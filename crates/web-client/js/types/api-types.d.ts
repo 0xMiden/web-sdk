@@ -235,6 +235,49 @@ export interface ClientOptions {
    * the accessor reads the configuration the chain commits to.
    */
   feeFaucetId?: string;
+  /**
+   * How many times a private note send is retried after a transient note
+   * transport failure, within the same `notes.sendPrivate` /
+   * `notes.sendPrivateOutput` call. An integer from 0 to 10; defaults to 3.
+   * Together with {@link ClientOptions.noteTransportRetryIntervalMs} the total
+   * computed backoff, `interval * (2^retries - 1)` with an omitted value taken
+   * at its default, may not exceed 120000 ms.
+   *
+   * Retried: a failed connection, and the service answering `Unavailable`,
+   * `DeadlineExceeded`, or `ResourceExhausted` with a `retry-after` value.
+   * Nothing else is, since a retry would get the same answer. In the browser a
+   * failed `fetch` (network down, CORS, DNS) reaches the client as an
+   * `Unknown` status and is **not** retried; a request that times out is.
+   *
+   * The retries run inside the client's serialized call, so a slow or
+   * rate-limiting transport blocks every other call on this client until the
+   * send finishes. A non-zero `retry-after` from the service replaces the
+   * computed delay with no upper bound; a zero one falls back to the computed
+   * delay. Pass `0` to bound a send to a single attempt, which suits a
+   * latency-sensitive UI.
+   *
+   * Validated before the client is built: anything else throws a `TypeError`.
+   * Ignored by `MidenClient.createMock()`, whose note transport is in-process.
+   */
+  noteTransportMaxRetries?: number;
+  /**
+   * Delay before the first of those retries, in milliseconds; each later retry
+   * waits twice as long as the one before. An integer from 0 to 60000;
+   * defaults to 250. Together with
+   * {@link ClientOptions.noteTransportMaxRetries} the total computed backoff,
+   * `interval * (2^retries - 1)` with an omitted value taken at its default,
+   * may not exceed 120000 ms, which is also the longest computed wait.
+   *
+   * The retries run inside the client's serialized call, blocking every other
+   * call on this client until the send finishes. A non-zero `retry-after` from
+   * the service replaces the computed delay with no upper bound, so a
+   * rate-limited send can wait longer than this bound; a zero one falls back to
+   * the computed delay. Use `noteTransportMaxRetries: 0` to rule that out.
+   *
+   * Validated before the client is built: anything else throws a `TypeError`.
+   * Ignored by `MidenClient.createMock()`.
+   */
+  noteTransportRetryIntervalMs?: number;
   /** Sync state on creation (default: false). */
   autoSync?: boolean;
   /** External keystore callbacks. */
@@ -1605,6 +1648,12 @@ export interface NotesResource {
    * output notes prefer {@link NotesResource.sendPrivateOutput}, which reads the proof sync
    * stored on the note and throws if this client has not synced past the commitment.
    *
+   * A rejection means the note did not reach the transport or the outcome is not known, and
+   * it is final. The SDK keeps no queue and no `sync()` sends the note again;
+   * transient transport failures are already retried within the call (see
+   * {@link ClientOptions.noteTransportMaxRetries}). To try again, call this again with the
+   * same note: delivery is idempotent by note id.
+   *
    * @param options - The note, the recipient, and `inclusionProof`.
    */
   sendPrivate(options: SendPrivateOptions): Promise<void>;
@@ -1614,6 +1663,12 @@ export interface NotesResource {
    * The inclusion proof is the one sync stored on the output note. It is absent until this
    * client has synced past the block that committed the note, and the call throws in that
    * case. The note must exist in this client's store as an output note.
+   *
+   * A rejection means the note did not reach the transport or the outcome is not known, and
+   * it is final. The SDK keeps no queue and no `sync()` sends the note again;
+   * transient transport failures are already retried within the call (see
+   * {@link ClientOptions.noteTransportMaxRetries}). To try again, call this again with the
+   * same note id: delivery is idempotent by note id.
    *
    * @param options - The output note id and the recipient.
    */
