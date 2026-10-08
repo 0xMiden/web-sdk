@@ -13,6 +13,8 @@
  * - Array type polyfills (browser has typed WASM arrays, napi accepts plain JS arrays)
  */
 
+import { resolveAuthScheme } from "../utils.js";
+
 // ── Argument normalization ───────────────────────────────────────────
 
 /**
@@ -64,6 +66,13 @@ export function wrapClass(Cls) {
 
 // ── Client wrapping ──────────────────────────────────────────────────
 
+// Position of the AuthScheme argument in the client methods, other than
+// newWallet, whose native signature takes one.
+const AUTH_SCHEME_ARG_INDEX = new Map([
+  ["newFaucet", 6],
+  ["importPublicAccountFromSeed", 1],
+]);
+
 /**
  * Wraps a raw napi WebClient to normalize API differences with the browser SDK.
  *
@@ -72,8 +81,10 @@ export function wrapClass(Cls) {
  * - syncNoteTransport() -> syncNoteTransportImpl()
  * - null -> undefined for Option<T> returns
  * - BigInt/Uint8Array args normalized
+ * - AuthScheme args resolved against `rawSdk.AuthScheme`, as the browser
+ *   WebClient resolves them against the wasm enum
  */
-export function wrapClient(rawClient, storeName) {
+export function wrapClient(rawClient, storeName, rawSdk) {
   return new Proxy(rawClient, {
     get(target, prop) {
       if (prop === "syncState") {
@@ -118,14 +129,30 @@ export function wrapClient(rawClient, storeName) {
         return () => null;
       }
       if (prop === "newWallet") {
-        return (mode, authScheme, seed) => {
+        return async (mode, authScheme, seed) => {
           const normSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
           return target
-            .newWallet(mode, authScheme, normSeed ?? null)
+            .newWallet(
+              mode,
+              resolveAuthScheme(authScheme, rawSdk),
+              normSeed ?? null
+            )
             .then((v) => (v === null ? undefined : v));
+        };
+      }
+      const authSchemeIndex = AUTH_SCHEME_ARG_INDEX.get(prop);
+      if (authSchemeIndex !== undefined) {
+        return async (...args) => {
+          const normalizedArgs = args.map(normalizeArg);
+          normalizedArgs[authSchemeIndex] = resolveAuthScheme(
+            normalizedArgs[authSchemeIndex],
+            rawSdk
+          );
+          const result = await target[prop](...normalizedArgs);
+          return result === null ? undefined : result;
         };
       }
       const val = target[prop];

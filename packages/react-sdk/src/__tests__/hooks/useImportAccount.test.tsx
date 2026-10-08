@@ -168,7 +168,7 @@ describe("useImportAccount", () => {
         await result.current.importAccount({
           type: "seed",
           seed: new Uint8Array([1, 2, 3]),
-          authScheme: 2 as unknown as import("../../types").AuthScheme,
+          authScheme: 2,
         });
       });
 

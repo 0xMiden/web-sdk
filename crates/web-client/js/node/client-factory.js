@@ -90,7 +90,7 @@ export function createWasmWebClient(rawSdk, options) {
         noteTransportMaxRetries ?? null,
         noteTransportRetryIntervalMs ?? null
       );
-      return wrapClient(client, storeName);
+      return wrapClient(client, storeName, rawSdk);
     },
 
     createClientWithExternalKeystore: async () => {
@@ -126,7 +126,7 @@ export function createMockWasmWebClient(rawSdk) {
         normBytes(serializedMockChain) ?? null,
         normBytes(serializedNoteTransport) ?? null
       );
-      return wrapClient(client, "mock");
+      return wrapClient(client, "mock", rawSdk);
     },
   };
 }

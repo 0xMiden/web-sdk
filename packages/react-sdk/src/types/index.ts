@@ -306,8 +306,8 @@ export interface NoteSummary {
 export interface CreateWalletOptions {
   /** Storage mode. Default: private */
   storageMode?: StorageMode;
-  /** Auth scheme. Default: AuthScheme.AuthRpoFalcon512 */
-  authScheme?: AuthScheme;
+  /** Auth scheme, or a numeric wasm enum value. Default: AuthScheme.Falcon */
+  authScheme?: AuthScheme | number;
   /** Initial seed for deterministic account ID */
   initSeed?: Uint8Array;
 }
@@ -324,8 +324,8 @@ export interface CreateFaucetOptions {
   maxSupply: bigint | number;
   /** Storage mode. Default: private */
   storageMode?: StorageMode;
-  /** Auth scheme. Default: AuthScheme.AuthRpoFalcon512 */
-  authScheme?: AuthScheme;
+  /** Auth scheme, or a numeric wasm enum value. Default: AuthScheme.Falcon */
+  authScheme?: AuthScheme | number;
 }
 
 // Account import options
@@ -341,7 +341,7 @@ export type ImportAccountOptions =
   | {
       type: "seed";
       seed: Uint8Array;
-      authScheme?: AuthScheme;
+      authScheme?: AuthScheme | number;
     };
 
 // Send options
@@ -718,7 +718,7 @@ export interface UseSessionAccountOptions {
   /** Wallet creation options */
   walletOptions?: {
     storageMode?: "private" | "public";
-    authScheme?: AuthScheme;
+    authScheme?: AuthScheme | number;
   };
   /** Polling interval for funding note detection (ms). Default: 3000 */
   pollIntervalMs?: number;
@@ -755,7 +755,7 @@ export const DEFAULTS = {
   RPC_URL: undefined, // Will use SDK's testnet default
   AUTO_SYNC_INTERVAL: 15000,
   STORAGE_MODE: "private" as const,
-  AUTH_SCHEME: AuthScheme.AuthRpoFalcon512,
+  AUTH_SCHEME: AuthScheme.Falcon,
   NOTE_TYPE: "private" as const,
   FAUCET_DECIMALS: 8,
 } as const;

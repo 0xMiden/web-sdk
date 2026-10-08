@@ -146,6 +146,79 @@ test.describe("import from seed", () => {
     expect(result.restoredBalance).toEqual(result.initialBalance);
     expect(result.restoredAccountCommitment).toEqual(result.initialCommitment);
   });
+
+  test("raw client resolves friendly AuthScheme strings", async ({
+    run,
+  }, testInfo) => {
+    // Covers the napi client wrapper; js/__tests__/client.test.js covers the
+    // browser one. The import below runs on the client that created the
+    // account, because the napi mock RPC serves no other client's accounts and
+    // the IndexedDB store rejects re-importing an account it already tracks.
+    test.skip(testInfo.project.name !== "nodejs", "napi client wrapper only");
+    test.slow();
+    const result = await run(async ({ client, sdk }) => {
+      await client.syncState();
+
+      const ecdsaWallet = await client.newWallet(
+        sdk.AccountStorageMode.private(),
+        "ecdsa"
+      );
+
+      // A public wallet can be imported from its seed once a transaction of
+      // its own has put it on the mock chain.
+      const walletSeed = new Uint8Array(32);
+      crypto.getRandomValues(walletSeed);
+      const wallet = await client.newWallet(
+        sdk.AccountStorageMode.public(),
+        "falcon",
+        walletSeed
+      );
+      const faucet = await client.newFaucet(
+        sdk.AccountStorageMode.private(),
+        false,
+        "DAG",
+        "DAG",
+        8,
+        sdk.u64(10000000),
+        "falcon"
+      );
+
+      const mintTransactionId = await client.submitNewTransaction(
+        faucet.id(),
+        await client.newMintTransactionRequest(
+          wallet.id(),
+          faucet.id(),
+          sdk.NoteType.Public,
+          sdk.u64(1000)
+        )
+      );
+      await client.proveBlock();
+      await client.syncState();
+      const [mintRecord] = await client.getTransactions(
+        sdk.TransactionFilter.ids([mintTransactionId])
+      );
+      const mintedNoteId = mintRecord.outputNotes().notes()[0].id().toString();
+      const mintedNote = (await client.getInputNote(mintedNoteId)).toNote();
+      await client.submitNewTransaction(
+        wallet.id(),
+        await client.newConsumeTransactionRequest([mintedNote], wallet.id())
+      );
+      await client.proveBlock();
+      await client.syncState();
+
+      const imported = await client.importPublicAccountFromSeed(
+        walletSeed,
+        "falcon"
+      );
+      return {
+        ecdsaWalletId: ecdsaWallet.id().toString(),
+        walletId: wallet.id().toString(),
+        importedId: imported.id().toString(),
+      };
+    });
+    expect(result.ecdsaWalletId).toBeTruthy();
+    expect(result.importedId).toEqual(result.walletId);
+  });
 });
 
 test.describe("import public account by id", () => {

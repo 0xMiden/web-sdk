@@ -19,6 +19,7 @@ import {
   StorageResult,
   wordToBigInt,
 } from "./storageView.js";
+import { resolveAuthScheme } from "./utils.js";
 export * from "../Cargo.toml";
 
 export {
@@ -101,7 +102,6 @@ const WRITE_METHODS = new Set([
   "importAccountById",
   "importAccountFile",
   "importNoteFile",
-  "importPublicAccountFromSeed",
   "insertAccountAddress",
   "newAccount",
   "newB2AggTransactionRequest",
@@ -1007,8 +1007,13 @@ class WebClient {
 
   async newWallet(storageMode, authSchemeId, seed) {
     return this._serializeWasmCall(async () => {
+      const wasm = await getWasmOrThrow();
       const wasmWebClient = await this.getWasmWebClient();
-      return await wasmWebClient.newWallet(storageMode, authSchemeId, seed);
+      return await wasmWebClient.newWallet(
+        storageMode,
+        resolveAuthScheme(authSchemeId, wasm),
+        seed
+      );
     }, "newWallet");
   }
 
@@ -1022,6 +1027,7 @@ class WebClient {
     authSchemeId
   ) {
     return this._serializeWasmCall(async () => {
+      const wasm = await getWasmOrThrow();
       const wasmWebClient = await this.getWasmWebClient();
       return await wasmWebClient.newFaucet(
         storageMode,
@@ -1030,9 +1036,20 @@ class WebClient {
         tokenSymbol,
         decimals,
         maxSupply,
-        authSchemeId
+        resolveAuthScheme(authSchemeId, wasm)
       );
     }, "newFaucet");
+  }
+
+  async importPublicAccountFromSeed(seed, authSchemeId) {
+    return this._serializeWasmCall(async () => {
+      const wasm = await getWasmOrThrow();
+      const wasmWebClient = await this.getWasmWebClient();
+      return await wasmWebClient.importPublicAccountFromSeed(
+        seed,
+        resolveAuthScheme(authSchemeId, wasm)
+      );
+    }, "importPublicAccountFromSeed");
   }
 
   async newAccount(account, overwrite) {

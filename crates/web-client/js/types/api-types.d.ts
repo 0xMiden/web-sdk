@@ -105,6 +105,12 @@ export declare const AuthScheme: {
 export type AuthSchemeType = (typeof AuthScheme)[keyof typeof AuthScheme];
 
 /**
+ * The same union under the const's own name, so `AuthScheme` also works as a
+ * type.
+ */
+export type AuthScheme = AuthSchemeType;
+
+/**
  * User-friendly note visibility constants.
  * Use `NoteVisibility.Public` or `NoteVisibility.Private` instead of raw strings.
  */

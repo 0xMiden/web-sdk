@@ -90,6 +90,34 @@ describe("useSessionAccount", () => {
       );
     });
 
+    it("forwards a numeric walletOptions.authScheme to newWallet", async () => {
+      const mockClient = createMockWebClient({
+        newWallet: vi.fn().mockResolvedValue(createMockAccount()),
+        getConsumableNotes: vi.fn().mockResolvedValue([]),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() =>
+        useSessionAccount({
+          fund: vi.fn().mockResolvedValue(undefined),
+          walletOptions: { authScheme: 1 },
+          pollIntervalMs: 1,
+          maxWaitMs: 5,
+        })
+      );
+
+      await act(async () => {
+        await result.current.initialize().catch(() => {});
+      });
+
+      expect(mockClient.newWallet).toHaveBeenCalledWith(expect.anything(), 1);
+    });
+
     it("does not consume a block-locked funding note", async () => {
       // A note that unlocks at a later block would fail the whole consume
       // transaction, so the poll must keep waiting rather than submit it.

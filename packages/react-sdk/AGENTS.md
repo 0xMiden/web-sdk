@@ -194,7 +194,7 @@ const { createWallet, wallet, isCreating, error, reset } = useCreateWallet();
 
 const account = await createWallet({
   storageMode: "private",  // "private" | "public". Default: "private"
-  authScheme: 2,           // 2 = Falcon, 1 = ECDSA. Pass the number - see the trap below
+  authScheme: AuthScheme.Falcon, // AuthScheme.Falcon | AuthScheme.ECDSA. Default: Falcon
   initSeed: seedBytes,     // optional: Uint8Array for a deterministic account id
 });
 ```
@@ -203,15 +203,13 @@ const account = await createWallet({
 no `"network"` storage mode for a wallet - network accounts are built through
 the network-account auth component, not this flag.
 
-> **Pass `authScheme` as a number, and always pass it.** `web-sdk#223` is open:
-> the create/import hooks forward `authScheme` straight to the wasm calls, which
-> expect the numeric enum (`2` Falcon, `1` ECDSA). The friendly `AuthScheme`
-> re-exported from this package is the string const `{ Falcon: "falcon",
-> ECDSA: "ecdsa" }`, so the hooks' own default, `AuthScheme.AuthRpoFalcon512`,
-> resolves to `undefined`. wasm-bindgen then throws `invalid enum value passed`
-> inside a worker closure, where it does not reject the promise - **the call
-> hangs instead of failing.** Omitting `authScheme` hits exactly that default.
-> `skills/react-sdk-patterns/SKILL.md` has the full write-up.
+`authScheme` takes `AuthScheme.Falcon` or `AuthScheme.ECDSA`, the string const
+`{ Falcon: "falcon", ECDSA: "ecdsa" }` this package re-exports, and the same
+holds for `useCreateFaucet`, the seed import of `useImportAccount` and
+`useSessionAccount`'s `walletOptions`. Omitting it uses `DEFAULTS.AUTH_SCHEME`,
+which is `AuthScheme.Falcon`. The numeric wasm enum values `2` (Falcon) and `1`
+(ECDSA) still pass through unchanged; any other value rejects with
+`Unknown auth scheme`.
 
 ### Send Tokens
 ```tsx
@@ -315,7 +313,7 @@ const account = await createFaucet({
   decimals: 8,              // Default: 8
   maxSupply: 1000000n,      // required. bigint | number
   storageMode: "public",    // "private" | "public". Default: "private"
-  authScheme: 2,            // 2 = Falcon. Pass the number - see the trap above
+  authScheme: AuthScheme.Falcon, // AuthScheme.Falcon | AuthScheme.ECDSA. Default: Falcon
 });
 ```
 
