@@ -1910,9 +1910,12 @@ export declare class MidenClient {
   /** Returns the client-level default prover. */
   readonly defaultProver: TransactionProver | null;
   /**
-   * Terminates the client: stops its Web Worker if there is one, and always
-   * releases the main-realm wasm client and, through it, its IndexedDB store
-   * connection. After this, all method calls throw.
+   * Terminates the client: stops its Web Worker if there is one, and releases
+   * the main-realm wasm client and, through it, its IndexedDB store connection
+   * once the calls already queued or running have settled. After this, all
+   * method calls throw. To wait for the release, dispose of the client with
+   * `await using` or `await client[Symbol.asyncDispose]()`. The release is
+   * browser-only: on the Node.js binding nothing is released.
    */
   terminate(): void;
 
@@ -2030,7 +2033,14 @@ export declare class MidenClient {
   /** Serializes the mock note transport node state. */
   serializeMockNoteTransportNode(): Promise<Uint8Array>;
 
+  /** Terminates the client without waiting for the release; see `terminate()`. */
   [Symbol.dispose](): void;
+  /**
+   * Terminates the client, then resolves once its wasm client is freed and its
+   * store connection released, so the store can be deleted or reopened once
+   * this settles. On the Node.js binding it releases nothing and resolves at
+   * once.
+   */
   [Symbol.asyncDispose](): Promise<void>;
 }
 

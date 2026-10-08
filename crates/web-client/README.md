@@ -934,7 +934,7 @@ The allowlist must be non-empty. The canonical expiration transaction script is 
 
 ### Cleanup
 
-When you're finished using a MidenClient instance, call `terminate()`. It stops the client's Web Worker if there is one, and always releases its main-realm wasm client and, through it, its IndexedDB connection:
+When you're finished using a MidenClient instance, call `terminate()`. In the browser it stops the client's Web Worker if there is one, and releases its main-realm wasm client and, through it, its IndexedDB connection once the calls already queued or running have settled. On the Node.js binding it releases nothing.
 
 ```typescript
 client.terminate();
@@ -944,6 +944,12 @@ client.terminate();
   using client = await MidenClient.create();
   // ... use client ...
 } // client.terminate() called automatically
+
+// To wait for the release, e.g. before deleting or reopening the store:
+{
+  await using client = await MidenClient.create();
+  // ... use client ...
+} // terminates, then resolves once the wasm client is freed and its store released
 ```
 
 A store that several clients share stays open until the last of them is terminated.

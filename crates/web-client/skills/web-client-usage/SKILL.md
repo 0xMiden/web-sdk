@@ -207,8 +207,11 @@ against late callbacks on unmount. The exceptions are `usesMockChain()`, the
 `MidenClient` also implements `[Symbol.dispose]`, which calls `terminate()`,
 so `using client = ...` works, and `[Symbol.asyncDispose]`, which calls it and
 then waits until the wasm client is freed and its store connection released.
-Use `await using client = ...` when the code after the block deletes or
-reopens the same store.
+The release waits for calls already queued or running to settle. Use
+`await using client = ...` when the code after the block deletes or reopens
+the same store. The release is browser-only: on the Node.js binding
+`terminate()` releases nothing (its inner client's `terminate()` is a no-op)
+and `[Symbol.asyncDispose]` resolves at once.
 
 ## Sync - Always Sync First
 

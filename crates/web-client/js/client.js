@@ -403,14 +403,18 @@ export class MidenClient {
 
   /**
    * Terminates the underlying client: stops its Web Worker if there is one,
-   * and always releases the main-realm wasm client and, through it, its
-   * IndexedDB store connection. After this, all method calls will throw.
+   * and releases the main-realm wasm client and, through it, its IndexedDB
+   * store connection once the calls already queued or running have settled.
+   * After this, all method calls will throw. To wait for the release, use
+   * `await using` or `await client[Symbol.asyncDispose]()`. The release is
+   * browser-only: on the Node.js binding nothing is released.
    */
   terminate() {
     this.#terminated = true;
     this.#inner.terminate?.();
   }
 
+  /** Terminates the client without waiting for the release; see `terminate()`. */
   [Symbol.dispose]() {
     this.terminate();
   }
@@ -418,7 +422,8 @@ export class MidenClient {
   /**
    * Terminates the client, then waits until its wasm client is freed and its
    * store connection released, so the store can be deleted or reopened once
-   * this settles.
+   * this settles. On the Node.js binding it releases nothing and resolves at
+   * once.
    */
   async [Symbol.asyncDispose]() {
     this.terminate();

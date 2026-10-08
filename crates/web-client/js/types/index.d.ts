@@ -179,6 +179,17 @@ export declare class WasmWebClient extends WasmWebClientBase {
   syncNoteTransport(): Promise<void>;
   setSignCb(signCb: SignCallback | null | undefined): void;
   onStateChanged(callback: (event: any) => void): (() => void) | undefined;
+  /**
+   * Terminates this WebClient: stops its Web Worker if there is one, and
+   * always releases the main-realm wasm client and, through it, its IndexedDB
+   * store connection, which closes once no other client in this realm holds
+   * the same store.
+   *
+   * Calls already queued or running still finish against the attached client,
+   * and the release waits for them to settle; a call waiting on the stopped
+   * worker, and every call made after terminate(), fails with
+   * "WebClient terminated". Calling it again is harmless.
+   */
   terminate(): void;
 }
 
