@@ -639,7 +639,7 @@ await runExclusive(async () => {
 - **No protocol `AssetId` / `AssetClass` / `AssetVaultKey` type.** Every `assetId` in this package is a faucet (token) account reference - `asset.faucetId().toString()`. Do not "fix" these names to protocol ones.
 - **No `mutable` wallet option and no `storageMode: "network"`.** `CreateWalletOptions` is exactly `{ storageMode?, authScheme?, initSeed? }`.
 
-> **The package's own `README.md` and `ReactSDK.Arena.Findings.md` are stale - do not treat them as authoritative.** The README still documents a `mutable: true` wallet option, `storageMode: 'network'` and, in its Default Values table, a `0` (Falcon) `authScheme` default, none of which exist in `src/types/index.ts`. The Arena findings file is a proposal document and describes an API that was never shipped in that shape. `src/types/index.ts` plus the hook bodies are the source of truth, and the package's `AGENTS.md` (which ships alongside this skill) is kept current.
+> **The package's own `README.md` and `ReactSDK.Arena.Findings.md` are stale - do not treat them as authoritative.** The README still documents a `mutable: true` wallet option and `storageMode: 'network'`, neither of which exists in `src/types/index.ts`. The Arena findings file is a proposal document and describes an API that was never shipped in that shape. `src/types/index.ts` plus the hook bodies are the source of truth, and the package's `AGENTS.md` (which ships alongside this skill) is kept current.
 
 ## Type Imports
 

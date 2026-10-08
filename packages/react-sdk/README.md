@@ -1984,7 +1984,7 @@ The SDK uses privacy-first defaults:
 |---------|---------|-------------|
 | `storageMode` | `'private'` | Account data stored off-chain |
 | `mutable` | `true` | Wallet code can be updated |
-| `authScheme` | `0` (Falcon) | Post-quantum secure signatures |
+| `authScheme` | `AuthScheme.Falcon` | Post-quantum secure signatures |
 | `noteType` | `'private'` | Note contents are private |
 | `skipSync` | `false` | Auto-sync before transactions |
 | `decimals` | `8` | Token decimal places |
