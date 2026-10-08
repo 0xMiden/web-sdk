@@ -1057,54 +1057,65 @@ class WebClient {
    *   block the batch commits in. Sync to learn where it landed.
    */
   async submitNewTransactionBatch(items) {
-    const wasm = await getWasmOrThrow();
-    assertBatchItems(items, wasm.BatchItem);
-    if (!this.worker) {
-      return this._submitBatchInThread(items);
-    }
-
     return this._serializeWasmCall(async () => {
-      try {
-        // A `BatchItem` is a handle into this thread's WASM memory, so each
-        // one crosses as its parts and the worker rebuilds it.
-        const serializedItems = items.map((item) => [
-          item.accountId().toString(),
-          item.request().serialize(),
-        ]);
-        return await this.callMethodWithWorker(
-          MethodName.SUBMIT_NEW_TRANSACTION_BATCH,
-          serializedItems
-        );
-      } catch (error) {
-        console.error(
-          "INDEX.JS: Error in submitNewTransactionBatch (worker):",
-          error
-        );
-        throw error;
-      }
+      const wasm = await getWasmOrThrow();
+      assertBatchItems(items, wasm.BatchItem);
+      return await this._dispatchBatch(items);
     }, MethodName.SUBMIT_NEW_TRANSACTION_BATCH);
   }
 
   /**
+   * Runs a validated batch in the worker when there is one, else in-thread.
+   * The caller already holds the chain slot, so this must not join the chain
+   * again: the inner call would queue behind the outer one and deadlock.
+   *
+   * @param {BatchItem[]} items - Already validated.
+   * @returns {Promise<number>}
+   */
+  async _dispatchBatch(items) {
+    if (!this.worker) {
+      return this._submitBatchInThread(items);
+    }
+
+    try {
+      // A `BatchItem` is a handle into this thread's WASM memory, so each
+      // one crosses as its parts and the worker rebuilds it.
+      const serializedItems = items.map((item) => [
+        item.accountId().toString(),
+        item.request().serialize(),
+      ]);
+      return await this.callMethodWithWorker(
+        MethodName.SUBMIT_NEW_TRANSACTION_BATCH,
+        serializedItems
+      );
+    } catch (error) {
+      console.error(
+        "INDEX.JS: Error in submitNewTransactionBatch (worker):",
+        error
+      );
+      throw error;
+    }
+  }
+
+  /**
    * Runs a batch on this thread's WASM instance. Shared by the no-worker case
-   * above and by `MockWebClient`, which always takes this path.
+   * above and by `MockWebClient`, which always takes this path. Like
+   * `_dispatchBatch`, it runs inside the caller's chain slot.
    *
    * @param {BatchItem[]} items - Already validated.
    * @returns {Promise<number>}
    */
   async _submitBatchInThread(items) {
-    return this._serializeWasmCall(async () => {
-      try {
-        const wasmWebClient = await this.getWasmWebClient();
-        return await wasmWebClient.submitNewTransactionBatch(items);
-      } catch (error) {
-        console.error(
-          "INDEX.JS: Error in submitNewTransactionBatch (in-thread):",
-          error
-        );
-        throw error;
-      }
-    }, MethodName.SUBMIT_NEW_TRANSACTION_BATCH);
+    try {
+      const wasmWebClient = await this.getWasmWebClient();
+      return await wasmWebClient.submitNewTransactionBatch(items);
+    } catch (error) {
+      console.error(
+        "INDEX.JS: Error in submitNewTransactionBatch (in-thread):",
+        error
+      );
+      throw error;
+    }
   }
 
   async submitNewTransactionWithProver(accountId, transactionRequest, prover) {
@@ -1653,15 +1664,13 @@ class MockWebClient extends WebClient {
    * the nonce would advance on a chain that never saw the batch.
    *
    * Overriding is required rather than merely preferable: inheriting the base
-   * wrapper would forward to the worker, since a mock client has one.
+   * dispatch would forward to the worker, since a mock client has one.
    *
    * Note that this keeps the batch out of its own round trip, not out of every
    * later one — call `proveBlock()` after a mock batch, before submitting
    * anything else.
    */
-  async submitNewTransactionBatch(items) {
-    const wasm = await getWasmOrThrow();
-    assertBatchItems(items, wasm.BatchItem);
+  async _dispatchBatch(items) {
     return this._submitBatchInThread(items);
   }
 
