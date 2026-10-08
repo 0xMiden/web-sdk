@@ -5,6 +5,7 @@ use miden_client::note::{
     NoteScript as NativeNoteScript,
     NoteStorage as NativeNoteStorage,
 };
+use miden_client::rng::draw_word;
 
 use super::note_script::NoteScript;
 use super::note_storage::NoteStorage;
@@ -46,7 +47,7 @@ impl NoteRecipient {
     /// serial number (the secret that prevents double-spends).
     #[js_export(js_name = "fromScript")]
     pub fn from_script(note_script: &NoteScript, storage: &NoteStorage) -> NoteRecipient {
-        let serial_num: NativeWord = rand::random();
+        let serial_num: NativeWord = draw_word(&mut rand::rng());
 
         let native = NativeNoteRecipient::new(serial_num, note_script.into(), storage.into());
         NoteRecipient(native)

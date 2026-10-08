@@ -135,13 +135,6 @@ impl IdxdbStore {
                     ids.iter().map(ToString::to_string).collect::<Vec<String>>().join(",");
                 format!("Ids:{ids_str}")
             },
-            // Released clients have an exhaustive enum; linked clients can extend it.
-            #[allow(unreachable_patterns)]
-            _ => {
-                return Err(StoreError::QueryError(
-                    "unsupported transaction filter variant".to_string(),
-                ));
-            },
         };
 
         let promise = idxdb_get_transactions(self.db_id(), filter_as_str.to_string());
