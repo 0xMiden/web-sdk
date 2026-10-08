@@ -848,6 +848,8 @@ with a pre-built `TransactionRequest`. Later items may consume notes produced by
 earlier ones (even across accounts); push order must respect
 producer-before-consumer. The underlying primitive returns a block number
 rather than per-tx ids, so the hook's result is `{ blockNumber }`.
+Each tx is proven inside that primitive by the client's built-in local prover,
+so `MidenProvider`'s `prover` setting and its fallback do not apply to batches.
 
 Built-in features:
 - **Auto pre-sync** before submit (disable with `skipSync: true`)

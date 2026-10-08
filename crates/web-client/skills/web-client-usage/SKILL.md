@@ -853,8 +853,9 @@ The result is `{ blockNumber }` only - the Rust V1 batch API returns no
 per-transaction ids, so `waitForConfirmation` polls local sync height until it
 reaches that block rather than watching transaction status. A
 `custom` operation carries a request you built, so the fee rules above apply to
-it: use `client.feeAwareTransactionRequestBuilder(account)`. The V1 batch API
-has no per-call prover override.
+it: use `client.feeAwareTransactionRequestBuilder(account)`. Every transaction
+is proven inside the batch primitive by the client's built-in local prover, so
+`proverUrl` does not apply, and the V1 batch API has no per-call prover override.
 
 ### Preview (dry run)
 

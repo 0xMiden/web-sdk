@@ -247,7 +247,7 @@ const { blockNumber } = await batch({
 });
 ```
 
-Each item pairs a tracked account with a pre-built `TransactionRequest`. The batch is proven and submitted atomically: either every tx lands or none. Items can target multiple accounts; later items may consume notes produced by earlier ones (push order must respect producer-before-consumer).
+Each item pairs a tracked account with a pre-built `TransactionRequest`. The batch is proven and submitted atomically: either every tx lands or none. Each tx is proven inside the batch primitive by the client's built-in local prover, so `MidenProvider`'s `prover` setting and its fallback do not apply to batches. Items can target multiple accounts; later items may consume notes produced by earlier ones (push order must respect producer-before-consumer).
 
 ### Claim Notes
 ```tsx

@@ -453,6 +453,10 @@ impl WebClient {
     /// the per-tx updates to the local store. Returns the block number the batch was accepted
     /// into.
     ///
+    /// Every proof is produced inside the batch primitive by the client's built-in local prover.
+    /// Unlike `submitNewTransactionWithProver`, this takes no prover, so a JS-side `proverUrl` or
+    /// React `prover` setting does not apply to batches.
+    ///
     /// Each [`BatchItem`] pairs the executing account with its transaction request, so the
     /// pairing is enforced at the type level — there's no way to call this with mismatched
     /// arrays.

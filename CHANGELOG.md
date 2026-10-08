@@ -4,7 +4,7 @@
 
 ### Enhancements
 
-* [FEATURE][web,react] Transaction batches can span several local accounts. Every `client.transactions.batch` operation names its own executing `account`, so one atomic batch can mix any tracked accounts, and a later transaction may consume a note an earlier one produced, including across accounts. `submitBatch` takes `{ account, request }` pairs, backed by a new `BatchItem` (`new BatchItem(accountId, request)`) that the WASM `submitNewTransactionBatch` accepts as an array. The React SDK adds `useBatch()`, whose `batch({ items, skipSync? })` submits pre-built requests as one batch and resolves to `{ blockNumber }` ([#161](https://github.com/0xMiden/web-sdk/pull/161), [rust-sdk#2177](https://github.com/0xMiden/rust-sdk/pull/2177)).
+* [FEATURE][web,react] Transaction batches can span several local accounts. Every `client.transactions.batch` operation names its own executing `account`, so one atomic batch can mix any tracked accounts, and a later transaction may consume a note an earlier one produced, including across accounts. `submitBatch` takes `{ account, request }` pairs, backed by a new `BatchItem` (`new BatchItem(accountId, request)`) that the WASM `submitNewTransactionBatch` accepts as an array. The React SDK adds `useBatch()`, whose `batch({ items, skipSync? })` submits pre-built requests as one batch and resolves to `{ blockNumber }`. Each batch transaction is proven inside the batch primitive by the client's built-in local prover, so `MidenClient`'s `proverUrl` and `MidenProvider`'s `prover` setting, fallback included, do not apply to batches ([#161](https://github.com/0xMiden/web-sdk/pull/161), [rust-sdk#2177](https://github.com/0xMiden/rust-sdk/pull/2177)).
 
 ### Changes
 

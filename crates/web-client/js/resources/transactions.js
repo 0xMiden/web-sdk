@@ -588,6 +588,8 @@ export class TransactionsResource {
    * accounts. Each operation specifies which account it targets via `account`.
    * Operations are executed, proven individually and as a batch, and submitted
    * atomically — either every tx in the batch lands or none does.
+   * Every proof runs inside the batch primitive on the client's built-in local
+   * prover, so `proverUrl` does not apply to batches.
    *
    * @param {BatchOptions} opts - Batch options including the operations array and confirmation settings.
    * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
@@ -664,8 +666,9 @@ export class TransactionsResource {
    *
    * @param {Array<{ account: AccountRef, request: TransactionRequest }>} items - Per-tx (account, request) pairs.
    * @param {object} [options] - Optional settings (waitForConfirmation, timeout).
-   *   The batch is proved with the client's configured prover; the V1 batch API
-   *   has no per-call prover override.
+   *   Every transaction is proven inside the batch primitive by the client's
+   *   built-in local prover, so `proverUrl` does not apply; the V1 batch API has
+   *   no per-call prover override.
    * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
    */
   async submitBatch(items, options) {

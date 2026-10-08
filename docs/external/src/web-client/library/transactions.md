@@ -121,6 +121,7 @@ A later transaction may consume a note produced by an earlier transaction in the
 - **No per-tx ids in the result.** `batch` returns `{ blockNumber }`. To inspect individual transactions in the batch, sync state and query with `client.transactions.list()` after `waitForConfirmation` succeeds.
 - **Atomicity is at the batch level.** Either all transactions in the batch land or none do — this differs from `Promise.all([send, send, send])` of singular calls (which can partially succeed).
 - **No duplicate input notes.** A note consumed by one transaction in the batch cannot be consumed by another — globally across accounts.
+- **Proving uses the built-in local prover.** Each transaction is proven inside the batch primitive by the client's built-in local prover, so `proverUrl` does not apply to `batch` or `submitBatch`, and neither takes a per-call prover.
 
 ### `submitBatch` — pre-built requests
 
@@ -227,7 +228,7 @@ On a chain that charges nothing, a request for an account that is not a multisig
 
 The `client.transactions` operations that build their own request — `send`, `mint`, `consume`, `consumeAll`, `swap`, `bridge`, `createNetworkNote`, `execute`, `pswapCreate`, `pswapConsume`, `pswapCancel`, and the named operations of `batch` and `preview` — declare it too. The ones that take a finished request **from you** never do: `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview`. Those are the paths the next section is for.
 
-`submitBatch` is worth calling out because a batch proves each transaction as it is pushed. A multisig request that declares no salt is rejected by miden-client during preparation — after the proofs of everything ahead of it in the batch have already been paid for. Build multisig requests from `feeAwareTransactionRequestBuilder` before batching them.
+`submitBatch` is worth calling out because a batch proves each transaction as it is pushed, on the client's built-in local prover rather than `proverUrl`. A multisig request that declares no salt is rejected by miden-client during preparation, after the proofs of everything ahead of it in the batch have already been paid for. Build multisig requests from `feeAwareTransactionRequestBuilder` before batching them.
 
 ### Assembling a request yourself
 

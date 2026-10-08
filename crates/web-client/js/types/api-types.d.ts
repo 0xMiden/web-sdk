@@ -1405,7 +1405,9 @@ export interface TransactionsResource {
    * Execute a heterogeneous batch of operations across one or more local
    * accounts. Each operation specifies its executing `account`. Operations
    * are built, proven individually and as a batch, and submitted atomically —
-   * either every tx in the batch lands or none does.
+   * either every tx in the batch lands or none does. Every proof runs inside
+   * the batch primitive on the client's built-in local prover, so `proverUrl`
+   * does not apply to batches.
    *
    * The named operations attach fee conversion info themselves; a request you
    * supply through the `custom` operation is subject to the fee checks
@@ -1430,7 +1432,10 @@ export interface TransactionsResource {
    * {@link MidenClient.feeAwareTransactionRequestBuilder}.
    *
    * @param items - Per-tx (account, request) pairs (must be non-empty).
-   * @param options - Optional batch settings (waitForConfirmation, timeout, prover).
+   * @param options - Optional batch settings (waitForConfirmation, timeout).
+   *   There is no prover option: every transaction is proven inside the batch
+   *   primitive by the client's built-in local prover, and `proverUrl` does not
+   *   apply.
    */
   submitBatch(
     items: { account: AccountRef; request: TransactionRequest }[],

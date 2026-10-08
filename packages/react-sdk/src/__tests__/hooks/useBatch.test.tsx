@@ -132,6 +132,38 @@ describe("useBatch", () => {
       expect(sync).toHaveBeenCalledTimes(2);
     });
 
+    it("submits only the items when the provider configures a remote prover", async () => {
+      const mockClient = createMockWebClient({
+        submitNewTransactionBatch: vi.fn().mockResolvedValue(9),
+      });
+      const remoteProver = { _kind: "remote-testnet" };
+      useMidenStore
+        .getState()
+        .setConfig({ prover: { primary: "testnet", fallback: "local" } });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+        signerConnected: true,
+        prover: remoteProver,
+      });
+
+      const { result } = renderHook(() => useBatch());
+      await act(async () => {
+        await result.current.batch({
+          items: [{ account: "0xa", request: fakeRequest("r") }],
+        });
+      });
+
+      // The batch primitive proves with the client's built-in prover, so the
+      // provider's prover must not reach it.
+      expect(mockClient.submitNewTransactionBatch).toHaveBeenCalledTimes(1);
+      const call = mockClient.submitNewTransactionBatch.mock.calls[0];
+      expect(call).toHaveLength(1);
+      expect(call[0]).toHaveLength(1);
+      expect(call).not.toContain(remoteProver);
+    });
+
     it("skips the pre-submit sync when skipSync=true", async () => {
       const mockClient = createMockWebClient({
         submitNewTransactionBatch: vi.fn().mockResolvedValue(7),

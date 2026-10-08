@@ -12,7 +12,10 @@ export interface UseBatchResult {
   result: BatchResult | null;
   /** Whether the batch submission is in progress. */
   isLoading: boolean;
-  /** Current stage. `proving` is skipped — proving happens inside the batch primitive. */
+  /**
+   * Current stage. `proving` is skipped: each tx is proven inside the batch
+   * primitive by the client's built-in local prover.
+   */
   stage: TransactionStage;
   /** Error if the batch failed. */
   error: Error | null;
@@ -24,7 +27,9 @@ export interface UseBatchResult {
  * Hook for atomic multi-transaction batches across one or more local accounts.
  *
  * Each item pairs a tracked local account with a pre-built `TransactionRequest`.
- * The batch is proven and submitted atomically — either every tx lands or none.
+ * The batch is proven and submitted atomically: either every tx lands or none.
+ * Each tx is proven inside the batch primitive by the client's built-in local
+ * prover, so `MidenProvider`'s `prover` setting and its fallback do not apply.
  * A later tx may consume a note produced by an earlier one (even across accounts);
  * push order must respect producer-before-consumer.
  *
