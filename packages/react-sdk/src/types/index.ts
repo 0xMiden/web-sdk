@@ -286,8 +286,8 @@ export interface NoteSummary {
 export interface CreateWalletOptions {
   /** Storage mode. Default: private */
   storageMode?: StorageMode;
-  /** Auth scheme. Default: AuthScheme.Falcon */
-  authScheme?: AuthScheme;
+  /** Auth scheme, or a numeric wasm enum value. Default: AuthScheme.Falcon */
+  authScheme?: AuthScheme | number;
   /** Initial seed for deterministic account ID */
   initSeed?: Uint8Array;
 }
@@ -304,8 +304,8 @@ export interface CreateFaucetOptions {
   maxSupply: bigint | number;
   /** Storage mode. Default: private */
   storageMode?: StorageMode;
-  /** Auth scheme. Default: AuthScheme.Falcon */
-  authScheme?: AuthScheme;
+  /** Auth scheme, or a numeric wasm enum value. Default: AuthScheme.Falcon */
+  authScheme?: AuthScheme | number;
 }
 
 // Account import options
@@ -321,7 +321,7 @@ export type ImportAccountOptions =
   | {
       type: "seed";
       seed: Uint8Array;
-      authScheme?: AuthScheme;
+      authScheme?: AuthScheme | number;
     };
 
 // Send options
@@ -698,7 +698,7 @@ export interface UseSessionAccountOptions {
   /** Wallet creation options */
   walletOptions?: {
     storageMode?: "private" | "public";
-    authScheme?: AuthScheme;
+    authScheme?: AuthScheme | number;
   };
   /** Polling interval for funding note detection (ms). Default: 3000 */
   pollIntervalMs?: number;

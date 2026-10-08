@@ -4,12 +4,19 @@ export * from "./crates/miden_client_web";
 // Re-export all simplified API types
 export * from "./api-types";
 
+// Both star exports above provide an `AuthScheme`; the runtime exports the
+// friendly const, so name it explicitly to keep the wasm enum from winning.
+export { AuthScheme } from "./api-types";
+
 // Import types needed for the @internal class declarations below
 import type {
+  Account,
+  AccountStorageMode,
   WebClient as WasmWebClientBase,
   SyncSummary,
 } from "./crates/miden_client_web";
 import type {
+  AuthSchemeType,
   GetKeyCallback,
   InsertKeyCallback,
   MidenObservation,
@@ -173,6 +180,27 @@ export declare class WasmWebClient extends WasmWebClientBase {
     observability?: ClientObservabilityOptions,
     feeFaucetId?: string
   ): Promise<WasmWebClient>;
+
+  // The wrapper resolves a friendly scheme to the wasm enum and passes a
+  // numeric enum value through, so these accept both.
+  newWallet(
+    storage_mode: AccountStorageMode,
+    auth_scheme: AuthSchemeType | number,
+    init_seed?: Uint8Array | null
+  ): Promise<Account>;
+  newFaucet(
+    storage_mode: AccountStorageMode,
+    non_fungible: boolean,
+    token_name: string,
+    token_symbol: string,
+    decimals: number,
+    max_supply: bigint,
+    auth_scheme: AuthSchemeType | number
+  ): Promise<Account>;
+  importPublicAccountFromSeed(
+    init_seed: Uint8Array,
+    auth_scheme: AuthSchemeType | number
+  ): Promise<Account>;
 
   syncState(): Promise<SyncSummary>;
   syncChain(): Promise<SyncSummary>;
