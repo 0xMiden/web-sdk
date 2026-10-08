@@ -147,8 +147,8 @@ export class MidenClient {
     const rpcUrl = resolveRpcUrl(options?.rpcUrl);
     const noteTransportUrl = resolveNoteTransportUrl(options?.noteTransportUrl);
 
-    // `useWorker: false` opts out of the Web Worker shim that wraps every
-    // WASM call. The shim exists to keep the main thread responsive in
+    // `useWorker: false` opts out of the Web Worker shim that wraps WASM
+    // calls (batch submission excepted). The shim exists to keep the main thread responsive in
     // browser/extension contexts, but it serializes the prover via
     // `TransactionProver.serialize()` — a format that has no encoding for
     // `newCallbackProver(jsFn)` and silently downgrades it to `"local"`.

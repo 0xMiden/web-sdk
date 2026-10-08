@@ -396,7 +396,8 @@ class WebClient {
    * @param {boolean} [useWorker=true] - When `false`, skip the Web Worker shim
    *   and call the wasm-bindgen `WebClient` directly on the current thread.
    *   The worker exists to keep the main thread responsive during WASM work
-   *   in browser/extension contexts, but it serializes the prover argument
+   *   in browser/extension contexts (batch submission still runs on the
+   *   calling thread), but it serializes the prover argument
    *   via `TransactionProver.serialize()` — a format that has no encoding
    *   for `newCallbackProver(jsFn)` and silently downgrades it to `"local"`.
    *   Consumers that hand a `CallbackProver` (e.g. native iOS/Android plug-in
