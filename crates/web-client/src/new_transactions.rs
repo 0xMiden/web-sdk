@@ -947,9 +947,12 @@ fn map_anchor_err(err: ClientError, context: &'static str) -> JsErr {
 /// An empty vector means the account's auth procedure is one this crate cannot name: either
 /// genuinely custom, or standard but compiled from a different miden-standards revision.
 ///
-/// Classification reads the account's code only. An account carrying a custom auth procedure,
-/// one no bundled standard template claims, classifies as `CustomAuth`, which the filter leaves
-/// out.
+/// Classification reads the account's code only, and deliberately avoids `AccountInterface`: its
+/// constructor asserts that exactly one auth component is present, which an account whose
+/// procedures match two standard auth components fails, and `wasm32` is `panic = "abort"`, so the
+/// assertion is a trap taken while the client borrow is held, poisoning the client for every later
+/// call. `from_procedures` cannot panic. An account carrying a custom auth procedure, one no
+/// bundled standard template claims, classifies as `CustomAuth`, which the filter leaves out.
 ///
 /// Matching is by MAST procedure root against the locally pinned miden-standards, so an account
 /// whose auth component was compiled from a different revision classifies as `CustomAuth` and

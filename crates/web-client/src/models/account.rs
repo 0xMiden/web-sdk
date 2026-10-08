@@ -1,9 +1,12 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
 use miden_client::account::component::NetworkAccount;
-use miden_client::account::{Account as NativeAccount, AccountInterfaceExt};
+use miden_client::account::{
+    Account as NativeAccount,
+    AccountComponentInterface,
+    AccountComponentInterfaceExt,
+};
 use miden_client::testing::standards::account_interface::get_public_keys_from_account;
-use miden_client::transaction::{AccountComponentInterface, AccountInterface};
 
 use crate::models::account_code::AccountCode;
 use crate::models::account_id::AccountId;
@@ -69,13 +72,15 @@ impl Account {
     }
 
     // Faucet-ness is encoded in the account's code, so it is derived from the
-    // account's component interface rather than from its `AccountId`.
+    // account's component interface rather than from its `AccountId`. It uses
+    // `from_procedures`, not `AccountInterface`, whose constructor asserts on exactly
+    // one auth component and traps under `panic = "abort"`.
 
     /// Returns true if the account exposes a fungible-faucet interface.
     #[js_export(js_name = "isFaucet")]
     pub fn is_faucet(&self) -> bool {
-        let interface = AccountInterface::from_account(&self.0);
-        interface.components().contains(&AccountComponentInterface::FungibleFaucet)
+        AccountComponentInterface::from_procedures(self.0.code().procedures())
+            .contains(&AccountComponentInterface::FungibleFaucet)
     }
 
     /// Returns true if the account is a regular (non-faucet) account.
@@ -141,26 +146,69 @@ impl Account {
     /// a multisig that is every approver, including keys this client does not hold. For "which
     /// keys do I hold for this account", use `client.keystore.getCommitments(accountId)` instead.
     ///
-    /// Throws when the account's auth component is a non-standard (`CustomAuth`) one, an auth
-    /// procedure no bundled standard component claims. Such a component defines its own key
-    /// storage layout, which cannot be decoded here; read its keys through the package that
-    /// defines the component.
+    /// Throws unless exactly one standard auth component bundled with this SDK owns the account's
+    /// auth procedure. The causes, and what to do about each:
+    /// - A custom auth component, which defines its own key storage layout: read its keys through
+    ///   the package that defines it, or use `client.keystore.getCommitments(accountId)` for the
+    ///   keys this client holds.
+    /// - A standard component built from a different miden-standards revision: use an SDK version
+    ///   that matches the revision the account was built with.
+    /// - A standard component compiled through `AccountComponent.compile`, which links it
+    ///   dynamically and so changes its procedure root: build it with the SDK's factory, such as
+    ///   `createAuthGuardedMultisig`.
     ///
     /// Two kinds of standard auth component return `[]`: `NoAuth` and the network account hold no
     /// key, and the tx fee collector's key is not read here (the SDK cannot build such an
     /// account).
     #[js_export(js_name = "getPublicKeyCommitments")]
     pub fn get_public_key_commitments(&self) -> Result<Vec<Word>, JsErr> {
-        let interface = AccountInterface::from_account(&self.0);
-        let auth_component = interface.auth_component();
-        if matches!(auth_component, AccountComponentInterface::CustomAuth(_)) {
+        let procedures = self.0.code().procedures();
+        let components = AccountComponentInterface::from_procedures(procedures);
+        let auth_components: Vec<&AccountComponentInterface> =
+            components.iter().filter(|component| component.is_auth_component()).collect();
+
+        // `from_procedures` removes every root a standard component claimed, so an auth procedure
+        // root left in a `Custom` bucket belongs to no standard component, even when another
+        // procedure matched one.
+        let auth_root_unclaimed = procedures.first().is_none_or(|auth_root| {
+            components.iter().any(|component| {
+                matches!(
+                    component,
+                    AccountComponentInterface::Custom(roots) if roots.contains(auth_root)
+                )
+            })
+        });
+        let owned_by_one_standard_component = !auth_root_unclaimed
+            && matches!(
+                auth_components.as_slice(),
+                [only] if !matches!(only, AccountComponentInterface::CustomAuth(_))
+            );
+
+        if !owned_by_one_standard_component {
+            let found = if auth_components.is_empty() {
+                "none".to_string()
+            } else {
+                auth_components
+                    .iter()
+                    .map(|component| component.name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
             return Err(from_str_err(&format!(
                 "cannot derive public key commitments from account state: the account's auth \
-                 component, {}, is a non-standard auth component",
-                auth_component.name()
+                 procedure is not owned by exactly one standard auth component bundled with this \
+                 SDK (auth components found: {found}). If it is a custom auth component, read its \
+                 keys through the package that defines it, or use \
+                 client.keystore.getCommitments(accountId) for the keys this client holds. If it \
+                 is a standard component built from a different miden-standards revision, use an \
+                 SDK version that matches it. If it is a standard component compiled through \
+                 AccountComponent.compile, which links it dynamically, build it with the SDK's \
+                 factory such as createAuthGuardedMultisig instead."
             )));
         }
 
+        // Exactly one auth component was classified, so the `AccountInterface` this builds
+        // internally cannot assert.
         Ok(get_public_keys_from_account(&self.0).into_iter().map(Into::into).collect())
     }
 }

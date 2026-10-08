@@ -260,6 +260,81 @@ test.describe("Account.getPublicKeyCommitments", () => {
     expect(result.count).toBe(1);
   });
 
+  test("returns every approver key for an SDK-built multisig", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const approvers = [1, 2, 3].map(
+        (n) => new sdk.Word(sdk.u64Array([n, 0, 0, 0]))
+      );
+      // The config takes the approver words by value, so read them first.
+      const expected = approvers.map((word) => word.toHex()).sort();
+      const config = new sdk.AuthFalcon512RpoMultisigConfig(approvers, 2);
+      const seed = new Uint8Array(32);
+      seed.fill(0x21);
+      const account = new sdk.AccountBuilder(seed)
+        .withAuthComponent(sdk.createAuthFalcon512RpoMultisig(config))
+        .withBasicWalletComponent()
+        .storageMode(sdk.AccountStorageMode.public())
+        .build().account;
+      return {
+        expected,
+        keys: account
+          .getPublicKeyCommitments()
+          .map((word) => word.toHex())
+          .sort(),
+      };
+    });
+    expect(result.keys).toEqual(result.expected);
+  });
+
+  test("returns every approver key for a createAuthGuardedMultisig account", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const approvers = [4, 5].map(
+        (n) => new sdk.Word(sdk.u64Array([n, 0, 0, 0]))
+      );
+      const expected = approvers.map((word) => word.toHex()).sort();
+      const guardian = new sdk.Word(sdk.u64Array([6, 0, 0, 0]));
+      const config = new sdk.AuthGuardedMultisigConfig(
+        approvers,
+        2,
+        guardian,
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const seed = new Uint8Array(32);
+      seed.fill(0x22);
+      const account = new sdk.AccountBuilder(seed)
+        .withAuthComponent(sdk.createAuthGuardedMultisig(config))
+        .withBasicWalletComponent()
+        .storageMode(sdk.AccountStorageMode.public())
+        .build().account;
+      return {
+        expected,
+        keys: account
+          .getPublicKeyCommitments()
+          .map((word) => word.toHex())
+          .sort(),
+      };
+    });
+    expect(result.keys).toEqual(result.expected);
+  });
+
+  test("returns no keys for a NoAuth account", async ({ run }) => {
+    const result = await run(async ({ sdk }) => {
+      const seed = new Uint8Array(32);
+      seed.fill(0x23);
+      const account = new sdk.AccountBuilder(seed)
+        .withNoAuthComponent()
+        .withBasicWalletComponent()
+        .storageMode(sdk.AccountStorageMode.public())
+        .build().account;
+      return { count: account.getPublicKeyCommitments().length };
+    });
+    expect(result.count).toBe(0);
+  });
+
   test("throws for a non-standard auth component", async ({ run }) => {
     const result = await run(async ({ client, sdk }) => {
       // An auth component compiled from arbitrary MASM: its auth procedure matches no
@@ -298,8 +373,193 @@ test.describe("Account.getPublicKeyCommitments", () => {
       return { error, isFaucet: account.isFaucet() };
     });
 
-    expect(result.error).toContain("non-standard auth component");
+    expect(result.error).toContain(
+      "not owned by exactly one standard auth component"
+    );
+    expect(result.error).toContain("client.keystore.getCommitments(accountId)");
+    expect(result.error).toContain("different miden-standards revision");
+    expect(result.error).toContain("AccountComponent.compile");
+    expect(result.error).toContain("createAuthGuardedMultisig");
     expect(result.isFaucet).toBe(false);
+  });
+
+  test("throws without trapping when a second standard auth procedure is installed", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk }) => {
+      // NoAuth's auth procedure body from miden-standards, exported as an ordinary
+      // `@account_procedure` rather than `@auth_script`, so it compiles to the same
+      // MAST root as the standard NoAuth procedure. Next to a real single-sig auth
+      // component, classification then finds two standard auth components.
+      const code = `
+        use {AuthArgs} from miden::standards::types
+        use miden::protocol::active_account
+        use miden::protocol::native_account
+        use miden::protocol::tx
+        use miden::standards::fee
+
+        const NO_AUTH_POST_FEE_CYCLES = 1024
+
+        @account_procedure
+        pub proc auth_no_auth(auth_args: AuthArgs)
+            dropw
+            exec.fee::native_conversion_info
+            push.NO_AUTH_POST_FEE_CYCLES
+            exec.tx::get_reference_block_number movdn.5
+            exec.fee::pay_fee drop
+            exec.native_account::has_state_changed
+            exec.active_account::get_nonce eq.0
+            or
+            if.true
+                exec.native_account::incr_nonce drop
+            end
+        end
+      `;
+      const codeBuilder = await client.createCodeBuilder();
+      const library = codeBuilder.buildLibrary("custom::lookalike", code);
+      const lookalike = sdk.AccountComponent.fromLibrary(
+        library,
+        []
+      ).withSupportsAllTypes();
+
+      const noAuthSeed = new Uint8Array(32);
+      noAuthSeed.fill(0x24);
+      const noAuthAccount = new sdk.AccountBuilder(noAuthSeed)
+        .withNoAuthComponent()
+        .withBasicWalletComponent()
+        .storageMode(sdk.AccountStorageMode.public())
+        .build().account;
+      const sameRootAsNoAuth = noAuthAccount
+        .code()
+        .hasProcedure(
+          sdk.Word.fromHex(lookalike.getProcedureHash("auth_no_auth"))
+        );
+
+      const singleSig = sdk.AccountComponent.createAuthComponentFromCommitment(
+        new sdk.Word(sdk.u64Array([7, 0, 0, 0])),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const seed = new Uint8Array(32);
+      seed.fill(0x25);
+      const account = new sdk.AccountBuilder(seed)
+        .withAuthComponent(singleSig)
+        .withComponent(lookalike)
+        .withBasicWalletComponent()
+        .storageMode(sdk.AccountStorageMode.public())
+        .build().account;
+
+      let isFaucet = null;
+      let isFaucetError = null;
+      try {
+        isFaucet = account.isFaucet();
+      } catch (err) {
+        isFaucetError = err?.message ?? String(err);
+      }
+
+      let error = null;
+      try {
+        account.getPublicKeyCommitments();
+      } catch (err) {
+        error = err?.message ?? String(err);
+      }
+
+      return { sameRootAsNoAuth, isFaucet, isFaucetError, error };
+    });
+
+    expect(result.sameRootAsNoAuth).toBe(true);
+    expect(result.isFaucetError).toBeNull();
+    expect(result.isFaucet).toBe(false);
+    expect(result.error).toContain(
+      "not owned by exactly one standard auth component"
+    );
+  });
+
+  test("throws when the auth procedure is custom and a standard auth body sits elsewhere", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk }) => {
+      // A custom auth procedure at index 0, plus an ordinary component exporting
+      // NoAuth's auth procedure body. Classification matches NoAuth on that body, so
+      // only the index-0 root left in the custom bucket shows that no standard
+      // component owns the auth procedure.
+      const lookalikeCode = `
+        use {AuthArgs} from miden::standards::types
+        use miden::protocol::active_account
+        use miden::protocol::native_account
+        use miden::protocol::tx
+        use miden::standards::fee
+
+        const NO_AUTH_POST_FEE_CYCLES = 1024
+
+        @account_procedure
+        pub proc auth_no_auth(auth_args: AuthArgs)
+            dropw
+            exec.fee::native_conversion_info
+            push.NO_AUTH_POST_FEE_CYCLES
+            exec.tx::get_reference_block_number movdn.5
+            exec.fee::pay_fee drop
+            exec.native_account::has_state_changed
+            exec.active_account::get_nonce eq.0
+            or
+            if.true
+                exec.native_account::incr_nonce drop
+            end
+        end
+      `;
+      const authCode = `
+        @auth_script
+        pub proc auth_noop
+            push.1 drop
+        end
+      `;
+      const codeBuilder = await client.createCodeBuilder();
+      const lookalike = sdk.AccountComponent.fromLibrary(
+        codeBuilder.buildLibrary("custom::lookalike", lookalikeCode),
+        []
+      ).withSupportsAllTypes();
+      const authComponent = sdk.AccountComponent.fromLibrary(
+        codeBuilder.buildLibrary("custom::auth::noop", authCode),
+        []
+      ).withSupportsAllTypes();
+
+      const noAuthSeed = new Uint8Array(32);
+      noAuthSeed.fill(0x26);
+      const noAuthAccount = new sdk.AccountBuilder(noAuthSeed)
+        .withNoAuthComponent()
+        .withBasicWalletComponent()
+        .storageMode(sdk.AccountStorageMode.public())
+        .build().account;
+      const sameRootAsNoAuth = noAuthAccount
+        .code()
+        .hasProcedure(
+          sdk.Word.fromHex(lookalike.getProcedureHash("auth_no_auth"))
+        );
+
+      const seed = new Uint8Array(32);
+      seed.fill(0x27);
+      const account = new sdk.AccountBuilder(seed)
+        .withAuthComponent(authComponent)
+        .withComponent(lookalike)
+        .withBasicWalletComponent()
+        .storageMode(sdk.AccountStorageMode.public())
+        .build().account;
+
+      let keys = null;
+      let error = null;
+      try {
+        keys = account.getPublicKeyCommitments().length;
+      } catch (err) {
+        error = err?.message ?? String(err);
+      }
+
+      return { sameRootAsNoAuth, keys, error };
+    });
+
+    expect(result.sameRootAsNoAuth).toBe(true);
+    expect(result.keys).toBeNull();
+    expect(result.error).toContain(
+      "not owned by exactly one standard auth component"
+    );
   });
 });
 
