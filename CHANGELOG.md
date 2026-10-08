@@ -5,6 +5,7 @@
 ### Enhancements
 
 * [FEATURE][web] Check whether an invitation can still register an account with `client.accounts.isInvitationCodeValid(code)`, without consuming the code. Low-level `WebClient` and `RpcClient` expose the same query ([#459](https://github.com/0xMiden/web-sdk/pull/459), [rust-sdk#2686](https://github.com/0xMiden/rust-sdk/pull/2686)).
+* [FEATURE][web] `AccountStoragePatch` now names the storage slots it changes and exposes map changes, so a co-signer can read what a `TransactionSummary` writes to storage, such as a multisig's signer set or thresholds, from `summary.accountDelta().storage()` before signing. `valueSlots()` returns a `StorageValueSlotPatch` (`slotName`, `operation`, `value`) per changed value slot, and `mapSlots()` returns a `StorageMapSlotPatch` (`slotName`, `operation`, `entries()`) per changed map slot, each entry a `StorageMapPatchEntry` (`key`, `value`). `operation` is a `StoragePatchOperation`: `Create`, `Update` or `Remove`. A removed value slot has no `value`, a removed map has no entries, a cleared map entry has the empty word as its value, and every slot of a new account is reported as `Create`. `values()` is unchanged ([#298](https://github.com/0xMiden/web-sdk/pull/298)).
 
 ### Fixes
 

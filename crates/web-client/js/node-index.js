@@ -302,9 +302,21 @@ export const SparseMerklePath = /* @__PURE__ */ _reexport("SparseMerklePath");
 export const StorageMap = /* @__PURE__ */ _reexport("StorageMap");
 export const StorageMapEntryJs = /* @__PURE__ */ _reexport("StorageMapEntryJs");
 export const StorageMapInfo = /* @__PURE__ */ _reexport("StorageMapInfo");
+export const StorageMapPatchEntry = /* @__PURE__ */ _reexport(
+  "StorageMapPatchEntry"
+);
+export const StorageMapSlotPatch = /* @__PURE__ */ _reexport(
+  "StorageMapSlotPatch"
+);
 export const StorageMapUpdate = /* @__PURE__ */ _reexport("StorageMapUpdate");
+export const StoragePatchOperation = /* @__PURE__ */ _reexport(
+  "StoragePatchOperation"
+);
 export const StorageSlot = /* @__PURE__ */ _reexport("StorageSlot");
 export const StorageSlotArray = /* @__PURE__ */ _reexport("StorageSlotArray");
+export const StorageValueSlotPatch = /* @__PURE__ */ _reexport(
+  "StorageValueSlotPatch"
+);
 export const SyncSummary = /* @__PURE__ */ _reexport("SyncSummary");
 export const TokenSymbol = /* @__PURE__ */ _reexport("TokenSymbol");
 export const TransactionArgs = /* @__PURE__ */ _reexport("TransactionArgs");
