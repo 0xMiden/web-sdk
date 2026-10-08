@@ -244,7 +244,9 @@ export interface ClientOptions {
     sign: SignCallback;
   };
   /**
-   * Enable the Web Worker shim that runs WASM calls off the main thread.
+   * Enable the Web Worker shim that runs WASM calls off the main thread,
+   * except batch submission (`transactions.batch` / `submitBatch`), which
+   * always proves on the calling thread.
    * Defaults to `true` — leave it that way in browsers/extensions so the UI
    * stays responsive while WASM is busy.
    *
@@ -590,13 +592,14 @@ export interface ConsumeAllOptions extends TransactionOptions {
 
 /**
  * A single operation inside a transaction batch. The shape mirrors the
- * singular options types (`SendOptions`, `MintOptions`, ...) minus the
- * `account` field — the executing account is set once at the batch level
- * and shared by every operation (V1 single-account constraint).
+ * singular options types (`SendOptions`, `MintOptions`, ...). Each
+ * operation specifies which local account executes it via `account`; a
+ * batch may mix operations across any combination of local accounts.
  */
 export type BatchOperation =
   | {
       kind: "send";
+      account: AccountRef;
       to: AccountRef;
       token: AccountRef;
       amount: number | bigint;
@@ -606,16 +609,19 @@ export type BatchOperation =
     }
   | {
       kind: "mint";
+      account: AccountRef;
       to: AccountRef;
       amount: number | bigint;
       type?: NoteVisibility;
     }
   | {
       kind: "consume";
+      account: AccountRef;
       notes: NoteInput | NoteInput[];
     }
   | {
       kind: "swap";
+      account: AccountRef;
       offer: Asset;
       request: Asset;
       type?: NoteVisibility;
@@ -623,6 +629,7 @@ export type BatchOperation =
     }
   | {
       kind: "execute";
+      account: AccountRef;
       script: TransactionScript;
       foreignAccounts?: (
         | AccountRef
@@ -632,23 +639,23 @@ export type BatchOperation =
   | {
       /** Escape hatch for pre-built TransactionRequests. */
       kind: "custom";
+      account: AccountRef;
       request: TransactionRequest;
     };
 
 export interface BatchOptions {
-  /** The account executing every operation in the batch (single-account in V1). */
-  account: AccountRef;
   /** Operations to execute atomically as a batch. Must be non-empty. */
   operations: BatchOperation[];
   /**
    * Wait until the batch's block has been observed in the local sync height.
-   * Differs from singular `waitForConfirmation`: the V1 batch API returns
-   * only a block number, so we poll chain height rather than per-tx status.
+   * Differs from singular `waitForConfirmation`: the batch API returns only
+   * a block number, so we poll chain height rather than per-tx status.
    */
   waitForConfirmation?: boolean;
   /** Wall-clock polling timeout for `waitForConfirmation` (default 60_000ms). */
   timeout?: number;
 }
+
 
 export interface BatchSubmitResult {
   /** The block number the batch was accepted into. */
@@ -1397,19 +1404,21 @@ export interface TransactionsResource {
   ): Promise<TransactionSubmission>;
 
   /**
-   * Execute a heterogeneous batch of operations against a single account.
-   * Each operation is built, proven individually and as a batch, and all
-   * operations are submitted atomically — either every tx in the batch
-   * lands or none does.
-   *
-   * V1 supports only same-account batches (mirrors the underlying Rust
-   * `Client::new_transaction_batch()` constraint).
+   * Execute a heterogeneous batch of operations across one or more local
+   * accounts. Each operation specifies its executing `account`. Operations
+   * are built, proven individually and as a batch, and submitted atomically —
+   * either every tx in the batch lands or none does. Every proof runs inside
+   * the batch primitive on the client's built-in local prover, so `proverUrl`
+   * does not apply to batches.
+   * In the browser a batch has no worker route: it proves on the calling
+   * thread (the main thread for a page, even with `useWorker` on) and blocks
+   * it until it settles, so keep batches small.
    *
    * The named operations attach fee conversion info themselves; a request you
    * supply through the `custom` operation is subject to the fee checks
    * described on {@link submitBatch}, which this delegates to.
    *
-   * @param options - Batch options including the account and operations.
+   * @param options - Batch options including the operations array.
    */
   batch(options: BatchOptions): Promise<BatchSubmitResult>;
 
@@ -1427,17 +1436,17 @@ export interface TransactionsResource {
    * ahead of it — build multisig requests from
    * {@link MidenClient.feeAwareTransactionRequestBuilder}.
    *
-   * The account's code is read once for the whole batch, not once per request,
-   * since a batch is single-account by contract.
-   *
-   * @param account - The account executing every transaction in the batch.
-   * @param requests - Pre-built transaction requests (must be non-empty).
-   * @param options - Optional batch settings (waitForConfirmation, timeout, prover).
+   * @param items - Per-tx (account, request) pairs (must be non-empty).
+   * @param options - Optional batch settings (waitForConfirmation, timeout).
+   *   There is no prover option: every transaction is proven inside the batch
+   *   primitive by the client's built-in local prover, and `proverUrl` does not
+   *   apply.
+   *   In the browser the batch proves on the calling thread, never the worker,
+   *   so it blocks the page's main thread until it settles; keep batches small.
    */
   submitBatch(
-    account: AccountRef,
-    requests: TransactionRequest[],
-    options?: Omit<BatchOptions, "account" | "operations">
+    items: { account: AccountRef; request: TransactionRequest }[],
+    options?: Omit<BatchOptions, "operations">
   ): Promise<BatchSubmitResult>;
 
   /** Execute a program (view call) and return the resulting stack output. */

@@ -443,6 +443,7 @@ export const createMockWebClient = (
       .fn()
       .mockResolvedValue(createMockTransactionRequest()),
 
+    submitNewTransactionBatch: vi.fn().mockResolvedValue(100),
     executeTransaction: vi.fn(async (_accountId: unknown, request: unknown) => {
       assertIsRequest(request, "executeTransaction");
       return createMockTransactionResult();
@@ -534,6 +535,7 @@ type MockWebClientType = {
   getPswapLineagesFor: ReturnType<typeof vi.fn>;
   getPswapLineage: ReturnType<typeof vi.fn>;
   buildPswapCancelByOrder: ReturnType<typeof vi.fn>;
+  submitNewTransactionBatch: ReturnType<typeof vi.fn>;
   executeTransaction: ReturnType<typeof vi.fn>;
   executeTransactionAt: ReturnType<typeof vi.fn>;
   executeForSummary: ReturnType<typeof vi.fn>;

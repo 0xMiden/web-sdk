@@ -155,7 +155,7 @@ so a bare string throws a runtime `TypeError`.
 Most mutation hooks return `{ <action>, result, isLoading, stage, error, reset }`:
 the action callback is named after the hook (`send`, `consume`, `mint`, ...) and
 the resolved value is on `result`. That holds for `useSend`, `useMultiSend`,
-`useConsume`, `useMint`, `useBridge`, `useSwap`, `useCreateNetworkNote`,
+`useBatch`, `useConsume`, `useMint`, `useBridge`, `useSwap`, `useCreateNetworkNote`,
 `useTransaction` and the `usePswap*` family.
 
 **The busy flag is not `isLoading` everywhere.** Every write hook returns its
@@ -164,7 +164,7 @@ in-progress flag, and only the transaction family has a `stage`:
 
 | Family | Hooks | Busy flag | `stage`? |
 |---|---|---|---|
-| Transaction | `useSend`, `useMultiSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `useTransaction`, all four `usePswap*` writes | `isLoading` | yes |
+| Transaction | `useSend`, `useMultiSend`, `useBatch`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `useTransaction`, all four `usePswap*` writes | `isLoading` | yes |
 | Account create / import | `useCreateWallet`, `useCreateFaucet`, `useImportAccount` | `isCreating` (`isImporting` for the last) | no |
 | Everything else names its own | `useChainAnchor().isCapturing`, `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting` | as named | no |
 
@@ -228,6 +228,26 @@ await multiSend({
   ],
 });
 ```
+
+### Submit a Multi-Transaction Batch
+```tsx
+const { batch } = useBatch();
+const client = useMidenClient();
+
+const sendReq = await client.newSendTransactionRequest(
+  alice, bob, token, NoteType.Private, 50n, null, null
+);
+const consumeReq = await client.newConsumeTransactionRequest([note], bob);
+
+const { blockNumber } = await batch({
+  items: [
+    { account: alice, request: sendReq },
+    { account: bob, request: consumeReq },  // may consume notes from earlier items in the batch
+  ],
+});
+```
+
+Each item pairs a tracked account with a pre-built `TransactionRequest`. The batch is proven and submitted atomically: either every tx lands or none. Each tx is proven inside the batch primitive by the client's built-in local prover, so `MidenProvider`'s `prover` setting and its fallback do not apply to batches. In the browser the batch has no worker route: it proves on the calling thread, which is the page's main thread even with `useWorker` on, and blocks the page until it settles, so keep batches small. Items can target multiple accounts; later items may consume notes produced by earlier ones (push order must respect producer-before-consumer).
 
 ### Claim Notes
 ```tsx
@@ -380,8 +400,8 @@ multisig flavour reuses that salt as its transaction summary's replay guard.
 So hooks that build their own request (`useSend`, `useMultiSend`, `useConsume`,
 `useMint`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`,
 `usePswapCancel`) declare a salt for you where the executing account needs one.
-The hooks that take a request *from you* - `useTransaction`, `usePreview`,
-`useChainAnchor` - cannot. A bare `new TransactionRequestBuilder()` is fine for
+The hooks that take a request *from you* - `useTransaction`, `useBatch`,
+`usePreview`, `useChainAnchor` - cannot. A bare `new TransactionRequestBuilder()` is fine for
 an ordinary account at any base fee; against a multisig on a fee-charging chain
 it fails with `FeeConversionInfoRequired` naming the component. So this matters
 for multisig, and for controlling the salt.
@@ -635,6 +655,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | `useImportStore()` / `useExportStore()` | store import/export | bytes / `void` |
 | `useSend()` | `send({ from, to, assetId, amount, noteType })` | `SendResult` (with `txId`, `note`) |
 | `useMultiSend()` | `multiSend({ from, recipients })` | `TransactionResult` |
+| `useBatch()` | `batch({ items })` - items are `{ account, request }` pairs | `BatchResult` (with `blockNumber`) |
 | `useMint()` | `mint({ faucetId, to, amount })` | `TransactionResult` |
 | `useBridge()` | `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress })` | `TransactionResult` (emits an AggLayer B2AGG bridge-out note) |
 | `useCreateNetworkNote()` | `createNetworkNote({ accountId, target, script \| recipient, ... })` | `NetworkNoteResult` (`{ txId, note }`; note satisfies `note.isNetworkNote()`) |

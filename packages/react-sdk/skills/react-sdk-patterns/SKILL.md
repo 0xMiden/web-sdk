@@ -187,7 +187,7 @@ A note on `ids`: the hook uses `TransactionFilter.ids(...)` only when every entr
 ## Mutation Hooks
 
 Each returns its own action function plus `error` and `reset`. The families differ in their loading/progress fields:
-- **Transaction hooks** (`useSend`, `useMultiSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`, `usePswapCancel`, `usePswapCancelByOrder`, `useTransaction`) expose `isLoading` and `stage` (a `TransactionStage`).
+- **Transaction hooks** (`useSend`, `useMultiSend`, `useBatch`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`, `usePswapCancel`, `usePswapCancelByOrder`, `useTransaction`) expose `isLoading` and `stage` (a `TransactionStage`).
 - **Account create/import hooks** (`useCreateWallet`, `useCreateFaucet`, `useImportAccount`) expose `isCreating` (or `isImporting` for the latter) and have **no** `stage`.
 - **Everything else names its own busy flag**: `useChainAnchor().isCapturing`, `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting`.
 
@@ -244,7 +244,7 @@ const account = await importAccount({
 });
 ```
 
-This hook calls `assertSignerConnected()` before doing anything else. With a signer provider mounted but **disconnected** it throws `"Signer is disconnected. Reconnect your wallet to perform transactions."` It is a no-op in local-keystore mode (`signerConnected === null`) and when the signer is connected. `useImportAccount` and `useMultiSend` are the **only two** hooks that make this check - do not assume the other mutation hooks guard it for you.
+This hook calls `assertSignerConnected()` before doing anything else. With a signer provider mounted but **disconnected** it throws `"Signer is disconnected. Reconnect your wallet to perform transactions."` It is a no-op in local-keystore mode (`signerConnected === null`) and when the signer is connected. `useImportAccount`, `useMultiSend` and `useBatch` are the **only three** hooks that make this check - do not assume the other mutation hooks guard it for you.
 
 ### useSend()
 ```tsx
@@ -288,6 +288,20 @@ await sendMany({
 ```
 
 Resolves to `{ transactionId }`, not `{ txId, note }`. Like `useImportAccount`, it calls `assertSignerConnected()` first and throws on a mounted-but-disconnected signer.
+
+### useBatch()
+```tsx
+const { batch, result, isLoading, stage, error, reset } = useBatch();
+const { blockNumber } = await batch({
+  items: [
+    { account: alice, request: sendReq },     // pre-built TransactionRequest
+    { account: bob, request: consumeReq },    // may consume a note an earlier item produced
+  ],
+  skipSync: false,         // optional: skip the auto-sync before submitting
+});
+```
+
+Submits every item as one atomic batch: every tx lands or none does. Each item pairs a tracked local account with a pre-built `TransactionRequest`; items may span accounts, and push order must respect producer-before-consumer. Resolves to `{ blockNumber }`, the block the batch was accepted into, with no per-tx ids. Each tx is proven inside the batch primitive by the client's built-in local prover, so `MidenProvider`'s `prover` setting and its fallback do not apply, and `stage` goes `"executing"` -> `"submitting"` -> `"complete"` without ever reporting `"proving"`. In the browser the batch has no worker route: it proves on the calling thread, which is the page's main thread even with `useWorker` on, and blocks the page until it settles, so keep batches small. A second `batch()` while one is in flight throws a `MidenError` with `code: "BATCH_BUSY"`. Like `useMultiSend`, it calls `assertSignerConnected()` and throws on a mounted-but-disconnected signer. The hook declares no fee conversion salt, so build a multisig item's request from `client.feeAwareTransactionRequestBuilder(account)`.
 
 ### useMint()
 ```tsx
@@ -576,7 +590,7 @@ import { MidenError, wrapWasmError } from "@miden-sdk/react";
 import type { CodedError, MidenErrorCode, WasmErrorCode } from "@miden-sdk/react";
 ```
 
-- `MidenErrorCode` is the **closed** union assigned by this package: `"WASM_CLASS_MISMATCH" | "WASM_POINTER_CONSUMED" | "WASM_NOT_INITIALIZED" | "WASM_SYNC_REQUIRED" | "SEND_BUSY" | "OPERATION_BUSY" | "STALE_CLIENT" | "UNKNOWN"`. Every `MidenError` carries one, defaulting to `"UNKNOWN"`.
+- `MidenErrorCode` is the **closed** union assigned by this package: `"WASM_CLASS_MISMATCH" | "WASM_POINTER_CONSUMED" | "WASM_NOT_INITIALIZED" | "WASM_SYNC_REQUIRED" | "SEND_BUSY" | "OPERATION_BUSY" | "BATCH_BUSY" | "STALE_CLIENT" | "UNKNOWN"`. Every `MidenError` carries one, defaulting to `"UNKNOWN"`.
 - `WasmErrorCode` is the union assigned by the Rust client and thrown out of WASM: `"INVALID_CHAIN_ANCHOR" | "TRANSACTION_ALREADY_AUTHORIZED"`. These are not `MidenError`s.
 - `CodedError = Error & { readonly code?: MidenErrorCode | WasmErrorCode | (string & {}) }`. The **`(string & {})` arm is open on purpose**: a code from a newer client stays assignable while the known ones keep autocomplete. So `switch` on `code`, but always leave a default branch - the union is not exhaustive of what you can receive.
 
@@ -652,6 +666,7 @@ import type {
   QueryResult, MutationResult, TransactionStage, AccountRef,
   AccountsResult, AccountResult, AssetBalance, NotesFilter, NotesResult, NoteSummary,
   SendOptions, SendResult, MultiSendOptions, MultiSendRecipient,
+  BatchItemInput, BatchOptions, BatchResult,
   MintOptions, ConsumeOptions, SwapOptions, BridgeOptions,
   CreateNetworkNoteOptions, NetworkNoteResult,
   PswapCreateOptions, PswapConsumeOptions, PswapCancelOptions,

@@ -224,9 +224,9 @@ callback (`store.client.setSignCb(wrappedSignCb)`) instead of rebuilding the cli
 made after disconnect throws `Signer is disconnected. Cannot sign.`
 (`packages/react-sdk/src/context/MidenProvider.tsx:166-212`).
 
-Two hooks additionally hard-block while a signer is mounted but disconnected: `useImportAccount`
-and `useMultiSend` call `assertSignerConnected()` and throw `Signer is disconnected. Reconnect your
-wallet to perform transactions.` (`packages/react-sdk/src/utils/errors.ts:101-107`).
+Three hooks additionally hard-block while a signer is mounted but disconnected: `useImportAccount`,
+`useMultiSend` and `useBatch` call `assertSignerConnected()` and throw `Signer is disconnected.
+Reconnect your wallet to perform transactions.` (`packages/react-sdk/src/utils/errors.ts:102-108`).
 
 The two shipped providers are the best worked examples of this contract: read `packages/para/react/src/ParaSignerProvider.tsx` or `packages/turnkey/react/src/TurnkeySignerProvider.tsx` end to end before writing your own.
 

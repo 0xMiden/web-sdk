@@ -125,7 +125,9 @@ export interface MidenConfig {
   /** Default timeout for remote prover requests in milliseconds. */
   proverTimeoutMs?: number | bigint;
   /**
-   * Enable the Web Worker shim that runs WASM calls off the main thread.
+   * Enable the Web Worker shim that runs WASM calls off the main thread,
+   * except batch submission (`useBatch`), which always proves on the calling
+   * thread.
    * Defaults to `true` — leave it that way in browsers/extensions so the UI
    * stays responsive while WASM is busy.
    *
@@ -378,6 +380,26 @@ export interface MultiSendOptions {
   noteType?: NoteVisibility;
   /** Skip auto-sync before send. Default: false */
   skipSync?: boolean;
+}
+
+/** A single (account, request) pair for {@link BatchOptions.items}. */
+export interface BatchItemInput {
+  /** Local account that executes this transaction. */
+  account: AccountRef;
+  /** Pre-built `TransactionRequest`. */
+  request: TransactionRequest;
+}
+
+export interface BatchOptions {
+  /** Per-tx `(account, request)` pairs. Must be non-empty. */
+  items: BatchItemInput[];
+  /** Skip auto-sync before submit. Default: false */
+  skipSync?: boolean;
+}
+
+export interface BatchResult {
+  /** The block number the batch was accepted into. */
+  blockNumber: number;
 }
 
 export interface WaitForCommitOptions {

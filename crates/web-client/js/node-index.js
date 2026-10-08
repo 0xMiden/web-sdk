@@ -195,6 +195,7 @@ export const AuthSecretKey = /* @__PURE__ */ _reexport("AuthSecretKey");
 export const BasicFungibleFaucetComponent = /* @__PURE__ */ _reexport(
   "BasicFungibleFaucetComponent"
 );
+export const BatchItem = /* @__PURE__ */ _reexport("BatchItem");
 export const BlockHeader = /* @__PURE__ */ _reexport("BlockHeader");
 export const ChainAnchor = /* @__PURE__ */ _reexport("ChainAnchor");
 export const CodeBuilder = /* @__PURE__ */ _reexport("CodeBuilder");

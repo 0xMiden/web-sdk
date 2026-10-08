@@ -64,6 +64,7 @@ const ciShardProjects = process.env.CI
           "test/network_transaction.test.ts",
           "test/swap_transactions.test.ts",
           "test/pswap_transactions.test.ts",
+          "test/batch.browser.test.ts",
         ],
         testIgnore: browserTestIgnore,
       },

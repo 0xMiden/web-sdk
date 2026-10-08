@@ -584,11 +584,17 @@ export class TransactionsResource {
   }
 
   /**
-   * Submit a heterogeneous batch of operations against a single account. All
-   * operations are executed, proven individually and as a batch, and submitted
+   * Submit a heterogeneous batch of operations across one or more local
+   * accounts. Each operation specifies which account it targets via `account`.
+   * Operations are executed, proven individually and as a batch, and submitted
    * atomically — either every tx in the batch lands or none does.
+   * Every proof runs inside the batch primitive on the client's built-in local
+   * prover, so `proverUrl` does not apply to batches.
+   * In the browser a batch has no worker route: it proves on the calling
+   * thread (the main thread for a page, even with `useWorker` on) and blocks
+   * it until it settles, so keep batches small.
    *
-   * @param {BatchOptions} opts - Batch options including the account, operations array, and confirmation settings.
+   * @param {BatchOptions} opts - Batch options including the operations array and confirmation settings.
    * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
    */
   async batch(opts) {
@@ -596,52 +602,38 @@ export class TransactionsResource {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
-    if (!opts || !opts.account) {
-      throw new Error("batch: `account` is required");
-    }
-    if (!Array.isArray(opts.operations) || opts.operations.length === 0) {
+    if (
+      !opts ||
+      !Array.isArray(opts.operations) ||
+      opts.operations.length === 0
+    ) {
       throw new Error("batch: `operations` must be a non-empty array");
     }
 
-    // Build each TransactionRequest. Per-op builders all use the batch-level
-    // `account` — V1 only supports same-account batches, mirroring the Rust
-    // constraint. We forward `opts.account` into each per-op options object so
-    // the existing builders' `resolveAccountRef` produces fresh AccountIds
-    // when needed.
-    const requests = [];
+    // Build each TransactionRequest. Every operation carries its own
+    // `account` — same-account batches just repeat the same value.
+    const items = [];
     for (let i = 0; i < opts.operations.length; i++) {
       const op = opts.operations[i];
+      if (!op?.account) {
+        throw new Error(`batch: operation[${i}] is missing \`account\``);
+      }
       let built;
       switch (op?.kind) {
         case "send":
-          built = await this.#buildSendRequest(
-            { ...op, account: opts.account },
-            wasm
-          );
+          built = await this.#buildSendRequest(op, wasm);
           break;
         case "mint":
-          built = await this.#buildMintRequest(
-            { ...op, account: opts.account },
-            wasm
-          );
+          built = await this.#buildMintRequest(op, wasm);
           break;
         case "consume":
-          built = await this.#buildConsumeRequest(
-            { ...op, account: opts.account },
-            wasm
-          );
+          built = await this.#buildConsumeRequest(op, wasm);
           break;
         case "swap":
-          built = await this.#buildSwapRequest(
-            { ...op, account: opts.account },
-            wasm
-          );
+          built = await this.#buildSwapRequest(op, wasm);
           break;
         case "execute":
-          built = await this.#buildExecuteRequest(
-            { ...op, account: opts.account },
-            wasm
-          );
+          built = await this.#buildExecuteRequest(op, wasm);
           break;
         case "custom":
           if (!op.request) {
@@ -656,16 +648,16 @@ export class TransactionsResource {
             `batch: operation[${i}] has unknown kind "${op?.kind}"`
           );
       }
-      requests.push(built.request);
+      items.push({ account: op.account, request: built.request });
     }
 
-    return this.submitBatch(opts.account, requests, opts);
+    return this.submitBatch(items, opts);
   }
 
   /**
    * Submit pre-built TransactionRequests as an atomic batch. Lower-level
-   * counterpart of `batch()` — for callers that already have built requests in
-   * hand. Equivalent to `submit()` but plural.
+   * counterpart of `batch()` — for callers that already have built requests
+   * paired with their target accounts.
    *
    * No fee conversion salt is declared here. miden-client commits the chain's
    * native conversion info while preparing each transaction, so requests against
@@ -675,27 +667,38 @@ export class TransactionsResource {
    * has already cost the proofs ahead of it — build multisig requests from
    * `client.feeAwareTransactionRequestBuilder`.
    *
-   * @param {AccountRef} account - The account executing the batch.
-   * @param {TransactionRequest[]} requests - Pre-built transaction requests.
+   * @param {Array<{ account: AccountRef, request: TransactionRequest }>} items - Per-tx (account, request) pairs.
    * @param {object} [options] - Optional settings (waitForConfirmation, timeout).
-   *   The batch is proved with the client's configured prover; the V1 batch API
-   *   has no per-call prover override.
+   *   Every transaction is proven inside the batch primitive by the client's
+   *   built-in local prover, so `proverUrl` does not apply; the V1 batch API has
+   *   no per-call prover override.
+   *   In the browser the batch proves on the calling thread, never the worker,
+   *   so it blocks the page's main thread until it settles; keep batches small.
    * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
    */
-  async submitBatch(account, requests, options) {
+  async submitBatch(items, options) {
     rejectUnexpectedAnchor(options, "submitBatch", "submit() per transaction");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
-    if (!Array.isArray(requests) || requests.length === 0) {
-      throw new Error("submitBatch: `requests` must be a non-empty array");
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error("submitBatch: `items` must be a non-empty array");
     }
 
-    const accountId = resolveAccountRef(account, wasm);
-    const blockNumber = await this.#inner.submitNewTransactionBatch(
-      accountId,
-      requests.map((r) => r.serialize())
-    );
+    const wasmItems = items.map((item, i) => {
+      if (!item?.account) {
+        throw new Error(`submitBatch: items[${i}] is missing \`account\``);
+      }
+      if (!item?.request) {
+        throw new Error(`submitBatch: items[${i}] is missing \`request\``);
+      }
+      return new wasm.BatchItem(
+        resolveAccountRef(item.account, wasm),
+        item.request
+      );
+    });
+
+    const blockNumber = await this.#inner.submitNewTransactionBatch(wasmItems);
 
     if (options?.waitForConfirmation) {
       await this.#waitForBlock(blockNumber, options);

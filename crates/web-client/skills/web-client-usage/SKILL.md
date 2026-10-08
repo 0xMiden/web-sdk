@@ -127,8 +127,9 @@ wallet path of `accounts.create({ seed })`. The **contract** path of
 `accounts.create` is the exception - its seed goes straight into
 `new AccountBuilder(seed)`, so it must be a raw 32-byte `Uint8Array`.
 
-`useWorker` defaults to `true` and runs WASM calls off the main thread. Set it
-to `false` when you pass a `CallbackProver` from
+`useWorker` defaults to `true` and runs WASM calls off the main thread, except
+batch submission (`transactions.batch` / `submitBatch`), which always proves on
+the calling thread. Set it to `false` when you pass a `CallbackProver` from
 `TransactionProver.newCallbackProver(jsFn)` (the worker boundary serializes the
 prover and silently downgrades the callback variant to `"local"`), or when
 embedding in a single-WebView native shell. `client.lastAuthError()` - which
@@ -821,39 +822,42 @@ proof that runs locally (and slowly) when you configured a remote one.
 
 ### Batching
 
-`transactions.batch` builds each operation itself; `submitBatch(account, requests, options?)`
-is the pre-built-request counterpart. Both submit atomically - every transaction
-in the batch lands or none does.
+`transactions.batch` builds each operation itself; `submitBatch(items, options?)`
+is the pre-built-request counterpart, taking `{ account, request }` pairs. Both
+submit atomically - every transaction in the batch lands or none does.
 
 ```typescript
 const { blockNumber } = await client.transactions.batch({
-  account: wallet,
   operations: [
-    { kind: "consume", notes: [noteId] },
-    { kind: "send", to: other, token: faucet, amount: 10n },
-    { kind: "custom", request: prebuiltRequest },
+    { kind: "consume", account: wallet, notes: [noteId] },
+    { kind: "send", account: wallet, to: other, token: faucet, amount: 10n },
+    { kind: "custom", account: other, request: prebuiltRequest },
   ],
   waitForConfirmation: true,
 });
 ```
 
 `BatchOperation` kinds are `send`, `mint`, `consume`, `swap`, `execute` and
-`custom`; each mirrors the singular options **minus `account`**.
+`custom`; each mirrors the singular options, **including `account`**, which every
+operation must carry.
 
-**V1 is single-account, and it rewrites every operation's account.** The builder
-spreads `{ ...op, account: opts.account }` over each operation before building
-it, so the batch-level account executes all of them. Mixing account roles does
-not raise an error, it builds the wrong request: a `mint` inside a
-wallet-scoped batch is rebuilt as if the wallet were the issuing faucet.
-Minting on a faucet and spending from a wallet are two accounts, so they are two
-calls.
+**Each operation names the account that executes it.** One batch may mix any
+tracked local accounts, so minting on a faucet and spending from a wallet can
+share a batch: put `account: faucet` on the `mint` and `account: wallet` on the
+`send`. A later transaction may consume a note an earlier one produced, even
+across accounts, so order the producer first. Every account must be tracked by
+this client, and no note may be consumed twice in one batch.
 
 The result is `{ blockNumber }` only - the Rust V1 batch API returns no
 per-transaction ids, so `waitForConfirmation` polls local sync height until it
 reaches that block rather than watching transaction status. A
 `custom` operation carries a request you built, so the fee rules above apply to
-it: use `client.feeAwareTransactionRequestBuilder(account)`. The V1 batch API
-has no per-call prover override.
+it: use `client.feeAwareTransactionRequestBuilder(account)`. Every transaction
+is proven inside the batch primitive by the client's built-in local prover, so
+`proverUrl` does not apply, and the V1 batch API has no per-call prover override.
+In the browser a batch has no worker route: it proves on the calling thread
+(the main thread for a page, even with `useWorker` on) and blocks it until it
+settles, so keep batches small.
 
 ### Preview (dry run)
 

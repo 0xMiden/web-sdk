@@ -134,6 +134,9 @@ function makeWasm(overrides = {}) {
     NoteArray: vi.fn().mockImplementation(makeNoteArray),
     NoteAndArgs: vi.fn().mockImplementation((note, args) => ({ note, args })),
     NoteAndArgsArray: vi.fn().mockReturnValue("noteAndArgsArray"),
+    BatchItem: vi
+      .fn()
+      .mockImplementation((accountId, request) => ({ accountId, request })),
     TransactionRequestBuilder: vi.fn().mockImplementation(makeTxRequestBuilder),
     TransactionFilter: {
       all: vi.fn().mockReturnValue("filterAll"),
@@ -1410,7 +1413,7 @@ describe("TransactionsResource", () => {
     it("submitBatch rejects an anchor instead of ignoring it", async () => {
       const { resource, inner } = makeResource();
       await expect(
-        resource.submitBatch("0xaccHex", [], { anchor: { blockNum: () => 1 } })
+        resource.submitBatch([], { anchor: { blockNum: () => 1 } })
       ).rejects.toThrow(/does not accept an anchor/);
       expect(inner.executeTransaction).not.toHaveBeenCalled();
     });
@@ -2223,15 +2226,10 @@ describe("TransactionsResource", () => {
   });
 
   describe("batch + submitBatch", () => {
-    // Helper: a fake TransactionRequest with a .serialize() method, since
-    // submitBatch calls `r.serialize()` on every entry. The per-op
-    // builders' `new*Request` methods need to return objects with
-    // `.serialize()` so the batch path is exercised end-to-end.
+    // Helper: a fake TransactionRequest. submitBatch no longer serializes;
+    // the BatchItem constructor takes the TransactionRequest by reference.
     function fakeRequest(label = "req") {
-      return {
-        serialize: vi.fn().mockReturnValue(new Uint8Array([1, 2])),
-        _label: label,
-      };
+      return { _label: label };
     }
 
     it("dispatches send / mint / consume / swap / execute / custom kinds and submits", async () => {
@@ -2263,38 +2261,47 @@ describe("TransactionsResource", () => {
       const customReq = fakeRequest("custom");
 
       const result = await resource.batch({
-        account: "0xsender",
         operations: [
           {
             kind: "send",
+            account: "0xsender",
             to: "0xto",
             token: "0xtok",
             amount: 1,
             type: "public",
           },
-          { kind: "mint", to: "0xto", amount: 2, type: "public" },
-          { kind: "consume", notes: ["0xnoteId"] },
+          {
+            kind: "mint",
+            account: "0xsender",
+            to: "0xto",
+            amount: 2,
+            type: "public",
+          },
+          { kind: "consume", account: "0xsender", notes: ["0xnoteId"] },
           {
             kind: "swap",
+            account: "0xsender",
             offer: { token: "0xt1", amount: 5 },
             request: { token: "0xt2", amount: 7 },
             type: "public",
           },
-          { kind: "execute", script: "scriptHandle" },
-          { kind: "custom", request: customReq },
+          { kind: "execute", account: "0xsender", script: "scriptHandle" },
+          { kind: "custom", account: "0xsender", request: customReq },
         ],
       });
 
       expect(inner.submitNewTransactionBatch).toHaveBeenCalledTimes(1);
-      const [accountIdArg, bytesArg] =
-        inner.submitNewTransactionBatch.mock.calls[0];
-      expect(accountIdArg.toString()).toBe("0xsender");
-      expect(bytesArg).toHaveLength(6);
+      const [itemsArg] = inner.submitNewTransactionBatch.mock.calls[0];
+      expect(itemsArg).toHaveLength(6);
+      expect(
+        itemsArg.every((item) => item.accountId.toString() === "0xsender")
+      ).toBe(true);
       expect(result).toEqual({ blockNumber: 42 });
-      // custom request.serialize() called via submitBatch path
-      expect(customReq.serialize).toHaveBeenCalled();
+      // The custom request flows through unchanged — no serialize() round-trip
+      // since BatchItem carries the TransactionRequest directly.
+      expect(itemsArg[5].request).toBe(customReq);
       // The `execute` operation is the one kind that assembles its own request,
-      // so it must come from the batch account's fee-aware builder — a bare
+      // so it must come from the executing account's fee-aware builder; a bare
       // builder aborts with ERR_FEE_CONVERSION_INFO_MISSING on a fee-charging
       // chain. The other five kinds delegate to `new*TransactionRequest`, which
       // attach conversion info themselves.
@@ -2302,6 +2309,40 @@ describe("TransactionsResource", () => {
       expect(
         inner.feeAwareTransactionRequestBuilder.mock.calls[0][0].toString()
       ).toBe("0xsender");
+    });
+
+    it("supports operations targeting multiple distinct accounts", async () => {
+      const { resource, inner } = makeResource({
+        newSendTransactionRequest: vi
+          .fn()
+          .mockResolvedValue(fakeRequest("send")),
+        newConsumeTransactionRequest: vi
+          .fn()
+          .mockResolvedValue(fakeRequest("consume")),
+        submitNewTransactionBatch: vi.fn().mockResolvedValue(99),
+      });
+
+      const result = await resource.batch({
+        operations: [
+          {
+            kind: "send",
+            account: "0xalice",
+            to: "0xbob",
+            token: "0xtok",
+            amount: 10,
+            type: "public",
+          },
+          { kind: "consume", account: "0xbob", notes: ["0xnoteId"] },
+        ],
+      });
+
+      expect(inner.submitNewTransactionBatch).toHaveBeenCalledTimes(1);
+      const [itemsArg] = inner.submitNewTransactionBatch.mock.calls[0];
+      expect(itemsArg.map((item) => item.accountId.toString())).toEqual([
+        "0xalice",
+        "0xbob",
+      ]);
+      expect(result).toEqual({ blockNumber: 99 });
     });
 
     it("execute kind threads foreignAccounts through ForeignAccountArray", async () => {
@@ -2317,10 +2358,10 @@ describe("TransactionsResource", () => {
       });
 
       await resource.batch({
-        account: "0xsender",
         operations: [
           {
             kind: "execute",
+            account: "0xsender",
             script: "scriptHandle",
             foreignAccounts: ["0xforeign1", { id: "0xforeign2" }],
           },
@@ -2330,35 +2371,36 @@ describe("TransactionsResource", () => {
       expect(wasm.ForeignAccount.public).toHaveBeenCalledTimes(2);
       expect(wasm.ForeignAccountArray).toHaveBeenCalled();
       // Foreign accounts do not change which account executes, so the
-      // fee-aware builder is still the batch account's.
+      // fee-aware builder is still the operation account's.
       expect(
         inner.feeAwareTransactionRequestBuilder.mock.calls[0][0].toString()
       ).toBe("0xsender");
     });
 
-    it("throws when account is missing", async () => {
+    it("throws when an operation is missing account", async () => {
       const { resource } = makeResource();
       await expect(
-        resource.batch({ operations: [{ kind: "send" }] })
-      ).rejects.toThrow(/account.*required/);
+        resource.batch({
+          operations: [{ kind: "send" }],
+        })
+      ).rejects.toThrow(/missing.*account/);
     });
 
     it("throws when operations is empty or not an array", async () => {
       const { resource } = makeResource();
-      await expect(
-        resource.batch({ account: "0xsender", operations: [] })
-      ).rejects.toThrow(/non-empty array/);
-      await expect(
-        resource.batch({ account: "0xsender", operations: undefined })
-      ).rejects.toThrow(/non-empty array/);
+      await expect(resource.batch({ operations: [] })).rejects.toThrow(
+        /non-empty array/
+      );
+      await expect(resource.batch({ operations: undefined })).rejects.toThrow(
+        /non-empty array/
+      );
     });
 
     it("throws on unknown operation kind", async () => {
       const { resource } = makeResource();
       await expect(
         resource.batch({
-          account: "0xsender",
-          operations: [{ kind: "bogus" }],
+          operations: [{ kind: "bogus", account: "0xsender" }],
         })
       ).rejects.toThrow(/unknown kind/);
     });
@@ -2367,17 +2409,25 @@ describe("TransactionsResource", () => {
       const { resource } = makeResource();
       await expect(
         resource.batch({
-          account: "0xsender",
-          operations: [{ kind: "custom" }],
+          operations: [{ kind: "custom", account: "0xsender" }],
         })
       ).rejects.toThrow(/missing.*request/);
     });
 
-    it("submitBatch rejects an empty requests array", async () => {
+    it("submitBatch rejects an empty items array", async () => {
       const { resource } = makeResource();
-      await expect(resource.submitBatch("0xsender", [])).rejects.toThrow(
-        /non-empty array/
+      await expect(resource.submitBatch([])).rejects.toThrow(/non-empty array/);
+    });
+
+    it("submitBatch throws when an item is missing account or request", async () => {
+      const { resource } = makeResource();
+      const r = fakeRequest();
+      await expect(resource.submitBatch([{ request: r }])).rejects.toThrow(
+        /missing.*account/
       );
+      await expect(
+        resource.submitBatch([{ account: "0xsender" }])
+      ).rejects.toThrow(/missing.*request/);
     });
 
     it("submitBatch with waitForConfirmation polls sync height until block lands", async () => {
@@ -2392,11 +2442,17 @@ describe("TransactionsResource", () => {
 
       const r1 = fakeRequest("a");
       const r2 = fakeRequest("b");
-      const result = await resource.submitBatch("0xsender", [r1, r2], {
-        waitForConfirmation: true,
-        timeout: 60_000,
-        interval: 0, // poll immediately, no wall-clock wait in tests
-      });
+      const result = await resource.submitBatch(
+        [
+          { account: "0xsender", request: r1 },
+          { account: "0xsender", request: r2 },
+        ],
+        {
+          waitForConfirmation: true,
+          timeout: 60_000,
+          interval: 0, // poll immediately, no wall-clock wait in tests
+        }
+      );
 
       expect(result).toEqual({ blockNumber: 100 });
       expect(inner.getSyncHeight).toHaveBeenCalled();
@@ -2414,7 +2470,7 @@ describe("TransactionsResource", () => {
         syncStateWithTimeout: sync,
       });
       const r = fakeRequest();
-      await resource.submitBatch("0xsender", [r], {
+      await resource.submitBatch([{ account: "0xsender", request: r }], {
         waitForConfirmation: true,
         interval: 0,
       });
@@ -2429,7 +2485,7 @@ describe("TransactionsResource", () => {
       });
       const r = fakeRequest();
       await expect(
-        resource.submitBatch("0xsender", [r], {
+        resource.submitBatch([{ account: "0xsender", request: r }], {
           waitForConfirmation: true,
           timeout: 1, // 1ms — first poll already past
           interval: 0,
