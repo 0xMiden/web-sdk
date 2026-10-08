@@ -810,6 +810,77 @@ describe("WasmWebClient.terminate", () => {
   );
 });
 
+describe("MidenClient.create", () => {
+  let savedWebClient;
+  let savedGetWasm;
+
+  beforeEach(() => {
+    savedWebClient = MidenClient._WasmWebClient;
+    savedGetWasm = MidenClient._getWasmOrThrow;
+  });
+
+  afterEach(() => {
+    MidenClient._WasmWebClient = savedWebClient;
+    MidenClient._getWasmOrThrow = savedGetWasm;
+  });
+
+  const install = (inner, wasm = makeWasm()) => {
+    MidenClient._WasmWebClient = {
+      createClient: vi.fn().mockResolvedValue(inner),
+    };
+    MidenClient._getWasmOrThrow = vi.fn().mockResolvedValue(wasm);
+  };
+
+  it("terminates the client it built when the first sync fails", async () => {
+    const failure = new Error("sync failed");
+    const inner = {
+      syncState: vi.fn().mockRejectedValue(failure),
+      terminate: vi.fn(),
+    };
+    install(inner);
+
+    await expect(
+      MidenClient.create({ rpcUrl: "devnet", autoSync: true })
+    ).rejects.toBe(failure);
+    expect(inner.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it("terminates the inner client when the prover URL cannot be resolved", async () => {
+    const failure = new Error("invalid prover url");
+    const inner = { syncState: vi.fn(), terminate: vi.fn() };
+    install(inner, {
+      ...makeWasm(),
+      TransactionProver: {
+        newRemoteProver: vi.fn(() => {
+          throw failure;
+        }),
+      },
+    });
+
+    await expect(
+      MidenClient.create({ rpcUrl: "devnet", proverUrl: "not a url" })
+    ).rejects.toBe(failure);
+    expect(inner.terminate).toHaveBeenCalledTimes(1);
+    expect(inner.syncState).not.toHaveBeenCalled();
+  });
+
+  it("leaves the client it returns alive", async () => {
+    const inner = {
+      syncState: vi.fn().mockResolvedValue({}),
+      terminate: vi.fn(),
+    };
+    install(inner);
+
+    const client = await MidenClient.create({
+      rpcUrl: "devnet",
+      autoSync: true,
+    });
+    expect(client).toBeInstanceOf(MidenClient);
+    expect(inner.syncState).toHaveBeenCalledTimes(1);
+    expect(inner.terminate).not.toHaveBeenCalled();
+  });
+});
+
 describe("MidenClient disposal", () => {
   const deferred = () => {
     let resolve;

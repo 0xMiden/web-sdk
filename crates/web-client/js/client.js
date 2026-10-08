@@ -184,16 +184,27 @@ export class MidenClient {
       );
     }
 
-    let defaultProver = null;
-    if (options?.proverUrl) {
-      const wasm = await getWasm();
-      defaultProver = resolveProver(options.proverUrl, wasm);
-    }
+    let client;
+    try {
+      let defaultProver = null;
+      if (options?.proverUrl) {
+        const wasm = await getWasm();
+        defaultProver = resolveProver(options.proverUrl, wasm);
+      }
 
-    const client = new MidenClient(inner, getWasm, defaultProver);
+      client = new MidenClient(inner, getWasm, defaultProver);
 
-    if (options?.autoSync) {
-      await client.sync();
+      if (options?.autoSync) {
+        await client.sync();
+      }
+    } catch (error) {
+      // Never handed to the caller, so nothing else would terminate it.
+      if (client) {
+        client.terminate();
+      } else {
+        inner.terminate?.();
+      }
+      throw error;
     }
 
     return client;
