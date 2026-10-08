@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/node-linux-x64-gnu",
-  "version": "0.18.0-rc.0",
+  "version": "0.17.1",
   "description": "Miden Client SDK native module for Linux x64 (glibc)",
   "os": [
     "linux"

@@ -2061,7 +2061,9 @@ export declare function createP2IDENote(
 /**
  * Builds (without submitting) a Public custom-script note carrying a
  * `NetworkAccountTarget` attachment. Provide exactly one of `recipient` or
- * `script`.
+ * `script`. The transaction that emits the note must declare the target as a
+ * foreign account (`withForeignAccounts`), which
+ * {@link TransactionsResource.createNetworkNote} does for you.
  */
 export declare function buildNetworkNote(opts: NetworkNoteOptions): Note;
 

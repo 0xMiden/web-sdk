@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { test, expect } from "./test-setup";
-import { createMidenClient } from "./test-helpers";
+import { createMidenClient, parseNetworkId } from "./test-helpers";
 import path from "path";
 
 test.describe("Node SDK deserialization", () => {
@@ -142,6 +142,62 @@ test.describe("MidenClient API - Mock Chain", () => {
 
     expect(faucet.isFaucet()).toBe(true);
     expect(faucet.isPublic()).toBe(true);
+  });
+
+  test("accounts.removeAddress preserves account scope and another address with the same tag", async ({
+    client,
+    sdk,
+  }) => {
+    const owner = await client.newWallet(
+      sdk.AccountStorageMode.private(),
+      sdk.AuthScheme.AuthRpoFalcon512
+    );
+    const other = await client.newWallet(
+      sdk.AccountStorageMode.private(),
+      sdk.AuthScheme.AuthRpoFalcon512
+    );
+    const network = parseNetworkId(sdk, "mtst");
+    const address = sdk.Address.fromAccountId(owner.id());
+    const sameTagAddress = sdk.Address.fromAccountId(owner.id(), "BasicWallet");
+    const encoded = address.toBech32(network);
+    const retained = sameTagAddress.toBech32(network);
+
+    expect(encoded).not.toBe(retained);
+    expect(address.toNoteTag().asU32()).toBe(
+      sameTagAddress.toNoteTag().asU32()
+    );
+
+    const readAddresses = async (account) => {
+      const reader = await client.accountReader(account.id());
+      return (await reader.addresses())
+        .map((stored) => stored.toBech32(network))
+        .sort();
+    };
+
+    const initial = await readAddresses(owner);
+    for (const candidate of [address, sameTagAddress]) {
+      if (!initial.includes(candidate.toBech32(network))) {
+        await client.insertAccountAddress(owner.id(), candidate);
+      }
+    }
+    const ownerBefore = await readAddresses(owner);
+    const otherBefore = await readAddresses(other);
+    expect(ownerBefore).toContain(encoded);
+    expect(ownerBefore).toContain(retained);
+
+    await client.removeAccountAddress(other.id(), address);
+    expect(await readAddresses(owner)).toEqual(ownerBefore);
+    expect(await readAddresses(other)).toEqual(otherBefore);
+
+    await client.removeAccountAddress(owner.id(), address);
+    const ownerAfter = ownerBefore.filter((stored) => stored !== encoded);
+    expect(await readAddresses(owner)).toEqual(ownerAfter);
+    expect(ownerAfter).toContain(retained);
+    expect(await readAddresses(other)).toEqual(otherBefore);
+
+    await client.removeAccountAddress(owner.id(), address);
+    expect(await readAddresses(owner)).toEqual(ownerAfter);
+    expect(await readAddresses(other)).toEqual(otherBefore);
   });
 
   test("accounts.insert stores a pre-built account", async ({

@@ -2,7 +2,7 @@
 # Local-dev mirror of .github/actions/inject-linked-client-pr.
 #
 # Appends a [patch] block to Cargo.toml that retargets miden-client (and
-# miden-client-sqlite-store) at a linked rust-sdk PR's head branch,
+# miden-client-proto and miden-client-sqlite-store) at a linked rust-sdk PR's head,
 # wrapped in begin/end markers so it can be removed cleanly with --clear.
 # A pre-commit hook (lefthook.yml) blocks committing while the marked
 # block is present, so you can't accidentally ship the patch.
@@ -18,6 +18,7 @@
 set -euo pipefail
 
 CARGO_TOML="$(git rev-parse --show-toplevel)/Cargo.toml"
+BACKUP_DIR="$(git rev-parse --git-path linked-client-pr-original)"
 MARK_BEGIN="# >>>>>>> linked-client-pr (auto-injected by scripts/dev-with-client-pr.sh) >>>>>>>"
 MARK_END="# <<<<<<< linked-client-pr <<<<<<<"
 # A dependency's own [patch] tables do not apply to this workspace. The second
@@ -32,6 +33,16 @@ PATCH_END="# <<<<<<< linked-client-pr patches <<<<<<<"
 # original in a marker block so --clear can restore it byte-for-byte.
 
 clear_block() {
+  if [ -f "$BACKUP_DIR/Cargo.toml" ]; then
+    cp "$BACKUP_DIR/Cargo.toml" "$CARGO_TOML"
+    if [ -f "$BACKUP_DIR/Cargo.lock" ]; then
+      cp "$BACKUP_DIR/Cargo.lock" "${CARGO_TOML%.toml}.lock"
+    else
+      rm -f "${CARGO_TOML%.toml}.lock"
+    fi
+    rm -rf "$BACKUP_DIR"
+    return 0
+  fi
   if ! grep -qF "$MARK_BEGIN" "$CARGO_TOML" && ! grep -qF "$PATCH_BEGIN" "$CARGO_TOML"; then
     return 0
   fi
@@ -87,19 +98,30 @@ build_cargo_update_args() {
   local args=""
   if cargo metadata --format-version=1 --no-deps 2>/dev/null \
       | grep -qE '"name":"(miden-client|miden-client-web|miden-idxdb-store)"'; then
-    # Always try miden-client; only add sqlite-store if it's resolvable.
+    # Only add optional members if they are resolvable in this workspace.
     args="-p miden-client"
-    if cargo pkgid -p miden-client-sqlite-store >/dev/null 2>&1; then
-      args="$args -p miden-client-sqlite-store"
-    fi
+    for member in miden-client-proto miden-client-sqlite-store; do
+      if cargo pkgid -p "$member" >/dev/null 2>&1; then
+        args="$args -p $member"
+      fi
+    done
   fi
   printf '%s' "$args"
 }
 
 if [ "${1:-}" = "--clear" ] || [ "${1:-}" = "-c" ]; then
+  restored_exact=false
+  if [ -f "$BACKUP_DIR/Cargo.toml" ] || {
+    ! grep -qF "$MARK_BEGIN" "$CARGO_TOML" && ! grep -qF "$PATCH_BEGIN" "$CARGO_TOML"
+  }; then
+    restored_exact=true
+  fi
   clear_block
-  # shellcheck disable=SC2086
-  cargo update $(build_cargo_update_args) --quiet 2>/dev/null || true
+  if [ "$restored_exact" = false ]; then
+    # Preserve cleanup for blocks written before original files were saved.
+    # shellcheck disable=SC2086
+    cargo update $(build_cargo_update_args) --quiet 2>/dev/null || true
+  fi
   echo "✓ Linked-client-pr block removed from Cargo.toml."
   exit 0
 fi
@@ -143,13 +165,18 @@ fi
 
 # Idempotent: clear any prior block first.
 clear_block
+mkdir -p "$BACKUP_DIR"
+cp "$CARGO_TOML" "$BACKUP_DIR/Cargo.toml"
+if [ -f "${CARGO_TOML%.toml}.lock" ]; then
+  cp "${CARGO_TOML%.toml}.lock" "$BACKUP_DIR/Cargo.lock"
+fi
 
 url="https://github.com/${head_owner}/${head_repo}.git"
 
 # Sanity-check there's a miden-client dep line at all. The Python block
 # below does the actual capture + rewrite; we exit early here only if
 # the file is structurally not what we expect.
-if ! grep -qE '^miden-client(-sqlite-store)?[^a-z-]' "$CARGO_TOML"; then
+if ! grep -qE '^miden-client(-(proto|sqlite-store))?[^a-z-]' "$CARGO_TOML"; then
   echo "Could not find a miden-client dep line in $CARGO_TOML." >&2
   exit 1
 fi
@@ -165,7 +192,7 @@ mark_end = """$MARK_END"""
 with open(path) as f:
     lines = f.readlines()
 
-dep_re = re.compile(r'^(?P<name>miden-client(?:-sqlite-store)?)\s*=\s*(?P<rhs>.+)$')
+dep_re = re.compile(r'^(?P<name>miden-client(?:-proto|-sqlite-store)?)\s*=\s*(?P<rhs>.+)$')
 captured = []
 patched = []
 out = []
@@ -217,12 +244,16 @@ PY
 # miden-node-proto-build's protocol git branch). Cargo ignores a dependency's
 # [patch] table, so copy those tables into a marker --clear removes.
 upstream_toml=$(mktemp)
+upstream_lock=$(mktemp)
 gh api -H "Accept: application/vnd.github.raw" \
   "repos/${head_owner}/${head_repo}/contents/Cargo.toml?ref=${head_sha}" > "$upstream_toml"
-python3 - "$CARGO_TOML" "$upstream_toml" "$PATCH_BEGIN" "$PATCH_END" <<'PY'
-import sys
+gh api -H "Accept: application/vnd.github.raw" \
+  "repos/${head_owner}/${head_repo}/contents/Cargo.lock?ref=${head_sha}" > "$upstream_lock"
+python3 - "$CARGO_TOML" "$upstream_toml" "$PATCH_BEGIN" "$PATCH_END" "$upstream_lock" <<'PY'
+import re, sys
 
 cargo_path, upstream_path, mark_begin, mark_end = sys.argv[1:5]
+lock_path = sys.argv[5]
 
 def patch_tables(text):
     lines = text.splitlines()
@@ -251,6 +282,32 @@ with open(upstream_path) as f:
 if not patches:
     sys.exit(0)
 
+with open(lock_path) as f:
+    lock = f.read()
+revisions = {}
+for block in re.findall(r'^\[\[package\]\]\n(.*?)(?=^\[\[|\Z)', lock, re.M | re.S):
+    fields = dict(re.findall(r'^(name|source)\s*=\s*"([^"]+)"', block, re.M))
+    source = fields.get('source', '')
+    if source.startswith('git+') and '#' in source:
+        url, revision = source[4:].rsplit('#', 1)
+        key = (fields.get('name'), url.split('?')[0].removesuffix('.git'))
+        revisions.setdefault(key, set()).add(revision)
+lines = []
+for line in patches.splitlines():
+    entry = re.match(r'^(\s*([A-Za-z0-9_-]+)\s*=\s*\{)(.*)(\}\s*(?:#.*)?)$', line)
+    git = re.search(r'\bgit\s*=\s*"([^"]+)"', entry[3]) if entry else None
+    if git:
+        package = re.search(r'\bpackage\s*=\s*"([^"]+)"', entry[3])
+        name = package[1] if package else entry[2]
+        captured = revisions.get((name, git[1].removesuffix('.git')), set())
+        if len(captured) > 1:
+            raise SystemExit(f'Ambiguous linked lock revision for {name}')
+        if captured:
+            fields = re.sub(r'\b(?:branch|tag|rev)\s*=\s*"[^"]*"\s*,?\s*', '', entry[3]).strip().rstrip(',').rstrip()
+            line = entry[1] + ' ' + fields + f', rev = "{next(iter(captured))}" ' + entry[4]
+    lines.append(line)
+patches = '\n'.join(lines)
+
 with open(cargo_path) as f:
     current = f.read()
 if not current.endswith("\n"):
@@ -269,7 +326,7 @@ current += (
 with open(cargo_path, "w") as f:
     f.write(current)
 PY
-rm -f "$upstream_toml"
+rm -f "$upstream_toml" "$upstream_lock"
 
 # shellcheck disable=SC2086
 bash "$(git rev-parse --show-toplevel)/scripts/cargo-update-linked-patches.sh" $(build_cargo_update_args)

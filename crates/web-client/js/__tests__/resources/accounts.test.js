@@ -567,6 +567,47 @@ describe("AccountsResource", () => {
       expect(inner.removeAccountAddress).toHaveBeenCalled();
     });
   });
+
+  describe("isInvitationCodeValid", () => {
+    it.each([true, false])("returns the node's %s answer", async (answer) => {
+      inner.isInvitationCodeValid = vi.fn().mockResolvedValue(answer);
+      expect(await makeResource().isInvitationCodeValid("code")).toBe(answer);
+      expect(inner.isInvitationCodeValid).toHaveBeenCalledExactlyOnceWith(
+        "code"
+      );
+      expect(getWasm).not.toHaveBeenCalled();
+    });
+
+    it.each(["", undefined, null, 1, {}])(
+      "rejects invalid input %s before contacting the node",
+      async (code) => {
+        inner.isInvitationCodeValid = vi.fn();
+        await expect(
+          makeResource().isInvitationCodeValid(code)
+        ).rejects.toThrow("requires a non-empty 'invitationCode' string");
+        expect(inner.isInvitationCodeValid).not.toHaveBeenCalled();
+      }
+    );
+
+    it("propagates an RPC failure", async () => {
+      const failure = new Error("RPC unavailable");
+      inner.isInvitationCodeValid = vi.fn().mockRejectedValue(failure);
+      await expect(makeResource().isInvitationCodeValid("code")).rejects.toBe(
+        failure
+      );
+    });
+
+    it("rejects a terminated client before contacting the node", async () => {
+      client.assertNotTerminated.mockImplementation(() => {
+        throw new Error("Client terminated");
+      });
+      inner.isInvitationCodeValid = vi.fn();
+      await expect(
+        makeResource().isInvitationCodeValid("code")
+      ).rejects.toThrow("Client terminated");
+      expect(inner.isInvitationCodeValid).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("AccountsResource.create selector validation", () => {

@@ -20,6 +20,43 @@
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
+# Cargo retains an older locked crate even when a newer linked patch is
+# compatible. Unlock only the client family and patched packages already used.
+targets="$(python3 - "$root/Cargo.toml" "$root/Cargo.lock" "$@" <<'PY'
+import re, sys
+from pathlib import Path
+
+manifest, lock, *args = sys.argv[1:]
+locked = set()
+if Path(lock).exists():
+    for block in re.findall(r'^\[\[package\]\]\n(.*?)(?=^\[\[|\Z)', Path(lock).read_text(), re.M | re.S):
+        match = re.search(r'^name\s*=\s*"([^"]+)"', block, re.M)
+        if match:
+            locked.add(match.group(1))
+selected = {args[i + 1] for i, arg in enumerate(args[:-1]) if arg in ('-p', '--package')}
+patches = set()
+in_patch = False
+for line in Path(manifest).read_text().splitlines():
+    stripped = line.strip()
+    if stripped.startswith('['):
+        in_patch = stripped.startswith('[patch.')
+        continue
+    if in_patch:
+        match = re.match(r'^([A-Za-z0-9_-]+)\s*=\s*\{', stripped)
+        if match:
+            package = re.search(r'\bpackage\s*=\s*"([^"]+)"', stripped)
+            patches.add(package.group(1) if package else match.group(1))
+family = {'miden-client', 'miden-client-proto', 'miden-client-sqlite-store'}
+for name in sorted((patches | family) & locked - selected):
+    print(name)
+PY
+)"
+while IFS= read -r target; do
+  if [ -n "$target" ]; then
+    set -- "$@" -p "$target"
+  fi
+done <<< "$targets"
+
 log="$(mktemp)"
 stub_root=""
 cleanup() {
@@ -31,6 +68,61 @@ cleanup() {
 trap cleanup EXIT
 
 finish_update() {
+  local unused name version
+  # A compatible older registry crate may keep its support crates locked.
+  # Cargo records the fetched replacement's version in patch.unused; selecting
+  # that version unlocks only the dependencies required by the linked patch.
+  unused="$(python3 - "$root/Cargo.lock" <<'PY'
+import re, sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text()
+locked = set()
+unused = []
+for kind, block in re.findall(r'^\[\[(package|patch\.unused)\]\]\n(.*?)(?=^\[\[|\Z)', text, re.M | re.S):
+    name = re.search(r'^name\s*=\s*"([^"]+)"', block, re.M)
+    version = re.search(r'^version\s*=\s*"([^"]+)"', block, re.M)
+    if not name or not version:
+        continue
+    if kind == 'package':
+        locked.add(name.group(1))
+    else:
+        unused.append((name.group(1), version.group(1)))
+for name, version in unused:
+    if name in locked:
+        print(name, version)
+PY
+)"
+  while read -r name version; do
+    if [ -z "$name" ]; then
+      continue
+    fi
+    echo "cargo update: selecting linked patch $name $version" >&2
+    if ! cargo update -p "$name" --precise "$version" >"$log" 2>&1; then
+      if python3 - "$name" "$log" <<'PY'
+import re, sys
+from pathlib import Path
+
+name, log = sys.argv[1:]
+text = re.sub(r'\x1b\[[0-9;]*m', '', Path(log).read_text())
+header = r'^error: failed to select a version for the requirement `' + re.escape(name) + r' = "[^"\n]+"`$'
+candidates = r"^candidate versions found which didn't match: [^\n]+$"
+rejected = (
+    len(re.findall(r'^error:', text, re.M)) == 1
+    and re.search(header, text, re.M)
+    and re.search(candidates, text, re.M)
+)
+sys.exit(0 if rejected else 1)
+PY
+      then
+        echo "cargo update: keeping incompatible unused patch $name $version inactive" >&2
+        : >"$log"
+        continue
+      fi
+      cat "$log" >&2
+      exit 1
+    fi
+  done <<< "$unused"
   cat "$log"
   local holds hold_root manifest name version archive spec
   holds="$(python3 - "$root/Cargo.toml" "$log" <<'PY'
@@ -215,7 +307,7 @@ PY
 }
 
 if cargo update "$@" >"$log" 2>&1; then
-  finish_update
+  finish_update "$@"
 fi
 cat "$log" >&2
 
@@ -267,7 +359,7 @@ PY
   then
     echo "cargo update: a patch version matched more than one crates.io release; retrying with that version pinned exact" >&2
     if cargo update "$@" >"$log" 2>&1; then
-      finish_update
+      finish_update "$@"
     fi
     cat "$log" >&2
   fi
@@ -384,7 +476,7 @@ EOF
 
 echo "cargo update: a patched git branch is gone; retrying against empty stand-in packages" >&2
 if cargo update "$@" >"$log" 2>&1; then
-  finish_update
+  finish_update "$@"
 fi
 cat "$log" >&2
 exit 1

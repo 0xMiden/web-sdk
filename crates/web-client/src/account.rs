@@ -184,8 +184,17 @@ impl WebClient {
     ) -> Result<(), JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let native_address = address.into();
+        let addresses =
+            client.account_reader(account_id.into()).addresses().await.map_err(|err| {
+                js_error_with_context(err, "failed to remove address from account")
+            })?;
+        // The store deletes by address, so retain the resource API's account scope.
+        if !addresses.contains(&native_address) {
+            return Ok(());
+        }
         client
-            .remove_address(address.into(), account_id.into())
+            .remove_address(native_address)
             .await
             .map_err(|err| js_error_with_context(err, "failed to remove address from account"))?;
         Ok(())

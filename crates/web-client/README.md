@@ -909,7 +909,7 @@ const { txId, note } = await client.transactions.createNetworkNote({
 console.log(note.isNetworkNote()); // true
 ```
 
-Provide exactly one of `script` or `recipient`. Notes are always Public — the attachment, not the tag, is what a network account matches on. The standalone `buildNetworkNote(opts)` builds the same note without submitting.
+Provide exactly one of `script` or `recipient`. Notes are always Public - the attachment, not the tag, is what a network account matches on. The standalone `buildNetworkNote(opts)` builds the same note without submitting; the transaction that emits it must then declare the target as a foreign account (`withForeignAccounts`), which `createNetworkNote` does for you (see the network notes guide for the full request).
 
 To create the receiving account, build a **public** account carrying the network-account auth component — its note-script allowlist tells the node which notes the account may auto-consume:
 
