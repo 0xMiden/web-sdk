@@ -115,10 +115,10 @@ note on a network account or to recognize one. An account built with
 another note, price its root in the allowlist, for example
 `new NoteScriptFee(NoteScript.pauseConfig().root(), fee)`. Allowlisting is not
 enough on its own: the note only runs on an account that also installs the
-component it drives, here `PausableManager` together with `Authority`.
+components it drives, here `PausableManager`, `Pausable` and `Authority`.
 `createNetworkAuthComponents` installs only the auth component, the wallet and
-the fee policy, so build that component from a compiled package as a custom
-`AccountComponent` (`AccountComponent.fromPackage`). The note must also be
+the fee policy, so build those components from compiled packages as custom
+`AccountComponent`s (`AccountComponent.fromPackage`). The note must also be
 public and carry a `NetworkAccountTarget` naming the account.
 
 ## Creating a network account

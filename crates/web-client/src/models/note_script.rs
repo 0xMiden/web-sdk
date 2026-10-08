@@ -86,9 +86,9 @@ impl NoteScript {
         StandardNote::FAUCET_POLICY_CONFIG.script().into()
     }
 
-    /// Returns the well-known `PAUSE_CONFIG` script. It runs on an account with `PausableManager`
-    /// and `Authority`, from a public note whose `NetworkAccountTarget` names that account. See
-    /// `miden_standards::note::config::PauseConfigNote`.
+    /// Returns the well-known `PAUSE_CONFIG` script. It runs on an account with `PausableManager`,
+    /// `Pausable` and `Authority`, from a public note whose `NetworkAccountTarget` names that
+    /// account. See `miden_standards::note::config::PauseConfigNote`.
     #[js_export(js_name = "pauseConfig")]
     pub fn pause_config() -> Self {
         StandardNote::PAUSE_CONFIG.script().into()
@@ -120,8 +120,8 @@ impl NoteScript {
     }
 
     /// Returns the well-known `FAUCET_METADATA_CONFIG` script. It runs on a `FungibleFaucet` or
-    /// `NonFungibleFaucet` account with `Authority`, from a public note whose
-    /// `NetworkAccountTarget` names that faucet. See
+    /// `NonFungibleFaucet` account with `Authority` (its max-supply action on a fungible faucet
+    /// only), from a public note whose `NetworkAccountTarget` names that faucet. See
     /// `miden_standards::note::config::FaucetMetadataConfigNote`.
     #[js_export(js_name = "faucetMetadataConfig")]
     pub fn faucet_metadata_config() -> Self {
@@ -137,16 +137,18 @@ impl NoteScript {
     }
 
     /// Returns the well-known `ALLOWLIST_CONFIG` script. It runs on an account with
-    /// `AllowlistManager` and `Authority`, from a public note whose `NetworkAccountTarget` names
-    /// that account. See `miden_standards::note::config::AllowlistConfigNote`.
+    /// `AllowlistManager`, `BasicAllowlist` (or another component holding the allowed accounts)
+    /// and `Authority`, from a public note whose `NetworkAccountTarget` names that account. See
+    /// `miden_standards::note::config::AllowlistConfigNote`.
     #[js_export(js_name = "allowlistConfig")]
     pub fn allowlist_config() -> Self {
         StandardNote::ALLOWLIST_CONFIG.script().into()
     }
 
     /// Returns the well-known `BLOCKLIST_CONFIG` script. It runs on an account with
-    /// `BlocklistManager` and `Authority`, from a public note whose `NetworkAccountTarget` names
-    /// that account. See `miden_standards::note::config::BlocklistConfigNote`.
+    /// `BlocklistManager`, `BasicBlocklist` (or another component holding the blocked accounts)
+    /// and `Authority`, from a public note whose `NetworkAccountTarget` names that account. See
+    /// `miden_standards::note::config::BlocklistConfigNote`.
     #[js_export(js_name = "blocklistConfig")]
     pub fn blocklist_config() -> Self {
         StandardNote::BLOCKLIST_CONFIG.script().into()
