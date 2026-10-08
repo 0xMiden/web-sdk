@@ -26,6 +26,17 @@ test.describe("well-known note scripts", () => {
       pauseConfig: sdk.NoteScript.pauseConfig().root().toHex(),
       ownerConfig: sdk.NoteScript.ownerConfig().root().toHex(),
       rbacConfig: sdk.NoteScript.rbacConfig().root().toHex(),
+      constantFeePolicyConfig: sdk.NoteScript.constantFeePolicyConfig()
+        .root()
+        .toHex(),
+      faucetMetadataConfig: sdk.NoteScript.faucetMetadataConfig()
+        .root()
+        .toHex(),
+      minBurnAmountConfig: sdk.NoteScript.minBurnAmountConfig().root().toHex(),
+      allowlistConfig: sdk.NoteScript.allowlistConfig().root().toHex(),
+      blocklistConfig: sdk.NoteScript.blocklistConfig().root().toHex(),
+      upgrade: sdk.NoteScript.upgrade().root().toHex(),
+      txFee: sdk.NoteScript.txFee().root().toHex(),
       burnAgain: sdk.NoteScript.burn().root().toHex(),
       rbacConfigAgain: sdk.NoteScript.rbacConfig().root().toHex(),
     }));
@@ -43,6 +54,13 @@ test.describe("well-known note scripts", () => {
       "pauseConfig",
       "ownerConfig",
       "rbacConfig",
+      "constantFeePolicyConfig",
+      "faucetMetadataConfig",
+      "minBurnAmountConfig",
+      "allowlistConfig",
+      "blocklistConfig",
+      "upgrade",
+      "txFee",
     ];
     // Each root is a well-formed 32-byte word hex string.
     for (const key of keys) {

@@ -117,6 +117,47 @@ impl NoteScript {
         StandardNote::RBAC_CONFIG.script().into()
     }
 
+    /// Returns the well-known `CONSTANT_FEE_POLICY_CONFIG` script.
+    #[js_export(js_name = "constantFeePolicyConfig")]
+    pub fn constant_fee_policy_config() -> Self {
+        StandardNote::CONSTANT_FEE_POLICY_CONFIG.script().into()
+    }
+
+    /// Returns the well-known `FAUCET_METADATA_CONFIG` script.
+    #[js_export(js_name = "faucetMetadataConfig")]
+    pub fn faucet_metadata_config() -> Self {
+        StandardNote::FAUCET_METADATA_CONFIG.script().into()
+    }
+
+    /// Returns the well-known `MIN_BURN_AMOUNT_CONFIG` script.
+    #[js_export(js_name = "minBurnAmountConfig")]
+    pub fn min_burn_amount_config() -> Self {
+        StandardNote::MIN_BURN_AMOUNT_CONFIG.script().into()
+    }
+
+    /// Returns the well-known `ALLOWLIST_CONFIG` script.
+    #[js_export(js_name = "allowlistConfig")]
+    pub fn allowlist_config() -> Self {
+        StandardNote::ALLOWLIST_CONFIG.script().into()
+    }
+
+    /// Returns the well-known `BLOCKLIST_CONFIG` script.
+    #[js_export(js_name = "blocklistConfig")]
+    pub fn blocklist_config() -> Self {
+        StandardNote::BLOCKLIST_CONFIG.script().into()
+    }
+
+    /// Returns the well-known `UPGRADE` script.
+    pub fn upgrade() -> Self {
+        StandardNote::UPGRADE.script().into()
+    }
+
+    /// Returns the well-known `TX_FEE` script.
+    #[js_export(js_name = "txFee")]
+    pub fn tx_fee() -> Self {
+        StandardNote::TX_FEE.script().into()
+    }
+
     /// Returns the MAST root of this script.
     ///
     /// The root is the script's MAST commitment — the identifier used on-chain to reference
