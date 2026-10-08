@@ -251,6 +251,7 @@ describe("MidenProvider — auto-sync + state-change listener", () => {
         syncState: syncSpy,
         getSyncHeight: vi.fn().mockResolvedValue(100),
         onStateChanged: vi.fn(() => () => {}),
+        terminate: vi.fn(),
         free: vi.fn(),
       };
       vi.mocked(WebClient.createClient).mockResolvedValueOnce(
@@ -290,6 +291,7 @@ describe("MidenProvider — auto-sync + state-change listener", () => {
       syncState: vi.fn().mockResolvedValue({ blockNum: () => 100 }),
       getSyncHeight: vi.fn().mockResolvedValue(100),
       onStateChanged: vi.fn(() => unsub),
+      terminate: vi.fn(),
       free: vi.fn(),
     };
     vi.mocked(WebClient.createClient).mockResolvedValueOnce(
@@ -319,6 +321,7 @@ describe("MidenProvider — auto-sync + state-change listener", () => {
       syncState: vi.fn().mockRejectedValue(new Error("syncState boom")),
       getSyncHeight: vi.fn().mockResolvedValue(100),
       onStateChanged: vi.fn(() => () => {}),
+      terminate: vi.fn(),
       free: vi.fn(),
     };
     vi.mocked(WebClient.createClient).mockResolvedValueOnce(
@@ -348,6 +351,7 @@ describe("MidenProvider — auto-sync + state-change listener", () => {
       syncState: vi.fn().mockResolvedValue({ blockNum: () => 100 }),
       getSyncHeight: vi.fn().mockResolvedValue(100),
       onStateChanged: vi.fn(() => () => {}),
+      terminate: vi.fn(),
       free: vi.fn(),
     };
     vi.mocked(WebClient.createClient).mockResolvedValueOnce(
@@ -375,6 +379,7 @@ describe("MidenProvider — auto-sync + state-change listener", () => {
         registeredCb = cb;
         return () => {};
       }),
+      terminate: vi.fn(),
       free: vi.fn(),
     };
     vi.mocked(WebClient.createClient).mockResolvedValueOnce(
@@ -415,6 +420,7 @@ describe("MidenProvider — auto-sync + state-change listener", () => {
         .mockRejectedValue(new Error("explicit sync boom")),
       getSyncHeight: vi.fn().mockResolvedValue(100),
       onStateChanged: vi.fn(() => () => {}),
+      terminate: vi.fn(),
       free: vi.fn(),
     };
     vi.mocked(WebClient.createClient).mockResolvedValueOnce(
@@ -456,6 +462,7 @@ describe("MidenProvider — auto-sync + state-change listener", () => {
         registeredCb = cb;
         return () => {};
       }),
+      terminate: vi.fn(),
       free: vi.fn(),
     };
     vi.mocked(WebClient.createClient).mockResolvedValueOnce(

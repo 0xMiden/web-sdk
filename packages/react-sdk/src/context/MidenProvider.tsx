@@ -70,6 +70,21 @@ export function MidenProvider({
   // Track the current signer identity (storeName) to detect identity changes
   const currentStoreNameRef = useRef<string | null>(null);
 
+  // The client this provider created and handed to the store. Each one keeps a
+  // worker and a store connection open until it is terminated.
+  const ownedClientRef = useRef<WebClient | null>(null);
+  const handOffClient = useCallback(
+    (next: WebClient | null) => {
+      const replaced = ownedClientRef.current;
+      ownedClientRef.current = next;
+      setClient(next);
+      if (replaced && replaced !== next) {
+        replaced.terminate();
+      }
+    },
+    [setClient]
+  );
+
   // Ref to hold the latest signCb so it can be hot-swapped on the WebClient
   const signCbRef = useRef<
     | ((pubKey: Uint8Array, signingInputs: Uint8Array) => Promise<Uint8Array>)
@@ -226,7 +241,7 @@ export function MidenProvider({
       ) {
         store.resetInMemoryState();
         // Also clear old client so we get a fresh one for the new identity
-        setClient(null);
+        handOffClient(null);
         setSignerAccountId(null);
       }
     }
@@ -245,6 +260,9 @@ export function MidenProvider({
         setInitializing(true);
         setConfig(resolvedConfig);
 
+        // Set once a client is created and cleared once the store holds it, so
+        // a cancelled or failed init terminates the client nothing else holds.
+        let unowned: WebClient | null = null;
         try {
           let webClient: WebClient;
           let didSignerInit = false;
@@ -269,6 +287,7 @@ export function MidenProvider({
               undefined,
               resolvedConfig.feeFaucetId
             );
+            unowned = webClient;
 
             if (cancelled) return;
 
@@ -297,6 +316,7 @@ export function MidenProvider({
               undefined,
               resolvedConfig.feeFaucetId
             );
+            unowned = webClient;
             if (cancelled) return;
           }
 
@@ -334,7 +354,8 @@ export function MidenProvider({
             if (!signerContext) {
               isInitializedRef.current = true;
             }
-            setClient(webClient);
+            handOffClient(webClient);
+            unowned = null;
             // Mark signer as connected if in signer mode
             if (signerIsConnected === true) {
               setSignerConnected(true);
@@ -346,6 +367,8 @@ export function MidenProvider({
               error instanceof Error ? error : new Error(String(error))
             );
           }
+        } finally {
+          unowned?.terminate();
         }
       });
     };
@@ -361,7 +384,7 @@ export function MidenProvider({
   }, [
     runExclusive,
     resolvedConfig,
-    setClient,
+    handOffClient,
     setConfig,
     setInitError,
     setInitializing,
@@ -377,6 +400,22 @@ export function MidenProvider({
     // signCb changes are handled by the dedicated useEffect + signCbRef above,
     // not by this effect.
   ]);
+
+  // Unmount only: the init effect's cleanup also runs on a signer disconnect
+  // and a same-identity reconnect, which keep the client alive.
+  useEffect(
+    () => () => {
+      const owned = ownedClientRef.current;
+      if (!owned) return;
+      ownedClientRef.current = null;
+      const store = useMidenStore.getState();
+      if (store.client === owned) {
+        store.setClient(null);
+      }
+      owned.terminate();
+    },
+    []
+  );
 
   // Auto-sync interval
   useEffect(() => {

@@ -501,6 +501,7 @@ export const createMockWebClient = (
     executeProgram: vi.fn().mockResolvedValue(createMockFeltArray()),
 
     // Cleanup
+    terminate: vi.fn(),
     free: vi.fn(),
   };
 
@@ -553,5 +554,6 @@ type MockWebClientType = {
   importNoteFile: ReturnType<typeof vi.fn>;
   setSignCb: ReturnType<typeof vi.fn>;
   executeProgram: ReturnType<typeof vi.fn>;
+  terminate: ReturnType<typeof vi.fn>;
   free: ReturnType<typeof vi.fn>;
 };
