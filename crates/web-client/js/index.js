@@ -1667,13 +1667,25 @@ class MockWebClient extends WebClient {
           return transactionResult.id();
         }
 
-        this.wasmWebClient = new wasm.WebClient();
-        this.wasmWebClientPromise = Promise.resolve(this.wasmWebClient);
-        await this.wasmWebClient.createMockClient(
-          this.seed,
-          newMockChain,
-          newMockNoteTransportNode
-        );
+        // Attached only once it is built, so a failed build leaves the
+        // replaced client in place.
+        const replacement = new wasm.WebClient();
+        try {
+          await replacement.createMockClient(
+            this.seed,
+            newMockChain,
+            newMockNoteTransportNode
+          );
+        } catch (error) {
+          try {
+            replacement.free();
+          } catch {
+            // Nothing references it.
+          }
+          throw error;
+        }
+        this.wasmWebClient = replacement;
+        this.wasmWebClientPromise = Promise.resolve(replacement);
         try {
           wasmWebClient.free();
         } catch {
@@ -1731,13 +1743,25 @@ class MockWebClient extends WebClient {
           return transactionResult.id();
         }
 
-        this.wasmWebClient = new wasm.WebClient();
-        this.wasmWebClientPromise = Promise.resolve(this.wasmWebClient);
-        await this.wasmWebClient.createMockClient(
-          this.seed,
-          newMockChain,
-          newMockNoteTransportNode
-        );
+        // Attached only once it is built, so a failed build leaves the
+        // replaced client in place.
+        const replacement = new wasm.WebClient();
+        try {
+          await replacement.createMockClient(
+            this.seed,
+            newMockChain,
+            newMockNoteTransportNode
+          );
+        } catch (error) {
+          try {
+            replacement.free();
+          } catch {
+            // Nothing references it.
+          }
+          throw error;
+        }
+        this.wasmWebClient = replacement;
+        this.wasmWebClientPromise = Promise.resolve(replacement);
         try {
           wasmWebClient.free();
         } catch {

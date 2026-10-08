@@ -3,14 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // `index.js` re-exports the wasm-bindgen surface from `../Cargo.toml`, which
 // the node test environment cannot load, and reaches the wasm module through
 // `../wasm.js`. Both are stubbed; the stand-in module's `WebClient` counts the
-// clients built, so a test can tell that a terminated wrapper builds none, and
-// lets a test hold `createMockClient` open.
+// clients built, so a test can tell that a terminated wrapper builds none, keeps
+// the last one built, and lets a test hold `createMockClient` open.
 const fakeWasm = vi.hoisted(() => {
   class WebClient {
     static constructed = 0;
+    static latest = null;
     static pendingCreateMockClient = null;
     constructor() {
       WebClient.constructed += 1;
+      WebClient.latest = this;
       this.free = vi.fn();
       this.createMockClient = vi.fn(
         async () => WebClient.pendingCreateMockClient
@@ -279,6 +281,7 @@ describe("WasmWebClient.terminate", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     fakeWasm.WebClient.pendingCreateMockClient = null;
+    fakeWasm.WebClient.latest = null;
   });
 
   it("frees the wasm client only after the serialized call already running settles", async () => {
@@ -583,9 +586,11 @@ describe("WasmWebClient.terminate", () => {
       inFlight.resolve();
       await expect(submitted).resolves.toBe("tx-id");
       await client.waitForIdle();
-      expect(client.wasmWebClient).not.toBe(replaced);
+      const created = fakeWasm.WebClient.latest;
+      expect(client.wasmWebClient).toBe(created);
+      await expect(client.wasmWebClientPromise).resolves.toBe(created);
       expect(replaced.free).toHaveBeenCalledTimes(1);
-      expect(client.wasmWebClient.free).not.toHaveBeenCalled();
+      expect(created.free).not.toHaveBeenCalled();
     }
   );
 
@@ -599,18 +604,48 @@ describe("WasmWebClient.terminate", () => {
 
       const submitted = submit(client, method, extraArgs);
       await vi.waitFor(() =>
-        expect(client.wasmWebClient.createMockClient).toHaveBeenCalled()
+        expect(fakeWasm.WebClient.latest?.createMockClient).toHaveBeenCalled()
       );
-      const created = client.wasmWebClient;
+      const created = fakeWasm.WebClient.latest;
+      expect(client.wasmWebClient).toBe(replaced);
       client.terminate();
       await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(client.wasmWebClient).toBe(replaced);
       expect(created.free).not.toHaveBeenCalled();
       expect(replaced.free).not.toHaveBeenCalled();
 
       creating.resolve();
       await expect(submitted).resolves.toBe("tx-id");
+      expect(replaced.free).toHaveBeenCalledTimes(1);
       await client.waitForIdle();
       expect(created.free).toHaveBeenCalledTimes(1);
+      expect(replaced.free).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(mockSubmits)(
+    "keeps the replaced client when a mock %s cannot create its replacement",
+    async (method, extraArgs) => {
+      const { client, replaced } = makeMockClient();
+      client.callMethodWithWorker = workerResult();
+      const creating = deferred();
+      fakeWasm.WebClient.pendingCreateMockClient = creating.promise;
+
+      const submitted = submit(client, method, extraArgs);
+      await vi.waitFor(() =>
+        expect(fakeWasm.WebClient.latest?.createMockClient).toHaveBeenCalled()
+      );
+      const created = fakeWasm.WebClient.latest;
+      created.free = vi.fn(() => {
+        throw new Error("still borrowed");
+      });
+      creating.reject(new Error("mock chain rejected"));
+
+      await expect(submitted).rejects.toThrow("mock chain rejected");
+      expect(client.wasmWebClient).toBe(replaced);
+      expect(client.wasmWebClientPromise).toBeNull();
+      expect(created.free).toHaveBeenCalledTimes(1);
+      expect(replaced.free).not.toHaveBeenCalled();
     }
   );
 
