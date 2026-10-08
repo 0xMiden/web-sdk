@@ -321,6 +321,41 @@ test.describe("Account.getPublicKeyCommitments", () => {
     expect(result.keys).toEqual(result.expected);
   });
 
+  test("returns the key for an ECDSA single-sig wallet", async ({ run }) => {
+    const result = await run(async ({ client, sdk }) => {
+      const wallet = await client.newWallet(
+        sdk.AccountStorageMode.private(),
+        sdk.AuthScheme.AuthEcdsaK256Keccak
+      );
+      return { count: wallet.getPublicKeyCommitments().length };
+    });
+    expect(result.count).toBe(1);
+  });
+
+  test("returns no keys for a network account", async ({ run }) => {
+    const result = await run(async ({ client, sdk }) => {
+      const components = sdk.AccountComponent.createNetworkAuthComponents(
+        [new sdk.NoteScriptFee(sdk.NoteScript.p2id().root(), sdk.u64(0))],
+        await client.feeFaucetId()
+      );
+      const seed = new Uint8Array(32);
+      seed.fill(0x31);
+      const builder = new sdk.AccountBuilder(seed).storageMode(
+        sdk.AccountStorageMode.public()
+      );
+      for (const component of components) {
+        builder.withComponent(component);
+      }
+      const account = builder.build().account;
+      return {
+        isNetworkAccount: account.isNetworkAccount(),
+        count: account.getPublicKeyCommitments().length,
+      };
+    });
+    expect(result.isNetworkAccount).toBe(true);
+    expect(result.count).toBe(0);
+  });
+
   test("returns no keys for a NoAuth account", async ({ run }) => {
     const result = await run(async ({ sdk }) => {
       const seed = new Uint8Array(32);
@@ -697,6 +732,367 @@ test.describe("Account.getPublicKeyCommitments", () => {
     });
 
     expect(result.sameRootAsNoAuth).toBe(true);
+    expect(result.keys).toBeNull();
+    expect(result.error).toContain(
+      "not owned by exactly one standard auth component"
+    );
+  });
+
+  test("throws when the auth procedure copies NoteCreator's create_note and a NoAuth body sits elsewhere", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk }) => {
+      // An @auth_script procedure with create_note's body, so with no BasicWallet installed
+      // the NoteCreator component claims the auth root, plus NoAuth's auth body exported as
+      // an ordinary procedure that classifies as the only auth component.
+      const authCode = `
+        use {NoteRecipient, NoteTag, NoteType} from miden::protocol::types
+        use miden::protocol::output_note
+
+        @auth_script
+        pub proc auth_create_note(tag: NoteTag, note_type: NoteType, recipient: NoteRecipient) -> u16
+            exec.output_note::create
+        end
+      `;
+      const lookalikeCode = `
+        use {AuthArgs} from miden::standards::types
+        use miden::protocol::active_account
+        use miden::protocol::native_account
+        use miden::protocol::tx
+        use miden::standards::fee
+
+        const NO_AUTH_POST_FEE_CYCLES = 1024
+
+        @account_procedure
+        pub proc auth_no_auth(auth_args: AuthArgs)
+            dropw
+            exec.fee::native_conversion_info
+            push.NO_AUTH_POST_FEE_CYCLES
+            exec.tx::get_reference_block_number movdn.5
+            exec.fee::pay_fee drop
+            exec.native_account::has_state_changed
+            exec.active_account::get_nonce eq.0
+            or
+            if.true
+                exec.native_account::incr_nonce drop
+            end
+        end
+      `;
+      const codeBuilder = await client.createCodeBuilder();
+      const authComponent = sdk.AccountComponent.fromLibrary(
+        codeBuilder.buildLibrary("custom::auth::create_note", authCode),
+        []
+      ).withSupportsAllTypes();
+      const lookalike = sdk.AccountComponent.fromLibrary(
+        codeBuilder.buildLibrary("custom::lookalike", lookalikeCode),
+        []
+      ).withSupportsAllTypes();
+
+      // A NoAuth wallet carries both standard roots the crafted procedures must match.
+      const walletSeed = new Uint8Array(32);
+      walletSeed.fill(0x2a);
+      const wallet = new sdk.AccountBuilder(walletSeed)
+        .withNoAuthComponent()
+        .withBasicWalletComponent()
+        .storageMode(sdk.AccountStorageMode.public())
+        .build().account;
+      const authIsCreateNote = wallet
+        .code()
+        .hasProcedure(
+          sdk.Word.fromHex(authComponent.getProcedureHash("auth_create_note"))
+        );
+      const lookalikeIsNoAuth = wallet
+        .code()
+        .hasProcedure(
+          sdk.Word.fromHex(lookalike.getProcedureHash("auth_no_auth"))
+        );
+
+      let account = null;
+      let buildError = null;
+      try {
+        const seed = new Uint8Array(32);
+        seed.fill(0x2b);
+        account = new sdk.AccountBuilder(seed)
+          .withAuthComponent(authComponent)
+          .withComponent(lookalike)
+          .storageMode(sdk.AccountStorageMode.public())
+          .build().account;
+      } catch (err) {
+        buildError = err?.message ?? String(err);
+      }
+
+      let keys = null;
+      let error = null;
+      if (account) {
+        try {
+          keys = account.getPublicKeyCommitments().length;
+        } catch (err) {
+          error = err?.message ?? String(err);
+        }
+      }
+
+      return { authIsCreateNote, lookalikeIsNoAuth, buildError, keys, error };
+    });
+
+    expect(result.authIsCreateNote).toBe(true);
+    expect(result.lookalikeIsNoAuth).toBe(true);
+    expect(result.buildError).toBeNull();
+    expect(result.keys).toBeNull();
+    expect(result.error).toContain(
+      "not owned by exactly one standard auth component"
+    );
+  });
+
+  test("throws when the auth procedure copies NoteCreator's create_note and a single-sig body sits elsewhere", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk }) => {
+      // As above, with the single-sig auth body (and a planted public key in its slot) as
+      // the ordinary procedure that classifies as the only auth component.
+      const authCode = `
+        use {NoteRecipient, NoteTag, NoteType} from miden::protocol::types
+        use miden::protocol::output_note
+
+        @auth_script
+        pub proc auth_create_note(tag: NoteTag, note_type: NoteType, recipient: NoteRecipient) -> u16
+            exec.output_note::create
+        end
+      `;
+      const lookalikeCode = `
+        use miden::standards::auth::signature
+        use miden::standards::fee
+        use miden::protocol::native_account
+        use miden::protocol::tx
+
+        const PUBLIC_KEY_COMMITMENT_SLOT = word("miden::standards::auth::singlesig::pub_key")
+        const SCHEME_ID_SLOT = word("miden::standards::auth::singlesig::scheme")
+
+        @account_procedure
+        pub proc auth_tx(auth_args: word)
+            exec.fee::load_conversion_info
+            push.SCHEME_ID_SLOT[0..2] exec.native_account::get_initial_item
+            movdn.3 drop drop drop
+            dup exec.signature::estimate_authentication_cycles
+            swap movdn.5
+            exec.tx::get_reference_block_number movdn.5
+            exec.fee::pay_fee drop
+            push.PUBLIC_KEY_COMMITMENT_SLOT[0..2] exec.native_account::get_initial_item
+            exec.signature::authenticate_transaction
+        end
+      `;
+      const codeBuilder = await client.createCodeBuilder();
+      const authComponent = sdk.AccountComponent.fromLibrary(
+        codeBuilder.buildLibrary("custom::auth::create_note", authCode),
+        []
+      ).withSupportsAllTypes();
+      const lookalike = sdk.AccountComponent.fromLibrary(
+        codeBuilder.buildLibrary("custom::lookalike", lookalikeCode),
+        [
+          sdk.StorageSlot.fromValue(
+            "miden::standards::auth::singlesig::pub_key",
+            new sdk.Word(sdk.u64Array([42, 0, 0, 0]))
+          ),
+        ]
+      ).withSupportsAllTypes();
+
+      const walletSeed = new Uint8Array(32);
+      walletSeed.fill(0x2c);
+      const wallet = new sdk.AccountBuilder(walletSeed)
+        .withNoAuthComponent()
+        .withBasicWalletComponent()
+        .storageMode(sdk.AccountStorageMode.public())
+        .build().account;
+      const authIsCreateNote = wallet
+        .code()
+        .hasProcedure(
+          sdk.Word.fromHex(authComponent.getProcedureHash("auth_create_note"))
+        );
+      const singleSigSeed = new Uint8Array(32);
+      singleSigSeed.fill(0x2d);
+      const singleSig = new sdk.AccountBuilder(singleSigSeed)
+        .withAuthComponent(
+          sdk.AccountComponent.createAuthComponentFromCommitment(
+            new sdk.Word(sdk.u64Array([43, 0, 0, 0])),
+            sdk.AuthScheme.AuthRpoFalcon512
+          )
+        )
+        .withBasicWalletComponent()
+        .storageMode(sdk.AccountStorageMode.public())
+        .build().account;
+      const lookalikeIsSingleSig = singleSig
+        .code()
+        .hasProcedure(sdk.Word.fromHex(lookalike.getProcedureHash("auth_tx")));
+
+      let account = null;
+      let buildError = null;
+      try {
+        const seed = new Uint8Array(32);
+        seed.fill(0x2e);
+        account = new sdk.AccountBuilder(seed)
+          .withAuthComponent(authComponent)
+          .withComponent(lookalike)
+          .storageMode(sdk.AccountStorageMode.public())
+          .build().account;
+      } catch (err) {
+        buildError = err?.message ?? String(err);
+      }
+
+      let keys = null;
+      let error = null;
+      if (account) {
+        try {
+          keys = account.getPublicKeyCommitments().length;
+        } catch (err) {
+          error = err?.message ?? String(err);
+        }
+      }
+
+      return {
+        authIsCreateNote,
+        lookalikeIsSingleSig,
+        buildError,
+        keys,
+        error,
+      };
+    });
+
+    expect(result.authIsCreateNote).toBe(true);
+    expect(result.lookalikeIsSingleSig).toBe(true);
+    expect(result.buildError).toBeNull();
+    expect(result.keys).toBeNull();
+    expect(result.error).toContain(
+      "not owned by exactly one standard auth component"
+    );
+  });
+
+  test("throws when the auth procedure copies a multisig's non-auth export and the rest of the multisig sits elsewhere", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk }) => {
+      // The @auth_script procedure has the root of the multisig's
+      // get_threshold_and_num_approvers export, and an ordinary component exports every
+      // other multisig procedure, its auth procedure included, so the account classifies
+      // as a multisig whose auth procedure sits at a non-auth index.
+      const authCode = `
+        @auth_script
+        pub proc auth_get_threshold
+            exec.::miden::standards::auth::multisig::get_threshold_and_num_approvers
+        end
+      `;
+      const restCode = `
+        use miden::protocol::tx
+        use miden::standards::auth::multisig
+        use miden::standards::auth::signature
+        use miden::standards::fee
+
+        pub use {update_signers_and_threshold} from miden::standards::auth::multisig
+        pub use {set_procedure_threshold} from miden::standards::auth::multisig
+        pub use {get_signer_at} from miden::standards::auth::multisig
+        pub use {is_signer} from miden::standards::auth::multisig
+
+        @account_procedure
+        pub proc auth_tx_multisig(auth_args: word)
+            exec.multisig::resolve_auth_args
+            dup.5 exec.tx::get_reference_block_number
+            exec.multisig::assert_approval_not_expired movdn.10
+            exec.multisig::get_initial_threshold_and_num_approvers drop
+            exec.signature::estimate_multisig_authentication_cycles
+            dup.5 movdn.5
+            exec.fee::pay_fee drop
+            exec.multisig::auth_tx
+            exec.multisig::record_and_assert_new_tx
+            exec.multisig::apply_approval_expiration
+        end
+      `;
+      const codeBuilder = await client.createCodeBuilder();
+      const authComponent = sdk.AccountComponent.fromLibrary(
+        codeBuilder.buildLibrary("custom::auth::get_threshold", authCode),
+        []
+      ).withSupportsAllTypes();
+      const approverKeys = new sdk.StorageMap();
+      approverKeys.insert(
+        new sdk.Word(sdk.u64Array([0, 0, 0, 0])),
+        new sdk.Word(sdk.u64Array([44, 0, 0, 0]))
+      );
+      approverKeys.insert(
+        new sdk.Word(sdk.u64Array([1, 0, 0, 0])),
+        new sdk.Word(sdk.u64Array([45, 0, 0, 0]))
+      );
+      const rest = sdk.AccountComponent.compile(
+        codeBuilder.compileAccountComponentCode(restCode),
+        [
+          sdk.StorageSlot.fromValue(
+            "miden::standards::auth::multisig::threshold_config",
+            new sdk.Word(sdk.u64Array([1, 2, 0, 0]))
+          ),
+          sdk.StorageSlot.map(
+            "miden::standards::auth::multisig::approver_public_keys",
+            approverKeys
+          ),
+        ]
+      ).withSupportsAllTypes();
+
+      const multisigSeed = new Uint8Array(32);
+      multisigSeed.fill(0x2f);
+      const multisig = new sdk.AccountBuilder(multisigSeed)
+        .withAuthComponent(
+          sdk.createAuthFalcon512RpoMultisig(
+            new sdk.AuthFalcon512RpoMultisigConfig(
+              [1, 2].map((n) => new sdk.Word(sdk.u64Array([n, 0, 0, 0]))),
+              1
+            )
+          )
+        )
+        .withBasicWalletComponent()
+        .storageMode(sdk.AccountStorageMode.public())
+        .build().account;
+      const authIsMultisigExport = multisig
+        .code()
+        .hasProcedure(
+          sdk.Word.fromHex(authComponent.getProcedureHash("auth_get_threshold"))
+        );
+      const restHasMultisigAuth = multisig
+        .code()
+        .hasProcedure(
+          sdk.Word.fromHex(rest.getProcedureHash("auth_tx_multisig"))
+        );
+
+      let account = null;
+      let buildError = null;
+      try {
+        const seed = new Uint8Array(32);
+        seed.fill(0x30);
+        account = new sdk.AccountBuilder(seed)
+          .withAuthComponent(authComponent)
+          .withComponent(rest)
+          .storageMode(sdk.AccountStorageMode.public())
+          .build().account;
+      } catch (err) {
+        buildError = err?.message ?? String(err);
+      }
+
+      let keys = null;
+      let error = null;
+      if (account) {
+        try {
+          keys = account.getPublicKeyCommitments().length;
+        } catch (err) {
+          error = err?.message ?? String(err);
+        }
+      }
+
+      return {
+        authIsMultisigExport,
+        restHasMultisigAuth,
+        buildError,
+        keys,
+        error,
+      };
+    });
+
+    expect(result.authIsMultisigExport).toBe(true);
+    expect(result.restHasMultisigAuth).toBe(true);
+    expect(result.buildError).toBeNull();
     expect(result.keys).toBeNull();
     expect(result.error).toContain(
       "not owned by exactly one standard auth component"

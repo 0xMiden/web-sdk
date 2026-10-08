@@ -1,15 +1,23 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
-use miden_client::account::component::NetworkAccount;
+use miden_client::account::component::{AuthNetworkAccount, AuthTxFeeCollector, NetworkAccount};
 use miden_client::account::{
     Account as NativeAccount,
     AccountComponentInterface,
     AccountComponentInterfaceExt,
+    AccountProcedureRoot,
     StorageSlot,
     StorageSlotContent,
 };
-use miden_client::auth::{AuthGuardedMultisig, AuthMultisig, AuthMultisigSmart};
+use miden_client::auth::{
+    AuthGuardedMultisig,
+    AuthMultisig,
+    AuthMultisigSmart,
+    AuthSingleSig,
+    NoAuth,
+};
 use miden_client::testing::standards::account_interface::get_public_keys_from_account;
+use miden_protocol::account::component::AUTH_SCRIPT_ATTRIBUTE;
 
 use crate::models::account_code::AccountCode;
 use crate::models::account_id::AccountId;
@@ -173,22 +181,15 @@ impl Account {
         let auth_components: Vec<&AccountComponentInterface> =
             components.iter().filter(|component| component.is_auth_component()).collect();
 
-        // `from_procedures` removes every root a standard component claimed, so an auth procedure
-        // root left in a `Custom` bucket belongs to no standard component, even when another
-        // procedure matched one.
-        let auth_root_unclaimed = procedures.first().is_none_or(|auth_root| {
-            components.iter().any(|component| {
-                matches!(
-                    component,
-                    AccountComponentInterface::Custom(roots) if roots.contains(auth_root)
-                )
-            })
-        });
-        let owned_by_one_standard_component = !auth_root_unclaimed
-            && matches!(
-                auth_components.as_slice(),
-                [only] if !matches!(only, AccountComponentInterface::CustomAuth(_))
-            );
+        // The account's auth procedure is the one at index 0. Classification matches components
+        // by root containment, so any other procedure can match a standard auth component's
+        // roots; only that component's own auth procedure at index 0 proves it is the
+        // account's auth component.
+        let owned_by_one_standard_component = match auth_components.as_slice() {
+            [only] => standard_auth_procedure_root(only)
+                .is_some_and(|auth_root| procedures.first() == Some(&auth_root)),
+            _ => false,
+        };
 
         if !owned_by_one_standard_component {
             let found = if auth_components.is_empty() {
@@ -253,6 +254,30 @@ impl Account {
         // internally cannot assert.
         Ok(get_public_keys_from_account(&self.0).into_iter().map(Into::into).collect())
     }
+}
+
+/// The root of the auth procedure of the bundled standard auth component that `component` names,
+/// or `None` for a custom or non-auth component.
+///
+/// This is the export the component's code marks `@auth_script`, the flag
+/// `AccountComponent::procedures` reports and account code places at index 0.
+fn standard_auth_procedure_root(
+    component: &AccountComponentInterface,
+) -> Option<AccountProcedureRoot> {
+    let code = match component {
+        AccountComponentInterface::AuthSingleSig => AuthSingleSig::code(),
+        AccountComponentInterface::AuthMultisig => AuthMultisig::code(),
+        AccountComponentInterface::AuthMultisigSmart => AuthMultisigSmart::code(),
+        AccountComponentInterface::AuthGuardedMultisig => AuthGuardedMultisig::code(),
+        AccountComponentInterface::AuthNoAuth => NoAuth::code(),
+        AccountComponentInterface::AuthNetworkAccount => AuthNetworkAccount::code(),
+        AccountComponentInterface::AuthTxFeeCollector => AuthTxFeeCollector::code(),
+        _ => return None,
+    };
+    // `procedure_roots` maps `exports` one to one and in order.
+    code.exports()
+        .zip(code.procedure_roots())
+        .find_map(|(export, root)| export.attributes.has(AUTH_SCRIPT_ATTRIBUTE).then_some(root))
 }
 
 // CONVERSIONS
