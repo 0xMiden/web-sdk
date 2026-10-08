@@ -204,8 +204,11 @@ client.terminate(); // free WASM resources, close the store handle
 After `terminate()`, nearly every method throws `Client terminated` - guard
 against late callbacks on unmount. The exceptions are `usesMockChain()`, the
 `defaultProver` getter and `terminate()` itself, which is idempotent.
-`MidenClient` also implements `[Symbol.dispose]` and `[Symbol.asyncDispose]`,
-both of which just call `terminate()`, so `using client = ...` works.
+`MidenClient` also implements `[Symbol.dispose]`, which calls `terminate()`,
+so `using client = ...` works, and `[Symbol.asyncDispose]`, which calls it and
+then waits until the wasm client is freed and its store connection released.
+Use `await using client = ...` when the code after the block deletes or
+reopens the same store.
 
 ## Sync - Always Sync First
 

@@ -3,14 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // `index.js` re-exports the wasm-bindgen surface from `../Cargo.toml`, which
 // the node test environment cannot load, and reaches the wasm module through
 // `../wasm.js`. Both are stubbed; the stand-in module's `WebClient` counts the
-// clients built, so a test can tell that a terminated wrapper builds none.
+// clients built, so a test can tell that a terminated wrapper builds none, and
+// lets a test hold `createMockClient` open.
 const fakeWasm = vi.hoisted(() => {
   class WebClient {
     static constructed = 0;
+    static pendingCreateMockClient = null;
     constructor() {
       WebClient.constructed += 1;
       this.free = vi.fn();
-      this.createMockClient = vi.fn(async () => {});
+      this.createMockClient = vi.fn(
+        async () => WebClient.pendingCreateMockClient
+      );
     }
   }
   return {
@@ -195,7 +199,18 @@ describe("WasmWebClient.terminate", () => {
     async submitNewTransaction() {
       throw new Error("ran in-realm");
     }
+    lastAuthError() {
+      return null;
+    }
+    buildSwapTag() {
+      return "tag";
+    }
+    async proveBlock() {}
+    get keystore() {
+      return "keystore";
+    }
     serializeMockChain() {
+      if (this.freed) throw new Error("used after free");
       return new Uint8Array([1]);
     }
     serializeMockNoteTransportNode() {
@@ -245,6 +260,7 @@ describe("WasmWebClient.terminate", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    fakeWasm.WebClient.pendingCreateMockClient = null;
   });
 
   it("frees the wasm client only after the serialized call already running settles", async () => {
@@ -369,6 +385,20 @@ describe("WasmWebClient.terminate", () => {
     expect(wasmClient.calls).toBe(0);
   });
 
+  it("keeps each freed member's call shape", async () => {
+    const { client } = makeWebClient();
+    const proxy = createClientProxy(client);
+    client.terminate();
+    await client.waitForIdle();
+
+    expect(() => proxy.lastAuthError()).toThrow(/terminated/);
+    expect(() => proxy.buildSwapTag()).toThrow(/terminated/);
+    expect(() => proxy.keystore).toThrow(/terminated/);
+    const proving = proxy.proveBlock();
+    expect(proving).toBeInstanceOf(Promise);
+    await expect(proving).rejects.toThrow(/terminated/);
+  });
+
   it("never answers then, a symbol or an unknown name after the free", async () => {
     class ThenableWasmClient extends FakeWasmClient {
       then() {}
@@ -385,37 +415,174 @@ describe("WasmWebClient.terminate", () => {
     expect(proxy.notAWasmMethod).toBeUndefined();
   });
 
-  it.each([
+  const mockSubmits = [
     ["submitNewTransaction", []],
     ["submitNewTransactionWithProver", [{ serialize: () => "local" }]],
-  ])(
+  ];
+
+  const makeMockClient = () => {
+    const client = new MockWasmWebClient();
+    const replaced = new FakeWasmClient();
+    client.wasmWebClient = replaced;
+    attachWorker(client);
+    return { client, replaced };
+  };
+
+  const workerResult = () =>
+    vi.fn().mockResolvedValue({
+      serializedMockChain: [1],
+      serializedTransactionResult: [2],
+    });
+
+  const submit = (client, method, extraArgs) =>
+    client[method](
+      { toString: () => "0xacc" },
+      { serialize: () => new Uint8Array() },
+      ...extraArgs
+    );
+
+  it.each(mockSubmits)(
     "frees the wasm client a mock %s replaces once the queued calls settle",
     async (method, extraArgs) => {
-      const client = new MockWasmWebClient();
-      const replaced = new FakeWasmClient();
-      client.wasmWebClient = replaced;
-      attachWorker(client);
-      client.callMethodWithWorker = vi.fn().mockResolvedValue({
-        serializedMockChain: [1],
-        serializedTransactionResult: [2],
-      });
+      const { client, replaced } = makeMockClient();
+      client.callMethodWithWorker = workerResult();
       const inFlight = deferred();
       client._serializeWasmCall(() => inFlight.promise);
 
-      await expect(
-        client[method](
-          { toString: () => "0xacc" },
-          { serialize: () => new Uint8Array() },
-          ...extraArgs
-        )
-      ).resolves.toBe("tx-id");
-      expect(client.wasmWebClient).not.toBe(replaced);
+      const submitted = submit(client, method, extraArgs);
+      await Promise.resolve();
       expect(replaced.free).not.toHaveBeenCalled();
 
       inFlight.resolve();
+      await expect(submitted).resolves.toBe("tx-id");
       await client.waitForIdle();
+      expect(client.wasmWebClient).not.toBe(replaced);
       expect(replaced.free).toHaveBeenCalledTimes(1);
       expect(client.wasmWebClient.free).not.toHaveBeenCalled();
     }
   );
+
+  it.each(mockSubmits)(
+    "does not free the client a mock %s is still creating",
+    async (method, extraArgs) => {
+      const { client, replaced } = makeMockClient();
+      client.callMethodWithWorker = workerResult();
+      const creating = deferred();
+      fakeWasm.WebClient.pendingCreateMockClient = creating.promise;
+
+      const submitted = submit(client, method, extraArgs);
+      await vi.waitFor(() =>
+        expect(client.wasmWebClient.createMockClient).toHaveBeenCalled()
+      );
+      const created = client.wasmWebClient;
+      client.terminate();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(created.free).not.toHaveBeenCalled();
+      expect(replaced.free).not.toHaveBeenCalled();
+
+      creating.resolve();
+      await expect(submitted).resolves.toBe("tx-id");
+      await client.waitForIdle();
+      expect(created.free).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(mockSubmits)(
+    "never reads a freed client when terminate follows a mock %s at once",
+    async (method, extraArgs) => {
+      const { client, replaced } = makeMockClient();
+
+      const submitted = submit(client, method, extraArgs);
+      client.terminate();
+      await expect(submitted).rejects.toThrow(/terminated/);
+      await client.waitForIdle();
+      expect(replaced.free).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(mockSubmits)(
+    "frees the client a mock %s replaces within its own step",
+    async (method, extraArgs) => {
+      const { client, replaced } = makeMockClient();
+      client.callMethodWithWorker = workerResult();
+      const submitted = submit(client, method, extraArgs);
+      const queuedBehind = deferred();
+      client._serializeWasmCall(() => queuedBehind.promise);
+
+      await expect(submitted).resolves.toBe("tx-id");
+      expect(replaced.free).toHaveBeenCalledTimes(1);
+      queuedBehind.resolve();
+    }
+  );
+
+  it.each(mockSubmits)(
+    "resolves a mock %s whose replaced client cannot be freed",
+    async (method, extraArgs) => {
+      const { client, replaced } = makeMockClient();
+      client.callMethodWithWorker = workerResult();
+      replaced.free = vi.fn(() => {
+        throw new Error("still borrowed");
+      });
+
+      await expect(submit(client, method, extraArgs)).resolves.toBe("tx-id");
+      expect(replaced.free).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(mockSubmits)(
+    "rejects a mock %s made after terminate",
+    async (method, extraArgs) => {
+      const { client, replaced } = makeMockClient();
+      client.callMethodWithWorker = workerResult();
+      client.terminate();
+
+      await expect(submit(client, method, extraArgs)).rejects.toThrow(
+        /terminated/
+      );
+      expect(client.callMethodWithWorker).not.toHaveBeenCalled();
+      await client.waitForIdle();
+      expect(replaced.free).toHaveBeenCalledTimes(1);
+    }
+  );
+});
+
+describe("MidenClient disposal", () => {
+  const deferred = () => {
+    let resolve;
+    const promise = new Promise((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  };
+
+  it("asyncDispose resolves only once the inner client's release has settled", async () => {
+    const released = deferred();
+    const inner = {
+      terminate: vi.fn(),
+      waitForIdle: vi.fn(() => released.promise),
+    };
+    const client = new MidenClient(inner, async () => makeWasm(), null);
+
+    let disposed = false;
+    const disposing = client[Symbol.asyncDispose]().then(() => {
+      disposed = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(disposed).toBe(false);
+    expect(inner.terminate).toHaveBeenCalledTimes(1);
+    expect(inner.waitForIdle).toHaveBeenCalledTimes(1);
+
+    released.resolve();
+    await disposing;
+    expect(disposed).toBe(true);
+  });
+
+  it("dispose stays synchronous and does not wait", () => {
+    const inner = { terminate: vi.fn(), waitForIdle: vi.fn() };
+    const client = new MidenClient(inner, async () => makeWasm(), null);
+
+    expect(client[Symbol.dispose]()).toBeUndefined();
+    expect(inner.terminate).toHaveBeenCalledTimes(1);
+    expect(inner.waitForIdle).not.toHaveBeenCalled();
+  });
 });

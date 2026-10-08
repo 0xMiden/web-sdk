@@ -86,6 +86,11 @@ const SYNC_METHODS = new Set([
   "usesMockChain",
 ]);
 
+// The members whose live call returns a value rather than a Promise, so a
+// freed client's copy throws instead of rejecting. Not SYNC_METHODS: four of
+// its entries are `async fn` in Rust.
+const SYNCHRONOUS_METHODS = new Set(["buildSwapTag", "lastAuthError"]);
+
 const WRITE_METHODS = new Set([
   "addAccountSecretKeyToWebStore",
   "addTag",
@@ -323,16 +328,28 @@ function createClientProxy(instance) {
         }
         return value;
       }
-      // Once terminate() has freed the wasm client, its methods answer with
-      // the same rejection as every other route instead of vanishing. Never
-      // for "then", which would make the proxy itself look like a promise.
+      // Once terminate() has freed the wasm client, each of its members fails
+      // in its live call shape instead of vanishing: an accessor throws on
+      // access, a synchronous method throws, every other method rejects.
+      // Never for "then", which would make the proxy itself look like a
+      // promise.
+      const freed = target._freedWasmPrototype;
       if (
-        target._freedWasmPrototype &&
+        freed &&
         typeof prop === "string" &&
         prop !== "then" &&
-        prop in target._freedWasmPrototype
+        prop in freed
       ) {
-        return () => Promise.reject(new Error("WebClient terminated"));
+        const terminated = () => new Error("WebClient terminated");
+        if (Object.getOwnPropertyDescriptor(freed, prop)?.get) {
+          throw terminated();
+        }
+        if (SYNCHRONOUS_METHODS.has(prop)) {
+          return () => {
+            throw terminated();
+          };
+        }
+        return () => Promise.reject(terminated());
       }
       return undefined;
     },
@@ -1565,47 +1582,52 @@ class MockWebClient extends WebClient {
         return await super.submitNewTransaction(accountId, transactionRequest);
       }
 
-      const wasmWebClient = await this.getWasmWebClient();
-      const wasm = await getWasmOrThrow();
-      const serializedTransactionRequest = transactionRequest.serialize();
-      const serializedMockChain = (await wasmWebClient.serializeMockChain())
-        .buffer;
-      const serializedMockNoteTransportNode = (
-        await wasmWebClient.serializeMockNoteTransportNode()
-      ).buffer;
+      return await this._serializeWasmCall(async () => {
+        const wasmWebClient = await this.getWasmWebClient();
+        const wasm = await getWasmOrThrow();
+        const serializedTransactionRequest = transactionRequest.serialize();
+        const serializedMockChain = (await wasmWebClient.serializeMockChain())
+          .buffer;
+        const serializedMockNoteTransportNode = (
+          await wasmWebClient.serializeMockNoteTransportNode()
+        ).buffer;
 
-      const result = await this.callMethodWithWorker(
-        MethodName.SUBMIT_NEW_TRANSACTION_MOCK,
-        accountId.toString(),
-        serializedTransactionRequest,
-        serializedMockChain,
-        serializedMockNoteTransportNode
-      );
+        const result = await this.callMethodWithWorker(
+          MethodName.SUBMIT_NEW_TRANSACTION_MOCK,
+          accountId.toString(),
+          serializedTransactionRequest,
+          serializedMockChain,
+          serializedMockNoteTransportNode
+        );
 
-      const newMockChain = new Uint8Array(result.serializedMockChain);
-      const newMockNoteTransportNode = result.serializedMockNoteTransportNode
-        ? new Uint8Array(result.serializedMockNoteTransportNode)
-        : undefined;
+        const newMockChain = new Uint8Array(result.serializedMockChain);
+        const newMockNoteTransportNode = result.serializedMockNoteTransportNode
+          ? new Uint8Array(result.serializedMockNoteTransportNode)
+          : undefined;
 
-      const transactionResult = wasm.TransactionResult.deserialize(
-        new Uint8Array(result.serializedTransactionResult)
-      );
+        const transactionResult = wasm.TransactionResult.deserialize(
+          new Uint8Array(result.serializedTransactionResult)
+        );
 
-      if (!(this instanceof MockWebClient)) {
+        if (!(this instanceof MockWebClient)) {
+          return transactionResult.id();
+        }
+
+        this.wasmWebClient = new wasm.WebClient();
+        this.wasmWebClientPromise = Promise.resolve(this.wasmWebClient);
+        await this.wasmWebClient.createMockClient(
+          this.seed,
+          newMockChain,
+          newMockNoteTransportNode
+        );
+        try {
+          wasmWebClient.free();
+        } catch {
+          // Still borrowed by a raw-bound call; nothing references it now.
+        }
+
         return transactionResult.id();
-      }
-
-      const replaced = this.wasmWebClient;
-      this.wasmWebClient = new wasm.WebClient();
-      this.wasmWebClientPromise = Promise.resolve(this.wasmWebClient);
-      this._afterQueuedWasmCalls(() => replaced?.free());
-      await this.wasmWebClient.createMockClient(
-        this.seed,
-        newMockChain,
-        newMockNoteTransportNode
-      );
-
-      return transactionResult.id();
+      });
     } catch (error) {
       console.error("INDEX.JS: Error in submitNewTransaction:", error);
       throw error;
@@ -1622,49 +1644,54 @@ class MockWebClient extends WebClient {
         );
       }
 
-      const wasmWebClient = await this.getWasmWebClient();
-      const wasm = await getWasmOrThrow();
-      const serializedTransactionRequest = transactionRequest.serialize();
-      const proverPayload = prover.serialize();
-      const serializedMockChain = (await wasmWebClient.serializeMockChain())
-        .buffer;
-      const serializedMockNoteTransportNode = (
-        await wasmWebClient.serializeMockNoteTransportNode()
-      ).buffer;
+      return await this._serializeWasmCall(async () => {
+        const wasmWebClient = await this.getWasmWebClient();
+        const wasm = await getWasmOrThrow();
+        const serializedTransactionRequest = transactionRequest.serialize();
+        const proverPayload = prover.serialize();
+        const serializedMockChain = (await wasmWebClient.serializeMockChain())
+          .buffer;
+        const serializedMockNoteTransportNode = (
+          await wasmWebClient.serializeMockNoteTransportNode()
+        ).buffer;
 
-      const result = await this.callMethodWithWorker(
-        MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK,
-        accountId.toString(),
-        serializedTransactionRequest,
-        proverPayload,
-        serializedMockChain,
-        serializedMockNoteTransportNode
-      );
+        const result = await this.callMethodWithWorker(
+          MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK,
+          accountId.toString(),
+          serializedTransactionRequest,
+          proverPayload,
+          serializedMockChain,
+          serializedMockNoteTransportNode
+        );
 
-      const newMockChain = new Uint8Array(result.serializedMockChain);
-      const newMockNoteTransportNode = result.serializedMockNoteTransportNode
-        ? new Uint8Array(result.serializedMockNoteTransportNode)
-        : undefined;
+        const newMockChain = new Uint8Array(result.serializedMockChain);
+        const newMockNoteTransportNode = result.serializedMockNoteTransportNode
+          ? new Uint8Array(result.serializedMockNoteTransportNode)
+          : undefined;
 
-      const transactionResult = wasm.TransactionResult.deserialize(
-        new Uint8Array(result.serializedTransactionResult)
-      );
+        const transactionResult = wasm.TransactionResult.deserialize(
+          new Uint8Array(result.serializedTransactionResult)
+        );
 
-      if (!(this instanceof MockWebClient)) {
+        if (!(this instanceof MockWebClient)) {
+          return transactionResult.id();
+        }
+
+        this.wasmWebClient = new wasm.WebClient();
+        this.wasmWebClientPromise = Promise.resolve(this.wasmWebClient);
+        await this.wasmWebClient.createMockClient(
+          this.seed,
+          newMockChain,
+          newMockNoteTransportNode
+        );
+        try {
+          wasmWebClient.free();
+        } catch {
+          // Still borrowed by a raw-bound call; nothing references it now.
+        }
+
         return transactionResult.id();
-      }
-
-      const replaced = this.wasmWebClient;
-      this.wasmWebClient = new wasm.WebClient();
-      this.wasmWebClientPromise = Promise.resolve(this.wasmWebClient);
-      this._afterQueuedWasmCalls(() => replaced?.free());
-      await this.wasmWebClient.createMockClient(
-        this.seed,
-        newMockChain,
-        newMockNoteTransportNode
-      );
-
-      return transactionResult.id();
+      });
     } catch (error) {
       console.error(
         "INDEX.JS: Error in submitNewTransactionWithProver:",

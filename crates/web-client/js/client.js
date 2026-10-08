@@ -415,8 +415,14 @@ export class MidenClient {
     this.terminate();
   }
 
+  /**
+   * Terminates the client, then waits until its wasm client is freed and its
+   * store connection released, so the store can be deleted or reopened once
+   * this settles.
+   */
   async [Symbol.asyncDispose]() {
     this.terminate();
+    await this.#inner.waitForIdle?.();
   }
 
   /**
