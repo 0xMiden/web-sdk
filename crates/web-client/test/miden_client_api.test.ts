@@ -307,7 +307,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         const client = await window.MidenClient.createMock();
         const wallet = await client.accounts.create();
         const faucet = await client.accounts.create({
-          type: window.AccountType.FungibleFaucet,
+          type: window.FaucetType.FungibleFaucet,
           symbol: "DAG",
           decimals: 8,
           maxSupply: 10_000_000n,
