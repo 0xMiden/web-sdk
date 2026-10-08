@@ -181,20 +181,44 @@ slot; `account.networkNoteAllowlist()` returns the allowed note-script roots
 
 ## Building without submitting
 
-The standalone `buildNetworkNote(opts)` builds the same `Note` without
-submitting — useful when you need to inspect, batch, or otherwise hold onto
-the note before sending it via `client.transactions.submit(...)` or
-`client.transactions.batch(...)`:
+The standalone `buildNetworkNote(opts)` takes the same options and builds the
+same `Note` without submitting, for when you need to inspect it or hold onto it
+first. Its caller then owns what `createNetworkNote` does for you: since 0.17
+the kernel prices a network note by calling the target account, so the
+transaction that emits the note must declare that account as a foreign
+account, on a fee-free chain too. Build the request with the fee-aware builder,
+as `createNetworkNote` does:
 
 ```typescript
-import { buildNetworkNote } from "@miden-sdk/miden-sdk";
+import {
+  AccountStorageRequirements,
+  ForeignAccount,
+  ForeignAccountArray,
+  NoteArray,
+  buildNetworkNote,
+} from "@miden-sdk/miden-sdk";
 
 const note = buildNetworkNote({
   account: senderId,
   target: networkAccountId,
   script: myNoteScript,
 });
+
+const outputs = new NoteArray();
+outputs.push(note);
+const targets = new ForeignAccountArray();
+targets.push(
+  ForeignAccount.public(networkAccountId, new AccountStorageRequirements())
+);
+const request = (await client.feeAwareTransactionRequestBuilder(senderId))
+  .withOwnOutputNotes(outputs)
+  .withForeignAccounts(targets)
+  .build();
+await client.transactions.submit(senderId, request);
 ```
+
+Pricing the note also applies the standards' default expiration delta, so the
+transaction must be included within 20 blocks of its reference block.
 
 ## See also
 

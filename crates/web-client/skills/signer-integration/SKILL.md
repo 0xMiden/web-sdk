@@ -476,7 +476,11 @@ From the raw client the equivalent is `client.transactions.createNetworkNote(opt
 
 To build the same note without submitting it, import `buildNetworkNote(opts)` from
 `@miden-sdk/miden-sdk`; both the browser and the node entry export it, and it takes the same
-options.
+options. The transaction that emits the note must then declare the target as a foreign account,
+which `createNetworkNote` does for you: build it with
+`client.feeAwareTransactionRequestBuilder(sender)`, `.withOwnOutputNotes(...)` and
+`.withForeignAccounts(...)` holding `ForeignAccount.public(targetId, new AccountStorageRequirements())`,
+and get it included within 20 blocks of its reference block.
 
 ### Creating the network account
 
