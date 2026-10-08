@@ -194,7 +194,7 @@ impl WebClient {
             return Ok(());
         }
         client
-            .remove_address(native_address)
+            .remove_address(native_address, account_id.into())
             .await
             .map_err(|err| js_error_with_context(err, "failed to remove address from account"))?;
         Ok(())
