@@ -198,17 +198,17 @@ Auth scheme for the create/import hooks. At runtime the `AuthScheme` re-exported
 ```tsx
 import { AuthScheme } from "@miden-sdk/react";
 // AuthScheme.Falcon === "falcon"   |   AuthScheme.ECDSA === "ecdsa"
-// AuthScheme.AuthRpoFalcon512 === undefined   <- the trap below
+// AuthScheme.AuthRpoFalcon512 === undefined   <- the wasm enum's names are not on it
 ```
 
-> **Known issue, still OPEN in 0.16 ([web-sdk#223](https://github.com/0xMiden/web-sdk/issues/223)):** `useCreateWallet`, `useCreateFaucet`, `useImportAccount` and `useSessionAccount` forward `authScheme` straight to the low-level wasm calls (`newWallet`, `newFaucet`, `importPublicAccountFromSeed`), which expect the **numeric** wasm enum (`AuthRpoFalcon512 = 2`, `AuthEcdsaK256Keccak = 1`), not the friendly string. The hooks' own default is `AuthScheme.AuthRpoFalcon512`, which resolves to `undefined` for the reason above, and wasm-bindgen's `invalid enum value passed` throws inside a worker closure so the promise **never settles** - the call hangs rather than rejecting. Until it is fixed, always pass the numeric value explicitly: `authScheme: 2` (Falcon) or `authScheme: 1` (ECDSA). The examples below use `2`.
+`useCreateWallet`, `useCreateFaucet`, `useImportAccount` (seed import) and `useSessionAccount` (`walletOptions`) accept `AuthScheme.Falcon` and `AuthScheme.ECDSA`: the low-level `newWallet`, `newFaucet` and `importPublicAccountFromSeed` they call resolve the string to the numeric wasm enum. Omitting `authScheme` uses `DEFAULTS.AUTH_SCHEME`, which is `AuthScheme.Falcon`. The numeric wasm enum values `2` (Falcon) and `1` (ECDSA) still pass through unchanged; any other value rejects with `Unknown auth scheme`.
 
 ### useCreateWallet()
 ```tsx
 const { createWallet, wallet, isCreating, error, reset } = useCreateWallet();
 const account = await createWallet({
   storageMode: "private",                   // "private" | "public". Default: "private"
-  authScheme: 2,                            // 2 = Falcon; friendly AuthScheme.* not accepted here yet (web-sdk#223)
+  authScheme: AuthScheme.Falcon,            // AuthScheme.Falcon | AuthScheme.ECDSA. Default: Falcon
   initSeed: seedBytes,                       // optional: Uint8Array for a deterministic account id
 });
 ```
@@ -222,7 +222,7 @@ const account = await createFaucet({
   decimals: 8,                              // Default: 8
   maxSupply: 1000000n,                      // bigint | number
   storageMode: "private",                   // "private" | "public". Default: "private"
-  authScheme: 2,                            // 2 = Falcon; friendly AuthScheme.* not accepted here yet (web-sdk#223)
+  authScheme: AuthScheme.Falcon,            // AuthScheme.Falcon | AuthScheme.ECDSA. Default: Falcon
 });
 ```
 
@@ -240,7 +240,7 @@ const account = await importAccount({ type: "file", file: accountFileOrBytes });
 const account = await importAccount({
   type: "seed",
   seed: seedBytes,
-  authScheme: 2,                            // optional; 2 = Falcon (web-sdk#223 - friendly AuthScheme.* not accepted here yet)
+  authScheme: AuthScheme.Falcon,            // optional. Default: AuthScheme.Falcon
 });
 ```
 
@@ -382,7 +382,7 @@ const { initialize, sessionAccountId, isReady, step, error, reset } = useSession
   assetId: faucetId,              // optional, RESERVED: the hook body never reads it
   walletOptions: {                // optional: session wallet creation options
     storageMode: "public",                    // "private" | "public". Default: "public"
-    authScheme: 2,                            // 2 = Falcon (web-sdk#223)
+    authScheme: AuthScheme.Falcon,            // AuthScheme.Falcon | AuthScheme.ECDSA. Default: Falcon
   },
   pollIntervalMs: 3000,           // optional: funding detection interval. Default: 3000
   maxWaitMs: 60000,               // optional: max wait for the funding note. Default: 60000
@@ -611,7 +611,7 @@ toBech32AccountId("0x1234...");       // "mtst1..." (testnet HRP; defaults to te
 
 `formatNoteSummary(summary, formatAsset?)`: with an **empty `assets` array it returns `summary.id` alone** - no asset text and **no sender suffix**, regardless of whether `sender` is set. Otherwise it joins the assets with `" + "` and appends `" from <sender>"` only when a sender is present. Pass `formatAsset` to override the default `"<amount> <symbol-or-assetId>"` rendering.
 
-`DEFAULTS` is a **value** export, not a type: `{ RPC_URL: undefined, AUTO_SYNC_INTERVAL: 15000, STORAGE_MODE: "private", AUTH_SCHEME: AuthScheme.AuthRpoFalcon512, NOTE_TYPE: "private", FAUCET_DECIMALS: 8 }`. Note `AUTH_SCHEME` reads as `undefined` at runtime in a browser build, for the shadowing reason in web-sdk#223 above - which is exactly why the create hooks hang when you omit `authScheme`.
+`DEFAULTS` is a **value** export, not a type: `{ RPC_URL: undefined, AUTO_SYNC_INTERVAL: 15000, STORAGE_MODE: "private", AUTH_SCHEME: AuthScheme.Falcon, NOTE_TYPE: "private", FAUCET_DECIMALS: 8 }`. `AUTH_SCHEME` is the string `"falcon"` at runtime, which the create hooks resolve to the wasm Falcon enum when you omit `authScheme`.
 
 `waitForWalletDetection(adapter, timeoutMs = 5000)` resolves once the adapter's `readyState` reaches `"Installed"` and otherwise rejects with `"Wallet extension not detected within <n>ms."` Its `WalletAdapterLike` argument is a duck type (`{ readyState: string; on/off("readyStateChange", cb) }`) with no dependency on any wallet-adapter package, so it works against any adapter and against a plain fake object.
 
@@ -639,13 +639,13 @@ await runExclusive(async () => {
 - **No protocol `AssetId` / `AssetClass` / `AssetVaultKey` type.** Every `assetId` in this package is a faucet (token) account reference - `asset.faucetId().toString()`. Do not "fix" these names to protocol ones.
 - **No `mutable` wallet option and no `storageMode: "network"`.** `CreateWalletOptions` is exactly `{ storageMode?, authScheme?, initSeed? }`.
 
-> **The package's own `README.md` and `ReactSDK.Arena.Findings.md` are stale - do not treat them as authoritative.** The README still documents `authScheme: 0`, a `mutable: true` wallet option and `storageMode: 'network'`, none of which exist in `src/types/index.ts`. The Arena findings file is a proposal document and describes an API that was never shipped in that shape. `src/types/index.ts` plus the hook bodies are the source of truth, and the package's `AGENTS.md` (which ships alongside this skill) is kept current.
+> **The package's own `README.md` and `ReactSDK.Arena.Findings.md` are stale - do not treat them as authoritative.** The README still documents a `mutable: true` wallet option, `storageMode: 'network'` and, in its Default Values table, a `0` (Falcon) `authScheme` default, none of which exist in `src/types/index.ts`. The Arena findings file is a proposal document and describes an API that was never shipped in that shape. `src/types/index.ts` plus the hook bodies are the source of truth, and the package's `AGENTS.md` (which ships alongside this skill) is kept current.
 
 ## Type Imports
 
 ```tsx
 import { AuthScheme, DEFAULTS, MidenError } from "@miden-sdk/react"; // values, not just types
-// AuthScheme is the friendly string const { Falcon, ECDSA } at runtime - see web-sdk#223.
+// AuthScheme is the friendly string const { Falcon, ECDSA } at runtime.
 
 import type {
   MidenConfig, RpcUrlConfig, ProverConfig, ProverTarget, ProverUrls,

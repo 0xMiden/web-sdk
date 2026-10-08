@@ -481,7 +481,7 @@ It wraps ID parsing and defaults so you can start with a one-liner. The hook
 also tracks creation state so you can wire UI without extra reducers.
 
 ```tsx
-import { useCreateWallet } from '@miden-sdk/react';
+import { AuthScheme, useCreateWallet } from '@miden-sdk/react';
 
 function CreateWalletButton() {
   const {
@@ -502,7 +502,7 @@ function CreateWalletButton() {
       const customWallet = await createWallet({
         storageMode: 'private',  // 'private' | 'public' | 'network'
         mutable: true,           // Allow code updates
-        authScheme: 0,           // 0 = Falcon (default), 1 = ECDSA
+        authScheme: AuthScheme.Falcon, // Default; AuthScheme.ECDSA for ECDSA
       });
     } catch (err) {
       console.error('Failed to create wallet:', err);
@@ -536,7 +536,7 @@ It handles storage/auth defaults and returns a ready faucet object. That
 removes the usual setup friction when you just want tokens to exist.
 
 ```tsx
-import { useCreateFaucet } from '@miden-sdk/react';
+import { AuthScheme, useCreateFaucet } from '@miden-sdk/react';
 
 function CreateFaucetForm() {
   const { createFaucet, faucet, isCreating, error, reset } = useCreateFaucet();
@@ -548,7 +548,7 @@ function CreateFaucetForm() {
         decimals: 6,                       // Token decimals (default: 8)
         maxSupply: 1000000000n * 10n**6n, // Max supply in smallest units
         storageMode: 'private',            // Optional (default: 'private')
-        authScheme: 0,                     // Optional (default: 0 = Falcon)
+        authScheme: AuthScheme.Falcon,     // Optional (default: AuthScheme.Falcon)
       });
       console.log('Created faucet:', newFaucet.id().toString());
     } catch (err) {
@@ -1539,7 +1539,7 @@ function SessionWallet({ mainWalletId, assetId }: { mainWalletId: string; assetI
       },
       assetId,
       // Optional:
-      // walletOptions: { storageMode: 'public', mutable: true, authScheme: 0 },
+      // walletOptions: { storageMode: 'public', mutable: true },
       // pollIntervalMs: 3000,
       // storagePrefix: 'miden-session',
     });

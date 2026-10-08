@@ -4,7 +4,7 @@
 
 ### Fixes
 
-* [FIX][web,react] `WebClient.newWallet`/`newFaucet` now resolve a friendly `AuthScheme` string ("falcon" / "ecdsa") the same way the higher-level `client.accounts.create()` already does, instead of requiring a raw numeric WASM enum value. Previously, `AuthScheme.AuthRpoFalcon512` did not exist on the exported `AuthScheme` const (`{ Falcon: "falcon", ECDSA: "ecdsa" }`), so passing it — as `useCreateWallet()`'s documented default did — resolved to `undefined` and hung the call instead of rejecting. `@miden-sdk/react`'s `useCreateWallet()` / `useCreateFaucet()` default now correctly resolves to `AuthScheme.Falcon`. ([web-sdk#223](https://github.com/0xMiden/web-sdk/issues/223))
+* [FIX][web,react] `WebClient.newWallet`, `newFaucet` and `importPublicAccountFromSeed` now resolve a friendly `AuthScheme` (`AuthScheme.Falcon` / `AuthScheme.ECDSA`) to the wasm enum on both the browser and the Node.js entry, as `client.accounts.create()` already does. The numeric enum values `2` (Falcon) and `1` (ECDSA) still pass through, and any other value rejects with `Unknown auth scheme`. `@miden-sdk/react`'s `useCreateWallet`, `useCreateFaucet`, `useImportAccount` (seed import) and `useSessionAccount` accept `AuthScheme.Falcon` / `AuthScheme.ECDSA` and default to `AuthScheme.Falcon`; their previous default resolved to `undefined` and hung the call instead of rejecting. Accounts that `MidenProvider` builds for an external signer from its public key commitment now get the wasm ECDSA enum value for their auth component instead of `undefined`. ([web-sdk#223](https://github.com/0xMiden/web-sdk/issues/223), [#276](https://github.com/0xMiden/web-sdk/pull/276))
 
 ## 0.17.1 (2026-10-07)
 
