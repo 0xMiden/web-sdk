@@ -1,7 +1,7 @@
 use js_export_macro::js_export;
 use miden_client::account::{AccountFile as NativeAccountFile, AccountId as NativeAccountId};
 use miden_client::keystore::Keystore;
-use miden_client::notes::NoteFile as NativeNoteFile;
+use miden_client::note::NoteFile as NativeNoteFile;
 #[cfg(feature = "browser")]
 use wasm_bindgen::prelude::*;
 
@@ -23,9 +23,8 @@ impl WebClient {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
         let account_data: NativeAccountFile = account_file.into();
-        let account_id = account_data.account.id().to_string();
-
-        let NativeAccountFile { account, auth_secret_keys } = account_data;
+        let account_id = account_data.account().id().to_string();
+        let (account, auth_secret_keys) = account_data.into_parts();
 
         client
             .add_account(&account.clone(), false)
@@ -89,10 +88,10 @@ impl WebClient {
 
     /// Imports a note file and returns the imported note's identifier.
     ///
-    /// A note file that carries metadata — an explicit `NoteId` or a full note
-    /// with proof — resolves to a concrete `NoteId`, which is returned so the
-    /// caller can look the note up with [`get_input_note`]. A details-only file
-    /// (`NoteDetails`) has no metadata and therefore no `NoteId` yet, so its
+    /// A note file that carries metadata — an explicit `NoteId` or a committed
+    /// note with proof — resolves to a concrete `NoteId`, which is returned so
+    /// the caller can look the note up with [`get_input_note`]. An expected-note
+    /// file has no metadata and therefore no `NoteId` yet, so its
     /// metadata-independent details commitment is returned instead.
     ///
     /// Migration note (miden-client PR #2214): `Client::import_notes` now
@@ -106,8 +105,8 @@ impl WebClient {
         let native_note_file: NativeNoteFile = note_file.into();
         let note_id = match &native_note_file {
             NativeNoteFile::NoteId(id) => Some(id.to_string()),
-            NativeNoteFile::NoteWithProof(note, _) => Some(note.id().to_string()),
-            NativeNoteFile::NoteDetails { .. } => None,
+            NativeNoteFile::Committed { note, .. } => Some(note.id().to_string()),
+            NativeNoteFile::ExpectedNote { .. } => None,
         };
         let commitments = client
             .import_notes(&[native_note_file])
@@ -115,7 +114,7 @@ impl WebClient {
             .map_err(|err| js_error_with_context(err, "failed to import note"))?;
         match note_id {
             Some(id) => Ok(id),
-            // Only reached for the `NoteDetails` variant, which `import_notes`
+            // Only reached for the `ExpectedNote` variant, which `import_notes`
             // always imports (details are self-contained), so the vec is
             // non-empty here. Guard against an empty result regardless rather
             // than index blindly.

@@ -6,7 +6,6 @@ import {
   NoteAssets,
   NoteType,
   NoteArray,
-  TransactionRequestBuilder,
 } from "@miden-sdk/miden-sdk";
 import type {
   MultiSendOptions,
@@ -14,11 +13,15 @@ import type {
   TransactionResult,
 } from "../types";
 import { DEFAULTS } from "../types";
-import { parseAccountId, parseAddress } from "../utils/accountParsing";
+import { parseAccountId } from "../utils/accountParsing";
 import { createNoteAttachment, emptyAttachment } from "../utils/noteAttachment";
 import { MidenError, assertSignerConnected } from "../utils/errors";
-import { getNoteType, waitForTransactionCommit } from "../utils/noteFilters";
-import type { ClientWithTransactions } from "../utils/noteFilters";
+import { getNoteType } from "../utils/noteFilters";
+import {
+  readOwedPrivateNotes,
+  recipientRef,
+  settlePrivateNotes,
+} from "../utils/privateNoteDelivery";
 import { proveWithFallback } from "../utils/prover";
 import { useMidenStore } from "../store/MidenStore";
 import { runExclusiveDirect } from "../utils/runExclusive";
@@ -40,6 +43,12 @@ export interface UseMultiSendResult {
 
 /**
  * Hook to create a multi-send transaction (multiple P2ID notes).
+ *
+ * Private notes are relayed to their recipients once the transaction commits,
+ * each one attempted whatever happened to the others. If any is not delivered
+ * after the transaction was submitted, the call rejects with a
+ * `PrivateNoteDeliveryError` carrying the transaction id and the delivered and
+ * undelivered notes; pass the undelivered ones to `useResendPrivateNotes`.
  *
  * @example
  * ```tsx
@@ -98,6 +107,7 @@ export function useMultiSend(): UseMultiSendResult {
       setIsLoading(true);
       setStage("executing");
       setError(null);
+      setResult(null);
 
       try {
         // Auto-sync before send unless opted out
@@ -130,27 +140,42 @@ export function useMultiSend(): UseMultiSendResult {
               resolvedNoteType,
               noteAttachment
             );
-            const recipientAddress = parseAddress(to, receiverId);
             return {
               note,
-              recipientAddress,
+              to: recipientRef(to),
               noteType: resolvedNoteType,
             };
           }
         );
 
         // NoteArray constructor consumes its elements via Vec<Note>; use
-        // push(&note) so each output.note handle stays valid for the
-        // sendPrivateNote loop below.
+        // push(&note) so each output.note handle stays valid for reading the
+        // owed note ids below.
         const ownOutputs = new NoteArray();
         for (const o of outputs) {
           ownOutputs.push(o.note);
         }
-        const txRequest = new TransactionRequestBuilder()
-          .withOwnOutputNotes(ownOutputs)
-          .build();
-
+        // The sender executes this transaction, so its auth procedure is what
+        // pays the fee; a bare builder would abort with
+        // ERR_FEE_CONVERSION_INFO_MISSING wherever the chain charges.
+        //
+        // These two run serialized only by the proxy's own per-call lock:
+        // `feeAwareTransactionRequestBuilder` is a WRITE_METHOD and
+        // `executeTransaction` is an explicitly serialized wrapper, so neither is
+        // raw-bound and neither can alias the client. That rules out the aliasing
+        // panic, not a state change between them — and the AsyncLock the other
+        // send hooks hold would not close that gap either, since the provider
+        // drives auto-sync outside it. The window is real but narrow: the builder
+        // reads the verification base fee at the store's current sync height
+        // while execution resolves fee parameters from the reference block, so a
+        // sync that moves the base fee across zero in between leaves the request
+        // carrying info the execution no longer wants, or wanting info it does
+        // not carry.
         const txSenderId = parseAccountId(options.from);
+        const builder =
+          await client.feeAwareTransactionRequestBuilder(txSenderId);
+        const txRequest = builder.withOwnOutputNotes(ownOutputs).build();
+
         const txResult = await client.executeTransaction(txSenderId, txRequest);
 
         setStage("proving");
@@ -169,29 +194,29 @@ export function useMultiSend(): UseMultiSendResult {
           txResult
         );
 
-        // Save txId hex BEFORE applyTransaction, which consumes the
-        // WASM pointer inside txResult (and any child objects).
+        // Read once the transaction is submitted, so a failure from here on
+        // still reports which transaction it was.
         const txIdHex = txResult.id().toHex();
 
-        await client.applyTransaction(txResult, submissionHeight);
-
-        // Send private notes after commit
-        const hasPrivate = outputs.some((o) => o.noteType === NoteType.Private);
-        if (hasPrivate) {
-          await waitForTransactionCommit(
-            client as unknown as ClientWithTransactions,
-            runExclusiveDirect,
-            txIdHex
-          );
-
-          for (const output of outputs) {
-            if (output.noteType === NoteType.Private) {
-              await client.sendPrivateNote(
-                output.note,
-                output.recipientAddress
-              );
-            }
-          }
+        const apply = () => client.applyTransaction(txResult, submissionHeight);
+        const privateOutputs = outputs.filter(
+          (o) => o.noteType === NoteType.Private
+        );
+        if (privateOutputs.length > 0) {
+          await settlePrivateNotes({
+            client,
+            runExclusiveSafe: runExclusiveDirect,
+            transactionId: txIdHex,
+            owed: readOwedPrivateNotes(() =>
+              privateOutputs.map((o) => ({
+                noteId: o.note.id().toString(),
+                to: o.to,
+              }))
+            ),
+            apply,
+          });
+        } else {
+          await apply();
         }
 
         const txSummary = { transactionId: txIdHex };

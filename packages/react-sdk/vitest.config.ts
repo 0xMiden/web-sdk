@@ -39,11 +39,6 @@ export default defineConfig({
         // test/accountBech32.test.ts. Cannot be unit-tested in jsdom because
         // NetworkId, Address, and Account.prototype come from the real WASM bundle.
         "src/utils/accountBech32.ts",
-        // WASM-dependent hook — covered by Playwright integration tests in
-        // test/useAssetMetadata.test.ts. Cannot be unit-tested in jsdom because
-        // RpcClient, Endpoint, and BasicFungibleFaucetComponent come from the
-        // real WASM bundle and don't behave like the mocked SDK in jsdom.
-        "src/hooks/useAssetMetadata.ts",
       ],
       // `branches` is set 1pp lower than the others because v8's branch
       // instrumentation marks `} finally {` blocks as partially-covered even

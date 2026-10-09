@@ -20,6 +20,15 @@ test("transport basic", async ({ run }) => {
       sdk.AuthScheme.AuthRpoFalcon512,
       recipientSeed
     );
+    const faucetAccount = await mockClient.newFaucet(
+      sdk.AccountStorageMode.private(),
+      false,
+      "DAG",
+      "DAG",
+      8,
+      sdk.u64(10000000),
+      sdk.AuthScheme.AuthRpoFalcon512
+    );
 
     // Create recipient address
     const recipientAddress = sdk.Address.fromAccountId(
@@ -28,7 +37,9 @@ test("transport basic", async ({ run }) => {
     );
 
     // Create note
-    const noteAssets = new sdk.NoteAssets([]);
+    const noteAssets = new sdk.NoteAssets([
+      new sdk.FungibleAsset(faucetAccount.id(), sdk.u64(1)),
+    ]);
     const note = sdk.Note.createP2IDNote(
       senderAccount.id(),
       recipientAccount.id(),
@@ -44,8 +55,13 @@ test("transport basic", async ({ run }) => {
     );
     const notesBeforeSending = notes.length;
 
-    // Send note
-    await mockClient.sendPrivateNote(note, recipientAddress);
+    // The note is uncommitted here (never minted), so it has no real inclusion
+    // proof. mockAtBlock records block 0 and does not authenticate the path:
+    // the mock transport accepts it and the recipient scans from that block. A
+    // real node rejects the empty path. A committed note on this same client
+    // would be auto-imported and would not isolate the transport.
+    const proof = sdk.NoteInclusionProof.mockAtBlock(0);
+    await mockClient.sendPrivateNote(note, recipientAddress, proof);
 
     // 1 note stored
     await mockClient.fetchPrivateNotes();

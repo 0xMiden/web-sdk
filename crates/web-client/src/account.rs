@@ -100,11 +100,18 @@ impl WebClient {
     /// # Arguments
     /// * `account_id` - The ID of the account to read.
     ///
+    /// The reader holds the client's store until it is freed, so `terminate()` and `await using`
+    /// cannot release the store while one is alive.
+    ///
     /// # Example
     /// ```javascript
-    /// const reader = client.accountReader(accountId);
-    /// const nonce = await reader.nonce();
-    /// const balance = await reader.getBalance(faucetId);
+    /// const reader = await client.accountReader(accountId);
+    /// try {
+    ///   const nonce = await reader.nonce();
+    ///   const balance = await reader.getBalance(faucetId);
+    /// } finally {
+    ///   reader.free?.(); // the Node.js reader has no free()
+    /// }
     /// ```
     #[js_export(js_name = "accountReader")]
     pub async fn account_reader(&self, account_id: &AccountId) -> Result<AccountReader, JsErr> {
@@ -184,8 +191,17 @@ impl WebClient {
     ) -> Result<(), JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let native_address = address.into();
+        let addresses =
+            client.account_reader(account_id.into()).addresses().await.map_err(|err| {
+                js_error_with_context(err, "failed to remove address from account")
+            })?;
+        // The store deletes by address, so retain the resource API's account scope.
+        if !addresses.contains(&native_address) {
+            return Ok(());
+        }
         client
-            .remove_address(address.into(), account_id.into())
+            .remove_address(native_address, account_id.into())
             .await
             .map_err(|err| js_error_with_context(err, "failed to remove address from account"))?;
         Ok(())
@@ -232,5 +248,72 @@ impl WebClient {
             .map_err(|err| js_error_with_context(err, "failed to prune account history"))?;
         // SAFETY: on wasm32 usize is 32 bits, so this conversion is infallible
         Ok(u32::try_from(deleted).expect("deleted count should fit in u32"))
+    }
+
+    // ACCOUNT REGISTRATION
+    // --------------------------------------------------------------------------------------------
+
+    /// Binds an invitation code to a tracked account on the network allowlist.
+    ///
+    /// A network that enforces an account allowlist creates an account on chain only when the
+    /// account is registered. The first transaction of an account is what creates it, so the
+    /// account must be registered before that transaction is submitted: a submission that would
+    /// create an account the network does not accept fails with `ACCOUNT_NOT_ALLOWLISTED`. Only
+    /// account creation is gated. An account that already exists on chain is never checked, and
+    /// network accounts are exempt.
+    ///
+    /// The account must be tracked by this client, must not be deployed on chain yet, and must
+    /// not be a network account. A registration consumes the code, so the client asks the node
+    /// first and does not send it for an account the node already allows: that fails with
+    /// `ACCOUNT_ALREADY_ALLOWED`, which a network that does not enforce an allowlist answers for
+    /// every account. The node's own rejections carry `INVITATION_NOT_FOUND`,
+    /// `ALREADY_REGISTERED` or `INVALID_REGISTRATION_REQUEST`.
+    ///
+    /// When the network operator runs a funding service, the node pays the registered account a
+    /// public P2ID note with the native asset and answers once that note is committed, so this
+    /// call can take a few blocks. The note reaches the client on the next sync; consuming it is
+    /// the first transaction, which creates the account on chain and pays its fee out of the
+    /// received funds.
+    #[js_export(js_name = "registerAccount")]
+    pub async fn register_account(
+        &self,
+        account_id: &AccountId,
+        invitation_code: String,
+    ) -> Result<(), JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        client
+            .register_account(account_id.into(), &invitation_code)
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to register account"))
+    }
+
+    /// Returns whether the network lets the account be created on chain.
+    ///
+    /// The node answers `true` when it does not enforce an account allowlist, or when the
+    /// account is registered. Only account creation is gated, so the answer says nothing about
+    /// an account that already exists on chain.
+    #[js_export(js_name = "isAccountAllowed")]
+    pub async fn is_account_allowed(&self, account_id: &AccountId) -> Result<bool, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        client.is_account_allowed(account_id.into()).await.map_err(|err| {
+            js_error_with_context(err, "failed to check whether the account is allowed")
+        })
+    }
+
+    /// Returns whether the invitation code can be used to register an account.
+    ///
+    /// The node answers `true` when it does not enforce an account allowlist, or when the code
+    /// exists and is not registered to an account. Unknown and registered codes answer `false`.
+    /// An empty code is an error when the node enforces the allowlist. The query does not consume
+    /// the code and does not identify the account that holds it.
+    #[js_export(js_name = "isInvitationCodeValid")]
+    pub async fn is_invitation_code_valid(&self, invitation_code: String) -> Result<bool, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        client.is_invitation_code_valid(&invitation_code).await.map_err(|err| {
+            js_error_with_context(err, "failed to check whether the invitation code is valid")
+        })
     }
 }

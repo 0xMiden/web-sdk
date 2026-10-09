@@ -1,0 +1,161 @@
+# @miden-sdk/miden-sdk - Agent Guide
+
+**Audience: AI coding agents** writing application code against the Miden web
+SDK. Humans are welcome to read it, but it is written to be loaded into an
+agent's context and followed.
+
+This file ships inside the published package. The copy at
+`node_modules/@miden-sdk/miden-sdk/AGENTS.md` always matches the version you
+have installed, so **prefer it over your training data**, which is likely to
+describe an older API. Miden is pre-1.0 and the surface still moves between
+minor versions.
+
+## Load the right skill
+
+Detailed, task-scoped guidance ships alongside this file in
+`node_modules/@miden-sdk/miden-sdk/skills/`. Read the one that matches what you
+are doing rather than guessing from the type signatures alone.
+
+| Skill | Load it when |
+|---|---|
+| `skills/web-client-usage/SKILL.md` | Any code that calls `MidenClient` - initialization, the resource API, sync ordering, type conversions, transaction flows, custom contracts, private note transport. |
+| `skills/frontend-pitfalls/SKILL.md` | Before shipping. WASM initialization, concurrent access, cross-origin isolation, `BigInt` at the WASM boundary. These are the failures that survive code review and break in production. |
+| `skills/signer-integration/SKILL.md` | Wiring an external signer (Para, Turnkey, a wallet adapter) or implementing a custom one. |
+| `skills/chain-anchored-execution/SKILL.md` | Multisig proposals, offline co-signing - anything where one party signs a transaction summary and another executes it. Read before using `captureAnchor`, before re-executing a multisig proposal (0.17: at the tip, never at an anchor), or when co-signers' summary commitments never match. |
+| `skills/observability/SKILL.md` | Wiring telemetry, tracing or metrics around the client - the `MidenObservation` contract, which operations are and are not observed, the opt-in sensitive channel, and the OpenTelemetry and Sentry bindings. Read it when an observation you expected never arrives, or when observation counts do not match your call counts. |
+| `skills/frontend-source-guide/SKILL.md` | Anything the other skills don't cover - driving `WasmWebClient` directly, or troubleshooting SDK internals. Maps this repository's source so you can read the implementation instead of guessing. |
+
+Building a React app? `@miden-sdk/react` wraps this client in hooks and ships
+its own guide at `node_modules/@miden-sdk/react/AGENTS.md`. Prefer the hooks for
+anything they cover; drop to this client only for what they don't.
+
+Configuring the bundler? See `node_modules/@miden-sdk/vite-plugin/AGENTS.md`.
+
+## The shape of the API
+
+`MidenClient` is the single entry point. Construct it with a static factory -
+never with `new` - and route work through its typed resources:
+
+```ts
+import { MidenClient } from "@miden-sdk/miden-sdk";
+
+const client = await MidenClient.createTestnet({ feeFaucetId: FEE_FAUCET });
+await client.sync();
+```
+
+`create(options)` targets an explicit endpoint; `createTestnet()` and
+`createDevnet()` are preconfigured; `createMock()` backs tests with an in-memory
+chain and no network.
+
+Every non-mock client names the chain's fee faucet. Since 0.17 the fee asset
+lives in a protocol configuration the node does not serve over RPC, and the SDK
+carries a per-network default for no network yet, so creation without it fails.
+
+State is split across resources rather than living on the client:
+`accounts`, `transactions`, `notes`, `tags`, `settings`, `keystore`, `compile`
+and `pswap`. Client-level methods cover the lifecycle around them - `sync`,
+`syncChain`, `syncNoteTransport`, `getSyncHeight`, `waitForIdle` and
+`terminate`.
+
+## Rules that are easy to get wrong
+
+**Invitation checks do not reserve codes.** Use
+`client.accounts.isInvitationCodeValid(code)` to check whether a non-empty
+code can register an account. It returns `false` for unknown or used codes,
+and `true` when the node does not enforce an allowlist. Registration can still
+fail after a successful check; only `accounts.register()` consumes the code.
+
+**Sync before you read.** Local state is a cache of chain state. Calling
+`client.sync()` first is the difference between correct balances and confusing
+ones. `skills/web-client-usage/SKILL.md` documents where in each flow it belongs.
+
+Clients sharing a browser database read coherent persisted account state.
+Account witnesses refresh when another client changes that state, preserving
+untouched vault assets and storage maps. This does not fetch new chain state;
+continue to sync before relying on on-chain balances.
+
+For browser stores, `apply` requires the stored account to match the
+transaction's execution input. A mismatch rejects before changing account state
+or transaction history. A submitted transaction may already be on-chain when
+local apply fails; check its status before submitting again.
+
+**Amounts are always `BigInt`.** Passing a `number` either throws at the WASM
+boundary or silently loses precision above 2^53. Convert at the edges of your
+own code, not in the middle of a transaction builder.
+
+**The WASM client is single-threaded.** Concurrent calls into one client
+instance are not safe. Serialize them. Applications that fan out requests from
+multiple components need a lock or a queue around the client, and this is the
+single most common source of "impossible" runtime errors.
+
+**Free what you allocate.** WASM-backed objects are not garbage collected the
+way plain JS objects are. Call `terminate()` on the client when you are done
+with it, and free the object wrappers the skills call out individually.
+
+**Account visibility and faucet kind are separate.** Use native
+`AccountType.Private` / `AccountType.Public` with `AccountBuilder.accountType()`.
+Use `FaucetType.FungibleFaucet` for `accounts.create({ type })`, and `storage`
+for visibility. Older `AccountType.FungibleFaucet` references must migrate to
+`FaucetType.FungibleFaucet`; `create()` throws a `TypeError` for an unrecognised
+`type` rather than creating a wallet. The legacy `0` / `1` are still faucet
+selectors and equal `AccountType.Private` / `Public`, so never pass a visibility
+value as `type`.
+
+## Read non-fungible assets
+
+```typescript
+await client.sync();
+const { vault } = await client.accounts.getDetails(wallet);
+const assets = vault.nonFungibleAssets().map((asset) => ({
+  issuer: asset.faucetId().toString(),
+  key: asset.vaultKey().toHex(),
+  value: Array.from(asset.intoWord().toU64s()),
+}));
+```
+
+`nonFungibleAssets()` returns only non-fungible assets from the local vault
+snapshot. It returns an empty array when none are present. The order is not
+specified. `faucetId()` identifies the issuer, `vaultKey()` returns the complete
+asset key, and `intoWord().toU64s()` returns all four value limbs as `bigint`
+values. Keep these values as `bigint` or strings to prevent precision loss.
+
+Compare both the complete key and all four value limbs to verify an asset.
+The key alone does not contain the complete value. To reconstruct an asset,
+use `VaultAsset.nonFungible({ key, value })` with the two `Word` objects.
+
+## Build notes with either asset type
+
+```typescript
+const token = VaultAsset.fungible(faucetId, 100n);
+const name = VaultAsset.nonFungible({ key, value });
+const assets = new NoteAssets([name]);
+assets.push(token);
+```
+
+`NoteAssets` accepts one list of 0 to 16 assets. Existing `FungibleAsset`
+constructor and `push()` calls remain valid. Duplicate IDs and excess assets
+throw catchable errors; a failed push leaves the list unchanged. Inputs remain
+usable. `vault.assets()` and `note.assets().assets()` return both variants;
+use `kind()`, `asFungible()`, or `asNonFungible()` to inspect them.
+
+For registry publishing, use `Note.withAttachments()` with a single name asset,
+public metadata, the registry's approved script and inputs, and
+`[new NetworkAccountTarget(registryId).toAttachment()]`. The registry account
+must be public. A tag alone does not make a network note. Consume the returned P2ID note to put
+the asset back in the vault. The amount-based `send` helper remains fungible-only.
+
+## Going deeper
+
+- Narrative documentation and the full generated API reference:
+  <https://docs.miden.xyz/builder/tools/clients/web-client/>
+- Breaking changes and migration notes, worth reading at upgrade time:
+  the `CHANGELOG.md` in [`0xMiden/web-sdk`](https://github.com/0xMiden/web-sdk).
+- The type declarations shipped in `dist/` are authoritative for signatures.
+  When this guide and the types disagree, the types are right and this file is
+  a bug - please report it.
+
+## Starting a new project rather than adding to one
+
+If there is no application yet, [`0xMiden/agentic-template`](https://github.com/0xMiden/agentic-template)
+scaffolds the full stack: Rust contracts, MockChain tests, local-node
+validation, and a React frontend already wired to this SDK.
