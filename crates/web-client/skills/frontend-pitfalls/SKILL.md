@@ -1,6 +1,6 @@
 ---
 name: frontend-pitfalls
-description: Critical pitfalls and safety rules for Miden frontend development. Covers per-hook readiness, non-atomic client sequences, COOP/COEP headers, BigInt boundaries, Bech32 network inference, IndexedDB state loss including the minor-version store wipe, auto-sync side effects, Vite configuration, React rendering race conditions, the Web Worker shim and callback-prover downgrade, structured error codes, eager vs lazy entry points, the fee note now included in outputNotes(), the removed expiredBefore filter, sendPrivate inclusion proofs, block-pinned foreign-account inputs, and transaction preview authorization. Use when reviewing, debugging, or writing Miden frontend code, or when upgrading from 0.15 to 0.16.
+description: Critical pitfalls and safety rules for Miden frontend development. Covers per-hook readiness, non-atomic client sequences, COOP/COEP headers, BigInt boundaries, Bech32 network inference, IndexedDB state loss including the one-time 0.17 store clear and the refusal of a newer client's store, auto-sync side effects, Vite configuration, React rendering race conditions, the Web Worker shim and callback-prover downgrade, structured error codes, eager vs lazy entry points, the fee note now included in outputNotes(), the removed expiredBefore filter, sendPrivate inclusion proofs, block-pinned foreign-account inputs, and transaction preview authorization. Use when reviewing, debugging, or writing Miden frontend code, or when upgrading from 0.15 to 0.16.
 ---
 
 # Miden Frontend Pitfalls
@@ -234,18 +234,20 @@ const { pauseSync, resumeSync, isPaused } = useSyncControl();
 The client persists accounts, keys, notes and transaction history in IndexedDB. There are **two** distinct ways to lose all of it, and the second one is under your control:
 
 1. **The user or the browser deletes it** - "Clear site data", private browsing, storage pressure.
-2. **An SDK version bump deletes it.** On open, `ensureClientVersion` compares the running client version against the one stored in the database. If both parse as semver and the running version's **major or minor is higher** than the stored one, the store is closed, `delete()`d and reopened **empty**. A version that does not parse as semver on either side forces the same reset. Same-major-minor (a patch bump) and downgrades are preserved and handled by Dexie migrations; the major/minor nuke is deliberate, tied to network resets.
+2. **The one-time clear when upgrading from an SDK older than 0.17.0.** From 0.17.4 the store is kept across SDK upgrades, and a schema change migrates the existing data in place. The first open by 0.17.4 or later clears, once, a store last written by a client older than 0.17.0 (a 0.17.0 release candidate included) or carrying no client version; a store any 0.17.0 or later client wrote is kept. Earlier SDKs reset the store on every minor or major version bump.
 
-**Upgrading the SDK across a minor version destroys every locally-stored account, key and note on every user's device.** Nothing prompts, nothing warns, and the user's wallet is simply gone on next load. This is the single most consequential item on this page: it turns a routine dependency bump into data loss for your whole userbase.
+**Upgrading a userbase from a pre-0.17.0 SDK destroys every locally-stored account, key and note on every user's device.** Nothing prompts, nothing warns, and the user's wallet is simply gone on next load.
+
+From 0.17.4 the SDK does not open a store a newer SDK wrote (one with a newer store schema): client creation fails with `Failed to initialize IdxdbStore: IndexedDB store "..." was written by a newer Miden client ...`, and nothing in the store is deleted. Rolling an app back to a 0.17.4 or later SDK with an older store schema therefore fails for every user who already ran the newer one, until you roll forward again or they clear the site's data.
 
 Mitigations:
 
-- **Ship export/import before you ship the bump**, not with it. Users need a build that can back up while their data still exists. The surface is `useExportStore()` / `useImportStore()` in `@miden-sdk/react`, backed by the standalone `exportStore(storeName)` / `importStore(storeName, dump)` from `@miden-sdk/miden-sdk`. Per-object export/import also exists on the high-level client (`accounts.export` / `accounts.import`, `notes.export` / `notes.import`).
+- **Ship export/import before you ship an upgrade from a pre-0.17.0 SDK**, not with it. Users need a build that can back up while their data still exists. The surface is `useExportStore()` / `useImportStore()` in `@miden-sdk/react`, backed by the standalone `exportStore(storeName)` / `importStore(storeName, dump)` from `@miden-sdk/miden-sdk`. Per-object export/import also exists on the high-level client (`accounts.export` / `accounts.import`, `notes.export` / `notes.import`).
 - Warn users that clearing browser data deletes their wallet.
 - Consider external signers (Para, Turnkey, wallet adapters) for production - the key material lives outside the browser store, so only cached chain state is lost.
 - Each signer identity gets its own database (`MidenClientDB_<storeName>`), so `SignerContextValue.storeName` must be unique per user.
 
-Verify before relying on this: `crates/idxdb-store/src/ts/schema.ts`, `ensureClientVersion`.
+Verify before relying on this: `crates/idxdb-store/src/ts/schema.ts`, the `version(8)` cutover and `MIGRATION_BASELINE`.
 
 ## FP8: Vite Configuration Requirements (MEDIUM)
 
@@ -496,7 +498,7 @@ Verify: `crates/web-client/js/eager.js`.
 | FP4 | BigInt | HIGH | Hooks and the high-level `MidenClient` coerce `number`; strict `bigint` only at the low-level request constructors |
 | FP5 | Bech32 mismatch | HIGH | Match network in rpcUrl and addresses; the HRP is inferred from the `rpcUrl` string and falls back to testnet |
 | FP6 | Auto-sync | MEDIUM | Default 15000ms; prefer `useSyncControl()` over `autoSyncInterval: 0` |
-| FP7 | IndexedDB loss | HIGH | A minor SDK bump wipes the store - ship `useExportStore`/`useImportStore` BEFORE upgrading |
+| FP7 | IndexedDB loss | HIGH | Upgrading from a pre-0.17.0 SDK clears the store once - ship `useExportStore`/`useImportStore` BEFORE upgrading; a newer SDK's store is refused |
 | FP8 | Vite config | MEDIUM | `midenVitePlugin()` has four options; bare call is right for ST, `crossOriginIsolation: true` only for `/mt` |
 | FP9 | StrictMode | LOW | Use MidenProvider, not manual `WasmWebClient.createClient()`; there is no debug-mode argument |
 | FP10 | Fee note in `outputNotes()` | CRITICAL | The list is one longer on a fee-charging chain; use `userOutputNotes()` / `feeNote()` on `ExecutedTransaction`, filter manually elsewhere |

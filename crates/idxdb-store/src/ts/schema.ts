@@ -1,8 +1,21 @@
-import Dexie from "dexie";
+import Dexie, { type Transaction } from "dexie";
 import * as semver from "semver";
 import { logWebStoreError } from "./utils.js";
 
 export const CLIENT_VERSION_SETTING_KEY = "clientVersion";
+
+/**
+ * The threshold of the v8 cutover: a store stamped below it, a prerelease of it included, or not
+ * stamped at all holds data from networks that no longer exist, so that upgrade clears it once.
+ * Raising it clears nothing that already ran v8. A later release that genuinely cannot migrate
+ * older data adds a new Dexie version with the same clear-and-reseed upgrade and its own
+ * threshold, which is the only way a store is ever cleared.
+ */
+export const MIGRATION_BASELINE = "0.17.0";
+
+// How long the pre-open newer-store check waits on indexedDB.databases() before leaving the
+// refusal to the ready hook.
+const DATABASES_PROBE_TIMEOUT_MS = 1000;
 
 /** The client-scope setting a 0.17.1 client queued undelivered private notes under. */
 export const NOTE_TRANSPORT_OUTBOX_SETTING_KEY = "note_transport_outbox";
@@ -351,8 +364,75 @@ function indexes(...items: string[]): string {
   return items.join(",");
 }
 
-/** V1 baseline schema. Extracted as a constant because once migrations are enabled, this must
- *  never be modified — all schema changes should go through new version blocks instead.
+// This store is the client, so its own bookkeeping belongs to the `Client` scope, which the
+// user-facing settings API never reaches.
+async function readClientVersion(
+  settings: Dexie.Table<ISetting, [number, string]>
+): Promise<string | null> {
+  const record = await settings.get([
+    SETTING_SCOPE_CLIENT,
+    CLIENT_VERSION_SETTING_KEY,
+  ]);
+  return record ? textDecoder.decode(record.value) : null;
+}
+
+// What a store holds before its first sync: the chain checkpoint at the genesis block.
+function seedFreshStore(tx: Transaction): Promise<unknown> {
+  return tx
+    .table<IBlockchainCheckpoint, number>(Table.BlockchainCheckpoint)
+    .put({ id: 1, blockNum: 0, partialBlockchainPeaks: new Uint8Array() });
+}
+
+// The upgrade of a cutover version. A store stamped below `threshold` (a prerelease of it
+// included) or not stamped has every table cleared and is seeded as a fresh store; a stamp that
+// is not valid semver keeps it. Clearing inside the versionchange transaction makes it atomic,
+// and IndexedDB runs one at a time across tabs and workers, so a context opening the store
+// meanwhile waits and then finds it upgraded. A fresh database runs no upgrade callbacks.
+function clearStoreStampedBelow(threshold: string) {
+  return async (tx: Transaction): Promise<void> => {
+    const stamp = await readClientVersion(
+      tx.table<ISetting, [number, string]>(Table.Settings)
+    );
+    if (
+      stamp !== null &&
+      !(semver.valid(stamp) && semver.lt(stamp, threshold))
+    ) {
+      return;
+    }
+    console.warn(
+      `Clearing IndexedDB store ${tx.db.name}: ` +
+        (stamp === null
+          ? "it has no client version stamp."
+          : `it was written by client ${stamp}, older than ${threshold}.`)
+    );
+    // A table a later version adds does not exist yet at this step.
+    const tables = Object.values(Table).filter((name) =>
+      tx.idbtrans.db.objectStoreNames.contains(name)
+    );
+    await Promise.all(tables.map((name) => tx.table(name).clear()));
+    await seedFreshStore(tx);
+  };
+}
+
+// Dexie keeps version N natively as N * 10, plus one for each schema patch it applies. Dexie may
+// have patched the store's schema before the ready hook runs, so the message only promises that
+// nothing was deleted.
+function refuseNewerStore(
+  name: string,
+  nativeVersion: number,
+  verno: number
+): void {
+  const storeVersion = Math.floor(nativeVersion / 10);
+  if (storeVersion > verno) {
+    throw new Error(
+      `IndexedDB store "${name}" was written by a newer Miden client (schema version ` +
+        `${storeVersion}; this client reads up to ${verno}). Nothing was deleted. Upgrade the ` +
+        `Miden SDK to open it, or clear this site's data to start over.`
+    );
+  }
+}
+
+/** V1 baseline schema. Never modify it: every schema change goes through a new version block.
  *  Exported for migration tests, which seed a physical v1 database before opening it with the
  *  current version chain. */
 export const V1_STORES: Record<string, string> = {
@@ -509,12 +589,8 @@ export class MidenDatabase {
 
     // --- Schema versioning ---
     //
-    // NOTE: Migrations coexist with the client-version nuke: the database is
-    // still nuked on major/minor client-version changes (network resets — see
-    // ensureClientVersion), while Dexie version blocks below handle schema and
-    // data fixes for stores that survive patch upgrades. Once the network
-    // stabilizes and data can be preserved across all upgrades, the
-    // version-change nuke will be removed and migrations alone will take over.
+    // A store survives client upgrades, so every change to a table's shape or to a stored
+    // value's encoding ships here as a new version (see the policy above ensureClientVersion).
     //
     // v1 is the baseline schema. To add a migration:
     //   1. Add a .version(N+1).stores({...}).upgrade(tx => {...}) block below.
@@ -546,10 +622,8 @@ export class MidenDatabase {
     // Note: The `populate` hook (below the version blocks) only fires on
     // first database creation, NOT during upgrades.
     //
-    // Version blocks exist below, so V1_STORES is frozen — never modify it;
-    // add a new version block instead. To retire the nuke entirely (once data
-    // must survive major/minor upgrades), remove the close/delete/open logic
-    // in ensureClientVersion and just persist the new version there.
+    // Version blocks exist below, so V1_STORES is frozen. Never modify it; add a new version
+    // block instead.
     this.dexie.version(1).stores(V1_STORES);
 
     // v2 (miden-client 0.15.4): prune note tags leaked by output-note
@@ -562,10 +636,6 @@ export class MidenDatabase {
     // leaked. A tag is kept while an inclusion-pending input note
     // (Expected = 0, Unverified = 1 — the mirror of
     // `InputNoteRecord::is_inclusion_pending`) still needs it.
-    //
-    // This data-only fix coexists with the version-change nuke above: the
-    // nuke covers major/minor client upgrades (network resets), while this
-    // upgrade runs for stores preserved across patch upgrades.
     this.dexie
       .version(2)
       .stores({})
@@ -610,14 +680,15 @@ export class MidenDatabase {
 
     // v4/v5 (miden-client 0.16.0-rc.4): `settings` is keyed by `[scope+key]`. A primary key
     // cannot change in place, hence the drop and the recreate; the rows it held are cached
-    // values the client re-fetches.
+    // values the client re-fetches. The client version stamp goes with them, which the v8
+    // cutover reads as a store older than MIGRATION_BASELINE.
     this.dexie.version(4).stores({ [Table.Settings]: null });
     this.dexie.version(5).stores({
       [Table.Settings]: indexes("[scope+key]", "scope"),
     });
 
     // v6: accounts whose witness the sync keeps fresh. The witness column is null until the
-    // first refresh. A minor client bump still nukes the database; this covers patch upgrades.
+    // first refresh.
     this.dexie.version(6).stores({
       [Table.AccountWitnesses]: indexes("&accountId"),
     });
@@ -633,6 +704,13 @@ export class MidenDatabase {
           .table(Table.Settings)
           .delete([SETTING_SCOPE_CLIENT, NOTE_TRANSPORT_OUTBOX_SETTING_KEY])
       );
+
+    // v8 (miden-client 0.17.4): the one clear on the move from resets to migrations. Every store
+    // a 0.17.0 or later client stamped is kept.
+    this.dexie
+      .version(8)
+      .stores({})
+      .upgrade(clearStoreStampedBelow(MIGRATION_BASELINE));
 
     this.accountCodes = this.dexie.table<IAccountCode, string>(
       Table.AccountCode
@@ -706,18 +784,22 @@ export class MidenDatabase {
       Table.AccountWitnesses
     );
 
-    this.dexie.on("populate", () => {
-      this.blockchainCheckpoint
-        .put({
-          id: 1,
-          blockNum: 0,
-          partialBlockchainPeaks: new Uint8Array(),
-        } as IBlockchainCheckpoint)
+    this.dexie.on("populate", (tx) => {
+      seedFreshStore(tx)
         /* v8 ignore next 2 — populate blockchainCheckpoint failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
         .catch((err: unknown) =>
           logWebStoreError(err, "Failed to populate DB")
         );
     });
+
+    // `open` refuses a newer store before Dexie touches it where `indexedDB.databases()` exists.
+    // This sticky hook is the fallback for runtimes without it, and it also refuses Dexie's
+    // automatic reopen after another tab upgraded the store under an open connection.
+    this.dexie.on(
+      "ready",
+      (db) => refuseNewerStore(db.name, db.backendDB().version, db.verno),
+      true
+    );
   }
 
   async open(clientVersion: string): Promise<boolean> {
@@ -725,6 +807,7 @@ export class MidenDatabase {
       `Opening database ${this.dexie.name} for client version ${clientVersion}...`
     );
     try {
+      await this.refuseInstalledNewerStore();
       await this.dexie.open();
       await this.ensureClientVersion(clientVersion);
       console.log("Database opened successfully");
@@ -736,62 +819,51 @@ export class MidenDatabase {
     }
   }
 
+  // Dexie 4 opens a store whose schema version is above this client's instead of failing with
+  // VersionError, and first patches in any table or index the newer schema dropped, raising the
+  // native version. Reading the installed version first refuses such a store untouched.
+  private async refuseInstalledNewerStore(): Promise<void> {
+    const installed = await this.installedVersion();
+    if (installed !== undefined) {
+      refuseNewerStore(this.dexie.name, installed, this.dexie.verno);
+    }
+  }
+
+  // Best effort: the ready hook still refuses a newer store, so a databases() that rejects, or
+  // never answers (Safari 14 can leave the first call pending), must not fail or stall the open.
+  private async installedVersion(): Promise<number | undefined> {
+    const { indexedDB } = Dexie.dependencies;
+    if (typeof indexedDB?.databases !== "function") {
+      return undefined;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const gaveUp = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), DATABASES_PROBE_TIMEOUT_MS);
+    });
+    try {
+      const databases = await Promise.race([indexedDB.databases(), gaveUp]);
+      return databases?.find((info) => info.name === this.dexie.name)?.version;
+    } catch {
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // Store version policy: a store is kept across client upgrades and downgrades. Every change to
+  // a table's shape or to a stored value's encoding ships a Dexie version whose upgrade()
+  // converts the existing rows, and dexie.open() has run them by now. The stamp written here
+  // only records the last client for diagnostics and for a future cutover's threshold.
   private async ensureClientVersion(clientVersion: string): Promise<void> {
     if (!clientVersion) {
       console.warn(
-        "openDatabase called without a client version; skipping version enforcement."
+        "openDatabase called without a client version; not stamping the store."
       );
       return;
     }
-
-    const storedVersion = await this.getStoredClientVersion();
-    if (!storedVersion) {
+    if ((await readClientVersion(this.settings)) !== clientVersion) {
       await this.persistClientVersion(clientVersion);
-      return;
     }
-
-    if (storedVersion === clientVersion) {
-      return;
-    }
-
-    const validCurrent = semver.valid(clientVersion);
-    const validStored = semver.valid(storedVersion);
-    if (validCurrent && validStored) {
-      const parsedCurrent = semver.parse(validCurrent);
-      const parsedStored = semver.parse(validStored);
-      const sameMajorMinor =
-        parsedCurrent?.major === parsedStored?.major &&
-        parsedCurrent?.minor === parsedStored?.minor;
-      if (sameMajorMinor || !semver.gt(clientVersion, storedVersion)) {
-        await this.persistClientVersion(clientVersion);
-        return;
-      }
-    } else {
-      console.warn(
-        `Failed to parse semver (${storedVersion} vs ${clientVersion}), forcing store reset.`
-      );
-    }
-
-    console.warn(
-      `IndexedDB client version mismatch (stored=${storedVersion}, expected=${clientVersion}). Resetting store.`
-    );
-    this.dexie.close();
-    await this.dexie.delete();
-    await this.dexie.open();
-    await this.persistClientVersion(clientVersion);
-  }
-
-  // This store is the client, so its own bookkeeping belongs to the `Client` scope, which the
-  // user-facing settings API never reaches.
-  private async getStoredClientVersion(): Promise<string | null> {
-    const record = await this.settings.get([
-      SETTING_SCOPE_CLIENT,
-      CLIENT_VERSION_SETTING_KEY,
-    ]);
-    if (!record) {
-      return null;
-    }
-    return textDecoder.decode(record.value);
   }
 
   private async persistClientVersion(clientVersion: string): Promise<void> {
