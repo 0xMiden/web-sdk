@@ -1,20 +1,11 @@
-use miden_client::account::component::{
-    AccountComponent,
-    BasicWallet,
-    BurnPolicy,
-    FungibleFaucet,
-    MintPolicy,
-    TokenName,
-    TokenPolicyManager,
-};
+use miden_client::account::component::AccountComponent;
+use miden_client::account::standards::auth::{Approver, AuthSingleSig};
+use miden_client::account::standards::faucets::{FungibleFaucet, TokenName};
+use miden_client::account::standards::policies::{BurnPolicy, MintPolicy, TokenPolicyManager};
+use miden_client::account::standards::wallets::BasicWallet;
 use miden_client::account::{Account, AccountBuilder, AccountBuilderSchemaCommitmentExt};
 use miden_client::asset::{AssetAmount, TokenSymbol};
-use miden_client::auth::{
-    Approver,
-    AuthSchemeId as NativeAuthScheme,
-    AuthSecretKey,
-    AuthSingleSig,
-};
+use miden_client::auth::{AuthSchemeId as NativeAuthScheme, AuthSecretKey};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 

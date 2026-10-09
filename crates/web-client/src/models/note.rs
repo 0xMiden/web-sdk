@@ -3,9 +3,9 @@ use miden_client::agglayer::B2AggNote;
 use miden_client::asset::Asset as NativeAsset;
 use miden_client::block::BlockNumber as NativeBlockNumber;
 use miden_client::note::{Note as NativeNote, NoteAssets as NativeNoteAssets, P2idNote, P2ideNote};
-use miden_client::rng::draw_word;
 use miden_client::{Felt as NativeFelt, Word as NativeWord};
 use miden_protocol::crypto::rand::RandomCoin;
+use rand::RngExt;
 
 use super::NoteType;
 use super::account_id::AccountId;
@@ -126,7 +126,7 @@ impl Note {
             .assets(native_assets)
             .note_type(note_type.into())
             .attachment(native_attachment)
-            .serial_number(draw_word(&mut rand::rng()))
+            .serial_number(rand::rng().random::<NativeWord>())
             .build()
             .map_err(|err| js_error_with_context(err, "create p2id note"))?
             .into();
@@ -158,7 +158,7 @@ impl Note {
             .attachment(native_attachment)
             .maybe_reclaim_height(reclaim_height.map(NativeBlockNumber::from))
             .maybe_timelock_height(timelock_height.map(NativeBlockNumber::from))
-            .serial_number(draw_word(&mut rand::rng()))
+            .serial_number(rand::rng().random::<NativeWord>())
             .build()
             .map_err(|err| js_error_with_context(err, "create p2ide note"))?
             .into();

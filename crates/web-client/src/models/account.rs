@@ -1,6 +1,15 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
-use miden_client::account::component::{AuthNetworkAccount, AuthTxFeeCollector, NetworkAccount};
+use miden_client::account::standards::auth::{
+    AuthGuardedMultisig,
+    AuthMultisig,
+    AuthMultisigSmart,
+    AuthNetworkAccount,
+    AuthSingleSig,
+    AuthTxFeeCollector,
+    NetworkAccount,
+    NoAuth,
+};
 use miden_client::account::{
     Account as NativeAccount,
     AccountComponentInterface,
@@ -8,13 +17,6 @@ use miden_client::account::{
     AccountProcedureRoot,
     StorageSlot,
     StorageSlotContent,
-};
-use miden_client::auth::{
-    AuthGuardedMultisig,
-    AuthMultisig,
-    AuthMultisigSmart,
-    AuthSingleSig,
-    NoAuth,
 };
 use miden_client::testing::standards::account_interface::get_public_keys_from_account;
 use miden_protocol::account::component::AUTH_SCRIPT_ATTRIBUTE;

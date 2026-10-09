@@ -1,15 +1,14 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
 use miden_client::account::AccountProcedureRoot;
-use miden_client::account::component::ApproverSet;
-use miden_client::auth::{
+use miden_client::account::standards::auth::{
     Approver,
+    ApproverSet,
     AuthGuardedMultisig as NativeAuthGuardedMultisig,
     AuthGuardedMultisigConfig as NativeAuthGuardedMultisigConfig,
-    AuthSchemeId as NativeAuthSchemeId,
     GuardianConfig as NativeGuardianConfig,
-    PublicKeyCommitment,
 };
+use miden_client::auth::{AuthSchemeId as NativeAuthSchemeId, PublicKeyCommitment};
 
 use crate::js_error_with_context;
 use crate::models::account_component::AccountComponent;
