@@ -386,6 +386,10 @@ const display = formatAssetAmount(balance, 8);
 const amount = parseAssetAmount("0.01", 8);
 ```
 
+`parseAssetAmount` accepts an unsigned decimal string and throws for an empty,
+negative or malformed amount; `formatAssetAmount` puts a single leading minus on
+a negative value.
+
 ### Display Note Summary
 ```tsx
 import { getNoteSummary, formatNoteSummary } from "@miden-sdk/react";
