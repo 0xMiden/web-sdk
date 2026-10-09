@@ -151,7 +151,8 @@ describe("useNotes", () => {
 
       act(() => {
         useMidenStore.getState().setClient(mockClient as any);
-        useMidenStore.getState().setNotes(mockNotes as any);
+        useMidenStore.getState().setNotes(mockNotes as any, "all");
+        useMidenStore.getState().setConsumableNotes([], "default");
       });
 
       const { result, rerender } = renderHook(() => useNotes());
@@ -164,6 +165,62 @@ describe("useNotes", () => {
 
       // Should not fetch again because notes already exist
       expect(mockClient.getInputNotes).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("store resets and new buckets", () => {
+    it("fetches again when the store is reset under a mounted hook", async () => {
+      const mockClient = createMockWebClient({
+        getInputNotes: vi
+          .fn()
+          .mockResolvedValue([createMockInputNoteRecord("0xnote1")]),
+        getConsumableNotes: vi.fn().mockResolvedValue([]),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as any);
+      });
+
+      const { result } = renderHook(() => useNotes());
+      await waitFor(() => {
+        expect(result.current.notes.length).toBe(1);
+      });
+      expect(mockClient.getInputNotes).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        useMidenStore.getState().resetInMemoryState();
+      });
+
+      await waitFor(() => {
+        expect(mockClient.getInputNotes).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    it("fetches an account's consumable notes when another hook filled the status bucket", async () => {
+      const mockClient = createMockWebClient({
+        getInputNotes: vi
+          .fn()
+          .mockResolvedValue([createMockInputNoteRecord("0xnote1")]),
+        getConsumableNotes: vi.fn().mockResolvedValue([]),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as any);
+      });
+
+      const first = renderHook(() => useNotes());
+      await waitFor(() => {
+        expect(first.result.current.notes.length).toBe(1);
+      });
+      expect(useMidenStore.getState().notesByFilter.get("all")?.length).toBe(1);
+      expect(mockClient.getConsumableNotes).toHaveBeenCalledTimes(1);
+
+      renderHook(() => useNotes({ accountId: "0xaccount123" }));
+
+      await waitFor(() => {
+        expect(mockClient.getConsumableNotes).toHaveBeenCalledTimes(2);
+      });
+      expect(mockClient.getConsumableNotes.mock.calls[1][0]).toBeDefined();
     });
   });
 

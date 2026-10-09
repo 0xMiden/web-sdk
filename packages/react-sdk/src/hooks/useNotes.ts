@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import {
   useMidenStore,
@@ -55,6 +55,11 @@ export function useNotes(options?: NotesFilter): NotesResult {
 
   const notes = useNotesStore(filterKey);
   const consumableNotes = useConsumableNotesStore(accountKey);
+  const fetched = useMidenStore(
+    (state) =>
+      state.notesByFilter.has(filterKey) &&
+      state.consumableNotesByAccount.has(accountKey)
+  );
   const isLoadingNotes = useMidenStore((state) => state.isLoadingNotes);
   const setLoadingNotes = useMidenStore((state) => state.setLoadingNotes);
   const setNotesIfChanged = useMidenStore((state) => state.setNotesIfChanged);
@@ -64,7 +69,6 @@ export function useNotes(options?: NotesFilter): NotesResult {
   const { lastSyncTime } = useSyncStateStore();
 
   const [error, setError] = useState<Error | null>(null);
-  const fetchedKeysRef = useRef<Set<string>>(new Set());
 
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
@@ -97,7 +101,6 @@ export function useNotes(options?: NotesFilter): NotesResult {
       // Smart refetch: only update store if note IDs changed (prevents unnecessary re-renders)
       setNotesIfChanged(fetchedNotes, filterKey);
       setConsumableNotesIfChanged(fetchedConsumable, accountKey);
-      fetchedKeysRef.current.add(`${filterKey}|${accountKey}`);
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
@@ -115,17 +118,13 @@ export function useNotes(options?: NotesFilter): NotesResult {
     setConsumableNotesIfChanged,
   ]);
 
-  // Initial fetch
+  // Initial fetch: whenever this hook's buckets are missing, including after
+  // the provider resets the store on a signer identity change.
   useEffect(() => {
-    const fetchKey = `${filterKey}|${accountKey}`;
-    if (
-      isReady &&
-      !fetchedKeysRef.current.has(fetchKey) &&
-      notes.length === 0
-    ) {
+    if (isReady && !fetched) {
       refetch();
     }
-  }, [isReady, filterKey, accountKey, notes.length, refetch]);
+  }, [isReady, fetched, refetch]);
 
   // Refresh after successful syncs to keep notes current
   useEffect(() => {
