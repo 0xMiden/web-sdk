@@ -91,7 +91,7 @@ describe("useCreateFaucet", () => {
         "TEST",
         8, // decimals (default)
         1000000n,
-        2 // authScheme (default: AuthRpoFalcon512)
+        "falcon" // authScheme (default: AuthScheme.Falcon)
       );
     });
 
@@ -363,7 +363,7 @@ describe("useCreateFaucet", () => {
         "BIG",
         8,
         largeSupply,
-        2
+        "falcon"
       );
     });
 

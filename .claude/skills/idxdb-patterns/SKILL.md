@@ -1,0 +1,880 @@
+---
+name: idxdb-patterns
+description: Enforce conventions for the IndexedDB/Dexie persistence layer of the Miden web client, which lives in the web-sdk repo (idxdb-store crate). Use when editing TypeScript in `crates/idxdb-store/src/ts/`, writing Dexie transactions, or modifying the database schema.
+---
+
+# IndexedDB Store Patterns (idxdb-store)
+
+This layer lives in the **web-sdk** repo (`github.com/0xMiden/web-sdk`,
+crate `crates/idxdb-store`, package `miden-idxdb-store`), not in the
+`miden-client` repo. It is a Dexie-backed `Store` implementation for the
+WASM web client.
+
+The schema splits account-related tables into `Latest…` / `Historical…`
+pairs to support account-history pruning (`WasmWebClient.pruneAccountHistory()`
+- it is a WASM method, not part of the `MidenClient` resource surface).
+Always check `crates/idxdb-store/src/ts/schema.ts` for the canonical table
+list before adding rows or filters. The full set, in declaration order
+(`schema.ts:50-74`), is: `AccountCode`, `LatestAccountStorage`,
+`HistoricalAccountStorage`, `LatestAccountAssets`, `HistoricalAccountAssets`,
+`LatestStorageMapEntries`, `HistoricalStorageMapEntries`, `AccountAuth`,
+`AccountKeyMapping`, `LatestAccountHeaders`, `HistoricalAccountHeaders`,
+`Addresses`, `Transactions`, `TransactionScripts`, `InputNotes`,
+`OutputNotes`, `NotesScripts`, `BlockchainCheckpoint`, `BlockHeaders`,
+`PartialBlockchainNodes`, `Tags`, `ForeignAccountCode`, `Settings`.
+
+## Build Workflow
+
+The `idxdb-store` has a dual-file workflow:
+
+- **TypeScript source** lives in `crates/idxdb-store/src/ts/`
+- **Generated JavaScript** lives in `crates/idxdb-store/src/js/`
+- **Both are committed to git**. The `js` folder is currently *not*
+  gitignored (the `#js` entry in `src/.gitignore` is commented out)
+- The Rust side imports the generated `.js` modules via
+  `#[wasm_bindgen(module = "/src/js/...")]`, so the JS must be kept in
+  sync with the TS
+
+After modifying any `.ts` file, regenerate the JS with the canonical
+top-level Make target (which runs the package's `build` script through
+**pnpm**; this repo is pnpm-only, there is no yarn):
+
+```bash
+make rust-client-ts-build   # == pnpm --filter web_store run build
+make rust-client-ts-lint    # == pnpm --filter web_store run lint
+make test-idxdb-store       # == pnpm --filter web_store exec vitest run --coverage
+```
+
+The underlying package script is `tsc --build --force ./tsconfig.json`
+(`crates/idxdb-store/src/package.json`). Always commit both the `.ts`
+source and the regenerated `.js` output together.
+
+## Database Registry
+
+There is no JS object pointer on the Rust side, so open databases are
+tracked in a module-level `Map` keyed by network name, in
+`crates/idxdb-store/src/ts/schema.ts`. Each name has one entry: the open
+connection and a count of the stores holding it.
+
+```typescript
+interface RegistryEntry {
+  db: MidenDatabase;
+  holders: number;
+}
+
+const databaseRegistry = new Map<string, RegistryEntry>();
+
+export function getDatabase(dbId: string): MidenDatabase {
+  const entry = databaseRegistry.get(dbId);
+  if (!entry) {
+    throw new Error(
+      `Database not found for id: ${dbId}. Call openDatabase first.`
+    );
+  }
+  return entry.db;
+}
+
+export function closeDatabase(network: string): void {
+  const entry = databaseRegistry.get(network);
+  if (!entry) {
+    return;
+  }
+  entry.holders -= 1;
+  if (entry.holders > 0) {
+    return;
+  }
+  entry.db.dexie.close();
+  databaseRegistry.delete(network);
+}
+
+export async function openDatabase(
+  network: string,
+  clientVersion: string
+): Promise<string> {
+  const registered = databaseRegistry.get(network);
+  if (registered?.db.dexie.isOpen()) {
+    registered.holders += 1;
+    return network;
+  }
+  // Otherwise join the open already in flight for `network`, or start one;
+  // see `openAndRegister` in schema.ts.
+}
+```
+
+The holder is the Rust `IdxdbStore`: `IdxdbStore::new` calls `openDatabase`
+and its `Drop` calls `closeDatabase` with the same `database_id`, so every
+store on a name, whether a client's, an export's or an import's, shares one
+connection and the last one dropped closes it.
+
+Rules:
+
+- `openDatabase` counts its caller as one more holder. It reuses an open
+  entry, shares one in-flight open among concurrent callers, and replaces an
+  entry whose connection was closed elsewhere, keeping that entry's holders.
+  A failed open closes only its own connection and leaves the registered
+  entry alone
+- `closeDatabase` drops one holder and closes and unregisters the entry only
+  at zero. Only `IdxdbStore`'s `Drop` calls it; never close a registered
+  connection directly, and never open a second one for a registered name
+- Every exported store function takes `dbId: string` as its first parameter
+- Call `const db = getDatabase(dbId)` at the top of each function. Look it
+  up per call rather than holding a long-lived reference across calls
+- The `dbId` is the network name (`"mainnet"`, `"devnet"`, `"testnet"`, or
+  a custom one); `openDatabase` registers under and returns `network`
+
+## Schema Interfaces
+
+Define TypeScript interfaces for each table with the `I` prefix. Use
+`Latest…` / `Historical…` pairs for anything that participates in account
+history (storage slots, storage map entries, vault assets, and account
+headers). The account-header pair uses `IAccount` (latest, keyed on `id`)
+and `IHistoricalAccount` (same fields plus `replacedAtNonce`) inside
+`latestAccountHeaders` / `historicalAccountHeaders`:
+
+```typescript
+export interface IAccountCode {
+  root: string;
+  code: Uint8Array;
+}
+
+export interface ILatestAccountStorage {
+  accountId: string;
+  slotName: string;
+  slotValue: string;
+  slotType: number;
+}
+
+export interface IHistoricalAccountStorage {
+  accountId: string;
+  replacedAtNonce: string;
+  slotName: string;
+  oldSlotValue: string | null;
+  slotType: number;
+}
+
+export interface ILatestAccountAsset {
+  accountId: string;
+  vaultKey: string;     // ASSET_KEY, see the `miden-concepts` skill
+  asset: string;        // ASSET_VALUE serialized
+}
+
+export interface IHistoricalAccountAsset {
+  accountId: string;
+  replacedAtNonce: string;
+  vaultKey: string;
+  oldAsset: string | null;
+}
+
+export interface IAccount {
+  id: string;           // primary key, NOT `accountId`
+  codeRoot: string;
+  storageRoot: string;
+  vaultRoot: string;
+  nonce: string;
+  committed: boolean;
+  accountSeed?: Uint8Array;
+  accountCommitment: string;
+  locked: boolean;
+  watched: boolean;
+}
+
+export interface IBlockchainCheckpoint {
+  id: number;           // always 1; the singleton sync row
+  blockNum: number;
+  partialBlockchainPeaks: Uint8Array;
+}
+
+// The block-header row is deliberately narrow (schema.ts:225-229).
+export interface IBlockHeader {
+  blockNum: number;
+  header: Uint8Array;
+  hasClientNotes: string;   // a string, not a boolean
+}
+
+export interface ISetting {
+  scope: number;        // SETTING_SCOPE_CLIENT | SETTING_SCOPE_USER
+  key: string;
+  value: Uint8Array;
+}
+```
+
+Rules:
+
+- Use `string` for hex-encoded values (hashes, IDs, commitments, nonces,
+  vault keys)
+- Use `Uint8Array` for raw binary data
+- Use `?` suffix for optional fields, `| null` when the column explicitly
+  represents the absence of a previous value (e.g. `oldSlotValue`,
+  `oldAsset`, `oldValue` in the history tables)
+- Use `boolean` for flags, `number` for block heights and slot types
+- Primary keys differ per table and most of them are COMPOUND. Getting this
+  wrong produces a `get`/`put` that silently misses rather than an error, so
+  read `V1_STORES` plus the later version blocks in `schema.ts` rather than
+  assuming. As of schema v5:
+
+  | Table | Primary key | Secondary indexes |
+  |---|---|---|
+  | `latestAccountHeaders` | `&id` | `accountCommitment` |
+  | `historicalAccountHeaders` | `&accountCommitment` | `id`, `[id+replacedAtNonce]` |
+  | `latestAccountStorage` | `[accountId+slotName]` | `accountId` |
+  | `latestAccountAssets` | `[accountId+vaultKey]` | `accountId` |
+  | `latestStorageMapEntries` | `[accountId+slotName+key]` | `accountId`, `[accountId+slotName]` |
+  | `foreignAccountCode` | `accountId` | none |
+  | `settings` | `[scope+key]` | `scope` |
+
+  Only `foreignAccountCode` keys on `accountId` alone. Pass the tuple for the
+  rest: `db.latestAccountStorage.get([accountId, slotName])`.
+- The asset layer is two-word: `vaultKey` is the `ASSET_KEY` and `asset`
+  is the encoded `ASSET_VALUE`. Don't fold them back into a single hex
+  string.
+- `settings` rows are **scoped**. `ISetting` carries a `scope` discriminant
+  and the row's primary key is the compound `[scope, key]`, never `key`
+  alone. See [Scoped settings](#scoped-settings) below.
+
+## Table Enum
+
+Define tables as a TypeScript enum, in the order they appear in
+`crates/idxdb-store/src/ts/schema.ts`. The Rust side imports table-backed
+JS functions verbatim:
+
+```typescript
+enum Table {
+  AccountCode = "accountCode",
+  LatestAccountStorage = "latestAccountStorage",
+  HistoricalAccountStorage = "historicalAccountStorage",
+  LatestAccountAssets = "latestAccountAssets",
+  HistoricalAccountAssets = "historicalAccountAssets",
+  LatestStorageMapEntries = "latestStorageMapEntries",
+  HistoricalStorageMapEntries = "historicalStorageMapEntries",
+  AccountAuth = "accountAuth",
+  AccountKeyMapping = "accountKeyMapping",
+  LatestAccountHeaders = "latestAccountHeaders",
+  HistoricalAccountHeaders = "historicalAccountHeaders",
+  Addresses = "addresses",
+  Transactions = "transactions",
+  TransactionScripts = "transactionScripts",
+  InputNotes = "inputNotes",
+  OutputNotes = "outputNotes",
+  NotesScripts = "notesScripts",
+  BlockchainCheckpoint = "blockchainCheckpoint",
+  BlockHeaders = "blockHeaders",
+  PartialBlockchainNodes = "partialBlockchainNodes",
+  Tags = "tags",
+  ForeignAccountCode = "foreignAccountCode",
+  Settings = "settings",
+  AccountWitnesses = "accountWitnesses",
+}
+```
+
+There is no `stateSync` table. The singleton sync row lives in
+`blockchainCheckpoint` (id `1`) and carries `partialBlockchainPeaks`
+alongside `blockNum`.
+
+**The MMR peaks live on the checkpoint row, not on the tip block header.**
+`IBlockHeader` carries only `{ blockNum, header, hasClientNotes }`, so a sync
+writes the header and the peaks to two different tables inside one transaction
+(`crates/idxdb-store/src/ts/sync.ts`, `applyStateSync`). Read the peaks back
+through the exported `getCurrentBlockchainPeaks(dbId)` in `sync.ts:66-83`
+(bound Rust-side as `#[wasm_bindgen(js_name = getCurrentBlockchainPeaks)]` in
+`crates/idxdb-store/src/sync/js_bindings.rs:24`), which returns
+`{ blockNum, peaks }` with `peaks` base64-encoded - and with `blockNum`
+falling back to `0` and `peaks` to the base64 of an empty array when the row
+is missing or its peaks are empty.
+
+## Schema Versioning
+
+The Dexie schema is a **version chain**, not a single declaration.
+`V1_STORES` is the frozen v1 baseline, applied as
+`this.dexie.version(1).stores(V1_STORES)` in the `MidenDatabase`
+constructor; its index strings are built with a small `indexes(...)`
+helper, e.g.
+`[Table.LatestAccountStorage]: indexes("[accountId+slotName]", "accountId")`.
+Every later change is its own `.version(N).stores({...})` block.
+
+**The current schema version is 8.**
+
+| Version | Change |
+| --- | --- |
+| 1 | Baseline, `V1_STORES` |
+| 2 | Data-only. Deletes `tags` rows leaked by output-note registration, mirroring the sqlite-store `0002_prune_output_note_tags.sql`. A tag is kept while an inclusion-pending input note (`stateDiscriminant` 0 or 1) still needs it |
+| 3 | Rekeys the input-note consumption index to `[consumedBlockHeight+consumedTxOrder+detailsCommitment]` (was `...+noteId`), so `Store::get_input_note_after` seeks on the values an `InputNoteCursor` carries. Index-only, no `.upgrade()` hook |
+| 4 | Drops `settings`: `this.dexie.version(4).stores({ [Table.Settings]: null })`. The client version stamp goes with it, so the v8 cutover clears every store that runs this step |
+| 5 | Recreates `settings` as `indexes("[scope+key]", "scope")`. A primary key cannot change in place, hence the drop-and-recreate pair |
+| 6 | Adds `accountWitnesses`, primary key `&accountId`. `witness` is null until the first sync refresh |
+| 7 | Data-only. Deletes the client-scope `note_transport_outbox` row a 0.17.1 client left behind, mirroring the sqlite-store `0002_drop_note_transport_outbox.sql` |
+| 8 | The cutover: `.upgrade(clearStoreStampedBelow(MIGRATION_BASELINE))` clears a store stamped below `"0.17.0"` or not stamped (see below) |
+
+### Migrations, not resets
+
+A store is kept across client upgrades, as the Node `SqliteStore` is.
+**Every change to a table's shape or to a stored value's encoding ships a new
+Dexie version whose `.upgrade()` converts the existing rows.** Never edit an
+earlier version block.
+
+**A cutover version is the only way a store is ever cleared.** v8's
+`.upgrade()` is `clearStoreStampedBelow(MIGRATION_BASELINE)`. It reads the
+client-scope stamp through the upgrade `tx`, then:
+
+- **No stamp, or valid semver below `MIGRATION_BASELINE` (`"0.17.0"`):
+  cleared.** Every table that exists at that step is cleared and seeded with
+  what `populate` writes (`seedFreshStore`), in the same transaction. A
+  prerelease sorts below its release, so a `0.17.0-rc.5` stamp is below
+  `0.17.0`. No stamp includes every store the v4 settings drop stripped.
+- **Valid semver at or above the baseline: kept.**
+- **Not valid semver: kept.** Never wipe on uncertainty.
+
+The clear runs inside the versionchange transaction, so it is atomic, and
+IndexedDB runs versionchange transactions one at a time across tabs and
+workers: a second context opening the same store waits, then opens it at v8
+and runs nothing. Never move a clear into a normal transaction after
+`dexie.open()`, where two contexts can both read the old stamp and clear
+twice, the second wiping what the first wrote meanwhile. A fresh database runs
+no upgrade callbacks, only `populate`. A store already at v8 never runs the
+cutover again, whatever its stamp says later.
+
+**A release that genuinely cannot migrate older data adds a NEW Dexie version
+with the same `clearStoreStampedBelow(...)` upgrade and its own threshold.**
+Raising `MIGRATION_BASELINE` clears nothing that already ran v8. State the new
+cutover up front in any upgrade plan: it destroys every locally-stored
+account, key and note in the user's browser.
+
+**An import skips every upgrade() callback.** `forceImportStore` writes a
+dump's rows in a plain transaction, so it takes only a dump this store could
+have kept: stamped by a client at or after `MIGRATION_BASELINE` and not newer
+than the running one. Anything else is refused before the target is cleared.
+A Dexie version that converts stored data must also convert, or refuse, a dump
+stamped by a client from before it, in `forceImportStore`.
+
+`ensureClientVersion` never clears. After `dexie.open()` it writes the running
+version when the stamp differs, for diagnostics and for a future cutover's
+threshold. An empty `clientVersion` warns and writes nothing.
+
+The version is `CLIENT_VERSION = env!("CARGO_PKG_VERSION")` in
+`crates/idxdb-store/src/lib.rs`, persisted under the exported
+`CLIENT_VERSION_SETTING_KEY = "clientVersion"` in `SETTING_SCOPE_CLIENT`.
+
+**A store written by a newer client is refused, never deleted.** Dexie 4 does
+not fail with `VersionError` when the store's schema version is above the
+declared one: it opens the store anyway, and first re-adds any table or index
+the newer schema dropped, raising the native version. So
+`MidenDatabase.open()` first reads the installed version from
+`indexedDB.databases()` and rejects when `Math.floor(version / 10)` exceeds
+`verno` (Dexie keeps version N as N * 10, plus one per schema patch), without
+opening the store through Dexie. Where `databases()` is missing, and on
+Dexie's automatic reopen after another tab upgraded the store under an open
+connection, a sticky `on("ready")` hook refuses it instead. Dexie may have
+patched the schema by then, so the message promises only that nothing was
+deleted. The error reaches the caller of `openDatabase` and the console
+through `logWebStoreError`, and `WebClient.createClient` reports it as
+`Failed to initialize IdxdbStore: <message>`.
+
+**`V1_STORES` is frozen. Never modify it.** schema.ts says so at the constant
+and again above `this.dexie.version(1)`. Adding a table or changing an index
+today means:
+
+1. Update the `Table` enum + interface(s) in `schema.ts`
+2. Add a **new** `this.dexie.version(N+1).stores({...})` block at the bottom
+   of the chain, listing only the tables whose indexes changed (Dexie carries
+   the rest forward). Add `.upgrade(tx => {...})` only if existing rows need
+   rewriting; index-only changes need no hook. Removing a table is
+   `{ [Table.Foo]: null }`, and a primary-key change is a drop block followed
+   by a recreate block (see v4/v5)
+3. Update the `declare module "dexie"` augmentation, the `MidenDexie` type,
+   and the `MidenDatabase` field + `this.dexie.table<...>(...)` assignment
+4. Update Rust-side reads/writes, which import the corresponding JS
+   functions through `#[wasm_bindgen(module = "/src/js/<file>.js")]`
+   (e.g. account functions from `/src/js/accounts.js`, schema/registry
+   functions from `/src/js/schema.js`)
+5. Run `make rust-client-ts-build` to regenerate the JS, and add a
+   migration test in `schema.test.ts` (seed a physical database at the
+   previous version from the exported `V1_STORES` or the test's `V6_STORES`,
+   then open it through `MidenDatabase` so the whole chain runs. A store
+   seeded below v4 has no stamp at v8, so the cutover clears it; the v2-v4
+   tests read what each upgrade left through `openReadingAtCutover`, which
+   observes each table as the cutover clears it)
+
+The `populate` hook fires only on first database creation, never during an
+upgrade. Through `seedFreshStore`, which the v8 cutover shares, it seeds
+exactly one row, the `blockchainCheckpoint` singleton:
+
+```typescript
+{ id: 1, blockNum: 0, partialBlockchainPeaks: new Uint8Array() }
+```
+
+Nothing else is seeded, so every other table starts empty.
+
+Because v1 is frozen history, `V1_STORES[Table.Settings]` still reads
+`indexes("key")`. That is **not** the live schema. Read the last version
+block that touches a table, not `V1_STORES`, when you need its current key.
+
+## Scoped Settings
+
+`settings` is namespaced by scope. The same key under `Client` and under
+`User` is a separate row, and the primary key is the compound `[scope, key]`:
+
+```typescript
+export const SETTING_SCOPE_CLIENT = 0;   // store's own bookkeeping
+export const SETTING_SCOPE_USER = 1;     // the user-facing settings API
+```
+
+- All five settings functions take `scope` as the parameter right after
+  `dbId`: `getSetting`, `insertSetting`, `removeSetting`, `listSettingKeys`,
+  `applySettingsMutations`. The Rust side passes `SettingScope::as_u8()`.
+- Address a row with the **tuple**: `db.settings.get([scope, key])`,
+  `db.settings.delete([scope, key])`, and `put({ scope, key, value })`.
+  A bare `get(key)` silently misses.
+- `listSettingKeys` filters on the `scope` secondary index and strips the
+  scope off the compound primary keys it gets back:
+  `keys.map(([, key]) => key)`.
+- There is **no** `INTERNAL_SETTING_KEYS` filter any more. It existed to hide
+  the store's own `clientVersion` row from user listings; that row now lives
+  in `SETTING_SCOPE_CLIENT` and a scoped listing cannot see it.
+- `ensureClientVersion` reads and writes `CLIENT_VERSION_SETTING_KEY` under
+  `SETTING_SCOPE_CLIENT`, never `User`.
+
+## Dexie Transactions
+
+### Atomic Operations
+
+When multiple tables must be updated together, wrap in a Dexie transaction.
+List every table the transaction touches, and use `Promise.all()` to run
+independent operations concurrently (from `applyStateSync` in
+`crates/idxdb-store/src/ts/sync.ts`):
+
+```typescript
+const tablesToAccess = [
+  db.blockchainCheckpoint,
+  db.inputNotes,
+  db.outputNotes,
+  db.notesScripts,
+  db.transactions,
+  db.transactionScripts,
+  db.blockHeaders,
+  db.partialBlockchainNodes,
+  db.tags,
+  db.latestAccountHeaders,
+  db.historicalAccountHeaders,
+  // ... plus the latest/historical storage, map-entry and asset tables
+];
+
+return await db.dexie.transaction("rw", tablesToAccess, async (tx) => {
+  await Promise.all([
+    /* input/output note upserts */,
+    /* transaction upserts */,
+    /* per-account applyFullAccountState calls */,
+    updateSyncHeight(tx, blockNum, newPeaks),
+    updatePartialBlockchainNodes(tx, serializedNodeIds, serializedNodes),
+    updateCommittedNoteTags(tx, committedNoteTagSources),
+    /* block-header writes */,
+  ]);
+});
+```
+
+Rules:
+
+- Use `"rw"` for read-write transactions
+- List all tables that will be accessed in the `tablesToAccess` array
+- Use `Promise.all()` inside transactions to parallelize independent operations
+- Pass the `tx` transaction object to helper functions that need table access
+- Helper write functions (e.g. `upsertInputNote`) commonly take an optional
+  `tx?: Transaction`: if supplied they run inside the caller's transaction,
+  otherwise they open their own `db.dexie.transaction(...)`
+
+### Table Access Within Transactions
+
+The Dexie `Transaction` type doesn't statically declare table accessors.
+`schema.ts` augments `declare module "dexie"` so `tx.inputNotes` etc.
+type-check; where that augmentation isn't in scope, type-cast the
+transaction (from `updateSyncHeight` in `sync.ts`):
+
+```typescript
+async function updateSyncHeight(
+  tx: Transaction,
+  blockNum: number,
+  newPeaks: Uint8Array
+) {
+  try {
+    const current = await (
+      tx as Transaction & {
+        blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
+      }
+    ).blockchainCheckpoint.get(1);
+    if (!current || current.blockNum < blockNum) {
+      await (
+        tx as Transaction & {
+          blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
+        }
+      ).blockchainCheckpoint.update(1, {
+        blockNum: blockNum,
+        partialBlockchainPeaks: newPeaks,
+      });
+    }
+  } catch (error) {
+    logWebStoreError(error, "Failed to update sync height");
+  }
+}
+```
+
+### Forward-Only Updates
+
+Only advance the sync height forward (never regress):
+
+```typescript
+if (!current || current.blockNum < blockNum) {
+  // Update
+}
+```
+
+The MMR peaks travel with `blockNum` in the same row, so skipping the height
+update deliberately skips the peaks update too. A backward-going sync must
+not overwrite newer peaks with older ones. Keep them in one `update()` call.
+
+### Never overwrite MMR authentication nodes
+
+`partialBlockchainNodes` values are **immutable once written**: an index's node
+value is fixed, so a differing later write signals a buggy or malicious sync
+path. **Never call `put` on that table.** Use
+`putPartialBlockchainNodesNoOverwrite(table, data)` from `./utils.js`
+(`crates/idxdb-store/src/ts/utils.ts:52-88`), which:
+
+1. dedups the batch by index up front, throwing
+   `Conflicting partial blockchain node <id> within the same write` when two
+   entries in one batch disagree (identical copies are collapsed, because a
+   repeated index would otherwise make `bulkAdd` throw a key collision);
+2. `bulkGet`s the existing rows;
+3. `bulkAdd`s only the missing indices;
+4. accepts a write whose value **matches** what is stored (no-op);
+5. **throws** when an existing index would receive a different value:
+   `Refusing to overwrite partial blockchain node <id>: stored value differs
+   from the new value`.
+
+Its three callers wrap it in a transaction so the check and the insert are
+atomic and a conflict rolls the whole write back: `chainData.ts:50`,
+`chainData.ts:94` and `sync.ts:436`.
+
+### Columns added after the fact are filtered in JS, not indexed
+
+Rows written before a column existed simply lack the property, and a Dexie
+`where` equality against `""` never matches them. Filter in JS instead. From
+`removeNoteTag` in `sync.ts:107-134`, for `ITag.sourceSubscriptionKey`:
+
+```typescript
+return await db.tags
+  .where({
+    tag: tagBase64,
+    sourceNoteId: sourceNoteId ? sourceNoteId : "",
+    sourceAccountId: sourceAccountId ? sourceAccountId : "",
+  })
+  // Filtered in JS rather than via the `where` clause: rows written before
+  // the column existed lack the property entirely, and a `where` equality
+  // on "" would never match them.
+  .and((record) => (record.sourceSubscriptionKey ?? "") == subscriptionKey)
+  .delete();
+```
+
+Note the asymmetry: the three pre-existing columns are matched through the
+compound `where`, and only the late-added one moves to `.and(...)`. Adding a
+column to an existing table means taking this branch, not widening the index.
+
+## Error Handling
+
+### logWebStoreError
+
+Use `logWebStoreError()` from `./utils.js` for error logging. It formats
+Dexie errors (and walks `error.inner`), then **re-throws** the error:
+
+```typescript
+import { logWebStoreError } from "./utils.js";
+
+try {
+  // database operation
+} catch (error) {
+  logWebStoreError(error, "Error while fetching account headers");
+}
+```
+
+Because `logWebStoreError` always re-throws, code after a `catch` that
+calls it (e.g. a trailing `return []`) is effectively unreachable on the
+error path. The surrounding `try` body must return the success value.
+
+TypeScript cannot see that, so two conventions cover the gap:
+
+- Where the unreachable tail would otherwise make the function's return type
+  include `undefined`, add an explicit `throw error;` after the
+  `logWebStoreError` call (see `removeSetting`, `removeAccountAddress`).
+- Mark the genuinely unreachable tail with a `/* v8 ignore next N */` pragma
+  and a one-line reason, so it doesn't sink the coverage gate.
+
+### Reads return optional / empty
+
+Read functions wrap their body in `try/catch`, returning the queried value
+on success. The fallback after the catch (empty array, `null`, or
+`undefined`) documents intent but is unreachable because `logWebStoreError`
+re-throws (from `getAccountIds` in `crates/idxdb-store/src/ts/accounts.ts`):
+
+```typescript
+export async function getAccountIds(dbId: string) {
+  try {
+    const db = getDatabase(dbId);
+    const records = await db.latestAccountHeaders.toArray();
+    return records.map((entry) => entry.id);   // header rows key on `id`
+  } catch (error) {
+    logWebStoreError(error, "Error while fetching account IDs");
+  }
+  /* v8 ignore next 2 */
+  return [];
+}
+```
+
+### Functions that report presence
+
+Some `Store` trait methods need to say whether anything was there.
+`removeSetting` and `removeAccountAddress` return `Promise<boolean>`:
+
+- `Table.delete()` resolves to nothing whether or not a row matched, so
+  `removeSetting` reads inside the same `"rw"` transaction and returns that.
+- `Collection.delete()` resolves to the number of rows removed, so
+  `removeAccountAddress` returns `deleted > 0` and needs no extra read.
+
+Both end their `catch` with `throw error;` for the reason above. The
+corresponding `WasmWebClient` JS methods still resolve to nothing; the
+boolean is for the Rust `Store` impl.
+
+## Data Operations
+
+### Querying
+
+Use Dexie's query API. Patterns actually used in the store:
+
+```typescript
+// Get all records
+const records = await db.latestAccountHeaders.toArray();
+
+// Get by primary key (the blockchainCheckpoint singleton is row id 1)
+const current = await db.blockchainCheckpoint.get(1);
+
+// Look up a header by its `id` index (header PK is `id`)
+const record = await db.latestAccountHeaders
+  .where("id")
+  .equals(accountId)
+  .first();
+
+// Filter a single-field index, optionally narrowing with `.and(...)`
+const slots = await db.latestAccountStorages
+  .where("accountId")
+  .equals(accountId)
+  .and((record) => nameSet.has(record.slotName))
+  .toArray();
+
+// Match multiple keys against one index
+const codes = await db.accountCodes.where("root").anyOf(codeRoots).toArray();
+
+// InputNotes carries a `scriptRoot` index, which backs
+// getInputNotesFromScriptRoots (notes.ts:101-114)
+const notes = await db.inputNotes
+  .where("scriptRoot")
+  .anyOf(scriptRoots)
+  .toArray();
+```
+
+The current (v3) `InputNotes` index string is
+`"detailsCommitment,noteId,nullifier,scriptRoot,stateDiscriminant,[consumedBlockHeight+consumedTxOrder+detailsCommitment]"`.
+The `...+noteId` form survives only in the intentionally frozen v1 baseline
+(`schema.ts:320-327`); v3 replaces it (`schema.ts:521-528`).
+
+For compound indexes, use the **bracket-string** index name and pass the
+key parts as an array to `.equals(...)` (from `applyAccountPatch`):
+
+```typescript
+const oldSlot = await db.latestAccountStorages
+  .where("[accountId+slotName]")
+  .equals([accountId, slot.slotName])
+  .first();
+```
+
+### Cursor-seeking input notes
+
+`getInputNoteAfter` replaces the old `getInputNoteByOffset`: it seeks **past
+a cursor** rather than skipping an ordinal count, so a set that changes
+between calls can no longer skip or repeat a note. Two things follow:
+
+- The cursor is `(consumedBlockHeight, consumedTxOrder, detailsCommitment)`
+  and is compared as an index key with `.above([...])`, never looked up. That
+  is why v3 rekeyed the index on `detailsCommitment`: the seek resolves the
+  right position even once the cursor's own note has been deleted.
+- With a cursor set, `blockStart` is left to the row predicate. Emitting both
+  a cursor bound and a `blockStart` bound abandons the row-value seek.
+- Notes with **no** consumption order are no longer returned. Dexie skips
+  rows whose index components are `undefined`, and `SqliteStore` behaves the
+  same way. Don't "fix" this by widening the query.
+
+```typescript
+const INPUT_NOTE_CONSUMPTION_INDEX =
+  "[consumedBlockHeight+consumedTxOrder+detailsCommitment]";
+```
+
+### Latest vs Historical
+
+For account state, the `latest…` tables hold the current row (keyed by
+`accountId`, or the compound `[accountId+slotName]` / `[accountId+vaultKey]`
+/ `[accountId+slotName+key]`); the matching `historical…` tables hold the
+value that was replaced, keyed by `[accountId+replacedAtNonce…]` with the
+prior value in `oldSlotValue` / `oldAsset` / `oldValue` (`null` when no
+previous value existed). The write path is
+**archive-then-replace-or-delete**: read the current latest row, `put` it into
+historical under the new nonce, then either `put` the new value into latest or
+delete the latest row (see `applyAccountPatch` / `applyFullAccountState`, and
+the delete branches under [Absolute patches](#absolute-patches-not-relative-deltas)
+below).
+
+Undo restores from history back to latest, keyed by the compound nonce
+index; a non-null old value overwrites latest, a `null` old value deletes
+the latest row (from `restoreSlotsFromHistorical` in `accounts.ts`):
+
+```typescript
+const oldSlots = await db.historicalAccountStorages
+  .where("[accountId+replacedAtNonce]")
+  .equals([accountId, nonce])
+  .toArray();
+
+for (const slot of oldSlots) {
+  if (slot.oldSlotValue !== null) {
+    await db.latestAccountStorages.put({ /* ...restore old value... */ });
+  } else {
+    await db.latestAccountStorages
+      .where("[accountId+slotName]")
+      .equals([accountId, slot.slotName])
+      .delete();
+  }
+}
+```
+
+`pruneAccountHistory` drops `historical…` rows whose
+`replacedAtNonce <= upToNonce` and any orphaned account code. Write
+functions must keep the latest row authoritative regardless of how much
+history has been pruned.
+
+### Absolute patches, not relative deltas
+
+`applyAccountPatch` is the account write path (the old `applyTransactionDelta`
+is gone along with the relative delta model). Values arriving from Rust are
+**absolute**, so the store writes the final state rather than composing it:
+
+- `JsStorageSlot` carries an optional `patchOperation` discriminant.
+  `0` and `2` on a map slot (`slotType === STORAGE_SLOT_TYPE_MAP`, exported
+  from `schema.ts` as `1`) mean the map is reset: archive every persisted
+  entry for that slot into `historicalStorageMapEntries`, then delete them
+  from `latestStorageMapEntries`.
+- `patchOperation === 2` additionally deletes the latest storage-slot row
+  instead of writing a new value.
+- **For map entries and vault assets, an empty string means removal.** Both
+  loops archive the old value first, then branch on `entry.value === ""` /
+  `entry.asset === ""` and `.delete()` the latest row instead of `put`-ing it
+  (`accounts.ts:466-503`). The write path is therefore
+  archive-then-replace-**or**-delete, not plain archive-then-replace. Do not
+  "normalize" an empty value away before it reaches the store, and do not skip
+  the archive on the delete branch - the historical row is what an undo
+  restores from.
+- Everything else is a plain archive-then-replace `put`.
+
+Getting this wrong is silent: a missed reset leaves stale map entries that no
+later patch overwrites, because an absolute patch only names the keys it sets.
+
+The full signature (`accounts.ts:339-351`, bound Rust-side as
+`#[wasm_bindgen(js_name = applyAccountPatch)]` in
+`crates/idxdb-store/src/account/js_bindings.rs:130`):
+
+```typescript
+applyAccountPatch(
+  dbId: string,
+  accountId: string,
+  nonce: string,
+  updatedSlots: JsStorageSlot[],
+  changedMapEntries: JsStorageMapEntry[],
+  changedAssets: JsVaultAsset[],
+  codeRoot: string,
+  storageRoot: string,
+  vaultRoot: string,
+  committed: boolean,
+  commitment: string
+)
+```
+
+The three roots plus `committed` and `commitment` are the new header, written
+last in the same transaction after the old header is archived into
+`historicalAccountHeaders`.
+
+### The account forest is not in Dexie
+
+`crates/idxdb-store/src/forest.rs` holds `AccountForest`, a wrapper around an
+in-memory `AccountSmtForest<ForestInMemoryBackend>` plus a monotonic
+`VersionId`. Asset and storage-map **witnesses** are served from it, not from a
+Dexie query. It is in memory because the forest storage `Backend` trait is
+synchronous while every IndexedDB access from WASM goes through a JS promise,
+so it starts empty on store open and is filled from the account tables as
+accounts are read. Updates are forward-only - there is no staging or rollback.
+Other clients sharing the database change the tables, and a store write can
+fail after the forest advanced, so every forest reader compares the roots it
+uses with persisted state and refreshes the account from a validated full read
+when they differ. Write paths do this through
+`IdxdbStore::current_account_header` (`crates/idxdb-store/src/account/mod.rs`).
+
+Do not add a table to try to persist it, and do not add a promise-backed path
+for witness reads.
+
+### Serialization Conventions
+
+- Hex strings for cryptographic values (hashes, IDs, commitments, vault keys)
+- `uint8ArrayToBase64()` (from `./utils.js`) when a `Uint8Array` must be
+  returned to Rust as a base64 string (e.g. serialized account code, seeds)
+- `Uint8Array` for direct binary storage in a table column
+- Default empty strings for optional string fields when reading out:
+  `record.storageRoot || ""`
+- `BigInt()` for nonce comparisons and sorting (nonces are stored as
+  strings, so lexicographic / index-range ordering would be wrong)
+
+## Upsert Pattern
+
+Dexie `Table.put()` is itself an upsert: it inserts or replaces by primary
+key. The store builds a plain data object and calls `.put()`; it does not
+read-then-branch. Convert `null` to `undefined` so Dexie omits the field
+from indexes (a `null` in a compound index is a real value; an absent
+field is skipped, which is what keeps unconsumed notes out of the
+consumption index). From `upsertInputNote` in
+`crates/idxdb-store/src/ts/notes.ts`:
+
+```typescript
+export async function upsertInputNote(
+  dbId: string,
+  detailsCommitment: string,
+  noteId: string | undefined,
+  // ... more params
+  consumedBlockHeight?: number | null,
+  consumedTxOrder?: number | null,
+  consumerAccountId?: string | null,
+  tx?: Transaction
+) {
+  const db = getDatabase(dbId);
+  const doWork = async (t: Transaction) => {
+    try {
+      const data = {
+        detailsCommitment,
+        noteId: noteId ?? undefined,
+        // null -> undefined so Dexie omits these from compound indexes
+        consumedBlockHeight: consumedBlockHeight ?? undefined,
+        consumedTxOrder: consumedTxOrder ?? undefined,
+        consumerAccountId: consumerAccountId ?? undefined,
+        // ... remaining fields
+      };
+      await t.inputNotes.put(data);
+      await t.notesScripts.put({ scriptRoot, serializedNoteScript });
+    } catch (error) {
+      logWebStoreError(error, `Error inserting note: ${detailsCommitment}`);
+      throw error;
+    }
+  };
+  // Run inside the caller's tx if provided, else open one.
+  if (tx) return doWork(tx);
+  return db.dexie.transaction("rw", db.inputNotes, db.notesScripts, doWork);
+}
+```

@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "baseUrl": "src",
+    "target": "esnext",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "esnext",
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "noImplicitReturns": false,
+    "noImplicitAny": false,
+    "downlevelIteration": true,
+    "outDir": "dist",
+    "declaration": true,
+    "sourceMap": true,
+    // dist/*.js.map point at "../src/WalletModalProvider.tsx" etc, and
+    // "files": ["dist"] no longer ships those sources. Embed them in the map
+    // so consumer devtools can still step through original TypeScript.
+    "inlineSources": true
+  },
+  "include": ["src"],
+  "typedocOptions": {
+    "entryPoints": ["src/index.ts"],
+    "out": "docs",
+    "compilerOptions": {
+      "ignoreCompilerErrors": true
+    }
+  }
+}

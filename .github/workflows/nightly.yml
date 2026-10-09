@@ -25,12 +25,19 @@ jobs:
       - name: Extract workspace packages
         id: package-matrix
         run: |
+          # The MSRV check verifies each package against wasm32-unknown-unknown.
+          # miden-mobile-prover is a native-only crate (cdylib/staticlib C ABI for
+          # iOS/Android, published via the native release job) and is never built
+          # for wasm. Verifying its MSRV against wasm is a category error: it drags
+          # in the tonic->hyper->tokio->mio gRPC stack, and mio (which declares no
+          # rust-version) fails to compile on our MSRV. Exclude it here.
           PACKAGES=$(cargo metadata --format-version 1 --no-deps \
             | jq -c '
               .workspace_members as $members
               | .packages
               | map(select(.id as $id | $members | index($id)))
               | map(.name)
+              | map(select(. != "miden-mobile-prover"))
             ')
 
           echo "packages=$PACKAGES" >> "$GITHUB_OUTPUT"
@@ -39,6 +46,10 @@ jobs:
     needs: workspace-packages
     runs-on: ubuntu-24.04
     strategy:
+      # Report every package's MSRV status instead of cancelling the rest the
+      # moment one fails — otherwise a single failing leg masks whether the
+      # others comply.
+      fail-fast: false
       matrix:
         package: ${{ fromJson(needs.workspace-packages.outputs.packages) }}
     env:

@@ -1,8 +1,8 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { MidenProvider, MultiSignerProvider, SignerSlot } from "@miden-sdk/react";
-import { ParaSignerProvider } from "@miden-sdk/use-miden-para-react";
-import { TurnkeySignerProvider } from "@miden-sdk/miden-turnkey-react";
+import { ParaSignerProvider } from "@miden-sdk/para-react";
+import { TurnkeySignerProvider } from "@miden-sdk/turnkey-react";
 import { MidenFiSignerProvider } from "@miden-sdk/miden-wallet-adapter-react";
 import "./index.css";
 import App from "./App";
