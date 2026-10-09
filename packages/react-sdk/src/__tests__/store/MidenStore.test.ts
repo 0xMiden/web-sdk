@@ -395,6 +395,13 @@ describe("MidenStore", () => {
   });
 
   describe("setNotesIfChanged", () => {
+    it("creates an empty bucket for a missing key", () => {
+      useMidenStore.getState().setNotesIfChanged([], "consumed");
+      expect(useMidenStore.getState().notesByFilter.get("consumed")).toEqual(
+        []
+      );
+    });
+
     it("should update notes when IDs change", () => {
       const note1 = createMockInputNoteRecord("0xnote1");
       const note2 = createMockInputNoteRecord("0xnote2");
@@ -435,6 +442,13 @@ describe("MidenStore", () => {
   });
 
   describe("setConsumableNotesIfChanged", () => {
+    it("creates an empty bucket for a missing key", () => {
+      useMidenStore.getState().setConsumableNotesIfChanged([], "0xacct");
+      expect(
+        useMidenStore.getState().consumableNotesByAccount.get("0xacct")
+      ).toEqual([]);
+    });
+
     it("should update consumable notes when IDs change", () => {
       const cn1 = createMockConsumableNoteRecord("0xcn1");
       const cn2 = createMockConsumableNoteRecord("0xcn2");
@@ -496,16 +510,18 @@ describe("MidenStore", () => {
           throw new Error("broken record 2");
         },
       };
-      // Seed prev with a broken record so safeId catch runs over `state.consumableNotes`.
-      useMidenStore.getState().setConsumableNotes([broken1] as any, "default");
+      // Seed the bucket with a broken record so safeId's catch runs over
+      // `consumableNotesByAccount.get("default")`.
+      const seeded = [broken1];
+      useMidenStore.getState().setConsumableNotes(seeded as any, "default");
       useMidenStore
         .getState()
         .setConsumableNotesIfChanged([broken2] as any, "default");
-      // Both safeId calls returned null → both Sets stay empty → "same" early-return.
-      // The reference may or may not change depending on whether the size compare matched.
+      // Both safeId calls return null, so both id sets are empty and the
+      // existing bucket takes the early return: the seeded array stays.
       expect(
-        useMidenStore.getState().consumableNotesByAccount.get("default")!
-      ).toBeDefined();
+        useMidenStore.getState().consumableNotesByAccount.get("default")
+      ).toBe(seeded);
     });
   });
 

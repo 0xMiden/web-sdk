@@ -169,6 +169,33 @@ describe("useNotes", () => {
   });
 
   describe("store resets and new buckets", () => {
+    it("records empty results as fetched and fetches again after a reset", async () => {
+      const mockClient = createMockWebClient({
+        getInputNotes: vi.fn().mockResolvedValue([]),
+        getConsumableNotes: vi.fn().mockResolvedValue([]),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as any);
+      });
+
+      renderHook(() => useNotes());
+      await waitFor(() => {
+        const state = useMidenStore.getState();
+        expect(state.notesByFilter.has("all")).toBe(true);
+        expect(state.consumableNotesByAccount.has("default")).toBe(true);
+      });
+      expect(mockClient.getInputNotes).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        useMidenStore.getState().resetInMemoryState();
+      });
+
+      await waitFor(() => {
+        expect(mockClient.getInputNotes).toHaveBeenCalledTimes(2);
+      });
+    });
+
     it("fetches again when the store is reset under a mounted hook", async () => {
       const mockClient = createMockWebClient({
         getInputNotes: vi

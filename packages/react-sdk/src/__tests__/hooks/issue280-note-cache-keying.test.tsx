@@ -75,15 +75,20 @@ describe("issue 280: note cache keying per filter", () => {
     await waitFor(() => expect(stream.result.current.notes.length).toBe(1));
     await waitFor(() => expect(consumed.result.current.notes.length).toBe(1));
 
+    const getInputNotes = client.getInputNotes as ReturnType<typeof vi.fn>;
+    const before = getInputNotes.mock.calls.length;
     act(() => {
       useMidenStore.getState().setSyncState({ lastSyncTime: Date.now() });
     });
 
+    // One post-sync refetch per hook, then both settled.
     await waitFor(() =>
-      expect(
-        (client.getInputNotes as ReturnType<typeof vi.fn>).mock.calls.length
-      ).toBeGreaterThanOrEqual(2)
+      expect(getInputNotes.mock.calls.length).toBeGreaterThanOrEqual(before + 2)
     );
+    await waitFor(() => {
+      expect(stream.result.current.isLoading).toBe(false);
+      expect(useMidenStore.getState().isLoadingNotes).toBe(false);
+    });
 
     expect(stream.result.current.notes[0].id).toBe("0xcommitted1");
     expect(consumed.result.current.notes[0].id()!.toString()).toBe(
