@@ -19,8 +19,8 @@ impl InputNotes {
 
     /// Returns the number of input notes.
     #[js_export(js_name = "numNotes")]
-    pub fn num_notes(&self) -> u8 {
-        u8::try_from(self.0.num_notes()).expect("only 256 input notes is allowed")
+    pub fn num_notes(&self) -> u32 {
+        u32::from(self.0.num_notes())
     }
 
     /// Returns true if there are no input notes.
@@ -31,9 +31,9 @@ impl InputNotes {
 
     /// Returns the input note at the specified index.
     #[js_export(js_name = "getNote")]
-    pub fn get_note(&self, index: u8) -> Result<InputNote, JsErr> {
+    pub fn get_note(&self, index: u32) -> Result<InputNote, JsErr> {
         let index = index as usize;
-        let length = self.0.num_notes();
+        let length = usize::from(self.0.num_notes());
         if index >= length {
             return Err(from_str_err(&format!(
                 "InputNotes index out of bounds: tried to access index {index} with length {length}"
