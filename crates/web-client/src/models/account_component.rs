@@ -59,11 +59,11 @@ impl NoteScriptFee {
     /// Obtain the root via `NoteScript.root()`. An amount of `0` is a valid price and is what an
     /// account that charges nothing for a note uses.
     #[js_export(constructor)]
-    pub fn new(script_root: &Word, amount: JsU64) -> NoteScriptFee {
-        NoteScriptFee {
+    pub fn new(script_root: &Word, amount: JsU64) -> Result<NoteScriptFee, JsErr> {
+        Ok(NoteScriptFee {
             script_root: script_root.clone(),
-            amount: js_u64_to_u64(amount),
-        }
+            amount: js_u64_to_u64(amount)?,
+        })
     }
 
     /// Returns the note script root this fee applies to.

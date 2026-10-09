@@ -15,16 +15,17 @@ impl MerklePath {
     #[js_export(js_name = "computeRoot")]
     pub fn compute_root(&self, index: JsU64, node: &Word) -> Result<Word, JsErr> {
         self.0
-            .compute_root(js_u64_to_u64(index), node.clone().into())
+            .compute_root(js_u64_to_u64(index)?, node.clone().into())
             .map(Into::into)
             .map_err(|err| from_str_err(&format!("Invalid Merkle path index: {err}")))
     }
 
     /// Verifies the path against a root.
     pub fn verify(&self, index: JsU64, node: &Word, root: &Word) -> bool {
-        self.0
-            .verify(js_u64_to_u64(index), node.clone().into(), &root.clone().into())
-            .is_ok()
+        let Ok(index) = js_u64_to_u64(index) else {
+            return false;
+        };
+        self.0.verify(index, node.clone().into(), &root.clone().into()).is_ok()
     }
 
     /// Returns the depth of the path.

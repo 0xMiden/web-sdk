@@ -23,6 +23,7 @@ const EXCLUDED = {
   // napi-specific variants, covered by the `nodejs` project. The shared
   // `browserTestIgnore` keeps them out of every browser project.
   "compile_and_contract.node.test.ts": "napi variant, runs in `nodejs`",
+  "js_u64_out_of_range.node.test.ts": "napi variant, runs in `nodejs`",
   "miden_client_api.node.test.ts": "napi variant, runs in `nodejs`",
   "note_transport.node.test.ts": "napi variant, runs in `nodejs`",
 

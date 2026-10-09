@@ -24,7 +24,7 @@ pub struct VaultAsset(NativeAsset);
 impl VaultAsset {
     /// Creates a fungible asset. The amount must fit the protocol's asset amount range.
     pub fn fungible(faucet_id: &AccountId, amount: JsU64) -> Result<VaultAsset, JsErr> {
-        NativeFungibleAsset::new(faucet_id.into(), js_u64_to_u64(amount))
+        NativeFungibleAsset::new(faucet_id.into(), js_u64_to_u64(amount)?)
             .map(|asset| VaultAsset(asset.into()))
             .map_err(|err| from_str_err(&format!("Failed to create fungible asset: {err}")))
     }
