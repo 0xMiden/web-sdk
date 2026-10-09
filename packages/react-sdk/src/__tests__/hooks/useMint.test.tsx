@@ -7,6 +7,7 @@ import {
   createMockWebClient,
   createMockTransactionId,
   createMockTransactionRequest,
+  createMockNonFungibleAsset,
 } from "../mocks/miden-sdk";
 
 // Mock useMiden
@@ -99,6 +100,84 @@ describe("useMint", () => {
         expect.anything(), // noteType (private by default)
         1000n
       );
+    });
+
+    it("should mint a non-fungible asset", async () => {
+      const mockTxId = createMockTransactionId("0xtxnft");
+      const mockClient = createMockWebClient({
+        submitNewTransaction: vi.fn().mockResolvedValue(mockTxId),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+      const asset = createMockNonFungibleAsset("0xfaucet");
+
+      const { result } = renderHook(() => useMint());
+
+      let txResult;
+      await act(async () => {
+        txResult = await result.current.mint({
+          targetAccountId: "0xtarget",
+          faucetId: "0xfaucet",
+          asset: asset as never,
+        });
+      });
+
+      expect(txResult).toEqual({ transactionId: "0xtxnft" });
+      expect(
+        mockClient.newMintNonFungibleTransactionRequest
+      ).toHaveBeenCalledWith(expect.anything(), asset, expect.anything());
+      expect(mockClient.newMintTransactionRequest).not.toHaveBeenCalled();
+      const [submitter] = mockClient.submitNewTransaction.mock.calls[0];
+      expect((submitter as { toString(): string }).toString()).toBe("0xfaucet");
+    });
+
+    it("should reject a non-fungible asset issued by another faucet", async () => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useMint());
+
+      await act(async () => {
+        await expect(
+          result.current.mint({
+            targetAccountId: "0xtarget",
+            faucetId: "0xfaucet",
+            asset: createMockNonFungibleAsset("0xother") as never,
+          })
+        ).rejects.toThrow("`asset` must be issued by the faucet `faucetId`");
+      });
+      expect(
+        mockClient.newMintNonFungibleTransactionRequest
+      ).not.toHaveBeenCalled();
+    });
+
+    it("should reject both asset and amount", async () => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useMint());
+
+      await act(async () => {
+        await expect(
+          result.current.mint({
+            targetAccountId: "0xtarget",
+            faucetId: "0xfaucet",
+            asset: createMockNonFungibleAsset("0xfaucet"),
+            amount: 1n,
+          } as never)
+        ).rejects.toThrow("Pass either `asset` or `amount`, not both");
+      });
     });
 
     it("should execute mint transaction with custom note type", async () => {

@@ -7,6 +7,7 @@ import {
   createMockWebClient,
   createMockTransactionId,
   createMockTransactionRequest,
+  createMockNonFungibleAsset,
 } from "../mocks/miden-sdk";
 
 // Mock useMiden
@@ -106,6 +107,67 @@ describe("useSwap", () => {
         expect.anything(), // noteType (private)
         expect.anything() // paybackNoteType (private)
       );
+    });
+
+    it("should offer a non-fungible asset for a fungible amount", async () => {
+      const mockClient = createMockWebClient({
+        submitNewTransaction: vi
+          .fn()
+          .mockResolvedValue(createMockTransactionId("0xnftswap")),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+      const offeredAsset = createMockNonFungibleAsset();
+
+      const { result } = renderHook(() => useSwap());
+
+      let txResult;
+      await act(async () => {
+        txResult = await result.current.swap({
+          accountId: "0xaccount",
+          offeredAsset: offeredAsset as never,
+          requestedFaucetId: "0xfaucetB",
+          requestedAmount: 50n,
+        });
+      });
+
+      expect(txResult).toEqual({ transactionId: "0xnftswap" });
+      expect(mockClient.newSwapTransactionRequest).not.toHaveBeenCalled();
+      const [, offered, requested] =
+        mockClient.newSwapAssetsTransactionRequest.mock.calls[0];
+      expect(offered).toBe(offeredAsset);
+      expect(requested.faucetId.toString()).toBe("0xfaucetB");
+      expect(requested.amount).toBe(50n);
+    });
+
+    it("should request a non-fungible asset for a fungible amount", async () => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+      const requestedAsset = createMockNonFungibleAsset();
+
+      const { result } = renderHook(() => useSwap());
+
+      await act(async () => {
+        await result.current.swap({
+          accountId: "0xaccount",
+          offeredFaucetId: "0xfaucetA",
+          offeredAmount: 100n,
+          requestedAsset: requestedAsset as never,
+        });
+      });
+
+      const [, offered, requested] =
+        mockClient.newSwapAssetsTransactionRequest.mock.calls[0];
+      expect(offered.faucetId.toString()).toBe("0xfaucetA");
+      expect(offered.amount).toBe(100n);
+      expect(requested).toBe(requestedAsset);
     });
 
     it("should execute swap transaction with custom note types", async () => {
