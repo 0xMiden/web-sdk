@@ -268,6 +268,24 @@ const felt = new Felt(42n); // sync
 const client = await MidenClient.createTestnet();
 ```
 
+`feeFaucetId` is optional. Since 0.17 the chain's fee asset lives in the
+protocol configuration, which the client receives from the node when it syncs,
+so execution never needs the option: it only sets what `client.feeFaucetId()`
+reports before the first sync. Snippets below leave it out.
+
+`noteTransportMaxRetries` (0 to 10, default 3) and
+`noteTransportRetryIntervalMs` (0 to 60000, default 250), with a total computed
+backoff `interval * (2^retries - 1)` of at most 120000 ms, set how
+`notes.sendPrivate` / `notes.sendPrivateOutput` retry a transient note
+transport failure within the call. The retries run inside the client's
+serialized call, so a slow or rate-limiting transport blocks other client calls
+until the send finishes; a non-zero service `retry-after` replaces the computed
+delay with no upper bound, and a zero one falls back to it. Pass
+`noteTransportMaxRetries: 0` to bound a send to one attempt in a
+latency-sensitive UI. A send that still fails rejects, and the rejection is
+final: the client keeps no queue and no sync sends the note again, so send the
+same note again to retry (delivery is idempotent by note id).
+
 ### Lazy usage (`/lazy`)
 
 ```typescript
@@ -411,6 +429,12 @@ The script at `crates/web-client/scripts/check-bindgen-types.js` verifies that e
 pnpm check:wasm-types
 ```
 
+`scripts/check-asset-types.js` type-checks a consumer fixture (with `skipLibCheck`) that imports `VaultAsset` and the `Asset` option type from all four entry points and `NoteAssets` from the root entry. It fails if an entry point stops exporting `VaultAsset`, or if `Asset` stops resolving to the `{ token, amount }` option type, for example because a generated class takes its name:
+
+```
+pnpm check:asset-types
+```
+
 `WebClient` is intentionally excluded because the wrapper defines its own implementation. If the check reports missing exports, update `js/types/index.d.ts` so consumers get the full generated surface.
 
 ## Usage
@@ -420,7 +444,7 @@ The following are just a few simple examples to get started. For more details, s
 ### Quick Start
 
 ```typescript
-import { MidenClient, AccountType } from "@miden-sdk/miden-sdk";
+import { MidenClient, FaucetType } from "@miden-sdk/miden-sdk";
 
 // 1. Create client (defaults to testnet, or use createTestnet()/createDevnet())
 const client = await MidenClient.createDevnet();
@@ -428,7 +452,7 @@ const client = await MidenClient.createDevnet();
 // 2. Create a wallet and a token (faucet account)
 const wallet = await client.accounts.create();
 const dagToken = await client.accounts.create({
-  type: AccountType.FungibleFaucet, symbol: "DAG", decimals: 8, maxSupply: 10_000_000n
+  type: FaucetType.FungibleFaucet, symbol: "DAG", decimals: 8, maxSupply: 10_000_000n
 });
 
 // 3. Mint tokens
@@ -454,20 +478,44 @@ console.log(`Balance: ${balance}`); // 900n
 client.terminate();
 ```
 
+### Account Visibility and Faucet Types
+
+`AccountType.Private` and `AccountType.Public` are the native visibility enum
+accepted by `AccountBuilder.accountType()` in both browser and Node.js:
+
+```typescript
+import { AccountBuilder, AccountType } from "@miden-sdk/miden-sdk";
+
+const builder = new AccountBuilder(new Uint8Array(32))
+  .accountType(AccountType.Public);
+```
+
+For `client.accounts.create()`, select visibility with `storage: "public"` or
+`"private"`, and create a fungible faucet with `type: FaucetType.FungibleFaucet`.
+Migrate previous `AccountType.FungibleFaucet` uses to `FaucetType.FungibleFaucet`.
+Omit `type` to create a wallet, or pass `components` to create a contract.
+The legacy selectors `0`, `1` and `"NonFungibleFaucet"` are still read as
+faucet types (non-fungible faucets are not supported yet and are rejected);
+`0` and `1` are also `AccountType.Private` / `AccountType.Public`, so never pass
+a visibility value as `type`. `create()` throws a `TypeError` for any other
+`type`, for faucet fields (`name`, `symbol`, `decimals`, `maxSupply`) without a
+faucet type, for `components` on a faucet, and for a faucet missing `symbol`,
+`decimals` or `maxSupply`, so a missed migration fails instead of creating a
+wallet.
+
 ### Create a New Wallet
 
 ```typescript
-import { MidenClient, AccountType, AuthScheme } from "@miden-sdk/miden-sdk";
+import { MidenClient, AuthScheme } from "@miden-sdk/miden-sdk";
 
 const client = await MidenClient.create();
 
-// Default wallet (private storage, mutable, Falcon auth)
+// Default wallet (private storage, Falcon auth)
 const wallet = await client.accounts.create();
 
 // Wallet with options
 const wallet2 = await client.accounts.create({
   storage: "public",
-  type: AccountType.ImmutableWallet,
   auth: AuthScheme.ECDSA,
   seed: "deterministic"
 });
@@ -475,21 +523,42 @@ const wallet2 = await client.accounts.create({
 console.log(wallet.id().toString()); // account id as hex
 console.log(wallet.isPublic()); // false
 console.log(wallet.isPrivate()); // true
-console.log(wallet.isFaucet()); // false
 ```
+
+### Register on an Allowlisted Network
+
+A network that enforces an account allowlist creates an account on chain only once the account is registered with an invitation code from the network operator. Register a new account before its first transaction:
+
+```typescript
+const wallet = await client.accounts.create();
+
+if (!(await client.accounts.isAllowed(wallet))) {
+  // Optional: check the code first. The check does not consume the code.
+  if (!(await client.accounts.isInvitationCodeValid(invitationCode))) {
+    throw new Error("The invitation code cannot be used.");
+  }
+  await client.accounts.register({ account: wallet, invitationCode });
+}
+
+// When the network funds registered accounts, the funding note arrives on the
+// next sync; consuming it is the transaction that creates the account on chain.
+await client.sync();
+await client.transactions.consumeAll({ account: wallet });
+```
+
+`register` fails with code `ACCOUNT_ALREADY_ALLOWED` for an account the node already allows, keeping the code, and a submission that would create an unregistered account fails with `ACCOUNT_NOT_ALLOWLISTED`. `accounts.isInvitationCodeValid` answers `false` for an unknown or registered code, and `true` when the node does not enforce an allowlist. `RpcClient.registerAccount`, `RpcClient.isAccountAllowed` and `RpcClient.isInvitationCodeValid` expose the node endpoints directly for flows that hold no account state. See [the allowlist guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/allowlist.md) for the full flow.
 
 ### Create a Faucet
 
 ```typescript
 const faucet = await client.accounts.create({
-  type: AccountType.FungibleFaucet,
+  type: FaucetType.FungibleFaucet,
   symbol: "DAG",
   decimals: 8,
   maxSupply: 10_000_000n
 });
 
 console.log(faucet.id().toString());
-console.log(faucet.isFaucet()); // true
 ```
 
 ### Read Faucet Metadata
@@ -529,9 +598,26 @@ const txId = await client.transactions.send({
 // Sync state to discover new notes
 await client.sync();
 
-// Consume all available notes for an account
+// Consume the notes this account can consume right now. Notes that unlock at a
+// later block are left alone, and are counted in neither number below.
 const result = await client.transactions.consumeAll({ account: wallet });
 console.log(`Consumed ${result.consumed} notes, ${result.remaining} remaining`);
+
+// `remaining === 0` therefore means "nothing consumable now", not "no notes".
+// To see block-locked notes too, with their unlock block:
+const walletId = wallet.id().toString();
+const all = await client.notes.listConsumable({ account: wallet });
+for (const record of all) {
+  // Match the entry to the account you asked about rather than taking the
+  // first: a record can carry one status per account.
+  const entry = record
+    .noteConsumability()
+    .find((nc) => nc.accountId().toString() === walletId);
+  const status = entry?.consumptionStatus();
+  if (status && !status.isConsumableNow()) {
+    console.log(`locked until block ${status.consumableAfterBlock()}`);
+  }
+}
 ```
 
 ### Check Balance
@@ -540,6 +626,49 @@ console.log(`Consumed ${result.consumed} notes, ${result.remaining} remaining`);
 const balance = await client.accounts.getBalance(wallet, dagToken);
 console.log(`Balance: ${balance}`);
 ```
+
+### Read Non-Fungible Assets
+
+```typescript
+await client.sync();
+const { vault } = await client.accounts.getDetails(wallet);
+const assets = vault.nonFungibleAssets().map((asset) => ({
+  issuer: asset.faucetId().toString(),
+  key: asset.vaultKey().toHex(),
+  value: Array.from(asset.intoWord().toU64s()),
+}));
+```
+
+`nonFungibleAssets()` returns only non-fungible assets from the local vault
+snapshot. It returns an empty array when none are present. The order is not
+specified. `faucetId()` identifies the issuer, `vaultKey()` returns the complete
+asset key, and `intoWord().toU64s()` returns all four value limbs as `bigint`
+values. Keep these values as `bigint` or strings to prevent precision loss.
+
+Compare both the complete key and all four value limbs to verify an asset.
+The key alone does not contain the complete value. To reconstruct an asset,
+use `VaultAsset.nonFungible({ key, value })` with the two `Word` objects.
+
+### Build Notes with Either Asset Type
+
+```typescript
+const token = VaultAsset.fungible(faucetId, 100n);
+const name = VaultAsset.nonFungible({ key, value });
+const assets = new NoteAssets([name]);
+assets.push(token);
+```
+
+`NoteAssets` accepts one list of 0 to 16 assets. Existing `FungibleAsset`
+constructor and `push()` calls remain valid. Duplicate IDs and excess assets
+throw catchable errors; a failed push leaves the list unchanged. Inputs remain
+usable. `vault.assets()` and `note.assets().assets()` return both variants;
+use `kind()`, `asFungible()`, or `asNonFungible()` to inspect them.
+
+For registry publishing, use `Note.withAttachments()` with a single name asset,
+public metadata, the registry's approved script and inputs, and
+`[new NetworkAccountTarget(registryId).toAttachment()]`. The registry account
+must be public. A tag alone does not make a network note. Consume the returned P2ID note to put
+the asset back in the vault. See the [non-fungible asset guide](../../docs/external/src/web-client/library/non-fungible-assets.md).
 
 ### Batch Operations
 
@@ -586,6 +715,16 @@ await submitted.apply(); // persist + fire observers
 
 Nothing is persisted until `apply` runs — stopping after `submit()` leaves the local store unaware of the transaction until the next sync. `submitted.waitForConfirmation()` blocks until the transaction commits on-chain.
 
+Clients sharing a browser database read coherent persisted account state.
+Account witnesses refresh when another client changes that state, preserving
+untouched vault assets and storage maps. This does not fetch new chain state;
+continue to sync before relying on on-chain balances.
+
+For browser stores, `apply` requires the stored account to match the
+transaction's execution input. A mismatch rejects before changing account state
+or transaction history. A submitted transaction may already be on-chain when
+local apply fails; check its status before submitting again.
+
 To submit a proof produced somewhere that shares nothing with this client (a detached prover), pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
 
 ### Paying Transaction Fees
@@ -601,15 +740,34 @@ const builder = await client.feeAwareTransactionRequestBuilder(wallet);
 const request = builder.withCustomScript(script).build();
 ```
 
-The argument is the account that will **execute** the request — the one whose auth procedure pays. It is a safe drop-in for `new TransactionRequestBuilder()`: on a chain whose `BlockHeader.verificationBaseFee()` is zero, or for any account that does not choose its own salt, the builder comes back untouched.
+The argument is the account that will **execute** the request — the one whose auth procedure pays. It is a safe drop-in for `new TransactionRequestBuilder()`: for an account that is not a multisig the builder comes back untouched. A zero base fee is not a second condition: since 0.17 a multisig resolves its auth args whatever the chain charges, so a multisig gets them on a fee-free chain too.
 
-To set the salt yourself — which co-signers must do when they need to agree on it without transporting the proposer's bytes — call `builder.withFeeConversionSalt(salt)`. It is a declaration rather than a commitment: `request.feeConversionSalt()` reports it back, `request.authArg()` stays empty, and it survives serialization. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive, and miden-client enforces that by having each setter clear the other, so whichever is called last wins rather than erroring. For a custom auth procedure that reads `AUTH_ARGS` as conversion info, compute the commitment yourself and attach it with `withAuthArg` plus `extendAdviceMap` — setting an auth argument opts the request out of the client's fee machinery, which commits only when the request carries none. Declaring a salt against such an account instead is rejected with `FeeConversionInfoUnsupported`.
+To set the salt yourself — which co-signers must do when they need to agree on it without transporting the proposer's bytes — pass it to `feeAwareTransactionRequestBuilder`, together with the block the summary binds: `client.feeAwareTransactionRequestBuilder(multisig, { feeConversionSalt: salt, boundBlockNum: block })`. Both are bound by the summary, so two parties who disagree on either can never derive the same one. Each call consumes the `Word`: it is moved across the WASM boundary, so a second build needs a freshly constructed one, and a spent handle arrives as "no salt given" rather than as an error. A co-signer who has the proposer's serialized request needs neither — it carries the auth argument and its advice-map preimage.
+
+Do **not** reach for `builder.withFeeConversionSalt(salt)` on that builder. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive, and miden-client enforces that by having each setter clear the other, so calling it discards the three-word multisig auth args the builder already carries and the transaction aborts in the auth procedure. On a bare `new TransactionRequestBuilder()` the setter is still a declaration rather than a commitment — `request.feeConversionSalt()` reports it back, `request.authArg()` stays empty, and it survives serialization — which is what a single-sig or custom-auth caller wants. For a custom auth procedure that reads `AUTH_ARGS` as conversion info, compute the commitment yourself and attach it with `withAuthArg` plus `extendAdviceMap` — setting an auth argument opts the request out of the client's fee machinery, which commits only when the request carries none. Declaring a salt against such an account instead is rejected with `FeeConversionInfoUnsupported`.
 
 One path the SDK cannot declare a salt on: `client.pswap.cancelByOrder` builds its request inside miden-client, so there is no builder. An ordinary creator has its conversion info committed and pays normally; a multisig creator fails with `FeeConversionInfoRequired`, so cancel by note with `client.transactions.pswapCancel` there. See the [transactions guide](https://docs.miden.xyz/builder/tools/clients/web-client/library/transactions) for the full narrative.
 
+### Multisig Proposals: Execute at the Tip
+
+Since protocol 0.17 a multisig summary binds a **bound block** named in the multisig auth args, not the reference block the transaction executes at. `feeAwareTransactionRequestBuilder` binds the current sync height and adds that block to the request with `withBlockNumbers`, so the proposer, every co-signer and the executor can all run the proposal at their own current tip and derive the same summary. Each party's client must first have synced to at least the bound block (the largest of `request.blockNumbers()`, by default the proposer's sync height when it built the request); a client below it fails with `requested block N is after transaction reference block M` until it syncs. Do not re-execute a multisig proposal at an anchor: a node keeps account state for only 50 blocks and every fee-paying transaction loads the fee faucet as a foreign account, so anchored re-execution of an older proposal fails with `block N has been pruned`, and a transaction executed at an older reference block expires 20 blocks after it anyway.
+
+```typescript
+// Proposer
+const request = (await client.feeAwareTransactionRequestBuilder(multisig))
+  .withCustomScript(script)
+  .build();
+const summary = await client.transactions.preview({ operation: "custom", account: multisig, request });
+// Co-signer: `await client.sync()`, then preview the proposer's request bytes at
+// the local tip and compare `toCommitment()`. Executor:
+await client.transactions.submit(multisig, request);
+```
+
+Available from `0.17.0-rc.4`. See [the transactions guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/transactions.md#multisig-proposals-bind-a-block-execute-at-the-tip) for verification details.
+
 ### Chain-Anchored Execution
 
-Transactions execute against the client's current sync height by default. Since protocol 0.16 a signed transaction summary binds the reference block commitment, so signatures collected over a summary only authorize an execution at that exact block — which breaks any flow that collects signatures and executes later, since the proposer, co-signers, and executor are all at different heights.
+For a multisig, use the tip flow above. This section applies when the summary binds the **reference block**, as a single-signature (`signature.masm`) account's does: signatures collected over it only authorize an execution at that exact block, which breaks any flow that collects signatures and executes later.
 
 A `ChainAnchor` pins the reference block so the same summary reproduces on a client at a different sync height:
 
@@ -624,7 +782,7 @@ import {
 const anchor = await client.transactions.captureAnchor(request);
 const summary = await client.transactions.preview({
   operation: "custom",
-  account: multisig,
+  account,
   request,
   anchor,
 });
@@ -636,16 +794,16 @@ await shipToCosigners(
 
 // Co-signer: re-derive at the proposer's anchor and compare before signing.
 // Re-derive from the proposer's request bytes, never from a locally rebuilt
-// request — a multisig request's fee conversion info carries a salt drawn fresh
-// on every build, and the auth procedure uses it as the summary's replay guard,
-// so a rebuilt request yields a different summary and the check below fails as
-// if the proposal had been tampered with.
+// request: on a fee-charging chain its fee conversion info carries a salt drawn
+// fresh on every build, and output notes draw fresh serial numbers, so a rebuilt
+// request yields a different summary and the check below fails as if the
+// proposal had been tampered with.
 const received = ChainAnchor.deserialize(anchorBytes);
 const proposed = TransactionSummary.deserialize(summaryBytes);
 const proposedRequest = TransactionRequest.deserialize(requestBytes);
 const derived = await client.transactions.preview({
   operation: "custom",
-  account: multisig,
+  account,
   request: proposedRequest,
   anchor: received,
 });
@@ -654,7 +812,7 @@ if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
 }
 
 // Executor: replay at the same anchor, whatever the local height is by now.
-await client.transactions.submit(multisig, request, { anchor: received });
+await client.transactions.submit(account, request, { anchor: received });
 ```
 
 The `anchor` option is available on `preview({ operation: "custom" })`, `executeRequest`, and `submit` — the methods that take a caller-built request.
@@ -662,16 +820,17 @@ The `anchor` option is available on `preview({ operation: "custom" })`, `execute
 The re-derivation above proves the request, anchor and summary agree with each other. It does not prove the transaction does what you want — all three came from the proposer, so they agree by construction for any request the proposer chose. A cheap consistency check on top:
 
 ```typescript
-// The summary signs its reference block, so a mismatched anchor is detectable
-// without paying for an execution.
+// A summary that binds the reference block signs that block, so a mismatched
+// anchor is detectable without paying for an execution. (A multisig summary
+// binds its bound block instead and takes no anchor.)
 if (received.commitment().toHex() !== proposed.blockCommitment().toHex()) {
   throw new Error("anchor is not the block this summary was built at");
 }
 ```
 
-Before signing, inspect what the transaction actually does — `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()`, and `summary.expirationDelta()` for how long the authorization stays live (`0` means no expiration was set, not that it has already expired) — and confirm it matches what you agreed to. `ChainAnchor` enforces only that its header and partial blockchain are consistent with each other, which is computable over an invented chain; fetch the header for `anchor.blockNum()` with `RpcClient.getBlockHeaderByNumber` and compare commitments to confirm the block is real.
+Before signing, inspect what the transaction actually does — `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()`, and `summary.expirationDelta()` for how long the authorization stays live (`0` means no expiration was set, not that it has already expired) — and confirm it matches what you agreed to. For storage, `summary.accountDelta().storage()` names each changed slot: `valueSlots()` gives a value slot's `slotName`, `operation` and final `value`, and `mapSlots()` gives a map slot's `slotName`, `operation` and changed `entries()` (`key`, `value`), so a change to a multisig's signer set or threshold is visible before you sign. `ChainAnchor` enforces only that its header and partial blockchain are consistent with each other, which is computable over an invented chain; fetch the header for `anchor.blockNum()` with `RpcClient.getBlockHeaderByNumber` and compare commitments to confirm the block is real.
 
-An anchor pins the **reference block and chain data only**. Account state and authenticated input-note records still come from each participant's own local store, so every party must also agree on the account state. If the account moved in a way that changes the transaction's effects, the re-derived summary will not match even though the anchor is correct — the most common reason a multisig flow fails.
+An anchor pins the **reference block and chain data only**. Account state and authenticated input-note records still come from each participant's own local store, so every party must also agree on the account state. If the account moved in a way that changes the transaction's effects, the re-derived summary will not match even though the anchor is correct - the most common reason a co-signing flow fails.
 
 A match, however, does not prove the two parties agree on account state. The summary binds the account *delta*, not the state it applies to, so divergence that leaves the delta and note sets unchanged — an unrelated nonce bump, assets arriving, or a change to a multisig's signer set or threshold — yields an identical commitment and passes verification. Signatures gathered under one threshold stay valid after it is lowered. Check the state you care about directly.
 
@@ -679,7 +838,7 @@ See [the transactions guide](https://github.com/0xMiden/web-sdk/blob/main/docs/e
 
 ### Foreign Accounts
 
-A transaction that invokes a procedure on another account declares it as a `ForeignAccount`. Three kinds:
+A transaction that invokes a procedure on another account declares it as a `ForeignAccount`. Two kinds:
 
 ```typescript
 import { ForeignAccount, AccountStorageRequirements } from "@miden-sdk/miden-sdk";
@@ -689,19 +848,9 @@ ForeignAccount.public(oracleAccountId, new AccountStorageRequirements());
 
 // Private — the caller supplies the state; only an inclusion proof is fetched.
 ForeignAccount.private(account);
-
-// Prefetched — the caller supplies state and witness; nothing is fetched.
-const blockNum = await client.getSyncHeight();
-const inputs = await client.transactions.foreignAccountInputs(
-  [ForeignAccount.public(oracleAccountId, new AccountStorageRequirements())],
-  blockNum
-);
-ForeignAccount.prefetched(inputs[0]);
 ```
 
-A witness opens against the account tree of exactly one block, so inputs fetched at block `N` are valid only for a transaction whose reference block is `N` — the anchor's block under chain-anchored execution, or the sync height otherwise. Don't sync between fetching and executing.
-
-Prefetched inputs serialize (`inputs[0].serialize()` / `AccountInputs.deserialize(bytes)`), so one client can fetch them and another can execute against them, and a transaction pinned to an older block can still execute after the node stops serving account state there.
+A public entry's inputs are fetched against the transaction's reference block, and the vault and storage maps the foreign code actually reads are resolved during execution as per-asset and per-key witnesses rather than up front. A transaction pinned to a block the node no longer serves account state for therefore cannot execute: pin it to a recent block instead.
 
 ### Partial-Swap (PSWAP) Orders
 
@@ -773,13 +922,17 @@ const { txId, note } = await client.transactions.createNetworkNote({
 console.log(note.isNetworkNote()); // true
 ```
 
-Provide exactly one of `script` or `recipient`. Notes are always Public — the attachment, not the tag, is what a network account matches on. The standalone `buildNetworkNote(opts)` builds the same note without submitting.
+Provide exactly one of `script` or `recipient`. Notes are always Public - the attachment, not the tag, is what a network account matches on. The standalone `buildNetworkNote(opts)` builds the same note without submitting; the transaction that emits it must then declare the target as a foreign account (`withForeignAccounts`), which `createNetworkNote` does for you (see the network notes guide for the full request).
 
 To create the receiving account, build a **public** account carrying the network-account auth component — its note-script allowlist tells the node which notes the account may auto-consume:
 
 ```typescript
 // Each allowed note script carries the fee charged to consume it, in the
-// fungible asset of `feeFaucetId`. Zero is a valid price.
+// chain's fee asset. Zero is a valid price. The fee faucet must be the chain's
+// own: the node never runs network transactions for an account whose fee asset
+// differs from the chain's protocol configuration, and says nothing to the
+// client - the account's notes are simply never consumed.
+const feeFaucetId = await client.feeFaucetId();
 const components = AccountComponent.createNetworkAuthComponents(
   [new NoteScriptFee(myNoteScript.root(), 0n)],
   feeFaucetId
@@ -794,11 +947,11 @@ for (const component of components) builder.withComponent(component);
 const { account } = builder.build();
 ```
 
-The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional third argument (`TransactionScript.root()`). The component bumps the nonce itself, so the account deploys via a scriptless transaction. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
+The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional third argument (`TransactionScript.root()`). Deploying the account needs an effect: since 0.17 the auth component asserts the transaction consumed an input note, created an output note, or changed account state before it pays the fee, so an empty transaction aborts. Consume a note the account allowlists, or run an allowlisted transaction script that changes its state. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
 
 ### Cleanup
 
-When you're finished using a MidenClient instance, call `terminate()` to release its Web Worker:
+When you're finished using a MidenClient instance, call `terminate()`. In the browser it stops the client's Web Worker if there is one, and releases its main-realm wasm client and, through it, its IndexedDB connection once the calls already queued or running have settled. On the Node.js binding it releases nothing.
 
 ```typescript
 client.terminate();
@@ -808,7 +961,15 @@ client.terminate();
   using client = await MidenClient.create();
   // ... use client ...
 } // client.terminate() called automatically
+
+// To wait for the release, e.g. before deleting or reopening the store:
+{
+  await using client = await MidenClient.create();
+  // ... use client ...
+} // terminates, then resolves once the wasm client is freed and its store released
 ```
+
+A store that several clients share stays open until the last of them is terminated. A store handle you obtain yourself, such as an `AccountReader` from `accountReader`, keeps the connection open until you call its `free()`.
 
 ## Observability
 

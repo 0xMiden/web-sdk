@@ -9,7 +9,7 @@ export async function getOutputNotes(dbId, states) {
                 .where("stateDiscriminant")
                 .anyOf(states)
                 .toArray();
-        return await processOutputNotes(notes);
+        return await processOutputNotes(dbId, notes);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get output notes");
@@ -64,7 +64,7 @@ export async function getOutputNotesFromNullifiers(dbId, nullifiers) {
             .where("nullifier")
             .anyOf(nullifiers)
             .toArray();
-        return await processOutputNotes(notes);
+        return await processOutputNotes(dbId, notes);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get output notes from nullifiers");
@@ -103,7 +103,7 @@ export async function getOutputNotesFromDetailsCommitments(dbId, detailsCommitme
             .where("detailsCommitment")
             .anyOf(detailsCommitments)
             .toArray();
-        return await processOutputNotes(notes);
+        return await processOutputNotes(dbId, notes);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get output notes from details commitments");
@@ -113,7 +113,7 @@ export async function getOutputNotesFromIds(dbId, noteIds) {
     try {
         const db = getDatabase(dbId);
         let notes = await db.outputNotes.where("noteId").anyOf(noteIds).toArray();
-        return await processOutputNotes(notes);
+        return await processOutputNotes(dbId, notes);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get output notes from IDs");
@@ -229,7 +229,7 @@ export async function getInputNoteAfter(dbId, states, consumerAccountId, blockSt
         logWebStoreError(err, "Failed to get input note after cursor");
     }
 }
-export async function upsertOutputNote(dbId, detailsCommitment, noteId, assets, attachments, recipientDigest, metadata, nullifier, expectedHeight, stateDiscriminant, state, tx) {
+export async function upsertOutputNote(dbId, detailsCommitment, noteId, assets, attachments, recipientDigest, metadata, nullifier, expectedHeight, stateDiscriminant, state, scriptRoot, serializedNoteScript, tx) {
     const db = getDatabase(dbId);
     const doWork = async (t) => {
         try {
@@ -242,10 +242,15 @@ export async function upsertOutputNote(dbId, detailsCommitment, noteId, assets, 
                 metadata,
                 nullifier: nullifier ? nullifier : undefined,
                 expectedHeight,
+                // Only known once the recipient is known.
+                scriptRoot: scriptRoot ?? undefined,
                 stateDiscriminant,
                 state,
             };
             await t.outputNotes.put(data);
+            if (scriptRoot && serializedNoteScript) {
+                await t.notesScripts.put({ scriptRoot, serializedNoteScript });
+            }
             /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
         }
         catch (error) {
@@ -283,10 +288,18 @@ async function processInputNotes(dbId, notes) {
         };
     }));
 }
-async function processOutputNotes(notes) {
-    return await Promise.all(notes.map((note) => {
+async function processOutputNotes(dbId, notes) {
+    const db = getDatabase(dbId);
+    return await Promise.all(notes.map(async (note) => {
         const assetsBase64 = uint8ArrayToBase64(note.assets);
         const metadataBase64 = uint8ArrayToBase64(note.metadata);
+        let serializedNoteScriptBase64 = undefined;
+        if (note.scriptRoot) {
+            const record = await db.notesScripts.get(note.scriptRoot);
+            if (record) {
+                serializedNoteScriptBase64 = uint8ArrayToBase64(record.serializedNoteScript);
+            }
+        }
         const stateBase64 = uint8ArrayToBase64(note.state);
         const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
         return {
@@ -294,6 +307,7 @@ async function processOutputNotes(notes) {
             recipientDigest: note.recipientDigest,
             metadata: metadataBase64,
             expectedHeight: note.expectedHeight,
+            serializedNoteScript: serializedNoteScriptBase64,
             state: stateBase64,
             attachments: attachmentsBase64,
         };

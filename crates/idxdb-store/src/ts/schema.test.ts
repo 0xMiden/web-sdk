@@ -1,7 +1,8 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import Dexie from "dexie";
 import {
   openDatabase,
+  closeDatabase,
   getDatabase,
   MidenDatabase,
   CLIENT_VERSION_SETTING_KEY,
@@ -232,6 +233,80 @@ describe("MidenDatabase migrations", () => {
     const userRow = await mdb.settings.get([SETTING_SCOPE_USER, "shared"]);
     expect(userRow!.value).toEqual(new Uint8Array([2]));
   });
+
+  // v6: account witness registry. A null witness is a registered account the sync has not
+  // refreshed yet.
+  it("v6 migration adds accountWitnesses", async () => {
+    const name = uniqueDbName();
+
+    const dbV1 = trackDb(new Dexie(name));
+    dbV1.version(1).stores(V1_STORES);
+    await dbV1.open();
+    dbV1.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.15.5")).toBe(true);
+
+    await mdb.accountWitnesses.add({ accountId: "0xacc", witness: null });
+    expect(await mdb.accountWitnesses.get("0xacc")).toEqual({
+      accountId: "0xacc",
+      witness: null,
+    });
+  });
+
+  // v7: drops the private-note relay queue a 0.17.1 client could leave behind. See the
+  // version(7) block in schema.ts.
+  it("v7 migration deletes only the client-scope note transport outbox row", async () => {
+    const name = uniqueDbName();
+    const outboxKey = "note_transport_outbox";
+
+    const dbV6 = trackDb(new Dexie(name));
+    dbV6.version(6).stores({
+      ...V1_STORES,
+      inputNotes:
+        "detailsCommitment,noteId,nullifier,scriptRoot,stateDiscriminant,[consumedBlockHeight+consumedTxOrder+detailsCommitment]",
+      settings: "[scope+key],scope",
+      accountWitnesses: "&accountId",
+    });
+    await dbV6.open();
+    await dbV6.table("settings").bulkPut([
+      // Same minor as the version opened below, so ensureClientVersion keeps the store.
+      {
+        scope: SETTING_SCOPE_CLIENT,
+        key: CLIENT_VERSION_SETTING_KEY,
+        value: new TextEncoder().encode("0.17.1"),
+      },
+      {
+        scope: SETTING_SCOPE_CLIENT,
+        key: outboxKey,
+        value: new Uint8Array([1]),
+      },
+      { scope: SETTING_SCOPE_USER, key: outboxKey, value: new Uint8Array([2]) },
+      {
+        scope: SETTING_SCOPE_CLIENT,
+        key: "note_transport_cursors",
+        value: new Uint8Array([3]),
+      },
+    ]);
+    dbV6.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.17.2")).toBe(true);
+
+    expect(await mdb.settings.get([SETTING_SCOPE_CLIENT, outboxKey])).toBe(
+      undefined
+    );
+    expect(
+      (await mdb.settings.get([SETTING_SCOPE_USER, outboxKey]))!.value
+    ).toEqual(new Uint8Array([2]));
+    expect(
+      (await mdb.settings.get([
+        SETTING_SCOPE_CLIENT,
+        "note_transport_cursors",
+      ]))!.value
+    ).toEqual(new Uint8Array([3]));
+    expect(await mdb.settings.count()).toBe(3);
+  });
 });
 
 // ============================================================
@@ -258,6 +333,103 @@ describe("openDatabase", () => {
     ]);
     expect(record).toBeDefined();
     expect(new TextDecoder().decode(record!.value)).toBe("1.0.0");
+  });
+});
+
+describe("openDatabase / closeDatabase holders", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("keeps a database open until its last holder closes it", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "1.0.0");
+    await openDatabase(name, "1.0.0");
+    const db = trackMidenDb(getDatabase(name));
+
+    closeDatabase(name);
+    expect(getDatabase(name)).toBe(db);
+    expect(db.dexie.isOpen()).toBe(true);
+
+    closeDatabase(name);
+    expect(db.dexie.isOpen()).toBe(false);
+    expect(() => getDatabase(name)).toThrow(/Database not found/);
+  });
+
+  it("opens one connection for concurrent opens of the same name", async () => {
+    const name = uniqueDbName();
+    const openSpy = vi.spyOn(MidenDatabase.prototype, "open");
+
+    await Promise.all([
+      openDatabase(name, "1.0.0"),
+      openDatabase(name, "1.0.0"),
+    ]);
+    expect(openSpy).toHaveBeenCalledTimes(1);
+
+    const db = trackMidenDb(getDatabase(name));
+    closeDatabase(name);
+    expect(db.dexie.isOpen()).toBe(true);
+    closeDatabase(name);
+    expect(db.dexie.isOpen()).toBe(false);
+  });
+
+  it("leaves the registered database in place when a reopen fails", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "1.0.0");
+    const first = trackMidenDb(getDatabase(name));
+    // A connection closed elsewhere makes the next open a real one.
+    first.dexie.close();
+
+    let failed: MidenDatabase | undefined;
+    vi.spyOn(MidenDatabase.prototype, "open").mockImplementationOnce(
+      async function (this: MidenDatabase) {
+        failed = this;
+        await this.dexie.open();
+        throw new Error("open failed");
+      }
+    );
+
+    await expect(openDatabase(name, "1.0.0")).rejects.toThrow("open failed");
+    expect(getDatabase(name)).toBe(first);
+    expect(failed).toBeDefined();
+    expect(failed!.dexie.isOpen()).toBe(false);
+  });
+
+  it("replaces a registered database whose connection was closed elsewhere", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "1.0.0");
+    const first = trackMidenDb(getDatabase(name));
+    first.dexie.close();
+
+    await openDatabase(name, "1.0.0");
+    const second = trackMidenDb(getDatabase(name));
+    expect(second).not.toBe(first);
+    expect(second.dexie.isOpen()).toBe(true);
+
+    // The first holder still holds the name, so one close keeps it open.
+    closeDatabase(name);
+    expect(second.dexie.isOpen()).toBe(true);
+    closeDatabase(name);
+    expect(second.dexie.isOpen()).toBe(false);
+  });
+
+  it("closes a replaced connection that reopened while the fresh open was in flight", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "1.0.0");
+    const first = trackMidenDb(getDatabase(name));
+    first.dexie.close();
+
+    const reopening = openDatabase(name, "1.0.0");
+    await first.dexie.open();
+    await reopening;
+
+    const second = trackMidenDb(getDatabase(name));
+    expect(second).not.toBe(first);
+    expect(first.dexie.isOpen()).toBe(false);
+  });
+
+  it("ignores a close for a name that was never opened", () => {
+    expect(() => closeDatabase(uniqueDbName())).not.toThrow();
   });
 });
 

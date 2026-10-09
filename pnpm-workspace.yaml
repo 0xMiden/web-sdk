@@ -9,7 +9,7 @@
 # imports now live here, so it can resolve them via workspace:*.)
 #
 # Every member is listed explicitly. A bare `packages/*` glob would
-# sweep in the three packages/node-sdk-* platform shells, which carry a
+# sweep in the four packages/node-sdk-* platform shells, which carry a
 # package.json but must not be workspace members.
 packages:
   - 'packages/react-sdk'

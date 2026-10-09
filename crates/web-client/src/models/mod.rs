@@ -36,7 +36,6 @@ pub mod account_delta;
 pub mod account_file;
 pub mod account_header;
 pub mod account_id;
-pub mod account_inputs;
 pub mod account_patch;
 pub mod account_proof;
 pub mod account_reader;
@@ -48,6 +47,7 @@ pub mod account_type;
 pub mod address;
 pub mod advice_inputs;
 pub mod advice_map;
+pub mod asset;
 pub mod asset_callback_flag;
 pub mod asset_vault;
 pub mod auth;
@@ -75,6 +75,7 @@ pub mod library;
 pub mod merkle_path;
 pub mod network_account_target;
 pub mod network_note_status;
+pub mod non_fungible_asset;
 pub mod note;
 pub mod note_assets;
 pub mod note_attachment;
@@ -141,7 +142,6 @@ declare_js_miden_arrays! {
     (crate::models::storage_slot::StorageSlot) -> StorageSlotArray,
     (crate::models::transaction_script_inputs::TransactionScriptInputPair) -> TransactionScriptInputPairArray,
     (crate::models::felt::Felt) -> FeltArray,
-    (crate::models::account_inputs::AccountInputs) -> AccountInputsArray,
     (crate::models::transaction_request::note_and_args::NoteAndArgs) -> NoteAndArgsArray,
     (crate::models::transaction_request::note_details_and_tag::NoteDetailsAndTag) -> NoteDetailsAndTagArray,
     (crate::models::transaction_request::note_id_and_args::NoteIdAndArgs) -> NoteIdAndArgsArray

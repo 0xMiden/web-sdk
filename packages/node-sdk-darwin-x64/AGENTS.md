@@ -14,10 +14,10 @@ The SDK is `@miden-sdk/miden-sdk`. Its guide, which is the one you want, is at
 
 ## Why it is installed
 
-`@miden-sdk/miden-sdk` lists the three native packages as
-`optionalDependencies`, so your package manager installs only the one matching
-the current platform and silently skips the rest. On Node.js the SDK's loader
-resolves the binary in this order:
+`@miden-sdk/miden-sdk` lists the native packages as `optionalDependencies`, so
+your package manager installs only the one matching the current platform and
+silently skips the rest. On Node.js the SDK's loader resolves the binary in
+this order:
 
 1. `MIDEN_MODULE_PATH`, or an explicit `modulePath` option
 2. the platform package for `darwin-x64`, which is this one
@@ -38,8 +38,9 @@ Do not try to require this package directly, and do not add it to your
   platform, or set `MIDEN_MODULE_PATH` to a binary you supply.
 - **`--no-optional`, or a lockfile pinned on another platform.** Optional
   dependencies are how this is delivered; skipping them skips the binary.
-- **musl rather than glibc.** The Linux package links against glibc. Alpine and
-  other musl distributions are not covered by it.
+- **musl rather than glibc.** On Linux the loader picks the glibc or the musl
+  package by the runtime C library. The musl one is
+  `@miden-sdk/node-linux-x64-musl`.
 
 In the browser none of this applies: the browser build runs WASM and never
 loads a native module.

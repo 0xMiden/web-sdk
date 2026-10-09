@@ -39,6 +39,14 @@ import { MidenProvider } from "@miden-sdk/react";
                                 //   | { primary, fallback, disableFallback?, onFallback? }
     autoSyncInterval: 15000,    // ms, set to 0 to disable. Default: 15000
     noteTransportUrl: "...",    // optional: for private note delivery
+    noteTransportMaxRetries: 3, // optional: in-call retries of a private note send after a
+                                //   transient transport failure. 0..10, default 3
+    noteTransportRetryIntervalMs: 250, // optional: delay before the first retry, doubling
+                                //   for each later one. 0..60000 ms, default 250.
+                                //   Together: at most 120000 ms of total backoff,
+                                //   interval * (2^retries - 1). Retries hold the
+                                //   provider lock, blocking other client calls;
+                                //   0 retries suits a latency-sensitive UI
     useWorker: true,            // default true; set FALSE for a CallbackProver (a native
                                 //   iOS/Android prover behind a Capacitor plugin) or a
                                 //   single-WebView native shell. The worker boundary
@@ -198,17 +206,17 @@ Auth scheme for the create/import hooks. At runtime the `AuthScheme` re-exported
 ```tsx
 import { AuthScheme } from "@miden-sdk/react";
 // AuthScheme.Falcon === "falcon"   |   AuthScheme.ECDSA === "ecdsa"
-// AuthScheme.AuthRpoFalcon512 === undefined   <- the trap below
+// AuthScheme.AuthRpoFalcon512 === undefined   <- the wasm enum's names are not on it
 ```
 
-> **Known issue, still OPEN in 0.16 ([web-sdk#223](https://github.com/0xMiden/web-sdk/issues/223)):** `useCreateWallet`, `useCreateFaucet`, `useImportAccount` and `useSessionAccount` forward `authScheme` straight to the low-level wasm calls (`newWallet`, `newFaucet`, `importPublicAccountFromSeed`), which expect the **numeric** wasm enum (`AuthRpoFalcon512 = 2`, `AuthEcdsaK256Keccak = 1`), not the friendly string. The hooks' own default is `AuthScheme.AuthRpoFalcon512`, which resolves to `undefined` for the reason above, and wasm-bindgen's `invalid enum value passed` throws inside a worker closure so the promise **never settles** - the call hangs rather than rejecting. Until it is fixed, always pass the numeric value explicitly: `authScheme: 2` (Falcon) or `authScheme: 1` (ECDSA). The examples below use `2`.
+`useCreateWallet`, `useCreateFaucet`, `useImportAccount` (seed import) and `useSessionAccount` (`walletOptions`) accept `AuthScheme.Falcon` and `AuthScheme.ECDSA`: the low-level `newWallet`, `newFaucet` and `importPublicAccountFromSeed` they call resolve the string to the numeric wasm enum. Omitting `authScheme` uses `DEFAULTS.AUTH_SCHEME`, which is `AuthScheme.Falcon`. The numeric wasm enum values `2` (Falcon) and `1` (ECDSA) still pass through unchanged; any other value rejects with `Unknown auth scheme`.
 
 ### useCreateWallet()
 ```tsx
 const { createWallet, wallet, isCreating, error, reset } = useCreateWallet();
 const account = await createWallet({
   storageMode: "private",                   // "private" | "public". Default: "private"
-  authScheme: 2,                            // 2 = Falcon; friendly AuthScheme.* not accepted here yet (web-sdk#223)
+  authScheme: AuthScheme.Falcon,            // AuthScheme.Falcon | AuthScheme.ECDSA. Default: Falcon
   initSeed: seedBytes,                       // optional: Uint8Array for a deterministic account id
 });
 ```
@@ -222,7 +230,7 @@ const account = await createFaucet({
   decimals: 8,                              // Default: 8
   maxSupply: 1000000n,                      // bigint | number
   storageMode: "private",                   // "private" | "public". Default: "private"
-  authScheme: 2,                            // 2 = Falcon; friendly AuthScheme.* not accepted here yet (web-sdk#223)
+  authScheme: AuthScheme.Falcon,            // AuthScheme.Falcon | AuthScheme.ECDSA. Default: Falcon
 });
 ```
 
@@ -240,7 +248,7 @@ const account = await importAccount({ type: "file", file: accountFileOrBytes });
 const account = await importAccount({
   type: "seed",
   seed: seedBytes,
-  authScheme: 2,                            // optional; 2 = Falcon (web-sdk#223 - friendly AuthScheme.* not accepted here yet)
+  authScheme: AuthScheme.Falcon,            // optional. Default: AuthScheme.Falcon
 });
 ```
 
@@ -269,7 +277,22 @@ await send({
 
 **Combining `attachment` with `recallHeight` or `timelockHeight` throws**, before anything is built: `"recallHeight and timelockHeight are not supported when attachment is provided"`. The attachment path constructs the P2ID note by hand and has nowhere to put either height. Pick one or the other.
 
-**Private notes need an explicit delivery push, and the hook does it for you.** For `noteType: "private"` `useSend` waits for the transaction to commit and then calls `client.sendPrivateOutputNote(noteId, recipientAddress)` to hand the note details to the recipient over the note-transport layer. The same push happens in `useMultiSend` (once per private recipient, after one shared commit wait) and in `useTransaction` when `privateNoteTarget` is set. Without it a private note is **never delivered** - the recipient has no way to learn it exists. A public note needs no such push. If you hand-roll a private send through `useTransaction`, either pass `privateNoteTarget` or make the `sendPrivateOutputNote` call yourself.
+**Private notes need an explicit delivery push, and the hook does it for you.** For `noteType: "private"` `useSend` waits for the transaction to commit and then calls `client.sendPrivateOutputNote(noteId, recipientAddress)` to hand the note details to the recipient over the note-transport layer. That call reads the inclusion proof sync stored on the output note and throws if this client has not synced past the commitment. The same push happens in `useMultiSend` (once per private recipient, after one shared commit wait) and in `useTransaction` when `privateNoteTarget` is set. Without it a private note is **never delivered** - the recipient has no way to learn it exists. A public note needs no such push. If you hand-roll a private send through `useTransaction`, either pass `privateNoteTarget` or make the `sendPrivateOutputNote` call yourself.
+
+**An undelivered private note rejects the call, but the transaction stands.** Once the transaction is submitted, a note that is not delivered (the transport rejects it, the commit wait times out, or applying the transaction locally fails) makes the hook reject with `PrivateNoteDeliveryError` (code `PRIVATE_NOTE_DELIVERY_FAILED`) carrying `transactionId`, `commitment` (`"committed"` or `"unknown"`), `delivered`, `undelivered` and `cause`. Every owed note is attempted first, so `useMultiSend` does not stop at the first failure. A discarded transaction is still a plain error: nothing was delivered because nothing landed. The SDK keeps no queue and no sync re-sends a note, so retry with `useResendPrivateNotes`:
+
+```tsx
+const { resend } = useResendPrivateNotes();
+try {
+  await send({ from, to, assetId, amount: 100n, noteType: "private" });
+} catch (err) {
+  if (err instanceof PrivateNoteDeliveryError) {
+    await resend({ transactionId: err.transactionId, notes: err.undelivered });
+  }
+}
+```
+
+`resend` syncs once and relays through `runExclusive`; a note that still fails comes back in a new `PrivateNoteDeliveryError`, and repeating is safe because delivery is idempotent by note id. `useTransaction` checks `privateNoteTarget` before executing, so a malformed target fails before anything is submitted.
 
 ### useMultiSend()
 ```tsx
@@ -345,7 +368,8 @@ await execute({
   skipSync: true,             // optional: skip the auto-sync before executing
   privateNoteTarget: "0x...", // optional: deliver private output notes to this account
                               //   after the transaction commits
-  anchor,                     // optional: execute against a pinned reference block
+  anchor,                     // optional: execute against a pinned reference block;
+                              //   not for a multisig proposal, which runs at the tip
                               //   (see "Chain-Anchored Execution")
 });
 ```
@@ -381,7 +405,7 @@ const { initialize, sessionAccountId, isReady, step, error, reset } = useSession
   assetId: faucetId,              // optional, RESERVED: the hook body never reads it
   walletOptions: {                // optional: session wallet creation options
     storageMode: "public",                    // "private" | "public". Default: "public"
-    authScheme: 2,                            // 2 = Falcon (web-sdk#223)
+    authScheme: AuthScheme.Falcon,            // AuthScheme.Falcon | AuthScheme.ECDSA. Default: Falcon
   },
   pollIntervalMs: 3000,           // optional: funding detection interval. Default: 3000
   maxWaitMs: 60000,               // optional: max wait for the funding note. Default: 60000
@@ -399,7 +423,9 @@ Three things that surprise people here:
 
 ## Chain-Anchored Execution
 
-Since protocol 0.16 a signed transaction summary binds the reference block commitment, so signatures collected over a summary only authorize an execution at that exact block. Any flow that collects signatures and executes later - multisig, offline co-signing - captures a `ChainAnchor` next to the summary and ships both.
+A summary that binds the reference block commitment only authorizes an execution at that exact block, so a flow that collects such signatures and executes later - single-signature offline co-signing - captures a `ChainAnchor` next to the summary and ships both.
+
+A multisig proposal (0.17+) needs no anchor: its summary binds the block its auth args name. Build it with `client.feeAwareTransactionRequestBuilder(accountId)`, which declares that block with `withBlockNumbers`, ship the request bytes, and let every party preview and execute at its own tip once its client has synced to at least the bound block (the largest of `request.blockNumbers()`). Below that height the call fails with `requested block N is after transaction reference block M` until the client syncs. `usePreview` does not sync first, and `useTransaction` syncs through the provider's `sync()`, which returns early while another sync runs and records failures instead of throwing, so after syncing confirm `await client.getSyncHeight()` is at least that block before previewing or executing. Re-executing an older multisig proposal at an anchor fails once the node prunes that block's account state (50 blocks).
 
 ```tsx
 const { captureAnchor, anchor, anchoredRequest, isCapturing, error, reset } = useChainAnchor();
@@ -410,10 +436,11 @@ const { execute } = useTransaction();
 const captured = await captureAnchor({ request: txRequest });
 
 // 2. Derive the summary the account is being asked to authorize, at that block.
-const s = await preview({ accountId, request: anchoredRequest ?? txRequest, anchor: captured });
+const s = await preview({ accountId, request: txRequest, anchor: captured });
 
-// 3. Collect signatures, then execute against the SAME request and anchor.
-await execute({ accountId, request: anchoredRequest ?? txRequest, anchor: captured });
+// 3. Collect signatures, then execute against the SAME request and anchor. Inside this
+//    handler that is txRequest; on a later interaction use `anchoredRequest` and `anchor`.
+await execute({ accountId, request: txRequest, anchor: captured });
 ```
 
 **The trap: never re-invoke a request factory once an anchor exists.** A factory resolves to a new object per call, and two draws from the client's RNG make that object differ every time: any builder minting an output note takes a fresh serial number, and on a fee-charging chain the fee conversion info takes a fresh salt, which reaches even a request with no output notes. A second call therefore yields a transaction the anchor does not pin and the co-signers did not approve. Preview and execute against `anchoredRequest`, the exact request the anchor was captured for. Note `anchoredRequest` is state: inside the handler that just captured, it still holds the previous render's value (`null` on a first capture), so use the object you resolved yourself there and `anchoredRequest` on a later interaction.
@@ -430,7 +457,7 @@ const bytes = captured.serialize();                   // ship to co-signers
 const rebuilt = ChainAnchor.deserialize(bytes);
 ```
 
-`usePreview` is the first summary surface in the React SDK: verifying and co-signing a multisig proposal no longer requires dropping to the WASM client. The summary only exists while authorization is pending, i.e. when the account's auth procedure aborts with the unauthorized event (a multisig below its signing threshold). Pass `anchor` whenever you are verifying a proposal, because deriving the summary at the local sync height produces a different summary.
+`usePreview` is the first summary surface in the React SDK: verifying and co-signing a multisig proposal no longer requires dropping to the WASM client. The summary only exists while authorization is pending, i.e. when the account's auth procedure aborts with the unauthorized event (a multisig below its signing threshold). For a multisig request from `feeAwareTransactionRequestBuilder`, preview without an anchor after syncing to its bound block. Pass `anchor` when verifying a summary that binds the reference block, because deriving that summary at the local sync height produces a different one.
 
 ## Network Notes
 
@@ -607,7 +634,7 @@ toBech32AccountId("0x1234...");       // "mtst1..." (testnet HRP; defaults to te
 
 `formatNoteSummary(summary, formatAsset?)`: with an **empty `assets` array it returns `summary.id` alone** - no asset text and **no sender suffix**, regardless of whether `sender` is set. Otherwise it joins the assets with `" + "` and appends `" from <sender>"` only when a sender is present. Pass `formatAsset` to override the default `"<amount> <symbol-or-assetId>"` rendering.
 
-`DEFAULTS` is a **value** export, not a type: `{ RPC_URL: undefined, AUTO_SYNC_INTERVAL: 15000, STORAGE_MODE: "private", AUTH_SCHEME: AuthScheme.AuthRpoFalcon512, NOTE_TYPE: "private", FAUCET_DECIMALS: 8 }`. Note `AUTH_SCHEME` reads as `undefined` at runtime in a browser build, for the shadowing reason in web-sdk#223 above - which is exactly why the create hooks hang when you omit `authScheme`.
+`DEFAULTS` is a **value** export, not a type: `{ RPC_URL: undefined, AUTO_SYNC_INTERVAL: 15000, STORAGE_MODE: "private", AUTH_SCHEME: AuthScheme.Falcon, NOTE_TYPE: "private", FAUCET_DECIMALS: 8 }`. `AUTH_SCHEME` is the string `"falcon"` at runtime, which the create hooks resolve to the wasm Falcon enum when you omit `authScheme`.
 
 `waitForWalletDetection(adapter, timeoutMs = 5000)` resolves once the adapter's `readyState` reaches `"Installed"` and otherwise rejects with `"Wallet extension not detected within <n>ms."` Its `WalletAdapterLike` argument is a duck type (`{ readyState: string; on/off("readyStateChange", cb) }`) with no dependency on any wallet-adapter package, so it works against any adapter and against a plain fake object.
 
@@ -635,13 +662,13 @@ await runExclusive(async () => {
 - **No protocol `AssetId` / `AssetClass` / `AssetVaultKey` type.** Every `assetId` in this package is a faucet (token) account reference - `asset.faucetId().toString()`. Do not "fix" these names to protocol ones.
 - **No `mutable` wallet option and no `storageMode: "network"`.** `CreateWalletOptions` is exactly `{ storageMode?, authScheme?, initSeed? }`.
 
-> **The package's own `README.md` and `ReactSDK.Arena.Findings.md` are stale - do not treat them as authoritative.** The README still documents `authScheme: 0`, a `mutable: true` wallet option and `storageMode: 'network'`, none of which exist in `src/types/index.ts`. The Arena findings file is a proposal document and describes an API that was never shipped in that shape. `src/types/index.ts` plus the hook bodies are the source of truth, and the package's `AGENTS.md` (which ships alongside this skill) is kept current.
+> **The package's own `README.md` and `ReactSDK.Arena.Findings.md` are stale - do not treat them as authoritative.** The README still documents a `mutable: true` wallet option and `storageMode: 'network'`, neither of which exists in `src/types/index.ts`. The Arena findings file is a proposal document and describes an API that was never shipped in that shape. `src/types/index.ts` plus the hook bodies are the source of truth, and the package's `AGENTS.md` (which ships alongside this skill) is kept current.
 
 ## Type Imports
 
 ```tsx
 import { AuthScheme, DEFAULTS, MidenError } from "@miden-sdk/react"; // values, not just types
-// AuthScheme is the friendly string const { Falcon, ECDSA } at runtime - see web-sdk#223.
+// AuthScheme is the friendly string const { Falcon, ECDSA } at runtime.
 
 import type {
   MidenConfig, RpcUrlConfig, ProverConfig, ProverTarget, ProverUrls,
@@ -725,8 +752,7 @@ For compile-from-source, call `await client.createCodeBuilder()` (returns `Promi
 
 Some `@miden-sdk/miden-sdk` 0.16.1 additions have **no** `@miden-sdk/react` hook or type. To use them, build the `TransactionRequest` yourself against `useMidenClient()` and hand it to `useTransaction().execute({ accountId, request })`:
 
-- `ForeignAccount.private(account)` and `ForeignAccount.prefetched(inputs)`, plus the `AccountInputs` model. `useExecuteProgram()`'s `foreignAccounts` option only builds `ForeignAccount.public(id, storage)`, so a private or prefetched foreign account has to go the manual route.
-- `client.transactions.foreignAccountInputs(accounts, blockNum)`, which fetches the inputs to feed `prefetched`.
+- `ForeignAccount.private(account)`. `useExecuteProgram()`'s `foreignAccounts` option only builds `ForeignAccount.public(id, storage)`, so a private foreign account has to go the manual route.
 - `TransactionRequestBuilder.withExplicitInputNote(note, args?)`, which pins whether each input note is consumed authenticated or unauthenticated so every client executing the request produces the same transaction summary. This matters most in chain-anchored flows, where co-signers must reproduce the summary exactly.
 
 ## Account Import then Sync then Read Storage Flow
@@ -907,7 +933,7 @@ Common app-developer types:
 | `Address` | `@miden-sdk/miden-sdk` | bech32 wrapper; `Address.fromBech32(...)` |
 | `Note`, `InputNoteRecord`, `ConsumableNoteRecord` | `@miden-sdk/react` | re-exported from `@miden-sdk/miden-sdk`. Input notes are received; for output-note types and private-note flows see `web-client-usage`. |
 | `NoteVisibility` (constants + string-union) | `@miden-sdk/miden-sdk` | `const NoteVisibility = { Public: 'public', Private: 'private' }` plus `type NoteVisibility = 'public' \| 'private'` (`api-types.d.ts`). NOT an enum. Coexists with the raw WASM `NoteType` enum (`miden_client_web.d.ts`), which is what you use when building notes from the WASM classes directly. |
-| `AccountType`, `AuthScheme`, `StorageMode` | `@miden-sdk/miden-sdk` | enums; see `web-client-usage` "Visibility & Account Types". |
+| `AccountType`, `FaucetType`, `AuthScheme`, `StorageMode` | `@miden-sdk/miden-sdk` | enums; see `web-client-usage` "Visibility & Account Types". |
 | `TransactionRequest` | `@miden-sdk/react` | the client's `new*TransactionRequest` factories return `Promise<TransactionRequest>` as of 0.16 - always `await` them |
 | `TransactionSummary`, `ChainAnchor` | `@miden-sdk/react` | **type-only** re-exports. Import the `ChainAnchor` class itself from `@miden-sdk/miden-sdk` to call `ChainAnchor.deserialize(bytes)` |
 | `Word` | `@miden-sdk/miden-sdk` | 32-byte (4 felts) value; `Word.toU64s()` returns `BigUint64Array` of length 4 (each lane is a `bigint` after subscript). See `Word.toU64s` in `miden_client_web.d.ts`. |
@@ -925,7 +951,7 @@ The Rust (`miden-client`) and TypeScript (`@miden-sdk/miden-sdk`) SDKs share con
 | 32-byte word | `Word` (`[Felt; 4]`) | `Word`; `toU64s(): BigUint64Array` length 4 (each lane is `bigint` after subscript). |
 | Account identifier | `AccountId` | `AccountId`; construct via `AccountId.fromHex` |
 | Note visibility | `NoteType` enum | constants + string-union `NoteVisibility` (`'public' \| 'private'`) at the high-level `MidenClient` resource API; raw WASM `NoteType` enum (`Private = 0`, `Public = 1`) is also exported and used directly when constructing notes via the WASM classes. The two coexist; pick the layer your code lives in. |
-| Account type | `AccountType` | `AccountType` enum |
+| Account visibility / faucet kind | `AccountType` / `FaucetType` | Native builder visibility / `accounts.create({ type })` selector |
 | Authentication scheme | `AuthScheme` | `AuthScheme` enum |
 | Storage mode | `StorageMode` | `StorageMode` enum |
 

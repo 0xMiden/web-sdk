@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { TransactionFilter } from "@miden-sdk/miden-sdk";
-import type { TransactionId, TransactionRecord } from "@miden-sdk/miden-sdk";
+import { TransactionFilter, TransactionId } from "@miden-sdk/miden-sdk";
+import type { TransactionRecord } from "@miden-sdk/miden-sdk";
 import { useMiden } from "../context/MidenProvider";
 import { useSyncStateStore } from "../store/MidenStore";
 import type {
@@ -138,9 +138,15 @@ function buildFilter(
     return { filter: TransactionFilter.all() };
   }
 
+  // `TransactionFilter.ids` takes its handles by value, so every refetch builds
+  // fresh ones from the hex snapshot rather than handing on the caller's.
   const allTransactionIds = ids.every((id) => typeof id !== "string");
   if (allTransactionIds) {
-    return { filter: TransactionFilter.ids(ids as TransactionId[]) };
+    return {
+      filter: TransactionFilter.ids(
+        (idsHex ?? []).map((hex) => TransactionId.fromHex(hex))
+      ),
+    };
   }
 
   return {

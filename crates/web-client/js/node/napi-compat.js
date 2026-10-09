@@ -5,12 +5,15 @@
  * SDK surfaces so the shared MidenClient wrapper works on both platforms.
  *
  * Key normalizations:
- * - Uint8Array/Buffer -> Array (napi's Vec<u8> expects plain arrays)
+ * - Uint8Array/Buffer -> Array for Vec<u8> parameters (e.g. RNG seeds)
+ * - deserialize args pass through: napi's JsBytes accepts any Uint8Array view
  * - BigUint64Array/BigInt64Array -> Array (napi's Vec<u64>/Vec<BigInt> expects plain arrays)
  * - null -> undefined (napi returns null for Option::None, wasm-bindgen returns undefined)
  * - camelCase -> snake_case aliases (napi uses camelCase, wasm-bindgen uses snake_case)
  * - Array type polyfills (browser has typed WASM arrays, napi accepts plain JS arrays)
  */
+
+import { resolveAuthScheme } from "../utils.js";
 
 // ── Argument normalization ───────────────────────────────────────────
 
@@ -31,9 +34,10 @@ export function normalizeArg(val) {
 // ── Class wrapping ───────────────────────────────────────────────────
 
 /**
- * Wraps a napi class so constructor and static method args are normalized.
+ * Wraps a napi class so constructor and static method args are normalized,
+ * except `deserialize`, whose JsBytes argument passes through unchanged.
  */
-function wrapClass(Cls) {
+export function wrapClass(Cls) {
   if (!Cls) return Cls;
   const Wrapper = function (...args) {
     return new Cls(...args.map(normalizeArg));
@@ -43,7 +47,12 @@ function wrapClass(Cls) {
     if (key === "prototype" || key === "length" || key === "name") continue;
     const desc = Object.getOwnPropertyDescriptor(Cls, key);
     if (desc && typeof desc.value === "function") {
-      Wrapper[key] = (...args) => desc.value.apply(Cls, args.map(normalizeArg));
+      // deserialize takes JsBytes, which reads a Buffer or any Uint8Array view
+      // at its own offset; flattening it to an Array (as for Vec<u8>) fails.
+      Wrapper[key] =
+        key === "deserialize"
+          ? desc.value.bind(Cls)
+          : (...args) => desc.value.apply(Cls, args.map(normalizeArg));
     } else if (desc) {
       try {
         Object.defineProperty(Wrapper, key, desc);
@@ -57,6 +66,13 @@ function wrapClass(Cls) {
 
 // ── Client wrapping ──────────────────────────────────────────────────
 
+// Position of the AuthScheme argument in the client methods, other than
+// newWallet, whose native signature takes one.
+const AUTH_SCHEME_ARG_INDEX = new Map([
+  ["newFaucet", 6],
+  ["importPublicAccountFromSeed", 1],
+]);
+
 /**
  * Wraps a raw napi WebClient to normalize API differences with the browser SDK.
  *
@@ -65,8 +81,10 @@ function wrapClass(Cls) {
  * - syncNoteTransport() -> syncNoteTransportImpl()
  * - null -> undefined for Option<T> returns
  * - BigInt/Uint8Array args normalized
+ * - AuthScheme args resolved against `rawSdk.AuthScheme`, as the browser
+ *   WebClient resolves them against the wasm enum
  */
-export function wrapClient(rawClient, storeName) {
+export function wrapClient(rawClient, storeName, rawSdk) {
   return new Proxy(rawClient, {
     get(target, prop) {
       if (prop === "syncState") {
@@ -111,14 +129,30 @@ export function wrapClient(rawClient, storeName) {
         return () => null;
       }
       if (prop === "newWallet") {
-        return (mode, authScheme, seed) => {
+        return async (mode, authScheme, seed) => {
           const normSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
           return target
-            .newWallet(mode, authScheme, normSeed ?? null)
+            .newWallet(
+              mode,
+              resolveAuthScheme(authScheme, rawSdk),
+              normSeed ?? null
+            )
             .then((v) => (v === null ? undefined : v));
+        };
+      }
+      const authSchemeIndex = AUTH_SCHEME_ARG_INDEX.get(prop);
+      if (authSchemeIndex !== undefined) {
+        return async (...args) => {
+          const normalizedArgs = args.map(normalizeArg);
+          normalizedArgs[authSchemeIndex] = resolveAuthScheme(
+            normalizedArgs[authSchemeIndex],
+            rawSdk
+          );
+          const result = await target[prop](...normalizedArgs);
+          return result === null ? undefined : result;
         };
       }
       const val = target[prop];
@@ -142,7 +176,7 @@ export function wrapClient(rawClient, storeName) {
 /**
  * Patches the raw SDK module:
  * - Adds snake_case aliases for camelCase methods
- * - Converts null -> undefined for Option<T> returns
+ * - Converts null -> undefined for Option<T> method returns and getters
  * - Aliases static methods
  */
 function patchSdkPrototypes(rawSdk) {
@@ -169,7 +203,7 @@ function patchSdkPrototypes(rawSdk) {
     // `feeNote` is absent whenever the chain charges nothing, which is the common case on a
     // local chain, so the "no fee note" reading has to be the same on both bindings.
     [rawSdk.ExecutedTransaction, ["feeNote"]],
-    [rawSdk.NoteConsumability, ["consumableAfterBlock"]],
+    [rawSdk.NoteConsumptionStatus, ["consumableAfterBlock"]],
     // `authArg` and `feeConversionSalt` are how a caller checks what a request
     // declared about paying its fee, so they have to read the same on both
     // bindings — the salt tests in `fee_conversion_salt.test.ts` compare with
@@ -188,6 +222,29 @@ function patchSdkPrototypes(rawSdk) {
     }
   }
 
+  // null -> undefined for Option<T> getters. napi-rs defines them as
+  // configurable prototype accessors; any other shape is left as it is.
+  for (const [cls, getters] of [
+    [rawSdk.Endpoint, ["port"]],
+    [rawSdk.FetchedNote, ["note"]],
+    [rawSdk.NetworkNoteStatusInfo, ["lastAttemptBlockNum", "lastError"]],
+    [rawSdk.StorageValueSlotPatch, ["value"]],
+  ]) {
+    if (!cls?.prototype) continue;
+    for (const name of getters) {
+      const desc = Object.getOwnPropertyDescriptor(cls.prototype, name);
+      if (typeof desc?.get !== "function" || !desc.configurable) continue;
+      const original = desc.get;
+      Object.defineProperty(cls.prototype, name, {
+        ...desc,
+        get() {
+          const value = original.call(this);
+          return value === null ? undefined : value;
+        },
+      });
+    }
+  }
+
   // snake_case aliases for static methods
   if (rawSdk.NoteScript) {
     if (!rawSdk.NoteScript.p2id && rawSdk.NoteScript.p2Id)
@@ -198,6 +255,26 @@ function patchSdkPrototypes(rawSdk) {
 }
 
 // ── Array polyfills ──────────────────────────────────────────────────
+
+/**
+ * Array containers declared by `declare_js_miden_arrays!` in src/models/mod.rs.
+ * On Node they are JS polyfills, so node-index.js re-exports them from this
+ * list (see scripts/gen-node-reexports.js).
+ */
+export const NODE_ARRAY_TYPES = Object.freeze([
+  "AccountArray",
+  "AccountIdArray",
+  "FeltArray",
+  "ForeignAccountArray",
+  "NoteAndArgsArray",
+  "NoteArray",
+  "NoteDetailsAndTagArray",
+  "NoteIdAndArgsArray",
+  "NoteRecipientArray",
+  "OutputNoteArray",
+  "StorageSlotArray",
+  "TransactionScriptInputPairArray",
+]);
 
 /**
  * Creates polyfill constructors for WASM typed array types.
@@ -213,34 +290,31 @@ function makeArrayPolyfills() {
         : Array.isArray(items)
           ? [...items]
           : [items];
-    arr.get = (i) => arr[i];
+    // Match the browser containers (miden_array.rs), which reject any index
+    // outside the array instead of reading undefined or growing it.
+    const checkIndex = (i) => {
+      if (!Number.isInteger(i) || i < 0 || i >= arr.length) {
+        throw new RangeError(
+          `out of bounds access -- tried to access at index: ${i} with length ${arr.length}`
+        );
+      }
+    };
+    arr.get = (i) => {
+      checkIndex(i);
+      return arr[i];
+    };
     arr.replaceAt = (i, val) => {
+      checkIndex(i);
       arr[i] = val;
       return arr;
     };
+    // A plain array owns no native memory, but callers written against the
+    // wasm-bindgen classes free them.
+    arr.free = () => {};
+    if (Symbol.dispose) arr[Symbol.dispose] = arr.free;
     return arr;
   }
-  const names = [
-    "AccountArray",
-    "AccountIdArray",
-    "AccountInputsArray",
-    "FeltArray",
-    "ForeignAccountArray",
-    "NoteAndArgsArray",
-    "NoteArray",
-    "NoteDetailsAndTagArray",
-    "NoteIdAndArgsArray",
-    "NoteRecipientArray",
-    "OutputNoteArray",
-    "OutputNotesArray",
-    "StorageSlotArray",
-    "TransactionScriptInputPairArray",
-  ];
-  const result = {};
-  for (const name of names) {
-    result[name] = polyfill;
-  }
-  return result;
+  return Object.fromEntries(NODE_ARRAY_TYPES.map((name) => [name, polyfill]));
 }
 
 // ── SDK wrapper ──────────────────────────────────────────────────────

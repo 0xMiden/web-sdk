@@ -16,6 +16,7 @@ import { getRpcUrl, RUN_ID } from "./playwright.global.setup";
 import path from "path";
 import fs from "fs";
 import os from "os";
+import { normalizeArg, wrapClass } from "../js/node/napi-compat.js";
 
 let _helperCounter = 0;
 
@@ -26,13 +27,6 @@ function tmpDir(): string {
   );
   fs.mkdirSync(path.join(dir, "keystore"), { recursive: true });
   return dir;
-}
-
-function norm(val: any): any {
-  if (val instanceof BigUint64Array) return Array.from(val);
-  if (val instanceof BigInt64Array) return Array.from(val);
-  if (val instanceof Uint8Array || Buffer.isBuffer(val)) return Array.from(val);
-  return val;
 }
 
 // ── Mock chain transaction helpers ───────────────────────────────────
@@ -782,27 +776,6 @@ function makeArrayPolyfill() {
   };
 }
 
-function wrapClass(Cls: any): any {
-  const Wrapper: any = function (...args: any[]) {
-    return new Cls(...args.map(norm));
-  };
-  Wrapper.prototype = Cls.prototype;
-  for (const key of Object.getOwnPropertyNames(Cls)) {
-    if (key === "prototype" || key === "length" || key === "name") continue;
-    const desc = Object.getOwnPropertyDescriptor(Cls, key);
-    if (desc && typeof desc.value === "function") {
-      Wrapper[key] = (...args: any[]) => desc.value.apply(Cls, args.map(norm));
-    } else if (desc) {
-      try {
-        Object.defineProperty(Wrapper, key, desc);
-      } catch {
-        /* skip */
-      }
-    }
-  }
-  return Wrapper;
-}
-
 /**
  * Wraps a raw napi WebClient for MidenClient compatibility.
  * Handles syncState → syncStateImpl (and the new split-sync siblings),
@@ -850,7 +823,7 @@ function wrapClientForMidenClient(
             name,
             symbol,
             decimals,
-            norm(maxSupply),
+            normalizeArg(maxSupply),
             auth,
             seed
           );
@@ -861,7 +834,7 @@ function wrapClientForMidenClient(
             wallet,
             faucet,
             noteType,
-            norm(amount)
+            normalizeArg(amount)
           );
       }
       if (prop === "newSendTransactionRequest") {
@@ -878,7 +851,7 @@ function wrapClientForMidenClient(
             targetId,
             faucet,
             noteType,
-            norm(amount),
+            normalizeArg(amount),
             ...rest
           );
       }
@@ -894,9 +867,9 @@ function wrapClientForMidenClient(
           target.newSwapTransactionRequest(
             accountId,
             assetAFaucet,
-            norm(assetAAmount),
+            normalizeArg(assetAAmount),
             assetBFaucet,
-            norm(assetBAmount),
+            normalizeArg(assetBAmount),
             ...rest
           );
       }
@@ -904,7 +877,7 @@ function wrapClientForMidenClient(
       if (typeof val === "function") {
         const bound = val.bind(target);
         return (...args: any[]) => {
-          const normalizedArgs = args.map(norm);
+          const normalizedArgs = args.map(normalizeArg);
           const result = bound(...normalizedArgs);
           if (result && typeof result.then === "function") {
             return result.then((v: any) => (v === null ? undefined : v));
@@ -976,9 +949,9 @@ export async function createMidenClient(sdk: any): Promise<any> {
       await client.createMockClient(
         path.join(dir, "store.db"),
         path.join(dir, "keystore"),
-        norm(seed) ?? null,
-        norm(serializedMockChain) ?? null,
-        norm(serializedNoteTransport) ?? null
+        normalizeArg(seed) ?? null,
+        normalizeArg(serializedMockChain) ?? null,
+        normalizeArg(serializedNoteTransport) ?? null
       );
       return wrapClientForMidenClient(client, rawSdk, "mock");
     },
@@ -987,22 +960,29 @@ export async function createMidenClient(sdk: any): Promise<any> {
   // WasmWebClient (for integration tests)
   const WasmWebClient = {
     buildSwapTag: (...args: any[]) =>
-      rawSdk.WebClient.buildSwapTag(...args.map(norm)),
+      rawSdk.WebClient.buildSwapTag(...args.map(normalizeArg)),
     createClient: async (
       rpcUrl?: string,
       noteTransportUrl?: any,
       seed?: any,
-      storeName?: string
+      storeName?: string,
+      _logLevel?: unknown,
+      _useWorker?: unknown,
+      _observability?: unknown,
+      feeFaucetId?: string
     ) => {
       const dir = tmpDir();
       const client = new rawSdk.WebClient();
       await client.createClient(
         rpcUrl ?? null,
         noteTransportUrl ?? null,
-        norm(seed) ?? null,
+        normalizeArg(seed) ?? null,
         path.join(dir, `${storeName || "store"}.db`),
         path.join(dir, "keystore"),
-        false
+        // Forward what the caller passed; the environment is only the fixture
+        // default. Reconstructing it here meant deleting `options?.feeFaucetId`
+        // from client.js failed no node-mode test.
+        feeFaucetId ?? process.env.TEST_MIDEN_FEE_FAUCET_ID ?? null
       );
       return wrapClientForMidenClient(client, rawSdk, storeName);
     },
@@ -1051,9 +1031,24 @@ export async function createIntegrationClient(): Promise<{
 } | null> {
   const rpcUrl = getRpcUrl();
   const storeName = `integration_${RUN_ID}_${++_integrationCounter}`;
+  // `null` from here means "no node reachable", and callers turn that into
+  // test.skip. A misconfiguration must not be able to borrow that meaning: the
+  // browser twin swallowed a missing fee faucet once and turned 12 integration
+  // tests into silent skips while their shards reported success.
+  if (!process.env.TEST_MIDEN_FEE_FAUCET_ID) {
+    throw new Error(
+      "TEST_MIDEN_FEE_FAUCET_ID is unset - a client without a fee faucet " +
+        "cannot execute or screen notes on any 0.17 network"
+    );
+  }
   try {
     return await createNodeIntegrationClient(rpcUrl, storeName);
-  } catch {
+  } catch (err) {
+    // Keep the skip for an unreachable node, but leave a trace: a future cause
+    // is otherwise invisible in the run output.
+    console.debug(
+      `integration client unavailable: ${(err as Error)?.message ?? err}`
+    );
     return null;
   }
 }

@@ -2,7 +2,7 @@
 // with importing DB types and we're testing this which
 // should be enough + the TS compiler.
 /* eslint-disable */
-import { getDatabase } from "./schema.js";
+import { getDatabase, NOTE_TRANSPORT_OUTBOX_SETTING_KEY, SETTING_SCOPE_CLIENT, } from "./schema.js";
 import { logWebStoreError } from "./utils.js";
 async function recursivelyTransformForImport(obj) {
     switch (obj.type) {
@@ -67,6 +67,11 @@ export async function forceImportStore(dbId, jsonStr) {
                 const transformedRecords = await Promise.all(records.map(transformForImport));
                 await table.bulkPut(transformedRecords);
             }
+            // An export taken from a 0.17.1 store can carry the relay queue the v7 upgrade drops.
+            await db.settings.delete([
+                SETTING_SCOPE_CLIENT,
+                NOTE_TRANSPORT_OUTBOX_SETTING_KEY,
+            ]);
         });
         console.log("Store imported successfully.");
     }

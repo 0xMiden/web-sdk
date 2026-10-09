@@ -143,7 +143,7 @@ The [frontend template](https://github.com/0xMiden/frontend-template) (last veri
 - **Provider order is INVERTED: `MidenProvider` runs OUTSIDE `MidenFiSignerProvider`** - see `src/providers.tsx`. This is the opposite of the canonical signer-outer / Miden-inner nesting at the top of this skill, and it is deliberate. In v0.15 and still in 0.16, when a signer provider is an *ancestor* of `MidenProvider`, `MidenProvider` treats it as its external keystore and does NOT create the `WebClient` until the signer connects (the init effect sees `signerIsConnected === false` and returns early before building the client). With a wallet that hasn't connected - or any environment without the extension - the app would hang on "Initializing…" and even public reads couldn't run. The template never signs *through* `MidenProvider` (it signs its only write, the counter increment, through the local `WebClient` rather than the wallet), so it runs `MidenProvider` in local-keystore mode (no signer ancestor → it initializes immediately, reads work pre-connect) and keeps `MidenFiSignerProvider` *inside*, purely for the connect button and the wallet's `requestTransaction`. `MidenFiSignerProvider` works standalone (it provides its own `WalletContext` + `SignerContext`; no `MultiSignerProvider` needed). Use this inversion only when you do not sign through `MidenProvider`; if external-keystore signing IS the goal, keep the canonical signer-outer order so `MidenProvider` picks up the signer's `signCb`/`accountConfig`.
 - **Wallet button uses `useMidenFiWallet()` + `WalletReadyState`** - see `src/components/AppContent.tsx`. The button gates on `wallet?.readyState` (rendering a disabled "Install MidenFi Wallet" state unless `readyState` is `Installed` or `Loadable`) so it can show install state before the extension is detected. `useSigner().connect()` would silently fall through to the adapter's `window.open(adapter.url, ...)` install fallback; gating on `readyState` avoids that path.
 - **The counter increment is a local two-transaction flow, not a wallet-signed tx** - see `src/hooks/useIncrementCounter.ts`. It does not use the wallet at all. It creates a throwaway local sender (`client.newWallet(...)`), publishes a plain increment note as that sender's own output note (`TransactionRequestBuilder().withOwnOutputNotes(...)`), then consumes the note *as the counter* (`await client.newConsumeTransactionRequest([note], counterAccountId)` - since 0.16 this is async and requires the consuming account, because it reads the chain's fee parameters to decide whether to attach fee conversion info; the 0.15 form `newConsumeTransactionRequest([note])` no longer compiles). Both transactions are submitted by the local `WebClient` via `submitNewTransactionWithProver(accountId, request, prover)` (remote prover), never by the wallet, so `useWaitForCommit` doesn't apply and the template polls the counter's storage map instead. This mirrors the project-template `increment_count` reference.
-  - **The note APIs in that hook (use as the reference):** the JS `NoteMetadata` constructor is attachment-less - `new NoteMetadata(sender, noteType, tag)`. Build the note with `new Note(new NoteAssets(), metadata, recipient)`. The increment note carries no attachment and uses tag `0`; the counter is a plain **public `NoAuth`** account, so anyone can consume the note against it with no signature. (Attachments still exist for other uses - `NoteAttachment.fromWord(scheme, word)` / `fromWords(scheme, words)`, read back via `.toWords()`, or `createNoteAttachment(...)` - but the increment does not need one. Network-execution targeting DOES exist on 0.16: a `Public` note carrying a `NetworkAccountTarget` attachment is auto-consumed by the operator. The target must be an account built from `AccountComponent.createNetworkAuthComponents`, committed on-chain at the transaction's reference block, allowlisting and pricing the note's script root; see `useCreateNetworkNote` in the React SDK. Targeting a plain wallet fails with `account procedure ... is not in the account procedure index map`.)
+  - **The note APIs in that hook (use as the reference):** the JS `NoteMetadata` constructor is attachment-less - `new NoteMetadata(sender, noteType, tag)`. Build the note with `new Note(new NoteAssets(), metadata, recipient)`. The increment note carries no attachment and uses tag `0`; the counter is a plain **public `NoAuth`** account, so anyone can consume the note against it with no signature. (Attachments still exist for other uses - `NoteAttachment.fromWord(scheme, word)` / `fromWords(scheme, words)`, read back via `.toWords()`, or `createNoteAttachment(...)` - but the increment does not need one. Network-execution targeting DOES exist on 0.16: a `Public` note carrying a `NetworkAccountTarget` attachment is auto-consumed by the operator. The target must be an account built from `AccountComponent.createNetworkAuthComponents` with the chain's fee faucet (`client.feeFaucetId()`), committed on-chain at the transaction's reference block, allowlisting and pricing the note's script root; see `useCreateNetworkNote` in the React SDK. A target built with any other fee faucet fails silently: the node never consumes its notes. Targeting a plain wallet fails with `account procedure ... is not in the account procedure index map`.)
   - **Two hard requirements (don't regress):** (1) the client runs with `useWorker: false` on `MidenProvider`. The default worker shim keeps a separate in-memory SMT forest per thread; consuming against an *imported* (not locally-created) account applies a delta transaction whose apply step looks the account up in the executing (worker) forest, which never contains the late-imported counter, so it fails with `account data wasn't found` ([web-sdk#222](https://github.com/0xMiden/web-sdk/issues/222)). One thread means one forest, which fixes it. (2) Submits go through the remote prover (`submitNewTransactionWithProver`) so the worker-less single thread only pays local execution, not minutes of local proving. The increment was verified working end-to-end on testnet on v0.15; there is no `INCREMENT_ONCHAIN_BLOCKED` flag. Re-verify against the template's current lockfile before relying on that, and note the `newConsumeTransactionRequest` signature change above.
 
 ## Unified Signer Interface
@@ -233,7 +233,7 @@ The two shipped providers are the best worked examples of this contract: read `p
 ## How the Account Gets Initialized
 
 `MidenProvider` calls `initializeSignerAccount(client, accountConfig)`
-(`packages/react-sdk/src/utils/signerAccount.ts:48-164`) right after creating the
+(`packages/react-sdk/src/utils/signerAccount.ts:48-174`) right after creating the
 external-keystore client. There are two paths.
 
 **Fast path - `importAccountId` is set.** The builder is skipped and `client.importAccountById()`
@@ -246,14 +246,21 @@ runs. It tolerates exactly two machine-readable error codes and rethrows everyth
   only refreshes accounts the store already tracks; it never discovers one by ID.
 - `ACCOUNT_ALREADY_TRACKED` - already imported locally; harmless.
 
-**Slow path - build from the commitment** (`signerAccount.ts:105-113`):
+**Slow path - build from the commitment** (`signerAccount.ts:105-123`):
 
 ```ts
+// The package's `AuthScheme` export is the friendly string const; the auth
+// component takes the numeric enum, so read it from the wasm module.
+const ecdsaAuthScheme = (await getWasmOrThrow()).AuthScheme.AuthEcdsaK256Keccak;
+if (ecdsaAuthScheme === undefined) {
+  throw new Error("The Miden SDK wasm module has no AuthScheme.AuthEcdsaK256Keccak, ...");
+}
+
 new AccountBuilder(seed)
   .withAuthComponent(
     AccountComponent.createAuthComponentFromCommitment(
       commitmentWord,
-      AuthScheme.AuthEcdsaK256Keccak  // see the AuthScheme trap below
+      ecdsaAuthScheme  // see the AuthScheme trap below
     )
   )
   .storageMode(config.storageMode)
@@ -268,8 +275,11 @@ never reached. Only when the import throws does it fall through to checking
 `client.getAccount(accountId)` for a local copy and finally `client.newAccount(account, false)`.
 
 Note the hard-coded ECDSA-K256/Keccak auth scheme: an external signer's commitment is registered
-as an ECDSA key, not Falcon. The `AuthScheme` symbol here is the numeric WASM enum, not the frozen
-string const the package exports - see "The `AuthScheme` trap" under Guarded Multisig below.
+as an ECDSA key, not Falcon. The value is the numeric WASM enum, read from the wasm module that the
+package's `getWasmOrThrow()` returns, never from the frozen string const the package exports as
+`AuthScheme` (that const has no `AuthEcdsaK256Keccak` member). If the wasm enum lacks the value,
+initialization throws instead of building an account - see "The `AuthScheme` trap" under Guarded
+Multisig below.
 
 **`withAuthComponent` validates nothing.** Its body is `with_component` verbatim
 (`crates/web-client/src/models/account_builder.rs:81-85`), so the name is documentation,
@@ -358,7 +368,7 @@ const accountConfig: SignerAccountConfig = {
 
 Each entry must be a real `AccountComponent` - created via `AccountComponent.compile()`,
 `.fromPackage()` or `.fromLibrary()`. The initializer duck-checks for a `getProcedures` method and
-throws otherwise (`packages/react-sdk/src/utils/signerAccount.ts:116-128`):
+throws otherwise (`packages/react-sdk/src/utils/signerAccount.ts:126-138`):
 
 > Each entry in customComponents must be an AccountComponent instance created via AccountComponent.compile(), AccountComponent.fromPackage(), or AccountComponent.fromLibrary().
 
@@ -474,13 +484,15 @@ Passing both `recipient` and `script`, or neither, throws
 `CreateNetworkNoteOptions` / `NetworkNoteResult` in `packages/react-sdk/src/types/index.ts:406-431`.
 From the raw client the equivalent is `client.transactions.createNetworkNote(options)`.
 
-> **`buildNetworkNote` is declared but not importable at this pin.** It builds the same note without
-> submitting, lives in `crates/web-client/js/standalone.js:121` and is declared in
-> `js/types/api-types.d.ts:1838` - but neither package entry re-exports it. Both `js/index.js:7-13`
-> and `js/node-index.js:19-25` pull only `createP2IDNote`, `createP2IDENote` and `buildSwapTag` out
-> of `standalone.js`, and `standalone.js` has no subpath in the package's `exports` map. A reader
-> trusting the `.d.ts` gets a runtime failure. Treat the declaration as aspirational until an entry
-> exports it.
+To build the same note without submitting it, import `buildNetworkNote(opts)` from
+`@miden-sdk/miden-sdk`; both the browser and the node entry export it, and it takes the same
+options. The transaction that emits the note must then declare the target as a foreign account,
+which `createNetworkNote` does for you: build it with
+`client.feeAwareTransactionRequestBuilder(sender)`, `.withOwnOutputNotes(...)` and
+`.withForeignAccounts(...)` holding `ForeignAccount.public(targetId, new AccountStorageRequirements())`,
+and get it included within 20 blocks of its reference block. After an expiry rejection, sync,
+then build the request again from new `NoteArray` and `ForeignAccountArray` instances (the
+builder takes both by value) and submit it again.
 
 ### Creating the network account
 
@@ -492,9 +504,10 @@ import { AccountBuilder, AccountComponent, AccountStorageMode, NoteScriptFee } f
 
 // Returns AccountComponent[] - the auth component plus the components backing
 // its fee policy. Install ALL of them.
+const feeFaucetId = await client.feeFaucetId(); // must be the chain's - see below
 const components = AccountComponent.createNetworkAuthComponents(
   [new NoteScriptFee(myNoteScript.root(), 0n)],  // NoteScriptFee[] - must be non-empty
-  feeFaucetId,                                   // AccountId - fees are denominated in this faucet's asset
+  feeFaucetId,                                   // AccountId - the chain's fee faucet; fees are in its asset
   allowedTxScriptRoots                           // optional Word[] from TransactionScript.root()
 );
 
@@ -520,6 +533,12 @@ Four rules bite, all enforced in
   root is passed in the optional third argument - and only allowlist a root whose effect is safe
   for *every* possible input, since a root pins code but not the submitter-controlled arguments or
   advice inputs.
+
+A fifth is enforced only by the node, and silently: **the fee faucet must be the chain's own**
+(`client.feeFaucetId()`). Since 0.17 the node's network-transaction builder refuses to execute for
+an account whose fee asset differs from the chain's protocol configuration. The client is not told;
+notes sent to the account are simply never consumed, and only the node's log names the cause. The
+fee asset is fixed when the account is built, so an account built with another faucet is rebuilt.
 
 Reuse the *same* compiled note script for the account allowlist and for the note, so the roots
 match. Targeting a plain wallet instead of a network account fails with `account procedure ... is

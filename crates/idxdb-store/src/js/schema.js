@@ -2,6 +2,8 @@ import Dexie from "dexie";
 import * as semver from "semver";
 import { logWebStoreError } from "./utils.js";
 export const CLIENT_VERSION_SETTING_KEY = "clientVersion";
+/** The client-scope setting a 0.17.1 client queued undelivered private notes under. */
+export const NOTE_TRANSPORT_OUTBOX_SETTING_KEY = "note_transport_outbox";
 /** Mirrors `StorageSlotType::Map`, originally defined in miden-protocol. */
 export const STORAGE_SLOT_TYPE_MAP = 1;
 const textEncoder = new TextEncoder();
@@ -9,31 +11,83 @@ const textDecoder = new TextDecoder();
 // Since we can't have a pointer to a JS Object from rust, we'll
 // use this instead to keep track of open DBs. A client can have
 // a DB for mainnet, devnet, testnet or a custom one, so this should be ok.
+// Each name has one connection, held by every live Rust `IdxdbStore` on it.
 const databaseRegistry = new Map();
+const pendingOpens = new Map();
 /**
  * Get a database instance from the registry by its ID.
  * Throws if the database hasn't been opened yet.
  */
 export function getDatabase(dbId) {
-    const db = databaseRegistry.get(dbId);
-    if (!db) {
+    const entry = databaseRegistry.get(dbId);
+    if (!entry) {
         throw new Error(`Database not found for id: ${dbId}. Call openDatabase first.`);
     }
-    return db;
+    return entry.db;
 }
 /**
- * Opens a database for the given network and registers it in the registry.
- * Returns the database ID (network name) which can be used to retrieve the database later.
+ * Releases one holder of the database registered for `network`, closing and
+ * unregistering it when the last holder is gone. No-op for an unknown name.
+ */
+export function closeDatabase(network) {
+    const entry = databaseRegistry.get(network);
+    if (!entry) {
+        return;
+    }
+    entry.holders -= 1;
+    if (entry.holders > 0) {
+        return;
+    }
+    entry.db.dexie.close();
+    databaseRegistry.delete(network);
+}
+/**
+ * Opens the database for `network`, or joins the connection already open or
+ * opening under that name, and counts the caller as one holder until it calls
+ * `closeDatabase`. Returns the database ID (network name) which can be used to
+ * retrieve the database later.
  */
 export async function openDatabase(network, clientVersion) {
-    const db = new MidenDatabase(network);
-    const success = await db.open(clientVersion);
-    /* v8 ignore next 3 — open() only returns false after logWebStoreError re-throws, so !success is unreachable */
-    if (!success) {
-        throw new Error(`Failed to open IndexedDB database: ${network}`);
+    const registered = databaseRegistry.get(network);
+    if (registered?.db.dexie.isOpen()) {
+        registered.holders += 1;
+        return network;
     }
-    databaseRegistry.set(network, db);
+    let pending = pendingOpens.get(network);
+    if (!pending) {
+        pending = { holders: 0, opened: Promise.resolve() };
+        pendingOpens.set(network, pending);
+        pending.opened = openAndRegister(network, clientVersion, pending);
+    }
+    pending.holders += 1;
+    await pending.opened;
     return network;
+}
+// Registers the connection and counts its waiting holders in one turn, so a
+// close landing in between cannot release it under them. An entry it replaces
+// was closed elsewhere, and that entry's holders now hold this connection.
+async function openAndRegister(network, clientVersion, pending) {
+    const db = new MidenDatabase(network);
+    try {
+        const success = await db.open(clientVersion);
+        /* v8 ignore next 3 - open() only returns false after logWebStoreError re-throws, so !success is unreachable */
+        if (!success) {
+            throw new Error(`Failed to open IndexedDB database: ${network}`);
+        }
+    }
+    catch (err) {
+        db.dexie.close();
+        throw err;
+    }
+    finally {
+        pendingOpens.delete(network);
+    }
+    const replaced = databaseRegistry.get(network);
+    replaced?.db.dexie.close();
+    databaseRegistry.set(network, {
+        db,
+        holders: (replaced?.holders ?? 0) + pending.holders,
+    });
 }
 var Table;
 (function (Table) {
@@ -60,6 +114,7 @@ var Table;
     Table["Tags"] = "tags";
     Table["ForeignAccountCode"] = "foreignAccountCode";
     Table["Settings"] = "settings";
+    Table["AccountWitnesses"] = "accountWitnesses";
 })(Table || (Table = {}));
 /** Mirrors `SettingScope`, whose discriminants are part of a store's schema. */
 export const SETTING_SCOPE_CLIENT = 0;
@@ -121,6 +176,7 @@ export class MidenDatabase {
     tags;
     foreignAccountCode;
     settings;
+    accountWitnesses;
     constructor(network) {
         this.dexie = new Dexie(network);
         // --- Schema versioning ---
@@ -214,6 +270,20 @@ export class MidenDatabase {
         this.dexie.version(5).stores({
             [Table.Settings]: indexes("[scope+key]", "scope"),
         });
+        // v6: accounts whose witness the sync keeps fresh. The witness column is null until the
+        // first refresh. A minor client bump still nukes the database; this covers patch upgrades.
+        this.dexie.version(6).stores({
+            [Table.AccountWitnesses]: indexes("&accountId"),
+        });
+        // v7 (miden-client 0.17.2): the client keeps no private-note relay queue, so a queue row a
+        // 0.17.1 client left behind would never be read or cleared. Mirrors sqlite-store migration
+        // `0002_drop_note_transport_outbox.sql`; a user-scope row of the same name is untouched.
+        this.dexie
+            .version(7)
+            .stores({})
+            .upgrade((tx) => tx
+            .table(Table.Settings)
+            .delete([SETTING_SCOPE_CLIENT, NOTE_TRANSPORT_OUTBOX_SETTING_KEY]));
         this.accountCodes = this.dexie.table(Table.AccountCode);
         this.latestAccountStorages = this.dexie.table(Table.LatestAccountStorage);
         this.historicalAccountStorages = this.dexie.table(Table.HistoricalAccountStorage);
@@ -237,6 +307,7 @@ export class MidenDatabase {
         this.tags = this.dexie.table(Table.Tags);
         this.foreignAccountCode = this.dexie.table(Table.ForeignAccountCode);
         this.settings = this.dexie.table(Table.Settings);
+        this.accountWitnesses = this.dexie.table(Table.AccountWitnesses);
         this.dexie.on("populate", () => {
             this.blockchainCheckpoint
                 .put({

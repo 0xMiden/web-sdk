@@ -129,6 +129,21 @@ describe("buildNetworkNote", () => {
     expect(wasm.NoteAssets).toHaveBeenCalledWith([expect.anything()]); // one FungibleAsset, not empty
   });
 
+  it("accepts an empty assets array as an asset-less note", () => {
+    expect(() =>
+      buildNetworkNote({
+        account: "0xs",
+        target: "0xt",
+        script: "s",
+        assets: [],
+      })
+    ).not.toThrow();
+    expect(wasm.NoteAssets).toHaveBeenCalledWith([]);
+    expect(wasm.Note.withAttachments.mock.calls[0][0]).toBe(
+      wasm.NoteAssets.mock.instances[0]
+    );
+  });
+
   it("uses a pre-built NetworkAccountTarget directly without reconstructing it", () => {
     const preBuilt = Object.create(wasm.NetworkAccountTarget.prototype);
     preBuilt.targetId = vi.fn(() => "preBuiltTargetId");
