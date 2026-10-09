@@ -38,6 +38,9 @@ Do not try to require this package directly, and do not add it to your
   container built on one architecture or C library and run on another gets no
   binary. Install on the target platform, or set `MIDEN_MODULE_PATH` to a
   binary you supply.
+  With npm, an install for Linux from another OS (`npm install --os=linux
+  --cpu=x64`) must also pass `--libc=glibc`; npm cannot detect the C library of
+  a foreign OS and otherwise skips this package.
 - **`--no-optional`, or a lockfile pinned on another platform.** Optional
   dependencies are how this is delivered; skipping them skips the binary.
 - **musl rather than glibc.** This package links against glibc and does not

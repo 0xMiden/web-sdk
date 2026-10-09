@@ -142,6 +142,8 @@ describe("loadNativeModule on linux-x64", () => {
     expect(error?.message).toContain(`require("${GNU}") -> MODULE_NOT_FOUND`);
     expect(error?.message).toContain(`require("${MUSL}") -> MODULE_NOT_FOUND`);
     expect(error?.message).toContain(`"${GNU}" or "${MUSL}"`);
+    expect(error?.message).toContain("--libc=glibc");
+    expect(error?.message).toContain("--libc=musl");
     expect(copyFileSync).not.toHaveBeenCalled();
   });
 

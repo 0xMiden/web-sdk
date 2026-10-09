@@ -234,6 +234,9 @@ function buildNotFoundMessage(platformPackages, attempts) {
       "package-lock.json and reinstall on Linux; pnpm avoids this npm bug).",
     "  - On Alpine/musl, ensure @miden-sdk/node-linux-x64-musl is installed, " +
       "or switch to a glibc base image such as node:22-bookworm-slim.",
+    "  - Installing with npm for Linux from another OS (`--os=linux " +
+      "--cpu=x64`)? Also pass `--libc=glibc`, or `--libc=musl` for Alpine: " +
+      "npm skips both Linux packages when it cannot detect the C library.",
     "  - Or set MIDEN_MODULE_PATH to a prebuilt .node file.",
     "  - Or build from source: `cargo build -p miden-client-web " +
       "--no-default-features --features nodejs --release`."
