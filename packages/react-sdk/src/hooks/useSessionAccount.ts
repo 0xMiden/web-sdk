@@ -258,7 +258,12 @@ async function waitAndConsume(
       return;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        Math.max(0, Math.min(pollIntervalMs, deadline - Date.now()))
+      )
+    );
   }
 
   throw new Error("Timeout waiting for session wallet funding");

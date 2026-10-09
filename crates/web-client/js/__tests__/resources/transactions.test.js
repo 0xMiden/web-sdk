@@ -1972,6 +1972,35 @@ describe("TransactionsResource", () => {
       expect(pollCount).toBe(2);
     });
 
+    it("waits the full interval between polls when timeout is 0", async () => {
+      let pollCount = 0;
+      const { resource } = makeResource({
+        getTransactions: vi.fn().mockImplementation(() => {
+          pollCount++;
+          if (pollCount < 2) return Promise.resolve([]);
+          return Promise.resolve([
+            {
+              transactionStatus: () => ({
+                isCommitted: () => true,
+                isDiscarded: () => false,
+              }),
+            },
+          ]);
+        }),
+        syncChain: vi.fn().mockResolvedValue(undefined),
+      });
+      const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+      let delays;
+      try {
+        await resource.waitFor("0xtxHex", { timeout: 0, interval: 60 });
+        delays = setTimeoutSpy.mock.calls.map((call) => call[1]);
+      } finally {
+        setTimeoutSpy.mockRestore();
+      }
+      expect(pollCount).toBe(2);
+      expect(delays).toContain(60);
+    });
+
     it("handles transactionStatus returning undefined (no status method)", async () => {
       let count = 0;
       const { resource } = makeResource({
@@ -2534,5 +2563,23 @@ describe("TransactionsResource", () => {
         })
       ).rejects.toThrow(/timed out/);
     });
+
+    it("submitBatch waitForConfirmation gives up at the timeout, not an interval later", async () => {
+      const { resource } = makeResource({
+        submitNewTransactionBatch: vi.fn().mockResolvedValue(1000),
+        getSyncHeight: vi.fn().mockResolvedValue(0),
+        syncStateWithTimeout: vi.fn().mockResolvedValue(undefined),
+      });
+      const r = fakeRequest();
+      const start = Date.now();
+      await expect(
+        resource.submitBatch([{ account: "0xsender", request: r }], {
+          waitForConfirmation: true,
+          timeout: 50,
+          interval: 5000,
+        })
+      ).rejects.toThrow("Batch confirmation timed out after 50ms");
+      expect(Date.now() - start).toBeLessThan(1000);
+    }, 10000);
   });
 });

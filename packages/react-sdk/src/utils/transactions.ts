@@ -88,8 +88,9 @@ export async function waitForTransactionCommit(
         throw new Error("Transaction was discarded before commit");
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-    waited += delayMs;
+    const step = Math.min(delayMs, maxWaitMs - waited);
+    await new Promise((resolve) => setTimeout(resolve, step));
+    waited += step;
   }
 
   throw new Error("Timeout waiting for transaction commit");

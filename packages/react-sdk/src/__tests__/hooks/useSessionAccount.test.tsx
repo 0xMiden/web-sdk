@@ -135,6 +135,50 @@ describe("useSessionAccount", () => {
       expect(mockClient.newConsumeTransactionRequest).not.toHaveBeenCalled();
     });
 
+    it("gives up waiting for funding at maxWaitMs, not a full poll interval later", async () => {
+      const mockWallet = createMockAccount({
+        id: vi.fn(() => ({
+          toString: vi.fn(() => "0xunfunded_wallet"),
+          toHex: vi.fn(() => "0xunfunded_wallet"),
+          isFaucet: vi.fn(() => false),
+          isRegularAccount: vi.fn(() => true),
+          free: vi.fn(),
+        })),
+      });
+      const mockClient = createMockWebClient({
+        newWallet: vi.fn().mockResolvedValue(mockWallet),
+        getConsumableNotes: vi.fn().mockResolvedValue([]),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() =>
+        useSessionAccount({
+          fund: vi.fn().mockResolvedValue(undefined),
+          assetId: "0xfaucet",
+          pollIntervalMs: 5000,
+          maxWaitMs: 50,
+        })
+      );
+
+      const start = Date.now();
+      let error: unknown;
+      await act(async () => {
+        await result.current.initialize().catch((err: unknown) => {
+          error = err;
+        });
+      });
+
+      expect((error as Error | undefined)?.message).toBe(
+        "Timeout waiting for session wallet funding"
+      );
+      expect(Date.now() - start).toBeLessThan(1000);
+    }, 10000);
+
     it("should create wallet and call fund callback", async () => {
       const mockWallet = createMockAccount({
         id: vi.fn(() => ({

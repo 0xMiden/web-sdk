@@ -126,4 +126,24 @@ describe("useWaitForCommit", () => {
       result.current.waitForCommit("0xtx", { timeoutMs: 20, intervalMs: 1 })
     ).rejects.toThrow("Transaction was discarded before commit");
   });
+
+  it("gives up at the timeout, not a full interval later", async () => {
+    const mockClient = createMockWebClient({
+      syncState: vi.fn().mockResolvedValue({}),
+      getTransactions: vi.fn().mockResolvedValue([]),
+    });
+
+    mockUseMiden.mockReturnValue({
+      client: mockClient,
+      isReady: true,
+    });
+
+    const { result } = renderHook(() => useWaitForCommit());
+
+    const start = Date.now();
+    await expect(
+      result.current.waitForCommit("0xtx", { timeoutMs: 50, intervalMs: 5000 })
+    ).rejects.toThrow("Timeout waiting for transaction commit");
+    expect(Date.now() - start).toBeLessThan(1000);
+  }, 10000);
 });

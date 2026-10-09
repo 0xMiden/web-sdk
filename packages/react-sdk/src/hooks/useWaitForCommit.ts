@@ -67,7 +67,12 @@ export function useWaitForCommit(): UseWaitForCommitResult {
           }
         }
 
-        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+        await new Promise((resolve) =>
+          setTimeout(
+            resolve,
+            Math.max(0, Math.min(intervalMs, deadline - Date.now()))
+          )
+        );
       }
 
       throw new Error("Timeout waiting for transaction commit");

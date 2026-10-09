@@ -72,6 +72,30 @@ describe("useWaitForNotes", () => {
     expect(calls[0]?.[0]).not.toBe(calls[1]?.[0]);
   });
 
+  it("gives up at the timeout, not a full interval later", async () => {
+    const mockClient = createMockWebClient({
+      syncState: vi.fn().mockResolvedValue({}),
+      getConsumableNotes: vi.fn().mockResolvedValue([]),
+    });
+
+    mockUseMiden.mockReturnValue({
+      client: mockClient,
+      isReady: true,
+    });
+
+    const { result } = renderHook(() => useWaitForNotes());
+
+    const start = Date.now();
+    await expect(
+      result.current.waitForConsumableNotes({
+        accountId: "0xaccount",
+        timeoutMs: 50,
+        intervalMs: 5000,
+      })
+    ).rejects.toThrow("Timeout waiting for consumable notes");
+    expect(Date.now() - start).toBeLessThan(1000);
+  }, 10000);
+
   it("should resolve when consumable notes are available", async () => {
     const note = createMockConsumableNoteRecord("0xnote1", "0xaccount");
     const mockClient = createMockWebClient({

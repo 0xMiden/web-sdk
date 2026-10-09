@@ -76,6 +76,24 @@ async function proveResult(inner, defaultProver, result, opts) {
     : await inner.proveTransaction(result);
 }
 
+/**
+ * Sleeps one polling interval, cut short at a finite `timeout` measured from
+ * `start`, so a polling loop gives up at its deadline rather than up to one
+ * interval after it. `timeout: 0` (poll indefinitely) sleeps the full interval.
+ *
+ * @param {number} start - `Date.now()` when polling began.
+ * @param {number} timeout - The polling timeout in ms, or 0 for none.
+ * @param {number} interval - The polling interval in ms.
+ * @returns {Promise<void>}
+ */
+function waitBeforeNextPoll(start, timeout, interval) {
+  const sleepMs =
+    timeout > 0
+      ? Math.max(0, Math.min(interval, timeout - (Date.now() - start)))
+      : interval;
+  return new Promise((resolve) => setTimeout(resolve, sleepMs));
+}
+
 export class TransactionsResource {
   #inner;
   #getWasm;
@@ -758,7 +776,7 @@ export class TransactionsResource {
       }
       const height = await this.#inner.getSyncHeight();
       if (height >= blockNumber) return;
-      await new Promise((resolve) => setTimeout(resolve, interval));
+      await waitBeforeNextPoll(start, timeout, interval);
     }
   }
 
@@ -1043,14 +1061,7 @@ export class TransactionsResource {
         opts?.onProgress?.("pending");
       }
 
-      // Bound the idle sleep by whatever remains of the timeout, so a finite
-      // deadline is hard rather than "deadline, rounded up to the next
-      // interval". `timeout: 0` (poll indefinitely) keeps the full interval.
-      const sleepMs =
-        timeout > 0
-          ? Math.max(0, Math.min(interval, timeout - (Date.now() - start)))
-          : interval;
-      await new Promise((resolve) => setTimeout(resolve, sleepMs));
+      await waitBeforeNextPoll(start, timeout, interval);
     }
   }
 
