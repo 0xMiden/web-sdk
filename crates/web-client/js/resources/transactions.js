@@ -76,6 +76,24 @@ async function proveResult(inner, defaultProver, result, opts) {
     : await inner.proveTransaction(result);
 }
 
+/**
+ * Sleeps one polling interval, cut short at a finite `timeout` measured from
+ * `start`, so a polling loop gives up at its deadline rather than up to one
+ * interval after it. `timeout: 0` (poll indefinitely) sleeps the full interval.
+ *
+ * @param {number} start - `Date.now()` when polling began.
+ * @param {number} timeout - The polling timeout in ms, or 0 for none.
+ * @param {number} interval - The polling interval in ms.
+ * @returns {Promise<void>}
+ */
+function waitBeforeNextPoll(start, timeout, interval) {
+  const sleepMs =
+    timeout > 0
+      ? Math.max(0, Math.min(interval, timeout - (Date.now() - start)))
+      : interval;
+  return new Promise((resolve) => setTimeout(resolve, sleepMs));
+}
+
 export class TransactionsResource {
   #inner;
   #getWasm;
@@ -758,7 +776,7 @@ export class TransactionsResource {
       }
       const height = await this.#inner.getSyncHeight();
       if (height >= blockNumber) return;
-      await new Promise((resolve) => setTimeout(resolve, interval));
+      await waitBeforeNextPoll(start, timeout, interval);
     }
   }
 
@@ -985,7 +1003,10 @@ export class TransactionsResource {
    *   milliseconds. This is NOT a block height — it controls how long the
    *   client waits before giving up. Set to 0 to disable the timeout and poll
    *   indefinitely until the transaction is committed or discarded.
-   * @param {number} [opts.interval=5000] - Polling interval in ms.
+   * @param {number} [opts.interval=5000] - Polling interval in ms. When
+   *   `timeout` is set, the wait between polls ends at the timeout, so
+   *   `waitFor` gives up at the deadline rather than up to one interval later.
+   *   A sync or query already in flight still finishes first.
    * @param {function} [opts.onProgress] - Called with the current status on
    *   each poll iteration ("pending", "submitted", or "committed").
    */
@@ -1040,7 +1061,7 @@ export class TransactionsResource {
         opts?.onProgress?.("pending");
       }
 
-      await new Promise((resolve) => setTimeout(resolve, interval));
+      await waitBeforeNextPoll(start, timeout, interval);
     }
   }
 

@@ -64,6 +64,29 @@ describe("waitForTransactionCommit", () => {
     ).rejects.toThrow("Timeout waiting for transaction commit");
   });
 
+  it("gives up at maxWaitMs, not a full delay later", async () => {
+    const client = makeClient("pending");
+    const txId = { toHex: () => "0xtx" } as never;
+    const start = Date.now();
+    await expect(
+      waitForTransactionCommit(client, passthrough, txId, 50, 5000)
+    ).rejects.toThrow("Timeout waiting for transaction commit");
+    expect(Date.now() - start).toBeLessThan(1000);
+  }, 10000);
+
+  it("counts time spent syncing toward maxWaitMs", async () => {
+    const client = makeClient("pending");
+    client.syncState.mockImplementation(
+      () => new Promise((resolve) => setTimeout(resolve, 40))
+    );
+    const txId = { toHex: () => "0xtx" } as never;
+    const start = Date.now();
+    await expect(
+      waitForTransactionCommit(client, passthrough, txId, 50, 5)
+    ).rejects.toThrow("Timeout waiting for transaction commit");
+    expect(Date.now() - start).toBeLessThan(300);
+  }, 10000);
+
   it("polls until the tx record appears, then commits", async () => {
     // First two getTransactions calls return [], third returns committed.
     const client = makeClient("committed", { firstCalls: 2 });

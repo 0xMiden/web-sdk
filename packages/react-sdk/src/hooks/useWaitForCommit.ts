@@ -36,7 +36,11 @@ export function useWaitForCommit(): UseWaitForCommitResult {
       }
 
       const timeoutMs = Math.max(0, options?.timeoutMs ?? 10_000);
-      const intervalMs = Math.max(1, options?.intervalMs ?? 1_000);
+      // A NaN interval would make every sleep a zero-length timer.
+      const flooredInterval = Math.max(1, options?.intervalMs ?? 1_000);
+      const intervalMs = Number.isNaN(flooredInterval)
+        ? 1_000
+        : flooredInterval;
       const targetHex = normalizeHex(
         typeof txId === "string" ? txId : txId.toHex()
       );
@@ -67,7 +71,12 @@ export function useWaitForCommit(): UseWaitForCommitResult {
           }
         }
 
-        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+        await new Promise((resolve) =>
+          setTimeout(
+            resolve,
+            Math.max(0, Math.min(intervalMs, deadline - Date.now()))
+          )
+        );
       }
 
       throw new Error("Timeout waiting for transaction commit");

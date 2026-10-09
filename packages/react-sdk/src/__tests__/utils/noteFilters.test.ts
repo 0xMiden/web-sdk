@@ -198,4 +198,20 @@ describe("waitForTransactionCommit", () => {
     // time we should complete fewer iterations than 150/10 = 15
     expect(client.syncState.mock.calls.length).toBeLessThanOrEqual(5);
   });
+
+  it("gives up at maxWaitMs, not a full delay later", async () => {
+    const client = createMockClient(["pending"]);
+
+    const start = Date.now();
+    await expect(
+      waitForTransactionCommit(
+        client as never,
+        mockRunExclusive,
+        TX_HEX,
+        50,
+        5000
+      )
+    ).rejects.toThrow("Timeout waiting for transaction commit");
+    expect(Date.now() - start).toBeLessThan(1000);
+  }, 10000);
 });
