@@ -689,7 +689,7 @@ The `StreamedNote` type provides:
 ```typescript
 interface StreamedNote {
   id: string;              // Note ID (hex)
-  sender: string;          // Sender account ID (bech32)
+  sender: string;          // Sender account ID (bech32 if the network is known, else hex)
   amount: bigint;          // First fungible asset amount (0n if none)
   assets: NoteAsset[];     // All assets on the note
   record: InputNoteRecord; // Underlying record for escape-hatch access
@@ -703,7 +703,9 @@ interface StreamedNote {
 Fetch asset symbols/decimals for a list of asset IDs. This is the lightweight
 way to enrich balances and note lists with human-friendly token info.
 It batches lookups and caches results for reuse across components. That avoids
-repeated RPC calls and inconsistent labels.
+repeated RPC calls and inconsistent labels. Lookups go to the node the
+provider's client was created against (`client.endpoint()`), so nothing is
+fetched until `MidenProvider` is ready.
 
 ```tsx
 import { useAssetMetadata } from '@miden-sdk/react';
@@ -839,6 +841,65 @@ function MultiSendButton() {
   );
 }
 ```
+
+#### `useBatch()`
+
+Submit multiple transactions across one or more tracked accounts as one atomic
+batch — every tx lands together or none does. Each item pairs a local account
+with a pre-built `TransactionRequest`. Later items may consume notes produced by
+earlier ones (even across accounts); push order must respect
+producer-before-consumer. The underlying primitive returns a block number
+rather than per-tx ids, so the hook's result is `{ blockNumber }`.
+Each tx is proven inside that primitive by the client's built-in local prover,
+so `MidenProvider`'s `prover` setting and its fallback do not apply to batches.
+In the browser the batch runs in the client's Web Worker, so the page stays
+responsive while it proves; with `useWorker: false`, or without `Worker`
+support, it proves on the calling thread and blocks the page until it settles,
+so keep batches small there.
+
+Built-in features:
+- **Auto pre-sync** before submit (disable with `skipSync: true`)
+- **Concurrency guard** rejects a second `batch()` while the first is still
+  in flight (`BATCH_BUSY`)
+- **Atomicity** — the batch path uses the same proven-batch RPC the underlying
+  `submitNewTransactionBatch` exposes; the store applies all per-tx updates
+  in one IndexedDB transaction
+
+```tsx
+import { useBatch, useMidenClient } from '@miden-sdk/react';
+import { BatchItem, NoteType } from '@miden-sdk/miden-sdk';
+
+function BatchButton() {
+  const { batch, isLoading, stage } = useBatch();
+  const client = useMidenClient();
+
+  const handleBatch = async () => {
+    const sendReq = await client.newSendTransactionRequest(
+      alice, bob, token, NoteType.Private, 50n, null, null,
+    );
+    const consumeReq = await client.newConsumeTransactionRequest([incomingNote], bob);
+
+    const { blockNumber } = await batch({
+      items: [
+        { account: alice, request: sendReq },
+        { account: bob,   request: consumeReq },  // can consume notes from earlier items
+      ],
+    });
+    console.log('Batch submitted at chain tip', blockNumber);
+  };
+
+  return (
+    <button onClick={handleBatch} disabled={isLoading}>
+      {isLoading ? `Submitting (${stage})...` : 'Submit batch'}
+    </button>
+  );
+}
+```
+
+Pass `skipSync: true` if you've already synced and want to avoid the pre-submit
+round-trip. The hook itself never serializes the requests: the WASM `BatchItem`
+constructor takes the `TransactionRequest` by reference. A client running a
+Web Worker serializes each request once to hand the batch to the worker.
 
 #### `useInternalTransfer()`
 
@@ -1588,7 +1649,7 @@ Compare and normalize account IDs across hex and bech32 formats:
 ```typescript
 import { normalizeAccountId, accountIdsEqual } from '@miden-sdk/react';
 
-const bech32 = normalizeAccountId('0x1234...');  // Returns bech32 format
+const bech32 = normalizeAccountId('0x1234...');  // bech32 for the client's network (raw id if unknown)
 accountIdsEqual('0x1234...', 'miden1abc...');     // true (format-agnostic)
 ```
 
@@ -1660,7 +1721,8 @@ try {
 } catch (e) {
   const wrapped = wrapWasmError(e);
   // MidenError with code: 'WASM_CLASS_MISMATCH' | 'WASM_POINTER_CONSUMED' |
-  //   'WASM_NOT_INITIALIZED' | 'WASM_SYNC_REQUIRED' | 'SEND_BUSY' | 'UNKNOWN'
+  //   'WASM_NOT_INITIALIZED' | 'WASM_SYNC_REQUIRED' | 'SEND_BUSY' |
+  //   'OPERATION_BUSY' | 'BATCH_BUSY' | 'STALE_CLIENT' | 'UNKNOWN'
   console.log(wrapped.message); // Human-readable with fix suggestions
 }
 ```
@@ -2006,6 +2068,9 @@ import type {
   SendOptions,
   MultiSendRecipient,
   MultiSendOptions,
+  BatchItemInput,
+  BatchOptions,
+  BatchResult,
   InternalTransferOptions,
   InternalTransferChainOptions,
   InternalTransferResult,

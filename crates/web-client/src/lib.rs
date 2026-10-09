@@ -22,7 +22,6 @@ use js_export_macro::js_export;
 use js_sys::{Function, Reflect};
 use miden_client::account::AccountId as NativeAccountId;
 use miden_client::builder::{ClientBuilder, DEFAULT_GRPC_TIMEOUT_MS};
-use miden_client::crypto::RandomCoin;
 #[cfg(feature = "nodejs")]
 use miden_client::keystore::FilesystemKeyStore;
 use miden_client::note_transport::NoteTransportClient;
@@ -31,15 +30,15 @@ use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, RpcError, Verifying
 use miden_client::store::{Store, StoreError};
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::MockNoteTransportApi;
-use miden_client::{Client, ClientError, ErrorHint, Felt};
+use miden_client::{Client, ClientError, ErrorHint};
 use models::code_builder::CodeBuilder;
 #[cfg(feature = "nodejs")]
 use napi_derive::napi;
 #[cfg(feature = "nodejs")]
 use platform::maybe_wrap_send;
 use platform::{AsyncCell, ClientAuth, JsErr, from_str_err};
+use rand::SeedableRng;
 use rand::rngs::StdRng;
-use rand::{RngExt, SeedableRng};
 #[cfg(feature = "browser")]
 use tracing::Level;
 #[cfg(feature = "browser")]
@@ -226,13 +225,17 @@ pub struct WebClient {
     fee_faucet: AsyncCell<Option<NativeAccountId>>,
     mock_rpc_api: AsyncCell<Option<Arc<MockRpcApi>>>,
     mock_note_transport_api: AsyncCell<Option<Arc<MockNoteTransportApi>>>,
+    /// Node endpoint the client was created against, kept outside `inner` so `endpoint()` can
+    /// answer synchronously without borrowing the client. `None` until creation succeeds, and for
+    /// a mock client, which talks to no node.
+    endpoint: std::sync::RwLock<Option<String>>,
 }
 
 // SAFETY: napi-rs with `tokio_rt` uses a multi-threaded tokio runtime, so async napi
 // functions run on worker threads. This is sound because the concrete types behind
 // trait objects (`SqliteStore`, `GrpcClient`, `FilesystemKeyStore`) are all Send + Sync
 // — only the `dyn Trait` bounds lack Send. All mutable state is behind `AsyncCell`
-// (tokio::sync::Mutex), which serializes access.
+// (tokio::sync::Mutex) or, for `endpoint`, a `std::sync::RwLock`, which serialize access.
 #[cfg(feature = "nodejs")]
 unsafe impl Send for WebClient {}
 #[cfg(feature = "nodejs")]
@@ -274,6 +277,7 @@ impl WebClient {
             fee_faucet: AsyncCell::new(None),
             mock_rpc_api: AsyncCell::new(None),
             mock_note_transport_api: AsyncCell::new(None),
+            endpoint: std::sync::RwLock::new(None),
         }
     }
 
@@ -326,6 +330,18 @@ impl WebClient {
         let guard = self.inner.lock().await;
         let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         Ok(client.store_identifier().to_string())
+    }
+
+    /// Returns the URL of the node this client was created against, for example
+    /// `https://rpc.devnet.miden.io`. A client created without a node URL reports the testnet
+    /// endpoint it defaulted to. Returns `undefined` before the client is created and for a mock
+    /// client, which talks to no node.
+    ///
+    /// Synchronous: the value is stored at creation, so reading it never waits on an in-flight
+    /// call.
+    #[js_export(js_name = "endpoint")]
+    pub fn endpoint(&self) -> Option<String> {
+        self.endpoint.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
     }
 
     #[js_export(js_name = "createCodeBuilder")]
@@ -444,18 +460,32 @@ impl WebClient {
         let store_name =
             store_name.unwrap_or(format!("{}_{}", BASE_STORE_NAME, endpoint.to_network_id()));
 
-        let rng = create_rng(seed)?;
+        let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
             IdxdbStore::new(store_name.clone())
                 .await
                 .map_err(|_| JsValue::from_str("Failed to initialize IdxdbStore"))?,
         );
-        let keystore = WebKeyStore::new_with_callbacks(rng, store_name.clone(), None, None, None);
+        let keystore = WebKeyStore::new_with_callbacks(
+            StdRng::from_rng(&mut rng),
+            store_name.clone(),
+            None,
+            None,
+            None,
+        );
 
         let fee_faucet = fee_faucet_id.map(|id| parse_fee_faucet_id(&id)).transpose()?;
 
-        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client, fee_faucet)
-            .await?;
+        self.setup_client(
+            web_rpc_client,
+            Some(endpoint.to_string()),
+            store,
+            keystore,
+            rng,
+            note_transport_client,
+            fee_faucet,
+        )
+        .await?;
 
         Ok(JsValue::from_str("Client created successfully"))
     }
@@ -506,19 +536,32 @@ impl WebClient {
         let store_name =
             store_name.unwrap_or(format!("{}_{}", BASE_STORE_NAME, endpoint.to_network_id()));
 
-        let rng = create_rng(seed)?;
+        let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
             IdxdbStore::new(store_name.clone())
                 .await
                 .map_err(|_| JsValue::from_str("Failed to initialize IdxdbStore"))?,
         );
-        let keystore =
-            WebKeyStore::new_with_callbacks(rng, store_name, get_key_cb, insert_key_cb, sign_cb);
+        let keystore = WebKeyStore::new_with_callbacks(
+            StdRng::from_rng(&mut rng),
+            store_name,
+            get_key_cb,
+            insert_key_cb,
+            sign_cb,
+        );
 
         let fee_faucet = fee_faucet_id.map(|id| parse_fee_faucet_id(&id)).transpose()?;
 
-        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client, fee_faucet)
-            .await?;
+        self.setup_client(
+            web_rpc_client,
+            Some(endpoint.to_string()),
+            store,
+            keystore,
+            rng,
+            note_transport_client,
+            fee_faucet,
+        )
+        .await?;
 
         Ok(JsValue::from_str("Client created successfully"))
     }
@@ -527,9 +570,10 @@ impl WebClient {
     async fn setup_client(
         &self,
         rpc_client: Arc<dyn NodeRpcClient>,
+        endpoint: Option<String>,
         store: Arc<dyn Store>,
-        keystore: WebKeyStore<RandomCoin>,
-        rng: RandomCoin,
+        keystore: WebKeyStore<StdRng>,
+        rng: StdRng,
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
         fee_faucet: Option<NativeAccountId>,
     ) -> Result<(), JsValue> {
@@ -553,9 +597,10 @@ impl WebClient {
             .await
             .map_err(|err| js_error_with_context(err, "Failed to ensure genesis in place"))?;
 
-        // Published together with `inner`, so a creation that fails leaves neither set: the
-        // accessor reports the faucet of a client that exists, or nothing.
+        // Published together with `inner`, so a creation that fails leaves none of them set: the
+        // accessors report the faucet and endpoint of a client that exists, or nothing.
         *self.fee_faucet.lock().await = fee_faucet;
+        *self.endpoint.write().unwrap_or_else(std::sync::PoisonError::into_inner) = endpoint;
         *self.inner.lock().await = Some(client);
 
         Ok(())
@@ -617,8 +662,16 @@ impl WebClient {
 
         let fee_faucet = fee_faucet_id.map(|id| parse_fee_faucet_id(&id)).transpose()?;
 
-        self.setup_client(rpc_client, store, keystore, rng, note_transport_client, fee_faucet)
-            .await?;
+        self.setup_client(
+            rpc_client,
+            Some(endpoint.to_string()),
+            store,
+            keystore,
+            rng,
+            note_transport_client,
+            fee_faucet,
+        )
+        .await?;
 
         Ok("Client created successfully".to_string())
     }
@@ -627,9 +680,10 @@ impl WebClient {
     async fn setup_client(
         &self,
         rpc_client: Arc<dyn NodeRpcClient>,
+        endpoint: Option<String>,
         store: Arc<dyn Store>,
         keystore: FilesystemKeyStore,
-        rng: RandomCoin,
+        rng: StdRng,
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
         fee_faucet: Option<NativeAccountId>,
     ) -> Result<(), JsErr> {
@@ -659,6 +713,7 @@ impl WebClient {
         .await?;
 
         *self.fee_faucet.lock().await = fee_faucet;
+        *self.endpoint.write().unwrap_or_else(std::sync::PoisonError::into_inner) = endpoint;
         *self.inner.lock().await = Some(client);
 
         Ok(())
@@ -684,23 +739,16 @@ fn parse_fee_faucet_id(id: &str) -> Result<NativeAccountId, JsErr> {
         })
 }
 
-pub(crate) fn create_rng(seed: Option<Vec<u8>>) -> Result<RandomCoin, JsErr> {
-    let mut rng = match seed {
+pub(crate) fn create_rng(seed: Option<Vec<u8>>) -> Result<StdRng, JsErr> {
+    match seed {
         Some(seed_bytes) => {
-            if seed_bytes.len() == 32 {
-                let mut seed_array = [0u8; 32];
-                seed_array.copy_from_slice(&seed_bytes);
-                StdRng::from_seed(seed_array)
-            } else {
-                return Err(from_str_err("Seed must be exactly 32 bytes"));
-            }
+            let seed_array: [u8; 32] = seed_bytes
+                .try_into()
+                .map_err(|_| from_str_err("Seed must be exactly 32 bytes"))?;
+            Ok(StdRng::from_seed(seed_array))
         },
-        None => StdRng::from_rng(&mut rand::rng()),
-    };
-    let coin_seed: [u64; 4] = rng.random();
-    // `coin_seed` is freshly drawn `u64`s; the probability of hitting the modulus is
-    // vanishing and `new_unchecked` matches the upstream Rust client's usage.
-    Ok(RandomCoin::new(coin_seed.map(Felt::new_unchecked).into()))
+        None => Ok(StdRng::from_rng(&mut rand::rng())),
+    }
 }
 
 // ERROR HANDLING HELPERS

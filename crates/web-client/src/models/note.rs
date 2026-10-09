@@ -2,9 +2,10 @@ use js_export_macro::js_export;
 use miden_client::agglayer::B2AggNote;
 use miden_client::asset::Asset as NativeAsset;
 use miden_client::block::BlockNumber as NativeBlockNumber;
-use miden_client::crypto::RandomCoin;
 use miden_client::note::{Note as NativeNote, NoteAssets as NativeNoteAssets, P2idNote, P2ideNote};
+use miden_client::rng::draw_word;
 use miden_client::{Felt as NativeFelt, Word as NativeWord};
+use miden_protocol::crypto::rand::RandomCoin;
 
 use super::NoteType;
 use super::account_id::AccountId;
@@ -114,12 +115,6 @@ impl Note {
         note_type: NoteType,
         attachment: &NoteAttachment,
     ) -> Result<Self, JsErr> {
-        let coin_seed: [u64; 4] = rand::random();
-        // `coin_seed` is freshly random `u64`s; values at or beyond the modulus would only
-        // happen with vanishing probability and `new_unchecked` is what the upstream Rust
-        // client uses in the same spot.
-        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
-
         let native_note_assets: NativeNoteAssets = assets.into();
         let native_assets: Vec<NativeAsset> = native_note_assets.iter().copied().collect();
 
@@ -131,7 +126,7 @@ impl Note {
             .assets(native_assets)
             .note_type(note_type.into())
             .attachment(native_attachment)
-            .generate_serial_number(&mut rng)
+            .serial_number(draw_word(&mut rand::rng()))
             .build()
             .map_err(|err| js_error_with_context(err, "create p2id note"))?
             .into();
@@ -150,10 +145,6 @@ impl Note {
         note_type: NoteType,
         attachment: &NoteAttachment,
     ) -> Result<Self, JsErr> {
-        let coin_seed: [u64; 4] = rand::random();
-        // See `create_p2id_note` for why `new_unchecked` is fine here.
-        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
-
         let native_note_assets: NativeNoteAssets = assets.into();
         let native_assets: Vec<NativeAsset> = native_note_assets.iter().copied().collect();
 
@@ -167,7 +158,7 @@ impl Note {
             .attachment(native_attachment)
             .maybe_reclaim_height(reclaim_height.map(NativeBlockNumber::from))
             .maybe_timelock_height(timelock_height.map(NativeBlockNumber::from))
-            .generate_serial_number(&mut rng)
+            .serial_number(draw_word(&mut rand::rng()))
             .build()
             .map_err(|err| js_error_with_context(err, "create p2ide note"))?
             .into();
@@ -191,7 +182,8 @@ impl Note {
         destination_address: &EthAddress,
     ) -> Result<Self, JsErr> {
         let coin_seed: [u64; 4] = rand::random();
-        // See `create_p2id_note` for why `new_unchecked` is fine here.
+        // `B2AggNote::create` needs a `FeltRng`, and `RandomCoin` is the protocol type that
+        // implements it. A seed value at or beyond the field modulus has negligible probability.
         let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
 
         let native_assets: NativeNoteAssets = assets.into();

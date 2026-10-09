@@ -3,6 +3,7 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { useNotes } from "../../hooks/useNotes";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
+import { Address } from "@miden-sdk/miden-sdk";
 import {
   createMockWebClient,
   createMockInputNoteRecord,
@@ -14,6 +15,16 @@ vi.mock("../../context/MidenProvider", () => ({
   useMiden: vi.fn(),
 }));
 
+// Network-aware stand-in for the bech32 helper: no prefix until the store has a
+// client, as the real helper behaves, so a test can cross that boundary.
+vi.mock("../../utils/accountBech32", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../utils/accountBech32")>()),
+  toBech32AccountId: vi.fn((id: string) => {
+    const hex = id.startsWith("mdev1") ? `0x${id.slice(5)}` : id;
+    return useMidenStore.getState().client ? `mdev1${hex.slice(2)}` : hex;
+  }),
+}));
+
 const mockUseMiden = useMiden as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
@@ -22,6 +33,62 @@ beforeEach(() => {
 });
 
 describe("useNotes", () => {
+  describe("sender filter", () => {
+    const withSender = (id: string, senderHex: string) => {
+      const record = createMockInputNoteRecord(id);
+      record.metadata = vi.fn(() => ({
+        sender: () => ({ toString: () => senderHex }),
+      }));
+      return record;
+    };
+
+    it("keeps matching a sender given before the provider has a client", async () => {
+      const fromBech32 = vi.mocked(Address.fromBech32);
+      const original = fromBech32.getMockImplementation();
+      fromBech32.mockImplementation(
+        (bech32: string) =>
+          ({
+            accountId: () => ({
+              toString: () => `0x${bech32.slice(5)}`,
+              free: vi.fn(),
+            }),
+            toString: () => bech32,
+          }) as never
+      );
+      try {
+        mockUseMiden.mockReturnValue({ client: null, isReady: false });
+        const { result, rerender } = renderHook(() =>
+          useNotes({ sender: "0xaaa" })
+        );
+
+        const mockClient = createMockWebClient({
+          getInputNotes: vi
+            .fn()
+            .mockResolvedValue([
+              withSender("0xnote1", "0xaaa"),
+              withSender("0xnote2", "0xbbb"),
+            ]),
+          getConsumableNotes: vi.fn().mockResolvedValue([]),
+        });
+        act(() => {
+          useMidenStore.getState().setClient(mockClient as any);
+        });
+        mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+        rerender();
+
+        await waitFor(() => {
+          expect(result.current.notes.length).toBe(2);
+        });
+        expect(result.current.noteSummaries.map((s) => s.id)).toEqual([
+          "0xnote1",
+        ]);
+        expect(result.current.noteSummaries[0].sender).toBe("mdev1aaa");
+      } finally {
+        fromBech32.mockImplementation(original!);
+      }
+    });
+  });
+
   describe("initial state", () => {
     it("should return empty arrays when client is not ready", () => {
       mockUseMiden.mockReturnValue({

@@ -8,8 +8,9 @@
  * The test page (bech32.html) renders a MidenProvider backed by MockWebClient
  * and exposes the bech32 utilities on window.__bech32.  An optional
  * `?rpcUrl=<network>` query parameter lets each test navigate to a page whose
- * MidenProvider is configured with the desired network, which in turn sets the
- * zustand store's config.rpcUrl – the value read by inferNetworkId().
+ * MidenProvider is configured with the desired network. The page's mock client
+ * reports the endpoint a real client created with that rpcUrl would, and
+ * resolveNetworkId() reads it through client.endpoint().
  */
 import { test, expect, type Page } from "@playwright/test";
 
@@ -100,13 +101,13 @@ async function loadBech32Page(
 
 test.describe("accountBech32 utilities (Playwright)", () => {
   // -------------------------------------------------------------------------
-  // toBech32AccountId — default config (no rpcUrl → inferNetworkId → testnet)
+  // toBech32AccountId - default config (no rpcUrl, so the testnet endpoint)
   // -------------------------------------------------------------------------
 
   test("toBech32AccountId converts a real wallet hex ID to a testnet bech32 string", async ({
     page,
   }) => {
-    // inferNetworkId branch: !rpcUrl → NetworkId.testnet()
+    // resolveNetworkId: the client defaulted to testnet -> NetworkId.testnet()
     // toBech32FromAccountId: Address.fromAccountId(...) → address.toBech32()
     const ready = await loadBech32Page(page);
     if (!ready) {
@@ -212,13 +213,13 @@ test.describe("accountBech32 utilities (Playwright)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // inferNetworkId branches via different ?rpcUrl= configs
+  // resolveNetworkId branches via different ?rpcUrl= configs
   // -------------------------------------------------------------------------
 
   test("toBech32AccountId produces a devnet bech32 when rpcUrl is 'devnet'", async ({
     page,
   }) => {
-    // inferNetworkId branch: url.includes("devnet") → NetworkId.devnet()
+    // resolveNetworkId branch: url.includes("devnet") → NetworkId.devnet()
     const ready = await loadBech32Page(page, { rpcUrl: "devnet" });
     if (!ready) {
       test.skip();
@@ -244,7 +245,7 @@ test.describe("accountBech32 utilities (Playwright)", () => {
   test("toBech32AccountId produces a mainnet bech32 when rpcUrl is 'mainnet'", async ({
     page,
   }) => {
-    // inferNetworkId branch: url.includes("mainnet") → NetworkId.mainnet()
+    // resolveNetworkId branch: url.includes("mainnet") → NetworkId.mainnet()
     const ready = await loadBech32Page(page, {
       rpcUrl: "https://rpc.mainnet.miden.io",
     });
@@ -272,7 +273,7 @@ test.describe("accountBech32 utilities (Playwright)", () => {
   test("toBech32AccountId produces a testnet bech32 when rpcUrl is 'testnet'", async ({
     page,
   }) => {
-    // inferNetworkId branch: url.includes("testnet") → NetworkId.testnet()
+    // resolveNetworkId branch: url.includes("testnet") → NetworkId.testnet()
     const ready = await loadBech32Page(page, { rpcUrl: "testnet" });
     if (!ready) {
       test.skip();
@@ -293,13 +294,11 @@ test.describe("accountBech32 utilities (Playwright)", () => {
     expect(result).toMatch(/^mtst1/);
   });
 
-  test("toBech32AccountId falls back to testnet for an unrecognised rpcUrl", async ({
+  test("toBech32AccountId produces a devnet bech32 for a local node", async ({
     page,
   }) => {
-    // inferNetworkId branch: no keyword match → default NetworkId.testnet()
-    const ready = await loadBech32Page(page, {
-      rpcUrl: "https://my-custom-node.example.com/rpc",
-    });
+    // resolveNetworkId branch: url.includes("localhost") -> NetworkId.devnet()
+    const ready = await loadBech32Page(page, { rpcUrl: "localhost" });
     if (!ready) {
       test.skip();
       return;
@@ -316,7 +315,37 @@ test.describe("accountBech32 utilities (Playwright)", () => {
       return (window as any).__bech32.toBech32AccountId(hexId);
     });
 
-    expect(result).toMatch(/^mtst1/);
+    expect(result).toMatch(/^mdev1/);
+  });
+
+  test("toBech32AccountId returns the raw id for an rpcUrl naming no known network", async ({
+    page,
+  }) => {
+    // resolveNetworkId branch: no keyword match -> null, so no bech32 is made
+    // up for a network the endpoint does not name.
+    const ready = await loadBech32Page(page, {
+      rpcUrl: "https://my-custom-node.example.com/rpc",
+    });
+    if (!ready) {
+      test.skip();
+      return;
+    }
+
+    const result = await page.evaluate(async () => {
+      const client = await (window as any).MockWebClient.createClient();
+      await client.syncState();
+      const wallet = await client.newWallet(
+        (window as any).AccountStorageMode.private(),
+        (window as any).AuthScheme.AuthRpoFalcon512
+      );
+      const hexId = wallet.id().toString();
+      return {
+        hexId,
+        converted: (window as any).__bech32.toBech32AccountId(hexId),
+      };
+    });
+
+    expect(result.converted).toBe(result.hexId);
   });
 
   // -------------------------------------------------------------------------

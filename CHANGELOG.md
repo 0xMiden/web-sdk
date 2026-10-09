@@ -1,5 +1,74 @@
 # Changelog
 
+## 0.18.0-rc.0 (TBD)
+
+### Enhancements
+
+* [FEATURE][web,react] Transaction batches can span several local accounts. Every `client.transactions.batch` operation names its own executing `account`, so one atomic batch can mix any tracked accounts, and a later transaction may consume a note an earlier one produced, including across accounts. `submitBatch` takes `{ account, request }` pairs, backed by a new `BatchItem` (`new BatchItem(accountId, request)`) that the WASM `submitNewTransactionBatch` accepts as an array. The React SDK adds `useBatch()`, whose `batch({ items, skipSync? })` submits pre-built requests as one batch and resolves to `{ blockNumber }`. Each batch transaction is proven inside the batch primitive by the client's built-in local prover, so `MidenClient`'s `proverUrl` and `MidenProvider`'s `prover` setting, fallback included, do not apply to batches ([#161](https://github.com/0xMiden/web-sdk/pull/161), [rust-sdk#2177](https://github.com/0xMiden/rust-sdk/pull/2177)).
+* [FEATURE][web,react] The batch call behind `transactions.batch()`, `transactions.submitBatch()`, the React `useBatch()` and `WebClient.submitNewTransactionBatch()` now runs in the Web Worker when one is in use (`useWorker: true` in an environment with `Worker`), and in-thread otherwise. Other client calls still queue behind a batch, but the page keeps painting. Mock-chain clients keep batching in-thread; call `proveBlock()` after a mock batch before the next submit. `BatchItem` gains `accountId()` and `request()`. Under the worker, external-keystore sign callbacks share the callback bridge's limits tracked in [#316](https://github.com/0xMiden/web-sdk/issues/316), and `lastAuthError()` does not report a batch's auth error ([#313](https://github.com/0xMiden/web-sdk/pull/313)).
+* [FEATURE][web] `MidenClient.endpoint()`, `WebClient.endpoint()` and `RpcClient.endpoint()` return, synchronously, the URL of the node the client was created against, e.g. `"https://rpc.devnet.miden.io"`. A client created without `rpcUrl` reports the testnet endpoint it defaulted to, and a mock client returns `undefined`. Build a standalone `RpcClient` against the same node with `new RpcClient(new Endpoint(client.endpoint()))` ([#212](https://github.com/0xMiden/web-sdk/pull/212)).
+* [FEATURE][web] `NoteScript` now has a constructor for every standard note. The new `NoteScript.faucetPolicyConfig()`, `pauseConfig()`, `ownerConfig()`, `rbacConfig()`, `constantFeePolicyConfig()`, `faucetMetadataConfig()`, `minBurnAmountConfig()`, `allowlistConfig()`, `blocklistConfig()`, `upgrade()` and `txFee()` return the standard note scripts for their roots: allowlist a note on a network account with `new NoteScriptFee(NoteScript.pauseConfig().root(), fee)`, or compare a note's script root against one to recognize it ([#260](https://github.com/0xMiden/web-sdk/pull/260)).
+
+### Changes
+
+* [CHANGE][web] Start the 0.18 prerelease development line across SDK packages and Rust wrapper crates. Upstream Rust SDK dependencies remain pinned to exactly 0.17.1 ([#458](https://github.com/0xMiden/web-sdk/pull/458)).
+* [BREAKING][web] On Node.js the array containers (`NoteArray`, `FeltArray`, `AccountIdArray` and the other declared containers) are no longer `Array`s: `length()` is a method, as in the browser, and `get`, `replaceAt`, `push` and `free()` exist under the browser's names, while index access and `for...of` still work. Code that read the `length` property or called Array methods such as `map` or `slice` must use `length()`, `get(i)`, `for...of` or `Array.from(container)`. Results the browser types as a container, such as `SigningInputs.toElements()` and `TransactionScriptInputPair.felts()`, come back as one too. Some behaviour still differs from the browser on Node.js: `get` returns the stored object rather than a copy, `replaceAt` and `push` return the container and keep the caller's reference, `free()` does nothing, and `instanceof` and per-type constructor identity do not hold ([#427](https://github.com/0xMiden/web-sdk/issues/427)) ([#435](https://github.com/0xMiden/web-sdk/pull/435)).
+* [BREAKING][web] `Account.getPublicKeyCommitments()` now throws when the account's auth procedure is not owned by exactly one standard auth component bundled with this SDK, instead of returning `[]` or keys it cannot vouch for. There are two causes. A custom auth component defines its own key storage layout, so read its keys through the package that defines it, or use `client.keystore.getCommitments(accountId)` for the keys this client actually holds. A standard component built from a different miden-standards revision needs an SDK version that matches it. `isFaucet()` and `isRegularAccount()` no longer trap on an account whose procedures match more than one standard auth component ([web-sdk#285](https://github.com/0xMiden/web-sdk/pull/285), [guardian#306](https://github.com/OpenZeppelin/guardian/issues/306)).
+* [BREAKING][web] `client.transactions.batch` no longer takes a batch-level `account`; put `account` on each operation instead. `submitBatch(account, requests, options?)` becomes `submitBatch(items, options?)` with `items` as `{ account, request }[]`, and the WASM `submitNewTransactionBatch(accountId, serializedRequests)` becomes `submitNewTransactionBatch(items: BatchItem[])` ([#161](https://github.com/0xMiden/web-sdk/pull/161)).
+* [CHANGE][web] Corrected the documented meaning of the number `batch()` and `submitBatch()` return: it is the node's chain tip as of submission, not the block the batch commits in. Behaviour is unchanged, but every public copy of the docs said the opposite. Separately documented that `waitForConfirmation` does not currently work on a batch at all: its poll calls a sync method that does not exist, so it times out unless the client is already at that height. The batch's own effects are already in the local store when the call returns; for chain inclusion, sync and check `transactions.list()` status. Tracked in [#314](https://github.com/0xMiden/web-sdk/issues/314) ([#313](https://github.com/0xMiden/web-sdk/pull/313)).
+
+### Fixes
+
+* [FIX][react] On a non-testnet configuration such as devnet, `useAssetMetadata` could query testnet and `bech32id()`, `toBech32AccountId()`, `normalizeAccountId()` and `useNoteStream`'s note `sender` could render testnet (`mtst1`) addresses while `MidenProvider` was still initializing. Both now take the network from the provider client's `endpoint()`: asset metadata is fetched once a client exists, and addresses render with the client's network prefix, `mdev1` for a local node, or as the hex ID when the endpoint names no known network or no client exists yet, where they previously fell back to `mtst1` ([#188](https://github.com/0xMiden/web-sdk/issues/188), [#212](https://github.com/0xMiden/web-sdk/pull/212)).
+* [FIX][web] The single-threaded WASM build now caches the precompile preprocessed data for the lifetime of the WASM instance, as the multi-threaded build already did, so repeat local batch proofs (`client.transactions.batch`, `useBatch`) that settle a precompile claim, such as one raised by an ECDSA-authenticated transaction, no longer rebuild it. Single-transaction proving defers those claims and is unaffected, as are Falcon-authenticated transactions, which raise none. The cache holds one bundle per hash function, about 50 MiB each; a local batch uses one (Blake3) ([#319](https://github.com/0xMiden/web-sdk/pull/319), [#318](https://github.com/0xMiden/web-sdk/issues/318)).
+
+## 0.17.2 (TBD)
+
+### Fixes
+
+* [FIX][web] `buildNetworkNote` was declared in the shipped types and implemented in `standalone.js`, but neither the browser nor the node entry point re-exported it, so `import { buildNetworkNote } from "@miden-sdk/miden-sdk"` failed at runtime while `tsc` accepted it. Both entries now export it ([#401](https://github.com/0xMiden/web-sdk/pull/401), [#388](https://github.com/0xMiden/web-sdk/issues/388)).
+* [FIX][web] For an account whose header names a code root with no stored code row, `WebClient.getAccountCode`, `feeAwareTransactionRequestBuilder` and the `new*TransactionRequest` constructors that build through it now fail with `account code with root <root> not found` instead of a serde `invalid type: unit value, expected struct AccountCodeIdxdbObject` error ([#241](https://github.com/0xMiden/web-sdk/pull/241)).
+
+## 0.17.1 (2026-10-07)
+
+### Fixes
+
+* [FIX][web] Include the V2 faucet receive and send policy callbacks so consuming or transferring V2 assets no longer fails with a missing procedure-root digest.
+
+### Changes
+
+* [CHANGE][web] Pin Rust SDK client, proto and SQLite store to exactly 0.17.1 and refresh protocol, standards and transaction libraries to 0.17.1.
+
+## 0.17.0 (2026-10-03)
+
+### Enhancements
+
+* [FEATURE][web] Create either asset type with `VaultAsset.fungible(faucetId, amount)` or `VaultAsset.nonFungible({ key, value })`, and carry them in `new NoteAssets([asset])` or `noteAssets.push(asset)`. Existing `FungibleAsset` calls remain valid. Vaults and notes expose `assets()` and `nonFungibleAssets()` for name recovery and NFA note flows, including the issuer, complete key, and all four value limbs. Invalid note asset lists now throw catchable errors instead of trapping WASM ([#418](https://github.com/0xMiden/web-sdk/pull/418)).
+
+### Fixes
+
+* [FIX][web] Browser clients sharing a database refresh account witnesses from persisted state, preserving untouched assets when applying transaction patches. Applying a transaction rejects changed execution inputs before altering account state or transaction history ([#453](https://github.com/0xMiden/web-sdk/pull/453)).
+
+* [FIX][web] On Node.js, `account.storage()` now returns a `StorageView`, as the declared type and the browser entry already do, so `getItem` returns a `StorageResult` instead of a raw `Word`; use `.raw` for the underlying `AccountStorage`. `StorageView`, `StorageResult` and `wordToBigInt` are now exported from the Node.js entry point ([#417](https://github.com/0xMiden/web-sdk/pull/417)).
+* [FIX][web] Export `NoteAndArgsArray`, `NoteArray`, `FeltArray` and the other declared array containers, and the `MidenArrays` namespace, from the Node.js entry point so their constructors are available at runtime. On Node.js each container is a plain array: `get` and `replaceAt` now throw on an out-of-range index and `free()` is a no-op, as in the browser, but use the `length` property rather than `length()` ([#427](https://github.com/0xMiden/web-sdk/issues/427)) ([#417](https://github.com/0xMiden/web-sdk/pull/417)).
+* [FIX][web] In Node.js, `AuthSecretKey.deserialize()` and `Word.deserialize()` now accept `Buffer` and `Uint8Array` inputs, including subarrays, through the public SDK export. RNG seeds and account-builder seeds continue to accept byte arrays ([#422](https://github.com/0xMiden/web-sdk/pull/422)).
+
+### Changes
+
+* [CHANGE][web] Upgraded `miden-client` to 0.17.0 (from 0.17.0-rc.5), which adopts protocol and node proto 0.17.0. Requires a compatible node ([rust-sdk v0.17.0](https://github.com/0xMiden/rust-sdk/releases/tag/v0.17.0), [#445](https://github.com/0xMiden/web-sdk/pull/445)).
+* [BREAKING][behavior][web] A 32-byte client seed now seeds the client's random generator directly; the release candidates derived a `RandomCoin` from it. The seed remains deterministic, but it produces different account keys, note serial numbers and other random values than the 0.17 release candidates; do not rely on a client seed to preserve generated identities across this upgrade ([#445](https://github.com/0xMiden/web-sdk/pull/445)).
+* [BREAKING][web] IndexedDB persistence now uses `miden-client-proto`'s protobuf encoding for stored protocol values. A database written by a 0.17 release candidate uses the previous native encoding and is not compatible with 0.17.0; export anything needed and recreate the client database before upgrading ([#444](https://github.com/0xMiden/web-sdk/pull/444)).
+
+## 0.17.0-rc.5 (TBD)
+
+### Changes
+
+* [CHANGE][web] The IndexedDB store keeps account witnesses for the accounts registered through the client, and a code upgrade writes the new account code before the header that commits to it. Creation patches (final nonce 1) still replace the whole account ([rust-sdk#2645](https://github.com/0xMiden/rust-sdk/pull/2645)).
+* [CHANGE][web] Upgraded `miden-client` to 0.17.0-rc.5, which adds the account-code upgrade helpers. Protocol moves to 0.17.0-rc.9 and the node proto to 0.17.0-rc.4 ([rust-sdk#2645](https://github.com/0xMiden/rust-sdk/pull/2645), [rust-sdk#2651](https://github.com/0xMiden/rust-sdk/pull/2651)).
+* [BREAKING][web] `TransactionRequest` bytes gain a trailing field, so bytes written by 0.17.0-rc.4 or earlier do not deserialize. Re-serialize a request with the client that will execute it. Where a dApp and a wallet, or co-signers, exchange proposal bytes, both sides need this version.
+* [BREAKING][web] `notes.sendPrivate` takes `inclusionProof` (a `NoteInclusionProof`) in place of `scanAfterBlockNum`. The transport verifies the proof and the recipient scans from the block it names. `notes.sendPrivateOutput({ noteId, to })` is unchanged and reads that proof from the output note; it throws if this client has not synced past the block that committed the note. `NoteInclusionProof.mockAtBlock(blockNum)` builds an empty-path proof the mock transport accepts and a real node rejects ([rust-sdk#2651](https://github.com/0xMiden/rust-sdk/pull/2651)).
+* [BREAKING][web] Account code, note scripts and transaction scripts now use the hashless MAST encoding of protocol 0.17.0-rc.9. A store an earlier version created cannot read them and must be recreated. This release keeps the same major.minor, so opening the client does not delete IndexedDB; export what you need and start a new store ([rust-sdk#2642](https://github.com/0xMiden/rust-sdk/pull/2642), [rust-sdk#2651](https://github.com/0xMiden/rust-sdk/pull/2651)).
+
 ## 0.17.0-rc.4 (TBD)
 
 ### Enhancements

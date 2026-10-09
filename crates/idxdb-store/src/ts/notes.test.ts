@@ -106,6 +106,63 @@ async function insertNote(
   );
 }
 
+const SCRIPT_A = new Uint8Array([1]);
+const SCRIPT_B = new Uint8Array([2]);
+// base64 of [1] and [2].
+const SCRIPT_A_BASE64 = "AQ==";
+const SCRIPT_B_BASE64 = "Ag==";
+
+// The noteId is stored in `createdAt` so each processed input note can be identified.
+async function insertInputNoteWithScript(
+  dbId: string,
+  noteId: string,
+  scriptRoot: string,
+  script: Uint8Array
+) {
+  await upsertInputNote(
+    dbId,
+    noteId,
+    noteId,
+    DUMMY_BYTES,
+    DUMMY_BYTES,
+    DUMMY_BYTES,
+    DUMMY_BYTES,
+    scriptRoot,
+    script,
+    `nullifier-${noteId}`,
+    noteId,
+    STATE_EXPECTED,
+    DUMMY_BYTES,
+    undefined,
+    undefined,
+    undefined
+  );
+}
+
+// The noteId is stored in `recipientDigest` so each processed output note can be identified.
+async function insertOutputNoteWithScript(
+  dbId: string,
+  noteId: string,
+  scriptRoot?: string,
+  script?: Uint8Array
+) {
+  await upsertOutputNote(
+    dbId,
+    noteId,
+    noteId,
+    DUMMY_BYTES,
+    DUMMY_BYTES,
+    noteId,
+    DUMMY_BYTES,
+    undefined,
+    100,
+    STATE_EXPECTED,
+    DUMMY_BYTES,
+    scriptRoot,
+    script
+  );
+}
+
 interface Cursor {
   blockHeight: number;
   txOrder: number;
@@ -647,6 +704,35 @@ describe("getInputNotes", () => {
     expect(result).toHaveLength(1);
     expect(result![0].serializedNoteScript).toBeUndefined();
   });
+
+  it("returns each input note its own script, including shared and missing roots", async () => {
+    const dbId = await openTestDb();
+    // Notes a1 and a2 share the same script
+    await insertInputNoteWithScript(dbId, "a1", "root-a", SCRIPT_A);
+    await insertInputNoteWithScript(dbId, "a2", "root-a", SCRIPT_A);
+    await insertInputNoteWithScript(dbId, "b", "root-b", SCRIPT_B);
+    await insertInputNoteWithScript(
+      dbId,
+      "missing-script",
+      "root-missing",
+      SCRIPT_A
+    );
+    // Model a note whose script row is absent.
+    await getDatabase(dbId).notesScripts.delete("root-missing");
+
+    const result = await getInputNotes(dbId, new Uint8Array([]));
+    const scripts = Object.fromEntries(
+      result!.map((note) => [note.createdAt, note.serializedNoteScript])
+    );
+
+    expect(result).toHaveLength(4);
+    expect(scripts).toEqual({
+      a1: SCRIPT_A_BASE64,
+      a2: SCRIPT_A_BASE64,
+      b: SCRIPT_B_BASE64,
+      "missing-script": undefined,
+    });
+  });
 });
 
 // ================================================================================================
@@ -824,6 +910,77 @@ describe("upsertNoteScript", () => {
 // ================================================================================================
 
 describe("getOutputNotes", () => {
+  it("stores the script in notesScripts and joins it on read", async () => {
+    const dbId = await openTestDb();
+    const script = new Uint8Array([7, 8, 9]);
+    await upsertOutputNote(
+      dbId,
+      "dc-out-script",
+      "out-script",
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      "recipient-script",
+      DUMMY_BYTES,
+      undefined,
+      100,
+      2,
+      DUMMY_BYTES,
+      "0xscriptroot",
+      script
+    );
+
+    const stored = await getNoteScript(dbId, "0xscriptroot");
+    expect(stored!.serializedNoteScript).toEqual(script);
+
+    const result = await getOutputNotesFromIds(dbId, ["out-script"]);
+    expect(result![0].serializedNoteScript).toBe("BwgJ");
+  });
+
+  it("returns no script for a note without a recipient", async () => {
+    const dbId = await openTestDb();
+    await upsertOutputNote(
+      dbId,
+      "dc-out-partial",
+      "out-partial",
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      "recipient-partial",
+      DUMMY_BYTES,
+      undefined,
+      100,
+      0,
+      DUMMY_BYTES
+    );
+
+    const result = await getOutputNotesFromIds(dbId, ["out-partial"]);
+    expect(result![0].serializedNoteScript).toBeUndefined();
+  });
+
+  it("returns each output note its own script, including shared and missing roots", async () => {
+    const dbId = await openTestDb();
+    // Notes a1 and a2 share the same script
+    await insertOutputNoteWithScript(dbId, "a1", "root-a", SCRIPT_A);
+    await insertOutputNoteWithScript(dbId, "a2", "root-a", SCRIPT_A);
+    await insertOutputNoteWithScript(dbId, "b", "root-b", SCRIPT_B);
+    // A root without script bytes writes no `notesScripts` row.
+    await insertOutputNoteWithScript(dbId, "missing-script", "root-missing");
+    await insertOutputNoteWithScript(dbId, "no-recipient");
+
+    const result = await getOutputNotes(dbId, new Uint8Array([]));
+    const scripts = Object.fromEntries(
+      result!.map((note) => [note.recipientDigest, note.serializedNoteScript])
+    );
+
+    expect(result).toHaveLength(5);
+    expect(scripts).toEqual({
+      a1: SCRIPT_A_BASE64,
+      a2: SCRIPT_A_BASE64,
+      b: SCRIPT_B_BASE64,
+      "missing-script": undefined,
+      "no-recipient": undefined,
+    });
+  });
+
   it("returns all output notes when states is empty", async () => {
     const dbId = await openTestDb();
     await upsertOutputNote(
@@ -1152,6 +1309,8 @@ describe("upsertOutputNote with external transaction", () => {
           999,
           3,
           DUMMY_BYTES,
+          undefined,
+          undefined,
           tx
         );
       }

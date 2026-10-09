@@ -1,6 +1,6 @@
 ---
 name: frontend-pitfalls
-description: Critical pitfalls and safety rules for Miden frontend development. Covers per-hook readiness, non-atomic client sequences, COOP/COEP headers, BigInt boundaries, Bech32 network inference, IndexedDB state loss including the minor-version store wipe, auto-sync side effects, Vite configuration, React rendering race conditions, the Web Worker shim and callback-prover downgrade, structured error codes, eager vs lazy entry points, the fee note now included in outputNotes(), the removed expiredBefore filter, sendPrivate block hints, block-pinned foreign-account inputs, and transaction preview authorization. Use when reviewing, debugging, or writing Miden frontend code, or when upgrading from 0.15 to 0.16.
+description: Critical pitfalls and safety rules for Miden frontend development. Covers per-hook readiness, non-atomic client sequences, COOP/COEP headers, BigInt boundaries, Bech32 network inference, IndexedDB state loss including the minor-version store wipe, auto-sync side effects, Vite configuration, React rendering race conditions, the Web Worker shim and callback-prover downgrade, structured error codes, eager vs lazy entry points, the fee note now included in outputNotes(), the removed expiredBefore filter, sendPrivate inclusion proofs, block-pinned foreign-account inputs, and transaction preview authorization. Use when reviewing, debugging, or writing Miden frontend code, or when upgrading from 0.15 to 0.16.
 ---
 
 # Miden Frontend Pitfalls
@@ -192,14 +192,11 @@ AccountId.fromBech32("mtst1...");
 
 Both hex and bech32 formats work in all hooks. Prefer hex for constants, bech32 for display.
 
-**Gotcha: the HRP is inferred from your `rpcUrl` string, not from the chain.** `bech32id()` (and `toBech32AccountId()`) read the *resolved* `rpcUrl` out of the store, lowercase it, and look for substrings in this order: `devnet` or `mdev` -> devnet, `mainnet` -> mainnet, `testnet` or `mtst` -> testnet. **Anything matching none of them falls back to testnet**, as does an unset `rpcUrl`.
+**Gotcha: the HRP is inferred from the endpoint URL, not from the chain.** `bech32id()` (and `toBech32AccountId()`) read `client.endpoint()` from the provider's client, the URL of the node it was created against, lowercase it, and look for substrings in this order: `devnet` or `mdev` -> devnet, `mainnet` -> mainnet, `testnet` or `mtst` -> testnet, `localhost` or `127.0.0.1` -> devnet. An unset `rpcUrl` is not a gap here: the client defaulted to testnet and reports that endpoint.
 
-`MidenConfig.rpcUrl` resolves only the shorthands `"testnet"`, `"devnet"` and `"localhost"` / `"local"` to concrete URLs and passes any other value through verbatim. So:
+**Anything matching none of them renders the hex ID**, and so does every call made before `MidenProvider` has a client. `MidenConfig.rpcUrl` resolves only the shorthands `"testnet"`, `"devnet"` and `"localhost"` / `"local"` to concrete URLs and passes any other value through verbatim, so a private or self-hosted RPC endpoint whose hostname names no network shows hex IDs where you might expect bech32.
 
-- A private or self-hosted RPC endpoint whose hostname contains none of those substrings silently renders `mtst1...` addresses for a network that is not testnet.
-- `"localhost"` resolves to `http://localhost:57291`, which also contains none of them, so a local node renders testnet-prefixed addresses too.
-
-If you run a custom or local network, do not treat `bech32id()` output as authoritative - key off hex, and render bech32 only where you control the network mapping yourself.
+If you run a custom network, do not rely on `bech32id()` producing bech32 - key off hex, and render bech32 yourself with `AccountId.toBech32(networkId, ...)` where you control the network mapping.
 
 The three real HRPs are `mtst` (testnet), `mdev` (devnet) and `mm` (mainnet); a custom
 network supplies its own through `NetworkId::custom`. **There is no `miden1` prefix** -
@@ -345,17 +342,17 @@ const expired = txs.filter((t) => t.expirationBlockNum() < height);
 
 It throws only where the filter was actually applied: a query that also carries `status` or `ids` is served by those, and an undefined `expiredBefore` still means "no filter".
 
-## FP12: sendPrivate Requires scanAfterBlockNum, and Overshooting Drops Delivery (HIGH)
+## FP12: sendPrivate Requires an Inclusion Proof (HIGH)
 
-`client.notes.sendPrivate({ note, to })` now requires an explicit `scanAfterBlockNum` - the block the recipient scans **forward** from for the note's on-chain commitment. The SDK no longer infers it from the current sync height, because that inference silently dropped delivery once the sender had synced past the note (for example when relaying *after* waiting for the transaction to commit).
+`client.notes.sendPrivate({ note, to, inclusionProof })` requires a `NoteInclusionProof`. The transport verifies it and the recipient scans from the block the proof names. The proof exists once the creating transaction is committed and this client has synced past that block.
 
-The value must be at or below the commitment block. A hint above it is never scanned back to and the recipient simply never receives the note - no error, on either side.
+For one of this client's own output notes, `sendPrivateOutput({ noteId, to })` reads the stored proof and throws if sync has not produced it yet. Call it after the transaction commits.
+
+`NoteInclusionProof.mockAtBlock(blockNum)` builds an empty-path proof. The published package includes it because that build enables the `testing` feature. The mock transport accepts it. A real node rejects it.
 
 ```tsx
-// CORRECT for an arbitrary note - pin the chain tip at submission time
-await client.notes.sendPrivate({ note, to, scanAfterBlockNum: tipAtSubmit });
+await client.notes.sendPrivate({ note, to, inclusionProof });
 
-// BETTER for one of this client's own output notes - the block is derived for you
 await client.notes.sendPrivateOutput({ noteId, to });
 ```
 
@@ -418,10 +415,11 @@ Set `useWorker: false` when:
 
 `MidenConfig.useWorker` is forwarded to both `createClient` and `createClientWithExternalKeystore`.
 
-Two companions to the same boundary:
+Three companions to the same boundary:
 
-- **`lastAuthError()` returns `null` under the worker.** The sign callback fires against the worker's WASM keystore while the accessor reads the main-thread instance, which never signed. It is meaningful only with `useWorker: false` - which is not a real constraint, since a JS sign callback needs that setting to be reachable at all. On the Node binding it always returns `null`, because signing goes through the filesystem keystore rather than a JS callback. Read it under your own lock: it is one of the raw-bound `SYNC_METHODS`, so unlike a forwarded async method it does not join `_serializeWasmCall`, and it takes a shared WASM borrow that can still lose the race against an in-flight call. The `keystore` getter has the same shape.
+- **`lastAuthError()` returns `null` under the worker.** The sign callback still fires under the worker, because it is proxied back to the main thread, but signing runs in the worker's WASM keystore while the accessor reads the main-thread instance, which never signed. Only the accessor misses the error, so if you need the signal, set `useWorker: false`. On the Node binding it always returns `null`, because signing goes through the filesystem keystore rather than a JS callback. Read it under your own lock: it is one of the raw-bound `SYNC_METHODS`, so unlike a forwarded async method it does not join `_serializeWasmCall`, and it takes a shared WASM borrow that can still lose the race against an in-flight call. The `keystore` getter has the same shape.
 - **`usePreview()` runs the VM on the main thread regardless.** It is not offloaded to the worker (matching the client's unanchored `executeForSummary`), so it blocks the UI for its whole duration and queues other client calls behind it. Budget for that in a confirmation flow; do not assume the worker is absorbing it.
+- **A batch in the worker still holds the client.** `submitNewTransactionBatch` is forwarded to the worker, so `transactions.batch`, `submitBatch` and `useBatch` leave the page's main thread free while every transaction is proven, but the whole batch occupies the client: other client calls queue behind it until it settles. A batch forwarded to the worker also does not surface its auth error through `lastAuthError()`, for the reason given above. With `useWorker: false`, without `Worker` support, or on a mock client, the batch proves on the main thread and blocks the UI, so keep batches small there.
 
 **Config cannot carry a prover instance.** Neither `ClientOptions.proverUrl` nor the React
 SDK's `ProverTarget` / `ProverConfig` has an arm that accepts a `TransactionProver`. The
@@ -438,7 +436,7 @@ Verify: `crates/web-client/js/index.js`, `crates/web-client/js/client.js`, `pack
 
 Errors carry machine-readable codes; message strings are not a stable API.
 
-- Assigned by the React SDK (`MidenError`, the closed `MidenErrorCode` union): `WASM_CLASS_MISMATCH`, `WASM_POINTER_CONSUMED`, `WASM_NOT_INITIALIZED`, `WASM_SYNC_REQUIRED`, `SEND_BUSY`, `OPERATION_BUSY`, `STALE_CLIENT`, `UNKNOWN`.
+- Assigned by the React SDK (`MidenError`, the closed `MidenErrorCode` union): `WASM_CLASS_MISMATCH`, `WASM_POINTER_CONSUMED`, `WASM_NOT_INITIALIZED`, `WASM_SYNC_REQUIRED`, `SEND_BUSY`, `OPERATION_BUSY`, `BATCH_BUSY`, `STALE_CLIENT`, `UNKNOWN`.
 - Assigned by the Rust client and thrown out of WASM (`WasmErrorCode`): `INVALID_CHAIN_ANCHOR`, `TRANSACTION_ALREADY_AUTHORIZED`. This list is deliberately **not** exhaustive of what the client can emit - `CodedError.code` carries a `(string & {})` arm so codes from a newer client stay assignable. Handle the ones you care about and fall through on the rest.
 
 ```tsx
@@ -490,14 +488,14 @@ Verify: `crates/web-client/js/eager.js`.
 | FP2 | Sequences are not atomic | HIGH | Forwarded async calls serialize themselves (raw-bound `SYNC_METHODS` do not); wrap multi-call sequences in `runExclusive()` |
 | FP3 | COOP/COEP | HIGH | Default ST build needs no headers; required ONLY for the `/mt` build |
 | FP4 | BigInt | HIGH | Hooks and the high-level `MidenClient` coerce `number`; strict `bigint` only at the low-level request constructors |
-| FP5 | Bech32 mismatch | HIGH | Match network in rpcUrl and addresses; the HRP is inferred from the `rpcUrl` string and falls back to testnet |
+| FP5 | Bech32 mismatch | HIGH | Match network in rpcUrl and addresses; the HRP is inferred from `client.endpoint()`, and an unrecognised endpoint renders hex |
 | FP6 | Auto-sync | MEDIUM | Default 15000ms; prefer `useSyncControl()` over `autoSyncInterval: 0` |
 | FP7 | IndexedDB loss | HIGH | A minor SDK bump wipes the store - ship `useExportStore`/`useImportStore` BEFORE upgrading |
 | FP8 | Vite config | MEDIUM | `midenVitePlugin()` has four options; bare call is right for ST, `crossOriginIsolation: true` only for `/mt` |
 | FP9 | StrictMode | LOW | Use MidenProvider, not manual `WasmWebClient.createClient()`; there is no debug-mode argument |
 | FP10 | Fee note in `outputNotes()` | CRITICAL | The list is one longer on a fee-charging chain; use `userOutputNotes()` / `feeNote()` on `ExecutedTransaction`, filter manually elsewhere |
 | FP11 | `expiredBefore` removed | HIGH | `transactions.list({ expiredBefore })` throws; use `{ status: "uncommitted" }` + `expirationBlockNum()` |
-| FP12 | `sendPrivate` block hint | HIGH | Pass `scanAfterBlockNum` at or below the commitment block, or prefer `sendPrivateOutput` |
+| FP12 | `sendPrivate` inclusion proof | HIGH | Pass a `NoteInclusionProof`, or `sendPrivateOutput` after the note commits |
 | FP13 | Foreign-account inputs | HIGH | Pinned to one block; do not sync between fetching and executing |
 | FP14 | `preview` already authorized | MEDIUM | Summary only while auth is pending; otherwise rejects `TRANSACTION_ALREADY_AUTHORIZED` |
 | FP15 | `useAccounts().faucets` | MEDIUM | Always empty; classify from `accounts` with `isFaucet()` |

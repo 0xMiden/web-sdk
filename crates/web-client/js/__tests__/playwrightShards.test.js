@@ -41,9 +41,9 @@ const EXCLUDED = {
   // run in no CI project at all. They are recorded rather than added to a
   // shard because none of them has ever run in CI: enabling them could surface
   // pre-existing failures, and verifying them first needs a local node, which
-  // is outside what a review pass can check.
+  // is outside what a review pass can check. `batch.browser.test.ts` matches
+  // the same glob but runs in ci-shard-1-tx-flows, so it is not listed here.
   "account.browser.test.ts": "KNOWN GAP — runs in no CI project",
-  "batch.browser.test.ts": "KNOWN GAP — runs in no CI project",
   "new_account.browser.test.ts": "KNOWN GAP — runs in no CI project",
   "new_transactions.browser.test.ts": "KNOWN GAP — runs in no CI project",
   "no_wasm_reentry_via_tojson.test.ts": "KNOWN GAP — runs in no CI project",
@@ -154,6 +154,15 @@ describe("playwright CI shard coverage", () => {
     expect(
       missing,
       "a shard entry with no matching file silently contributes nothing"
+    ).toEqual([]);
+  });
+
+  it("does not exclude a file that a shard runs", () => {
+    const sharded = new Set(shardedFiles());
+    const both = Object.keys(EXCLUDED).filter((f) => sharded.has(f));
+    expect(
+      both,
+      "an EXCLUDED entry for a sharded file misreports what CI runs; drop the entry"
     ).toEqual([]);
   });
 

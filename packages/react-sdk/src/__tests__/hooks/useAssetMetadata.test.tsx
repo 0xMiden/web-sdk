@@ -3,10 +3,13 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { useMidenStore } from "../../store/MidenStore";
 
 // Shared mocks hoisted above vi.mock so the factory can reference them
-const { mockGetAccountDetails, mockFromAccount } = vi.hoisted(() => ({
-  mockGetAccountDetails: vi.fn(),
-  mockFromAccount: vi.fn(),
-}));
+const { mockGetAccountDetails, mockFromAccount, mockEndpointUrls } = vi.hoisted(
+  () => ({
+    mockGetAccountDetails: vi.fn(),
+    mockFromAccount: vi.fn(),
+    mockEndpointUrls: [] as string[],
+  })
+);
 
 // Override the SDK mock for this file so we can control RpcClient behavior
 vi.mock("@miden-sdk/miden-sdk", () => {
@@ -21,9 +24,8 @@ vi.mock("@miden-sdk/miden-sdk", () => {
       fromBech32: vi.fn((bech32: string) => createMockAccountId(bech32)),
     },
     Endpoint: class Endpoint {
-      constructor(_url?: string) {}
-      static testnet() {
-        return new Endpoint();
+      constructor(url: string) {
+        mockEndpointUrls.push(url);
       }
     },
     RpcClient: class RpcClient {
@@ -43,6 +45,11 @@ beforeEach(() => {
   useMidenStore.getState().reset();
   mockGetAccountDetails.mockReset();
   mockFromAccount.mockReset();
+  // The hook reads its endpoint from the store's client, so it fetches only once
+  // a client exists.
+  useMidenStore.getState().setClient({
+    endpoint: () => "https://rpc.devnet.miden.io",
+  } as never);
 });
 
 describe("useAssetMetadata", () => {
@@ -149,6 +156,47 @@ describe("useAssetMetadata", () => {
     const meta = result.current.assetMetadata.get("0xfaucet5");
     expect(meta?.symbol).toBe("CACHED");
     expect(meta?.decimals).toBe(2);
+  });
+
+  it("defers fetching until a client exists (no RPC before the provider is ready)", async () => {
+    useMidenStore.getState().setClient(null);
+    mockGetAccountDetails.mockResolvedValue({ account: () => ({ id: "x" }) });
+
+    const { result } = renderHook(() => useAssetMetadata(["0xfaucet7"]));
+
+    // Give the effect a chance to run; with no client it must not fetch.
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(mockGetAccountDetails).not.toHaveBeenCalled();
+    expect(result.current.assetMetadata.has("0xfaucet7")).toBe(false);
+  });
+
+  it("builds its RPC client against the endpoint the client reports", async () => {
+    useMidenStore.getState().setClient({
+      endpoint: () => "https://rpc.custom-node.example",
+    } as never);
+    mockGetAccountDetails.mockResolvedValue({ account: () => null });
+
+    const { result } = renderHook(() => useAssetMetadata(["0xfaucet8"]));
+
+    await waitFor(() => {
+      expect(result.current.assetMetadata.has("0xfaucet8")).toBe(true);
+    });
+    expect(mockEndpointUrls).toContain("https://rpc.custom-node.example");
+  });
+
+  it("does not fetch for a client that reports no endpoint (mock client)", async () => {
+    useMidenStore.getState().setClient({
+      endpoint: () => undefined,
+    } as never);
+    mockGetAccountDetails.mockResolvedValue({ account: () => ({ id: "x" }) });
+
+    const { result } = renderHook(() => useAssetMetadata(["0xfaucet9"]));
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(mockGetAccountDetails).not.toHaveBeenCalled();
+    expect(result.current.assetMetadata.has("0xfaucet9")).toBe(false);
   });
 
   it("should filter out falsy asset IDs", () => {

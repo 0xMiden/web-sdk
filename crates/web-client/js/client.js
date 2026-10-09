@@ -147,8 +147,8 @@ export class MidenClient {
     const rpcUrl = resolveRpcUrl(options?.rpcUrl);
     const noteTransportUrl = resolveNoteTransportUrl(options?.noteTransportUrl);
 
-    // `useWorker: false` opts out of the Web Worker shim that wraps every
-    // WASM call. The shim exists to keep the main thread responsive in
+    // `useWorker: false` opts out of the Web Worker shim that wraps WASM
+    // calls. The shim exists to keep the main thread responsive in
     // browser/extension contexts, but it serializes the prover via
     // `TransactionProver.serialize()` — a format that has no encoding for
     // `newCallbackProver(jsFn)` and silently downgrades it to `"local"`.
@@ -359,8 +359,9 @@ export class MidenClient {
    * intentional, so a caller can drain and proceed without being blocked
    * indefinitely by concurrent workload.
    *
-   * Caveat for `syncState`: `syncStateWithTimeout` awaits the sync lock
-   * (`acquireSyncLock`, which uses Web Locks) BEFORE putting its WASM
+   * Caveat for `syncState`: it awaits the sync lock
+   * (`withSyncLock`, which uses Web Locks where available and an
+   * in-process promise chain otherwise) BEFORE putting its WASM
    * call onto the chain, so a `syncState` that is queued on the sync
    * lock — but has not yet begun its WASM phase — is not visible to
    * `waitForIdle` and will not be awaited. Other methods (`newWallet`,
@@ -390,9 +391,10 @@ export class MidenClient {
    * Meaningful only with `useWorker: false`: under the worker shim the
    * sign callback fires against the worker's WASM keystore, while this
    * accessor reads the main-thread instance — which never signed — so it
-   * returns `null`. Consumers that need this signal (e.g. external
-   * keystores with lock-aware sign callbacks) already require
-   * `useWorker: false` for the callback to be reachable at all.
+   * returns `null`. The callback itself still fires under the worker (it is
+   * proxied back to the main thread); it is only this accessor that cannot
+   * see the error, so consumers who need the signal require
+   * `useWorker: false`.
    *
    * @returns {any} The raw thrown value, or `null`.
    */
@@ -441,6 +443,22 @@ export class MidenClient {
   async storeIdentifier() {
     this.assertNotTerminated();
     return await this.#inner.storeIdentifier();
+  }
+
+  /**
+   * Returns the URL of the node this client was created against, e.g.
+   * `"https://rpc.devnet.miden.io"`. Shorthands are already resolved, and a
+   * client created without `rpcUrl` reports the testnet endpoint it defaulted
+   * to. A mock client talks to no node and returns `undefined`.
+   *
+   * Synchronous: the value is fixed at creation, so it never waits behind an
+   * in-flight call.
+   *
+   * @returns {string | undefined} The node URL, or `undefined` for a mock client.
+   */
+  endpoint() {
+    this.assertNotTerminated();
+    return this.#inner.endpoint();
   }
 
   /**

@@ -416,6 +416,12 @@ The script at `crates/web-client/scripts/check-bindgen-types.js` verifies that e
 pnpm check:wasm-types
 ```
 
+`scripts/check-asset-types.js` type-checks a consumer fixture (with `skipLibCheck`) that imports `VaultAsset` and the `Asset` option type from all four entry points and `NoteAssets` from the root entry. It fails if an entry point stops exporting `VaultAsset`, or if `Asset` stops resolving to the `{ token, amount }` option type, for example because a generated class takes its name:
+
+```
+pnpm check:asset-types
+```
+
 `WebClient` is intentionally excluded because the wrapper defines its own implementation. If the check reports missing exports, update `js/types/index.d.ts` so consumers get the full generated surface.
 
 ## Usage
@@ -604,37 +610,89 @@ const balance = await client.accounts.getBalance(wallet, dagToken);
 console.log(`Balance: ${balance}`);
 ```
 
+### Read Non-Fungible Assets
+
+```typescript
+await client.sync();
+const { vault } = await client.accounts.getDetails(wallet);
+const assets = vault.nonFungibleAssets().map((asset) => ({
+  issuer: asset.faucetId().toString(),
+  key: asset.vaultKey().toHex(),
+  value: Array.from(asset.intoWord().toU64s()),
+}));
+```
+
+`nonFungibleAssets()` returns only non-fungible assets from the local vault
+snapshot. It returns an empty array when none are present. The order is not
+specified. `faucetId()` identifies the issuer, `vaultKey()` returns the complete
+asset key, and `intoWord().toU64s()` returns all four value limbs as `bigint`
+values. Keep these values as `bigint` or strings to prevent precision loss.
+
+Compare both the complete key and all four value limbs to verify an asset.
+The key alone does not contain the complete value. To reconstruct an asset,
+use `VaultAsset.nonFungible({ key, value })` with the two `Word` objects.
+
+### Build Notes with Either Asset Type
+
+```typescript
+const token = VaultAsset.fungible(faucetId, 100n);
+const name = VaultAsset.nonFungible({ key, value });
+const assets = new NoteAssets([name]);
+assets.push(token);
+```
+
+`NoteAssets` accepts one list of 0 to 16 assets. Existing `FungibleAsset`
+constructor and `push()` calls remain valid. Duplicate IDs and excess assets
+throw catchable errors; a failed push leaves the list unchanged. Inputs remain
+usable. `vault.assets()` and `note.assets().assets()` return both variants;
+use `kind()`, `asFungible()`, or `asNonFungible()` to inspect them.
+
+For registry publishing, use `Note.withAttachments()` with a single name asset,
+public metadata, the registry's approved script and inputs, and
+`[new NetworkAccountTarget(registryId).toAttachment()]`. The registry account
+must be public. A tag alone does not make a network note. Consume the returned P2ID note to put
+the asset back in the vault. See the [non-fungible asset guide](../../docs/external/src/web-client/library/non-fungible-assets.md).
+
 ### Batch Operations
 
-Submit multiple operations against a single account as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally; you don't have to assemble or serialize them yourself.
+Submit multiple operations across one or more local accounts as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally; you don't have to assemble or serialize them yourself.
+
+The guarantee comes from the node's `SubmitProvenTxBatch` RPC contract: "All transactions in this batch will be considered atomic, and be committed together or not all." Two things it does *not* mean. The transactions still have to build on the current mempool state under the normal submission rules — `miden-client`'s RPC trait spells that out on the same endpoint — so atomicity governs how the batch commits, not whether the node accepts it. And locally, the batch's store updates are applied in one step whose failure is reported separately (see below).
 
 ```typescript
 const { blockNumber } = await client.transactions.batch({
-  account: wallet,
   operations: [
-    { kind: "send", to: alice, token: dagToken, amount: 50n, type: "public" },
-    { kind: "send", to: bob,   token: dagToken, amount: 30n, type: "public" },
-    { kind: "consume", notes: pendingNotes },
+    { kind: "send", account: alice, to: bob, token: dagToken, amount: 50n, type: "public" },
+    { kind: "send", account: alice, to: carol, token: dagToken, amount: 30n, type: "public" },
+    { kind: "consume", account: bob, notes: pendingNotes },
   ],
-  waitForConfirmation: true,
+  // waitForConfirmation is currently broken for batches — see below.
 });
-console.log(`Batch landed in block ${blockNumber}`);
+// The node's chain tip as of submission, not the block the batch commits in.
+console.log(`Batch submitted at chain tip ${blockNumber}`);
 ```
 
-Operations are discriminated by `kind`: `"send"`, `"mint"`, `"consume"`, `"swap"`, `"execute"`, and `"custom"` (escape hatch for a pre-built `TransactionRequest`). The shape of each operation mirrors the singular options object (`SendOptions`, `MintOptions`, …) minus the `account` field, which is set once at the batch level.
+Operations are discriminated by `kind`: `"send"`, `"mint"`, `"consume"`, `"swap"`, `"execute"`, and `"custom"` (escape hatch for a pre-built `TransactionRequest`). Each operation specifies its executing `account`; a batch may mix any combination of tracked local accounts, and a later transaction may consume a note produced by an earlier one in the same batch. Beyond `account`, each operation carries the request-building fields of its singular options object (`SendOptions`, `MintOptions`, …) and none of the per-submission ones: neither `prover`, `waitForConfirmation` and `timeout` nor `returnNote`, which selects a different request shape, has any per-operation meaning.
 
-V1 supports only same-account batches — every operation must execute against the `account` passed at the top level. Mixing accounts in one batch is not supported.
+A batch runs in the client's Web Worker where it has one, so the page keeps painting while every transaction and the batch itself are proven; with `useWorker: false`, or where no `Worker` exists, it proves on the calling thread and blocks it. Mock clients always batch on the main thread. On a mock client, call `proveBlock()` after a batch and before submitting anything else: a submitted batch is not part of the serialized mock chain, so a later mock submit that round-trips through the worker would adopt a chain that never saw it. A mock batch also proves for real whether you ask it to or not: the mock client's dummy-prover shortcut applies only when no prover was passed, and the batch builder bypasses it entirely, so budget more time for a mock batch than for other mock submits. A batch is also always proven locally: the batch API takes no prover, so `ClientOptions.proverUrl` applies to `submit()` but not here. The batch proof itself is always local; the per-transaction proofs use the Rust client's configured prover, which this crate never sets.
 
-For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders:
+For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders. Pass an array of `{ account, request }` pairs:
 
 ```typescript
-const { blockNumber } = await client.transactions.submitBatch(wallet, [
-  request1,
-  request2,
+const { blockNumber } = await client.transactions.submitBatch([
+  { account: alice, request: request1 },
+  { account: bob, request: request2 },
 ]);
 ```
 
-The V1 batch primitive returns only the block number — there are no per-tx ids in the result. `waitForConfirmation` polls local sync height until it reaches `blockNumber` (rather than per-tx polling like singular `send` / `consume`).
+The batch primitive returns only a block number. There are no per-tx ids in the result, and the number is the node's chain tip as of submission, not the block the batch commits in. Even were it the commit block, `waitForConfirmation` would confirm only that the client had caught up to it, not that the batch committed. `waitForConfirmation` on a batch does not currently work: its poll calls a sync method that does not exist, so the poll cannot advance the height itself and the call throws `Batch confirmation timed out` unless the client is already at or past that height. Tracked in [#314](https://github.com/0xMiden/web-sdk/issues/314); prefer syncing and checking `client.transactions.list()` yourself. The batch's own effects are already in the local store when the call returns, so what you are waiting for is chain inclusion:
+
+```typescript
+await client.sync();
+const txs = await client.transactions.list();
+```
+
+One more failure mode worth handling: the node can accept a batch and the local store update still fail, which surfaces as a rejected promise whose message contains `batch was accepted at block N but building store updates failed` (or `applying to the store failed`). The node has taken the batch in that case, so retrying would submit it twice; sync instead.
 
 ### Manual Transaction Lifecycle
 
@@ -648,6 +706,16 @@ await submitted.apply(); // persist + fire observers
 ```
 
 Nothing is persisted until `apply` runs — stopping after `submit()` leaves the local store unaware of the transaction until the next sync. `submitted.waitForConfirmation()` blocks until the transaction commits on-chain.
+
+Clients sharing a browser database read coherent persisted account state.
+Account witnesses refresh when another client changes that state, preserving
+untouched vault assets and storage maps. This does not fetch new chain state;
+continue to sync before relying on on-chain balances.
+
+For browser stores, `apply` requires the stored account to match the
+transaction's execution input. A mismatch rejects before changing account state
+or transaction history. A submitted transaction may already be on-chain when
+local apply fails; check its status before submitting again.
 
 To submit a proof produced somewhere that shares nothing with this client (a detached prover), pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
 
@@ -846,7 +914,7 @@ const { txId, note } = await client.transactions.createNetworkNote({
 console.log(note.isNetworkNote()); // true
 ```
 
-Provide exactly one of `script` or `recipient`. Notes are always Public — the attachment, not the tag, is what a network account matches on. The standalone `buildNetworkNote(opts)` builds the same note without submitting.
+Provide exactly one of `script` or `recipient`. Notes are always Public - the attachment, not the tag, is what a network account matches on. The standalone `buildNetworkNote(opts)` builds the same note without submitting; the transaction that emits it must then declare the target as a foreign account (`withForeignAccounts`), which `createNetworkNote` does for you (see the network notes guide for the full request).
 
 To create the receiving account, build a **public** account carrying the network-account auth component — its note-script allowlist tells the node which notes the account may auto-consume:
 
@@ -872,6 +940,20 @@ const { account } = builder.build();
 ```
 
 The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional third argument (`TransactionScript.root()`). Deploying the account needs an effect: since 0.17 the auth component asserts the transaction consumed an input note, created an output note, or changed account state before it pays the fee, so an empty transaction aborts. Consume a note the account allowlists, or run an allowlisted transaction script that changes its state. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
+
+### Read the Client's Node URL
+
+`client.endpoint()` returns the URL of the node the client was created against, synchronously. Shorthands are resolved, a client created without `rpcUrl` reports the testnet endpoint, and a mock client returns `undefined`. Use it to aim a standalone `RpcClient` at the same node; `rpc.endpoint()` reports the URL an `RpcClient` was built with:
+
+```typescript
+import { Endpoint, RpcClient } from "@miden-sdk/miden-sdk";
+
+const client = await MidenClient.createDevnet();
+client.endpoint(); // "https://rpc.devnet.miden.io"
+
+const rpc = new RpcClient(new Endpoint(client.endpoint()!));
+const header = await rpc.getBlockHeaderByNumber(100, false);
+```
 
 ### Cleanup
 

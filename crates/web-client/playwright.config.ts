@@ -64,6 +64,9 @@ const ciShardProjects = process.env.CI
           "test/network_transaction.test.ts",
           "test/swap_transactions.test.ts",
           "test/pswap_transactions.test.ts",
+          // The only test that reaches the non-mock batch worker handler
+          // against a real node.
+          "test/batch.browser.test.ts",
         ],
         testIgnore: browserTestIgnore,
       },
@@ -83,6 +86,7 @@ const ciShardProjects = process.env.CI
         use: { ...devices["Desktop Chrome"] },
         testMatch: [
           "test/account.test.ts",
+          "test/account_code_dangling.test.ts",
           "test/account_component.test.ts",
           "test/allowlist.test.ts",
           "test/account_file.test.ts",
@@ -105,6 +109,7 @@ const ciShardProjects = process.env.CI
           "test/fpi.test.ts",
           "test/explicit_input_note.test.ts",
           "test/compile_and_contract.test.ts",
+          "test/faucet_policy_v2.browser.test.ts",
           "test/package.test.ts",
           "test/mockchain.test.ts",
           "test/no_auth_consume.test.ts",
@@ -113,6 +118,7 @@ const ciShardProjects = process.env.CI
           "test/address.test.ts",
           "test/basic_fungible_faucet_component.test.ts",
           "test/fungible_asset.test.ts",
+          "test/non_fungible_asset.test.ts",
           "test/prune_account_history.test.ts",
           "test/settings.test.ts",
           "test/token_symbol.test.ts",
@@ -196,6 +202,7 @@ export default defineConfig({
       // Skip browser-only and WASM-specific tests
       testIgnore: [
         "test/store_isolation*",
+        "test/account_code_dangling.test.ts", // IndexedDB corruption regression
         "test/sync_lock*",
         "test/import_export*",
         "test/remote_keystore*",

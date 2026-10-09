@@ -12,7 +12,13 @@ use miden_client::builder::DEFAULT_GRPC_TIMEOUT_MS;
 use miden_client::note::{NoteId as NativeNoteId, Nullifier};
 use miden_client::rpc::domain::account::{GetAccountRequest, StorageMapFetch, VaultFetch};
 use miden_client::rpc::domain::note::FetchedNote as NativeFetchedNote;
-use miden_client::rpc::{AccountStateAt, GrpcClient, NodeRpcClient, VerifyingRpcClient};
+use miden_client::rpc::{
+    AccountStateAt,
+    Endpoint as NativeEndpoint,
+    GrpcClient,
+    NodeRpcClient,
+    VerifyingRpcClient,
+};
 use note::FetchedNote;
 
 use crate::js_error_with_context;
@@ -37,6 +43,7 @@ mod note;
 #[js_export]
 pub struct RpcClient {
     inner: Arc<dyn NodeRpcClient>,
+    endpoint: String,
 }
 
 #[js_export]
@@ -46,12 +53,21 @@ impl RpcClient {
     /// @param endpoint - Endpoint to connect to.
     #[js_export(constructor)]
     pub fn new(endpoint: Endpoint) -> Result<RpcClient, JsErr> {
-        let rpc_client = Arc::new(VerifyingRpcClient::new(GrpcClient::new(
-            &endpoint.into(),
-            DEFAULT_GRPC_TIMEOUT_MS,
-        )));
+        let endpoint = NativeEndpoint::from(endpoint);
+        let rpc_client =
+            Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
-        Ok(RpcClient { inner: rpc_client })
+        Ok(RpcClient {
+            inner: rpc_client,
+            endpoint: endpoint.to_string(),
+        })
+    }
+
+    /// Returns the URL of the node this RPC client was created against, in the form
+    /// `Endpoint.toString()` gives, for example `https://rpc.devnet.miden.io`.
+    #[js_export(js_name = "endpoint")]
+    pub fn endpoint(&self) -> String {
+        self.endpoint.clone()
     }
 
     /// Fetches notes by their IDs from the connected Miden node.

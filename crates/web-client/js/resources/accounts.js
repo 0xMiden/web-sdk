@@ -151,6 +151,13 @@ export class AccountsResource {
     return (await this.get(ref)) ?? (await this.import(ref));
   }
 
+  /**
+   * Read a coherent persisted account snapshot without syncing the network.
+   * Includes changes from other browser clients sharing this database.
+   *
+   * @param {AccountRef} ref - The account to retrieve.
+   * @returns {Promise<Account | null>} The account, or null if not tracked.
+   */
   async get(ref) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();

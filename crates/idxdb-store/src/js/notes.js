@@ -9,7 +9,7 @@ export async function getOutputNotes(dbId, states) {
                 .where("stateDiscriminant")
                 .anyOf(states)
                 .toArray();
-        return await processOutputNotes(notes);
+        return await processOutputNotes(dbId, notes);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get output notes");
@@ -64,7 +64,7 @@ export async function getOutputNotesFromNullifiers(dbId, nullifiers) {
             .where("nullifier")
             .anyOf(nullifiers)
             .toArray();
-        return await processOutputNotes(notes);
+        return await processOutputNotes(dbId, notes);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get output notes from nullifiers");
@@ -103,7 +103,7 @@ export async function getOutputNotesFromDetailsCommitments(dbId, detailsCommitme
             .where("detailsCommitment")
             .anyOf(detailsCommitments)
             .toArray();
-        return await processOutputNotes(notes);
+        return await processOutputNotes(dbId, notes);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get output notes from details commitments");
@@ -113,7 +113,7 @@ export async function getOutputNotesFromIds(dbId, noteIds) {
     try {
         const db = getDatabase(dbId);
         let notes = await db.outputNotes.where("noteId").anyOf(noteIds).toArray();
-        return await processOutputNotes(notes);
+        return await processOutputNotes(dbId, notes);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get output notes from IDs");
@@ -229,7 +229,7 @@ export async function getInputNoteAfter(dbId, states, consumerAccountId, blockSt
         logWebStoreError(err, "Failed to get input note after cursor");
     }
 }
-export async function upsertOutputNote(dbId, detailsCommitment, noteId, assets, attachments, recipientDigest, metadata, nullifier, expectedHeight, stateDiscriminant, state, tx) {
+export async function upsertOutputNote(dbId, detailsCommitment, noteId, assets, attachments, recipientDigest, metadata, nullifier, expectedHeight, stateDiscriminant, state, scriptRoot, serializedNoteScript, tx) {
     const db = getDatabase(dbId);
     const doWork = async (t) => {
         try {
@@ -242,10 +242,15 @@ export async function upsertOutputNote(dbId, detailsCommitment, noteId, assets, 
                 metadata,
                 nullifier: nullifier ? nullifier : undefined,
                 expectedHeight,
+                // Only known once the recipient is known.
+                scriptRoot: scriptRoot ?? undefined,
                 stateDiscriminant,
                 state,
             };
             await t.outputNotes.put(data);
+            if (scriptRoot && serializedNoteScript) {
+                await t.notesScripts.put({ scriptRoot, serializedNoteScript });
+            }
             /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
         }
         catch (error) {
@@ -258,18 +263,11 @@ export async function upsertOutputNote(dbId, detailsCommitment, noteId, assets, 
     return db.dexie.transaction("rw", db.outputNotes, db.notesScripts, doWork);
 }
 async function processInputNotes(dbId, notes) {
-    const db = getDatabase(dbId);
-    return await Promise.all(notes.map(async (note) => {
+    const scripts = await getNoteScriptsBase64(dbId, notes.map((note) => note.scriptRoot));
+    return notes.map((note) => {
         const assetsBase64 = uint8ArrayToBase64(note.assets);
         const serialNumberBase64 = uint8ArrayToBase64(note.serialNumber);
         const inputsBase64 = uint8ArrayToBase64(note.inputs);
-        let serializedNoteScriptBase64 = undefined;
-        if (note.scriptRoot) {
-            let record = await db.notesScripts.get(note.scriptRoot);
-            if (record) {
-                serializedNoteScriptBase64 = uint8ArrayToBase64(record.serializedNoteScript);
-            }
-        }
         const stateBase64 = uint8ArrayToBase64(note.state);
         const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
         return {
@@ -277,16 +275,20 @@ async function processInputNotes(dbId, notes) {
             serialNumber: serialNumberBase64,
             inputs: inputsBase64,
             createdAt: note.serializedCreatedAt,
-            serializedNoteScript: serializedNoteScriptBase64,
+            serializedNoteScript: scripts.get(note.scriptRoot),
             state: stateBase64,
             attachments: attachmentsBase64,
         };
-    }));
+    });
 }
-async function processOutputNotes(notes) {
-    return await Promise.all(notes.map((note) => {
+async function processOutputNotes(dbId, notes) {
+    const scripts = await getNoteScriptsBase64(dbId, notes.map((note) => note.scriptRoot));
+    return notes.map((note) => {
         const assetsBase64 = uint8ArrayToBase64(note.assets);
         const metadataBase64 = uint8ArrayToBase64(note.metadata);
+        const serializedNoteScriptBase64 = note.scriptRoot
+            ? scripts.get(note.scriptRoot)
+            : undefined;
         const stateBase64 = uint8ArrayToBase64(note.state);
         const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
         return {
@@ -294,10 +296,27 @@ async function processOutputNotes(notes) {
             recipientDigest: note.recipientDigest,
             metadata: metadataBase64,
             expectedHeight: note.expectedHeight,
+            serializedNoteScript: serializedNoteScriptBase64,
             state: stateBase64,
             attachments: attachmentsBase64,
         };
-    }));
+    });
+}
+// Fetches the scripts for the given roots in one read and returns them base64-encoded, keyed by
+// root. Empty roots are skipped, and roots without a stored script are absent from the map.
+async function getNoteScriptsBase64(dbId, roots) {
+    const db = getDatabase(dbId);
+    const uniqueRoots = [...new Set(roots.filter((root) => !!root))];
+    if (uniqueRoots.length === 0) {
+        return new Map();
+    }
+    const records = await db.notesScripts.bulkGet(uniqueRoots);
+    return new Map(records
+        .filter((record) => record !== undefined)
+        .map((record) => [
+        record.scriptRoot,
+        uint8ArrayToBase64(record.serializedNoteScript),
+    ]));
 }
 export async function upsertNoteScript(dbId, scriptRoot, serializedNoteScript) {
     const db = getDatabase(dbId);

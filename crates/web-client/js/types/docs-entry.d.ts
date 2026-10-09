@@ -30,7 +30,9 @@ export {
   InputNote,
   InputNoteRecord,
   NetworkAccountTarget,
+  NonFungibleAsset,
   Note,
+  NoteAssets,
   NoteConsumability,
   NoteConsumptionStatus,
   NoteExportFormat,
@@ -53,6 +55,7 @@ export {
   TransactionResult,
   TransactionStoreUpdate,
   TransactionSummary,
+  VaultAsset,
   Word,
 } from "./crates/miden_client_web";
 

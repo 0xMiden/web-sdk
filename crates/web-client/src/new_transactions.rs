@@ -33,6 +33,7 @@ use miden_protocol::crypto::SequentialCommit;
 use crate::models::NoteType;
 use crate::models::account_id::AccountId;
 use crate::models::advice_inputs::AdviceInputs;
+use crate::models::batch_item::BatchItem;
 use crate::models::chain_anchor::ChainAnchor;
 use crate::models::eth_address::EthAddress;
 use crate::models::felt::Felt;
@@ -50,14 +51,12 @@ use crate::models::transaction_store_update::TransactionStoreUpdate;
 use crate::models::transaction_summary::TransactionSummary;
 use crate::models::word::Word;
 use crate::platform::{
-    JsBytes,
     JsErr,
     from_str_err,
     from_str_err_with_code,
     js_u64_to_u64,
     maybe_wrap_send,
 };
-use crate::utils::deserialize_from_bytes;
 use crate::{WebClient, js_error_with_context};
 
 #[js_export]
@@ -449,40 +448,33 @@ impl WebClient {
         Ok(tx_id)
     }
 
-    /// Executes a batch of transactions against the specified account, proves them individually
-    /// and as a batch, submits the batch to the network, and atomically applies the per-tx
-    /// updates to the local store. Returns the block number the batch was accepted into.
+    /// Executes a batch of transactions across one or more local accounts, proves them
+    /// individually and as a batch, submits the batch to the network, and atomically applies
+    /// the per-tx updates to the local store. Returns the node's chain tip as of submission, not
+    /// the block the batch commits in, which only a later sync reveals.
     ///
-    /// All transactions must target the same local account — the `account_id` argument.
-    /// Each element of `transaction_requests` is the serialized-bytes form of a
-    /// `TransactionRequest` (obtained via `tx_request.serialize()`)
-    // TODO V2: support multi-account batches
+    /// Every proof is produced inside the batch primitive by the client's built-in local prover.
+    /// Unlike `submitNewTransactionWithProver`, this takes no prover, so a JS-side `proverUrl` or
+    /// React `prover` setting does not apply to batches.
+    ///
+    /// The batch proves on whichever thread calls this. The browser `WebClient` forwards the call
+    /// to its Web Worker when it has one, so a page keeps its main thread. Without a worker
+    /// (`useWorker: false`, or no `Worker` in the environment), and always on a mock client, the
+    /// batch proves on the calling thread and blocks it until it settles.
+    ///
+    /// Each [`BatchItem`] pairs the executing account with its transaction request, so the
+    /// pairing is enforced at the type level — there's no way to call this with mismatched
+    /// arrays.
     #[js_export(js_name = "submitNewTransactionBatch")]
-    pub async fn submit_new_transaction_batch(
-        &self,
-        account_id: &AccountId,
-        transaction_requests: Vec<JsBytes>,
-    ) -> Result<u32, JsErr> {
+    pub async fn submit_new_transaction_batch(&self, items: Vec<BatchItem>) -> Result<u32, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-        let native_account_id: miden_client::account::AccountId = account_id.into();
 
-        // Deserialize all requests up front so we fail early on malformed input.
-        let mut native_reqs: Vec<NativeTransactionRequest> =
-            Vec::with_capacity(transaction_requests.len());
-        for bytes in &transaction_requests {
-            let req = deserialize_from_bytes::<NativeTransactionRequest>(bytes).map_err(|err| {
-                from_str_err(&format!("failed to deserialize transaction request: {err:?}"))
-            })?;
-            native_reqs.push(req);
-        }
-
-        // `new_transaction_batch()` is now a synchronous builder constructor that takes no
-        // account id; the target account is supplied per-transaction via `push`. This wrapper
-        // keeps its single-account contract by pushing every request against `native_account_id`.
         let mut builder = client.new_transaction_batch();
 
-        for native_req in native_reqs {
+        for item in &items {
+            let native_account_id: NativeAccountId = item.account_id().into();
+            let native_req: NativeTransactionRequest = item.request().into();
             maybe_wrap_send(Box::pin(builder.push(native_account_id, native_req)))
                 .await
                 .map_err(|err| js_error_with_context(err, "failed to push transaction to batch"))?;
@@ -947,16 +939,17 @@ fn map_anchor_err(err: ClientError, context: &'static str) -> JsErr {
 /// An empty vector means the account's auth procedure is one this crate cannot name: either
 /// genuinely custom, or standard but compiled from a different miden-standards revision.
 ///
-/// Classification reads the account's code only, and deliberately avoids `AccountInterface`:
-/// building one asserts that exactly one auth component is present, and an account carrying a
-/// custom auth procedure classifies as `Custom` rather than any auth variant, so the assertion
-/// fires. `wasm32` is `panic = "abort"`, which makes that a trap taken while the client borrow is
-/// held — poisoning the client for every later call. `from_procedures` cannot panic.
+/// Classification reads the account's code only, and deliberately avoids `AccountInterface`: its
+/// constructor asserts that exactly one auth component is present, which an account whose
+/// procedures match two standard auth components fails, and `wasm32` is `panic = "abort"`, so the
+/// assertion is a trap taken while the client borrow is held, poisoning the client for every later
+/// call. `from_procedures` cannot panic. An account carrying a custom auth procedure, one no
+/// bundled standard template claims, classifies as `CustomAuth`, which the filter leaves out.
 ///
 /// Matching is by MAST procedure root against the locally pinned miden-standards, so an account
-/// whose auth component was compiled from a different revision classifies as `Custom` and yields
-/// an empty vector even though its procedure is a standard one. Nothing here can tell that case
-/// apart from a genuinely custom auth procedure, so it is a reason to keep this crate's
+/// whose auth component was compiled from a different revision classifies as `CustomAuth` and
+/// yields an empty vector even though its procedure is a standard one. Nothing here can tell that
+/// case apart from a genuinely custom auth procedure, so it is a reason to keep this crate's
 /// miden-standards pin aligned with the networks it targets rather than something to detect.
 async fn standard_auth_components(
     client: &Client<crate::ClientAuth>,

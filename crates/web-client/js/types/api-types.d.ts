@@ -23,6 +23,7 @@ import type {
   OutputNoteRecord,
   ConsumableNoteRecord,
   NoteId,
+  NoteInclusionProof,
   NoteFile,
   NoteTag,
   Note,
@@ -588,14 +589,18 @@ export interface ConsumeAllOptions extends TransactionOptions {
 }
 
 /**
- * A single operation inside a transaction batch. The shape mirrors the
- * singular options types (`SendOptions`, `MintOptions`, ...) minus the
- * `account` field — the executing account is set once at the batch level
- * and shared by every operation (V1 single-account constraint).
+ * A single operation inside a transaction batch. Each shape carries the
+ * request-building fields of its singular options type (`SendOptions`,
+ * `MintOptions`, ...) and none of the per-submission ones. Each operation
+ * specifies which local account executes it via `account`; a batch may mix
+ * operations across any combination of local accounts. Neither `prover`,
+ * `waitForConfirmation` and `timeout` nor `returnNote`, which selects a
+ * different request shape, has any per-operation meaning.
  */
 export type BatchOperation =
   | {
       kind: "send";
+      account: AccountRef;
       to: AccountRef;
       token: AccountRef;
       amount: number | bigint;
@@ -605,16 +610,19 @@ export type BatchOperation =
     }
   | {
       kind: "mint";
+      account: AccountRef;
       to: AccountRef;
       amount: number | bigint;
       type?: NoteVisibility;
     }
   | {
       kind: "consume";
+      account: AccountRef;
       notes: NoteInput | NoteInput[];
     }
   | {
       kind: "swap";
+      account: AccountRef;
       offer: Asset;
       request: Asset;
       type?: NoteVisibility;
@@ -622,6 +630,7 @@ export type BatchOperation =
     }
   | {
       kind: "execute";
+      account: AccountRef;
       script: TransactionScript;
       foreignAccounts?: (
         | AccountRef
@@ -631,26 +640,36 @@ export type BatchOperation =
   | {
       /** Escape hatch for pre-built TransactionRequests. */
       kind: "custom";
+      account: AccountRef;
       request: TransactionRequest;
     };
 
 export interface BatchOptions {
-  /** The account executing every operation in the batch (single-account in V1). */
-  account: AccountRef;
   /** Operations to execute atomically as a batch. Must be non-empty. */
   operations: BatchOperation[];
   /**
-   * Wait until the batch's block has been observed in the local sync height.
-   * Differs from singular `waitForConfirmation`: the V1 batch API returns
-   * only a block number, so we poll chain height rather than per-tx status.
+   * Poll until the local sync height reaches the block number returned by the
+   * submission.
+   *
+   * Does not currently work on a batch: the poll's sync step calls a method
+   * that does not exist, so it cannot advance the height and the call throws
+   * `Batch confirmation timed out` unless the client is already at or past
+   * that height. Even once fixed it would be a weak signal, since the number
+   * is the tip as of submission rather than the batch's commit block. See
+   * https://github.com/0xMiden/web-sdk/issues/314. Sync and check
+   * `transactions.list()` or the account nonce instead.
    */
   waitForConfirmation?: boolean;
   /** Wall-clock polling timeout for `waitForConfirmation` (default 60_000ms). */
   timeout?: number;
 }
 
+
 export interface BatchSubmitResult {
-  /** The block number the batch was accepted into. */
+  /**
+   * The node's chain tip as of submission — not the block the batch commits
+   * in. Sync to learn where it landed.
+   */
   blockNumber: number;
 }
 
@@ -717,6 +736,11 @@ export interface TransactionSubmission {
    * Persist the transaction into the local store, firing registered
    * transaction observers (e.g. PSWAP lineage tracking). Until this runs the
    * local store is unaware of the transaction.
+   *
+   * Browser stores require the stored account to match the execution input;
+   * a mismatch rejects before changing account state or transaction history.
+   * The network may already have accepted the transaction, so check its status
+   * before submitting again after a local apply failure.
    *
    * @returns The pre-apply store update.
    */
@@ -985,13 +1009,12 @@ export interface SendPrivateOptions {
   /** The recipient. */
   to: AccountRef;
   /**
-   * Block the recipient scans FORWARD from for the note's on-chain commitment. Must be at or below
-   * the commitment block — a hint above it is never scanned back to, so the recipient silently
-   * never receives the note. A safe, always-valid choice is the chain tip when the note's
-   * transaction was submitted. For one of this client's own output notes, prefer `sendPrivateOutput`,
-   * which derives this block for you.
+   * Inclusion proof the transport verifies. The recipient scans from the block the proof names.
+   * The proof exists once the creating transaction is committed and this client has synced past
+   * that block. For one of this client's own output notes, prefer `sendPrivateOutput`, which
+   * reads the stored proof.
    */
-  scanAfterBlockNum: number;
+  inclusionProof: NoteInclusionProof;
 }
 
 export interface SendPrivateOutputOptions {
@@ -1084,6 +1107,8 @@ export interface AccountsResource {
   isAllowed(accountId: AccountRef): Promise<boolean>;
   /**
    * Retrieve an account by ID. Returns `null` if not found in the local store.
+   * Browser stores read a coherent persisted snapshot, including changes made
+   * by other clients sharing the database. This does not sync from the network.
    *
    * @param accountId - The account to retrieve.
    */
@@ -1395,19 +1420,23 @@ export interface TransactionsResource {
   ): Promise<TransactionSubmission>;
 
   /**
-   * Execute a heterogeneous batch of operations against a single account.
-   * Each operation is built, proven individually and as a batch, and all
-   * operations are submitted atomically — either every tx in the batch
-   * lands or none does.
-   *
-   * V1 supports only same-account batches (mirrors the underlying Rust
-   * `Client::new_transaction_batch()` constraint).
+   * Execute a heterogeneous batch of operations across one or more local
+   * accounts. Each operation specifies its executing `account`. Each
+   * operation is proven individually as it is added, then a single batch
+   * proof is produced over all of them and submitted as one batch; the node
+   * commits them together or not at all. Every proof runs inside the batch
+   * primitive on the client's built-in local prover, so `proverUrl` does not
+   * apply to batches.
+   * In the browser the batch is forwarded to the client's Web Worker, so the
+   * page's main thread stays responsive; without a worker (`useWorker: false`,
+   * or no `Worker` in the environment), and on a mock client, it proves on the
+   * calling thread and blocks it until it settles.
    *
    * The named operations attach fee conversion info themselves; a request you
    * supply through the `custom` operation is subject to the fee checks
    * described on {@link submitBatch}, which this delegates to.
    *
-   * @param options - Batch options including the account and operations.
+   * @param options - Batch options including the operations array.
    */
   batch(options: BatchOptions): Promise<BatchSubmitResult>;
 
@@ -1425,17 +1454,28 @@ export interface TransactionsResource {
    * ahead of it — build multisig requests from
    * {@link MidenClient.feeAwareTransactionRequestBuilder}.
    *
-   * The account's code is read once for the whole batch, not once per request,
-   * since a batch is single-account by contract.
+   * @param items - Per-tx (account, request) pairs (must be non-empty).
+   * @param options - Optional batch settings (timeout, and `waitForConfirmation`,
+   *   which does not currently work, see its own documentation and #314).
+   *   There is no prover option: every transaction is proven inside the batch
+   *   primitive by the client's built-in local prover, and `proverUrl` does not
+   *   apply.
+   *   In the browser the batch runs in the client's Web Worker where it has
+   *   one; see {@link batch} for when it runs in-thread instead.
    *
-   * @param account - The account executing every transaction in the batch.
-   * @param requests - Pre-built transaction requests (must be non-empty).
-   * @param options - Optional batch settings (waitForConfirmation, timeout, prover).
+   *   With an external keystore and a worker, each of the batch's signature
+   *   callbacks has the worker's fixed 30s ceiling, and since signing happens
+   *   at push time and this wrapper treats a failed push as fatal, one timeout
+   *   fails the whole batch. A rejection thrown as a non-nullish value with no
+   *   truthy `.message` (a bare string, `{ code }`) loses its reason and surfaces as
+   *   the generic `sign callback must return a Uint8Array`. Both are shared
+   *   with every worker-forwarded method; tracked in #316. Relatedly,
+   *   `lastAuthError()` reads the main-thread instance, so it does not report
+   *   a forwarded batch's auth error.
    */
   submitBatch(
-    account: AccountRef,
-    requests: TransactionRequest[],
-    options?: Omit<BatchOptions, "account" | "operations">
+    items: { account: AccountRef; request: TransactionRequest }[],
+    options?: Omit<BatchOptions, "operations">
   ): Promise<BatchSubmitResult>;
 
   /** Execute a program (view call) and return the resulting stack output. */
@@ -1595,25 +1635,23 @@ export interface NotesResource {
    */
   fetchPrivate(): Promise<void>;
   /**
-   * Relay a private note to a recipient via the note transport service, with an explicit block
-   * hint (`scanAfterBlockNum`) the recipient scans forward from for the note's on-chain commitment.
+   * Relay a private note to a recipient via the note transport service, with the note's
+   * inclusion proof. The transport verifies the proof and the recipient scans from the block
+   * it names.
    *
-   * The hint must be at or below the commitment block; a hint above it is never scanned back to and
-   * the recipient silently never receives the note. This is the agnostic form for relaying an
-   * arbitrary note; for one of this client's own output notes prefer {@link NotesResource.sendPrivateOutput},
-   * which derives the block from the note's stored expected height.
+   * This is the agnostic form for relaying an arbitrary note. For one of this client's own
+   * output notes prefer {@link NotesResource.sendPrivateOutput}, which reads the proof sync
+   * stored on the note and throws if this client has not synced past the commitment.
    *
-   * @param options - The note, the recipient, and `scanAfterBlockNum`.
+   * @param options - The note, the recipient, and `inclusionProof`.
    */
   sendPrivate(options: SendPrivateOptions): Promise<void>;
   /**
    * Relay one of this client's own private output notes via the note transport service.
    *
-   * The recipient's scan-start block is derived from the note's stored `expected_height` (the chain
-   * tip when its transaction was submitted), so delivery is correct regardless of how far this
-   * client has since synced past the note — a bare sync-height hint would overshoot the commitment
-   * once the sender advances past it (e.g. relaying after waiting for commit) and silently drop
-   * delivery. The note must exist in this client's store as an output note.
+   * The inclusion proof is the one sync stored on the output note. It is absent until this
+   * client has synced past the block that committed the note, and the call throws in that
+   * case. The note must exist in this client's store as an output note.
    *
    * @param options - The output note id and the recipient.
    */
@@ -1928,6 +1966,20 @@ export declare class MidenClient {
   storeIdentifier(): Promise<string>;
 
   /**
+   * Returns the URL of the node this client was created against, e.g.
+   * `"https://rpc.devnet.miden.io"`.
+   *
+   * The value is fixed at creation and read synchronously. `rpcUrl` shorthands
+   * are already resolved, and a client created without `rpcUrl` reports the
+   * testnet endpoint it defaulted to. A mock client ({@link MidenClient.createMock})
+   * talks to no node and returns `undefined`.
+   *
+   * Use it to point a standalone `RpcClient` at the same node:
+   * `new RpcClient(new Endpoint(client.endpoint()!))`.
+   */
+  endpoint(): string | undefined;
+
+  /**
    * Returns a `TransactionRequestBuilder` that already declares a fee
    * conversion salt where the account that will execute the request needs one.
    *
@@ -2047,7 +2099,9 @@ export declare function createP2IDENote(
 /**
  * Builds (without submitting) a Public custom-script note carrying a
  * `NetworkAccountTarget` attachment. Provide exactly one of `recipient` or
- * `script`.
+ * `script`. The transaction that emits the note must declare the target as a
+ * foreign account (`withForeignAccounts`), which
+ * {@link TransactionsResource.createNetworkNote} does for you.
  */
 export declare function buildNetworkNote(opts: NetworkNoteOptions): Note;
 

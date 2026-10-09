@@ -7,7 +7,7 @@ use miden_client::block::BlockHeader;
 use miden_client::crypto::InOrderIndex;
 use miden_client::note::BlockNumber;
 use miden_client::store::{BlockRelevance, PartialBlockchainFilter, StoreError};
-use miden_client::utils::Deserializable;
+use miden_client_proto::decode_unchecked;
 
 use super::IdxdbStore;
 use crate::promise::{await_js, await_js_value, await_ok};
@@ -86,7 +86,7 @@ impl IdxdbStore {
             .filter_map(|record_option| record_option.map(Ok))
             .map(|record_result: Result<BlockHeaderIdxdbObject, StoreError>| {
                 let record = record_result?;
-                let block_header = BlockHeader::read_from_bytes(&record.header)?;
+                let block_header: BlockHeader = decode_unchecked(&record.header)?;
                 let has_client_notes = record.has_client_notes.into();
 
                 Ok((block_header, has_client_notes))
@@ -104,7 +104,7 @@ impl IdxdbStore {
         let results: Result<Vec<BlockHeader>, StoreError> = block_headers_idxdb
             .into_iter()
             .map(|record| {
-                let block_header = BlockHeader::read_from_bytes(&record.header)?;
+                let block_header: BlockHeader = decode_unchecked(&record.header)?;
 
                 Ok(block_header)
             })

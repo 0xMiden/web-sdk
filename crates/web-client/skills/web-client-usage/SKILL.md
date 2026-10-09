@@ -120,6 +120,11 @@ const client = await MidenClient.create({
 
 If `rpcUrl` is omitted, `create()` delegates to `createTestnet()`.
 
+`client.endpoint()` returns the resolved node URL synchronously, e.g.
+`"https://rpc.testnet.miden.io"` when `rpcUrl` was omitted; a `createMock()`
+client returns `undefined`. Build a standalone `RpcClient` against the same node
+with `new RpcClient(new Endpoint(client.endpoint()!))`.
+
 `seed` is `string | Uint8Array`. A string is legal: `hashSeed()` SHA-256s it to
 32 bytes before it reaches WASM, and a `Uint8Array` passes through unchanged.
 The same two forms work for `MidenClient.createMock({ seed })` and for the
@@ -237,6 +242,16 @@ Common patterns:
 single sync at construction time - it is not a polling loop. Use the React
 SDK's `useSyncState` or `MidenProvider` `autoSyncInterval` for periodic sync.
 
+Clients sharing a browser database read coherent persisted account state.
+Account witnesses refresh when another client changes that state, preserving
+untouched vault assets and storage maps. This does not fetch new chain state;
+continue to sync before relying on on-chain balances.
+
+For browser stores, `apply` requires the stored account to match the
+transaction's execution input. A mismatch rejects before changing account state
+or transaction history. A submitted transaction may already be on-chain when
+local apply fails; check its status before submitting again.
+
 ## Type Conversions
 
 Type confusion across the WASM boundary is the leading source of bugs.
@@ -328,6 +343,49 @@ are also accepted). Use `storage` to select visibility in `accounts.create()`.
 Non-fungible faucets are not supported yet, so `FaucetType` has no
 non-fungible member.
 
+## Read Non-Fungible Assets
+
+```typescript
+await client.sync();
+const { vault } = await client.accounts.getDetails(wallet);
+const assets = vault.nonFungibleAssets().map((asset) => ({
+  issuer: asset.faucetId().toString(),
+  key: asset.vaultKey().toHex(),
+  value: Array.from(asset.intoWord().toU64s()),
+}));
+```
+
+`nonFungibleAssets()` returns only non-fungible assets from the local vault
+snapshot. It returns an empty array when none are present. The order is not
+specified. `faucetId()` identifies the issuer, `vaultKey()` returns the complete
+asset key, and `intoWord().toU64s()` returns all four value limbs as `bigint`
+values. Keep these values as `bigint` or strings to prevent precision loss.
+
+Compare both the complete key and all four value limbs to verify an asset.
+The key alone does not contain the complete value. To reconstruct an asset,
+use `VaultAsset.nonFungible({ key, value })` with the two `Word` objects.
+
+## Build Notes with Either Asset Type
+
+```typescript
+const token = VaultAsset.fungible(faucetId, 100n);
+const name = VaultAsset.nonFungible({ key, value });
+const assets = new NoteAssets([name]);
+assets.push(token);
+```
+
+`NoteAssets` accepts one list of 0 to 16 assets. Existing `FungibleAsset`
+constructor and `push()` calls remain valid. Duplicate IDs and excess assets
+throw catchable errors; a failed push leaves the list unchanged. Inputs remain
+usable. `vault.assets()` and `note.assets().assets()` return both variants;
+use `kind()`, `asFungible()`, or `asNonFungible()` to inspect them.
+
+For registry publishing, use `Note.withAttachments()` with a single name asset,
+public metadata, the registry's approved script and inputs, and
+`[new NetworkAccountTarget(registryId).toAttachment()]`. The registry account
+must be public. A tag alone does not make a network note. Consume the returned P2ID note to put
+the asset back in the vault. The amount-based `send` helper remains fungible-only.
+
 ## Account Creation
 
 ```typescript
@@ -376,17 +434,15 @@ visibility matters.
 
 ### Standard auth components
 
-Two auth components must come from the SDK rather than from your own MASM,
-because the client identifies an auth component by its procedure root and
-declines to attach fee conversion info to one it cannot classify:
+Build these two auth components with the SDK's factories, the supported way to
+install them. The client identifies an auth component by its procedure root and
+declines to attach fee conversion info to one it cannot classify, and a factory
+builds exactly the code the Rust client builds:
 
-- `createAuthGuardedMultisig(config)` builds the standard guarded multisig,
-  statically linked exactly as the Rust client builds it. Configure it with
+- `createAuthGuardedMultisig(config)` builds the standard guarded multisig.
+  Configure it with
   `new AuthGuardedMultisigConfig(approvers, defaultThreshold, guardian, authScheme)`
-  (optionally `.withProcThresholds([...])`). Compiling equivalent MASM through
-  `AccountComponent.compile` links the standards package dynamically, yields a
-  different `auth_tx` root, and every transaction from the account then fails
-  on a fee-charging chain.
+  (optionally `.withProcThresholds([...])`).
 - `AccountComponent.createNetworkAuthComponents(allowedNoteScriptFees, feeFaucetId, allowedTxScriptRoots?)`
   builds a network account's auth. Each `new NoteScriptFee(noteScript.root(), amount)`
   pairs an allowlisted note script root with the fee the account charges to
@@ -452,11 +508,10 @@ clears the other, so whichever is called last wins. Never call either on a build
 
 ## Transactions
 
-**A note carries at most 16 assets** (`MAX_ASSETS_PER_NOTE` in `miden-protocol`). The
-constructors `unwrap` the protocol's `TooManyAssets` error, so going over the cap from
-JavaScript **traps the WASM instance** rather than rejecting with a catchable error - check
-the length yourself before building a note with many assets. Duplicates are rejected too,
-and the order of assets is unspecified.
+**A note carries at most 16 assets** (`MAX_ASSETS_PER_NOTE` in `miden-protocol`).
+`new NoteAssets(...)` and `push()` throw a catchable error when the list would go over the
+cap or repeat an asset, and a failed `push()` leaves the list unchanged. Note assets keep
+their input order.
 
 Per-asset callbacks are read off `FungibleAsset.callbacks()`. There is no `withCallbacks`
 builder - do not reach for one.
@@ -499,10 +554,11 @@ const { txId, note } = await client.transactions.send({
   amount: 100n,
   type: NoteVisibility.Private,
   returnNote: true,
+  waitForConfirmation: true,
 });
 
-// Stream the note via the note-transport service. For one of this client's own
-// output notes prefer sendPrivateOutput, which derives the scan block for you.
+// Stream the note via the note-transport service. sendPrivateOutput reads the
+// inclusion proof sync stored once the note has committed.
 await client.notes.sendPrivateOutput({ noteId: note.id(), to: "mtst1..." });
 ```
 
@@ -577,8 +633,9 @@ standards' default expiration delta, so the emitting transaction must be
 included within **20 blocks** of its reference block, roughly a minute at a
 three-second block interval. An expiration can only be lowered, never raised,
 so neither the SDK nor the caller can widen it. If proving is slow enough that
-the node rejects the submission as expired, re-execute against a fresh
-reference block and submit again.
+the node rejects the submission as expired, sync first and then call
+`createNetworkNote` again: without a sync it rebuilds against the same
+reference block and expires the same way.
 
 ### Consume
 
@@ -769,39 +826,44 @@ proof that runs locally (and slowly) when you configured a remote one.
 
 ### Batching
 
-`transactions.batch` builds each operation itself; `submitBatch(account, requests, options?)`
-is the pre-built-request counterpart. Both submit atomically - every transaction
-in the batch lands or none does.
+`transactions.batch` builds each operation itself; `submitBatch(items, options?)`
+is the pre-built-request counterpart, taking `{ account, request }` pairs. Both
+submit atomically - every transaction in the batch lands or none does.
 
 ```typescript
 const { blockNumber } = await client.transactions.batch({
-  account: wallet,
   operations: [
-    { kind: "consume", notes: [noteId] },
-    { kind: "send", to: other, token: faucet, amount: 10n },
-    { kind: "custom", request: prebuiltRequest },
+    { kind: "consume", account: wallet, notes: [noteId] },
+    { kind: "send", account: wallet, to: other, token: faucet, amount: 10n },
+    { kind: "custom", account: other, request: prebuiltRequest },
   ],
   waitForConfirmation: true,
 });
 ```
 
 `BatchOperation` kinds are `send`, `mint`, `consume`, `swap`, `execute` and
-`custom`; each mirrors the singular options **minus `account`**.
+`custom`; each mirrors the singular options, **including `account`**, which every
+operation must carry.
 
-**V1 is single-account, and it rewrites every operation's account.** The builder
-spreads `{ ...op, account: opts.account }` over each operation before building
-it, so the batch-level account executes all of them. Mixing account roles does
-not raise an error, it builds the wrong request: a `mint` inside a
-wallet-scoped batch is rebuilt as if the wallet were the issuing faucet.
-Minting on a faucet and spending from a wallet are two accounts, so they are two
-calls.
+**Each operation names the account that executes it.** One batch may mix any
+tracked local accounts, so minting on a faucet and spending from a wallet can
+share a batch: put `account: faucet` on the `mint` and `account: wallet` on the
+`send`. A later transaction may consume a note an earlier one produced, even
+across accounts, so order the producer first. Every account must be tracked by
+this client, and no note may be consumed twice in one batch.
 
 The result is `{ blockNumber }` only - the Rust V1 batch API returns no
-per-transaction ids, so `waitForConfirmation` polls local sync height until it
-reaches that block rather than watching transaction status. A
+per-transaction ids, and the number is the node's chain tip as of submission,
+not the block the batch commits in. `waitForConfirmation` does not currently
+work on a batch (#314): sync and check `transactions.list()` instead. A
 `custom` operation carries a request you built, so the fee rules above apply to
-it: use `client.feeAwareTransactionRequestBuilder(account)`. The V1 batch API
-has no per-call prover override.
+it: use `client.feeAwareTransactionRequestBuilder(account)`. Every transaction
+is proven inside the batch primitive by the client's built-in local prover, so
+`proverUrl` does not apply, and the V1 batch API has no per-call prover override.
+In the browser the batch runs in the client's Web Worker, so the page stays
+responsive while it proves; with `useWorker: false`, without `Worker` support,
+or on a mock client it proves on the calling thread and blocks it until it
+settles, so keep batches small there.
 
 ### Preview (dry run)
 
@@ -913,24 +975,25 @@ for it.
 // a newly tracked tag sit below that cursor and are back-filled by sync().
 await client.notes.fetchPrivate();
 
-// Relay one of this client's own output notes - the scan block is derived from
-// the note's stored expected height. Prefer this form.
+// Relay one of this client's own output notes. The call reads the inclusion
+// proof sync stored on the note and throws if this client has not synced past
+// the commitment. Prefer this form, after the transaction has committed.
 await client.notes.sendPrivateOutput({ noteId, to: "mtst1..." });
 
-// Agnostic form for an arbitrary note. `scanAfterBlockNum` is REQUIRED.
+// Agnostic form for an arbitrary note. `inclusionProof` is required.
 await client.notes.sendPrivate({
   note,
   to: "mtst1...",
-  scanAfterBlockNum: submissionHeight,
+  inclusionProof,
 });
 ```
 
-`sendPrivate` **throws** without an integer `scanAfterBlockNum`. It is the block
-the recipient scans **forward** from for the note's on-chain commitment, so it
-must be at or below the commitment block: a hint above it is never scanned back
-to and the recipient silently never receives the note. A safe choice is the
-chain tip when the note's transaction was submitted - which is exactly why
-relaying *after* waiting for the commit used to drop delivery. `to` accepts a
+`sendPrivate` **throws** without an `inclusionProof`. The transport verifies that
+`NoteInclusionProof` and the recipient scans from the block it names. The proof
+exists once the creating transaction is committed and this client has synced past
+that block. `NoteInclusionProof.mockAtBlock(blockNum)` builds an empty-path proof
+the mock transport accepts; a real node rejects it, and the constructor is present
+because the published build enables the `testing` feature. `to` accepts a
 bech32 string, a 0x-hex string, an `Account`, or an `AccountId`; it does **not**
 accept a pre-parsed `Address` object.
 
@@ -1151,9 +1214,9 @@ while (true) {
    `client.feeAwareTransactionRequestBuilder(account)` for anything you hand to
    `submit` / `executeRequest` / `submitBatch` / a `custom` preview, or a
    multisig account fails with `FeeConversionInfoRequired`.
-4. **`notes.sendPrivate()` without `scanAfterBlockNum`.** It throws. Prefer
-   `notes.sendPrivateOutput({ noteId, to })` for your own output notes, and
-   never pass a hint above the commitment block.
+4. **`notes.sendPrivate()` without `inclusionProof`.** It throws. For your own
+   output notes, wait until the transaction commits and call
+   `notes.sendPrivateOutput({ noteId, to })`, which reads the stored proof.
 5. **`number` literals above 2^53 for amounts.** Amount fields accept
    `number | bigint` and coerce via `BigInt()` (no `TypeError`), but a numeric
    literal above `Number.MAX_SAFE_INTEGER` loses precision _before_ coercion.

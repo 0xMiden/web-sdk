@@ -142,3 +142,30 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
     expect(inner.feeAwareTransactionRequestBuilder).not.toHaveBeenCalled();
   });
 });
+
+describe("MidenClient.endpoint", () => {
+  it("returns the inner client's endpoint synchronously", () => {
+    const { client, inner } = makeClient({
+      endpoint: vi.fn(() => "https://rpc.devnet.miden.io"),
+    });
+
+    expect(client.endpoint()).toBe("https://rpc.devnet.miden.io");
+    expect(inner.endpoint).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes a mock client's undefined through", () => {
+    const { client } = makeClient({ endpoint: vi.fn(() => undefined) });
+
+    expect(client.endpoint()).toBeUndefined();
+  });
+
+  it("throws once terminated", () => {
+    const { client, inner } = makeClient({
+      endpoint: vi.fn(() => "https://rpc.devnet.miden.io"),
+    });
+    client.terminate();
+
+    expect(() => client.endpoint()).toThrow("Client terminated");
+    expect(inner.endpoint).not.toHaveBeenCalled();
+  });
+});

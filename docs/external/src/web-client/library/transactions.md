@@ -84,48 +84,58 @@ Check status using methods on the `TransactionStatus` object:
 
 ## Batch Operations
 
-Submit multiple operations against a single account as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally, so consumers don't have to assemble or serialize them by hand.
+Submit multiple operations across one or more local accounts as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally, so consumers don't have to assemble or serialize them by hand.
+
+The guarantee comes from the node's `SubmitProvenTxBatch` RPC contract: "All transactions in this batch will be considered atomic, and be committed together or not all." It does not exempt the transactions from building on the current mempool state under the normal submission rules — `miden-client`'s RPC trait spells that out on the same endpoint — so atomicity governs how the batch commits, not whether the node accepts it.
 
 ```typescript
 const { blockNumber } = await client.transactions.batch({
-  account: wallet,
   operations: [
-    { kind: "send", to: alice, token: dagToken, amount: 50n, type: "public" },
-    { kind: "send", to: bob, token: dagToken, amount: 30n, type: "public" },
-    { kind: "consume", notes: pendingNotes },
+    { kind: "send", account: alice, to: bob, token: dagToken, amount: 50n, type: "public" },
+    { kind: "send", account: alice, to: carol, token: dagToken, amount: 30n, type: "public" },
+    { kind: "consume", account: bob, notes: pendingNotes },
   ],
-  waitForConfirmation: true,
+  // waitForConfirmation is currently broken for batches — see below.
 });
-console.log(`Batch landed in block ${blockNumber}`);
+// The node's chain tip as of submission, not the block the batch commits in.
+console.log(`Batch submitted at chain tip ${blockNumber}`);
 ```
 
 ### Operation kinds
 
-`BatchOperation` is a discriminated union on `kind`. Each shape mirrors the singular options object (`SendOptions`, `MintOptions`, …) minus the `account` field, which is set once at the batch level:
+`BatchOperation` is a discriminated union on `kind`. Each shape carries the request-building fields of its singular options object (`SendOptions`, `MintOptions`, …) and none of the per-submission ones. Every operation specifies which local account executes it via `account`, and neither `prover`, `waitForConfirmation` and `timeout` nor `returnNote`, which selects a different request shape, has any per-operation meaning:
 
 | `kind` | Fields |
 |---|---|
-| `"send"` | `to`, `token`, `amount`, `type?`, `reclaimAfter?`, `timelockUntil?` |
-| `"mint"` | `to`, `amount`, `type?` |
-| `"consume"` | `notes` (single `NoteInput` or array) |
-| `"swap"` | `offer: { token, amount }`, `request: { token, amount }`, `type?`, `paybackType?` |
-| `"execute"` | `script`, `foreignAccounts?` |
-| `"custom"` | `request: TransactionRequest` (escape hatch for pre-built requests) |
+| `"send"` | `account`, `to`, `token`, `amount`, `type?`, `reclaimAfter?`, `timelockUntil?` |
+| `"mint"` | `account`, `to`, `amount`, `type?` |
+| `"consume"` | `account`, `notes` (single `NoteInput` or array) |
+| `"swap"` | `account`, `offer: { token, amount }`, `request: { token, amount }`, `type?`, `paybackType?` |
+| `"execute"` | `account`, `script`, `foreignAccounts?` |
+| `"custom"` | `account`, `request: TransactionRequest` (escape hatch for pre-built requests) |
 
-### V1 constraints
+### Cross-account flows
 
-- **Single account.** Every operation runs against the `account` passed at the top level. Mixing accounts across operations throws — V2 will lift this constraint.
-- **No per-tx ids in the result.** `batch` returns `{ blockNumber }`. To inspect individual transactions in the batch, sync state and query with `client.transactions.list()` after `waitForConfirmation` succeeds.
+A later transaction may consume a note produced by an earlier transaction in the same batch — even when the producer and consumer target different accounts. Push order must respect producer-before-consumer.
+
+### Constraints
+
+- **All accounts must be tracked.** Every `account` referenced by an operation must be registered with the client. Pushing for an unknown account fails at submit time with `AccountDataNotFound`.
+- **No per-tx ids in the result.** `batch` returns `{ blockNumber }`, the node's chain tip as of submission. To inspect individual transactions in the batch, sync state and query with `client.transactions.list()`.
+- **On a mock client, call `proveBlock()` after a batch** before submitting anything else. A submitted batch is not part of the serialized mock chain, so a later mock submit that round-trips through the worker adopts a chain that never saw it. A mock batch also proves for real whether you ask it to or not: the mock client's dummy-prover shortcut applies only when no prover was passed, and the batch builder bypasses it entirely, so budget more time for a mock batch than for other mock submits.
 - **Atomicity is at the batch level.** Either all transactions in the batch land or none do — this differs from `Promise.all([send, send, send])` of singular calls (which can partially succeed).
+- **No duplicate input notes.** A note consumed by one transaction in the batch cannot be consumed by another — globally across accounts.
+- **Proving uses the built-in local prover.** Each transaction is proven inside the batch primitive by the client's built-in local prover, so `proverUrl` does not apply to `batch` or `submitBatch`, and neither takes a per-call prover.
+- **Proving runs in the Web Worker where there is one.** In the browser the client forwards a batch to its Web Worker, so the page keeps responding while the batch proves. With `useWorker: false`, where no `Worker` exists, or on a mock client, it proves on the calling thread and blocks it until it settles, so keep batches small there. Either way the batch holds the client: its other calls queue behind it until it settles.
 
 ### `submitBatch` — pre-built requests
 
-For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders:
+For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders. Each item pairs the executing account with its request:
 
 ```typescript
-const { blockNumber } = await client.transactions.submitBatch(wallet, [
-  request1,
-  request2,
+const { blockNumber } = await client.transactions.submitBatch([
+  { account: alice, request: request1 },
+  { account: bob, request: request2 },
 ]);
 ```
 
@@ -133,7 +143,16 @@ This is the plural counterpart of `client.transactions.submit(account, request)`
 
 ### `waitForConfirmation` semantics
 
-The V1 batch primitive returns only a block number — there are no per-tx ids to poll. Setting `waitForConfirmation: true` polls the local sync height until it reaches `blockNumber` (rather than per-transaction polling like singular `send` / `consume` do). The `timeout` option still applies; default is 60 seconds.
+The batch primitive returns only a block number, so there are no per-tx ids to poll, and that number is the node's chain tip at submission, per the caveat above. Even were it the commit block, reaching it would confirm only that the client had caught up, not that the batch committed. `waitForConfirmation` on a batch does not currently work: its poll calls a sync method that does not exist, so the poll cannot advance the height itself and the call throws `Batch confirmation timed out` unless the client is already at or past that height. Tracked in [#314](https://github.com/0xMiden/web-sdk/issues/314); prefer syncing and checking `client.transactions.list()` yourself. The `timeout` option still applies; default is 60 seconds.
+
+The batch's own effects are already in the local store when the call returns, so what you are waiting for is chain inclusion:
+
+```typescript
+await client.sync();
+const txs = await client.transactions.list();
+```
+
+One failure mode worth handling: the node can accept a batch and the local store update still fail, which surfaces as a rejected promise whose message contains `batch was accepted at block N but building store updates failed` (or `applying to the store failed`). The node has taken the batch in that case, so retrying would submit it twice; sync instead.
 
 ## Manual Transaction Lifecycle
 
@@ -161,6 +180,16 @@ Notes on the staged form:
 - **`apply` fires transaction observers** (e.g. PSWAP lineage tracking), the same as the one-shot `submit` path. `submitted.waitForConfirmation()` blocks until the transaction commits on-chain.
 - **`submit` is equivalent** to running the stages back to back — prefer it unless you need the seams.
 - **Proving elsewhere:** to submit a proof produced on a client that shares nothing with the executing one, pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
+
+Clients sharing a browser database read coherent persisted account state.
+Account witnesses refresh when another client changes that state, preserving
+untouched vault assets and storage maps. This does not fetch new chain state;
+continue to sync before relying on on-chain balances.
+
+For browser stores, `apply` requires the stored account to match the
+transaction's execution input. A mismatch rejects before changing account state
+or transaction history. A submitted transaction may already be on-chain when
+local apply fails; check its status before submitting again.
 
 ## Pinning How Input Notes Are Consumed
 
@@ -213,7 +242,7 @@ On a chain that charges nothing, a request for an account that is not a multisig
 
 The `client.transactions` operations that build their own request — `send`, `mint`, `consume`, `consumeAll`, `swap`, `bridge`, `createNetworkNote`, `execute`, `pswapCreate`, `pswapConsume`, `pswapCancel`, and the named operations of `batch` and `preview` — declare it too. The ones that take a finished request **from you** never do: `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview`. Those are the paths the next section is for.
 
-`submitBatch` is worth calling out because a batch proves each transaction as it is pushed. A multisig request that declares no salt is rejected by miden-client during preparation — after the proofs of everything ahead of it in the batch have already been paid for. Build multisig requests from `feeAwareTransactionRequestBuilder` before batching them.
+`submitBatch` is worth calling out because a batch proves each transaction as it is pushed, on the client's built-in local prover rather than `proverUrl`. A multisig request that declares no salt is rejected by miden-client during preparation, after the proofs of everything ahead of it in the batch have already been paid for. Build multisig requests from `feeAwareTransactionRequestBuilder` before batching them.
 
 ### Assembling a request yourself
 

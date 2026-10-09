@@ -224,9 +224,9 @@ callback (`store.client.setSignCb(wrappedSignCb)`) instead of rebuilding the cli
 made after disconnect throws `Signer is disconnected. Cannot sign.`
 (`packages/react-sdk/src/context/MidenProvider.tsx:166-212`).
 
-Two hooks additionally hard-block while a signer is mounted but disconnected: `useImportAccount`
-and `useMultiSend` call `assertSignerConnected()` and throw `Signer is disconnected. Reconnect your
-wallet to perform transactions.` (`packages/react-sdk/src/utils/errors.ts:101-107`).
+Three hooks additionally hard-block while a signer is mounted but disconnected: `useImportAccount`,
+`useMultiSend` and `useBatch` call `assertSignerConnected()` and throw `Signer is disconnected.
+Reconnect your wallet to perform transactions.` (`packages/react-sdk/src/utils/errors.ts:102-108`).
 
 The two shipped providers are the best worked examples of this contract: read `packages/para/react/src/ParaSignerProvider.tsx` or `packages/turnkey/react/src/TurnkeySignerProvider.tsx` end to end before writing your own.
 
@@ -414,7 +414,7 @@ namespace yourself rather than from the package's named export, and verify the v
 not `undefined` before passing it.
 
 
-**Do not compile equivalent MASM through `AccountComponent.compile` instead.** Doing so links the standards package *dynamically*, which yields a different `auth_tx` procedure root. `AccountComponentInterface::from_procedures` then cannot classify the account, the client treats it as having no recognised auth component, declines to attach fee conversion info, and **every transaction from the account fails on a fee-charging chain**. Nothing warns you at account-creation time; the failure arrives later, at the first send.
+**Build it with `createAuthGuardedMultisig`, the supported way to install the standard guarded multisig.** The client recognises an auth component only by its procedure root. If the account's auth procedure matches no standard component, for example MASM that differs from the bundled standard source, the client treats it as having no recognised auth component, declines to attach fee conversion info, and **every transaction from the account fails on a fee-charging chain**. Nothing warns you at account-creation time; the failure arrives later, at the first send.
 
 ## Network Accounts and Network Notes
 
@@ -474,13 +474,15 @@ Passing both `recipient` and `script`, or neither, throws
 `CreateNetworkNoteOptions` / `NetworkNoteResult` in `packages/react-sdk/src/types/index.ts:406-431`.
 From the raw client the equivalent is `client.transactions.createNetworkNote(options)`.
 
-> **`buildNetworkNote` is declared but not importable at this pin.** It builds the same note without
-> submitting, lives in `crates/web-client/js/standalone.js:121` and is declared in
-> `js/types/api-types.d.ts:1838` - but neither package entry re-exports it. Both `js/index.js:7-13`
-> and `js/node-index.js:19-25` pull only `createP2IDNote`, `createP2IDENote` and `buildSwapTag` out
-> of `standalone.js`, and `standalone.js` has no subpath in the package's `exports` map. A reader
-> trusting the `.d.ts` gets a runtime failure. Treat the declaration as aspirational until an entry
-> exports it.
+To build the same note without submitting it, import `buildNetworkNote(opts)` from
+`@miden-sdk/miden-sdk`; both the browser and the node entry export it, and it takes the same
+options. The transaction that emits the note must then declare the target as a foreign account,
+which `createNetworkNote` does for you: build it with
+`client.feeAwareTransactionRequestBuilder(sender)`, `.withOwnOutputNotes(...)` and
+`.withForeignAccounts(...)` holding `ForeignAccount.public(targetId, new AccountStorageRequirements())`,
+and get it included within 20 blocks of its reference block. After an expiry rejection, sync,
+then build the request again from new `NoteArray` and `ForeignAccountArray` instances (the
+builder takes both by value) and submit it again.
 
 ### Creating the network account
 

@@ -363,6 +363,7 @@ export const createMockWebClient = (
   const defaultClient: MockWebClientType = {
     // Initialization
     createClient: vi.fn().mockResolvedValue(undefined),
+    endpoint: vi.fn(() => "https://rpc.devnet.miden.io"),
 
     // Account methods
     getAccounts: vi.fn().mockResolvedValue([]),
@@ -443,6 +444,7 @@ export const createMockWebClient = (
       .fn()
       .mockResolvedValue(createMockTransactionRequest()),
 
+    submitNewTransactionBatch: vi.fn().mockResolvedValue(100),
     executeTransaction: vi.fn(async (_accountId: unknown, request: unknown) => {
       assertIsRequest(request, "executeTransaction");
       return createMockTransactionResult();
@@ -509,6 +511,7 @@ export const createMockWebClient = (
 
 type MockWebClientType = {
   createClient: ReturnType<typeof vi.fn>;
+  endpoint: ReturnType<typeof vi.fn>;
   getAccounts: ReturnType<typeof vi.fn>;
   getAccount: ReturnType<typeof vi.fn>;
   newWallet: ReturnType<typeof vi.fn>;
@@ -534,6 +537,7 @@ type MockWebClientType = {
   getPswapLineagesFor: ReturnType<typeof vi.fn>;
   getPswapLineage: ReturnType<typeof vi.fn>;
   buildPswapCancelByOrder: ReturnType<typeof vi.fn>;
+  submitNewTransactionBatch: ReturnType<typeof vi.fn>;
   executeTransaction: ReturnType<typeof vi.fn>;
   executeTransactionAt: ReturnType<typeof vi.fn>;
   executeForSummary: ReturnType<typeof vi.fn>;

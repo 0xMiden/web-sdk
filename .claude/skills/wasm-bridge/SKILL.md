@@ -535,21 +535,24 @@ const ownOutputs = new wasm.NoteArray();
 ownOutputs.push(note);
 ```
 
-**Adding a new array wrapper takes three coordinated edits**, because on
-Node.js the array wrappers are JS polyfills rather than napi classes, and the
-re-export generator cannot discover them:
+**Adding a new array wrapper takes two coordinated edits and a regenerate**,
+because on Node.js the array wrappers are JS polyfills rather than napi classes:
 
 1. `crates/web-client/src/models/mod.rs` - a new
    `(crate::models::foo::Foo) -> FooArray` line in `declare_js_miden_arrays!`
-2. `crates/web-client/js/node/napi-compat.js` - add `"FooArray"` to the
-   `names` list in `makeArrayPolyfills()`
-3. `crates/web-client/js/node-index.js` - a hand-written
-   `export const FooArray = _reexport("FooArray");` in the section above the
-   generated block (`pnpm --filter @miden-sdk/miden-sdk gen:node-reexports`
-   regenerates only the block below it, and CI's `check:node-reexports` keeps
-   that part in lockstep with napi)
+2. `crates/web-client/js/node/napi-compat.js` - add `"FooArray"` to
+   `NODE_ARRAY_TYPES`
+3. Run `pnpm --filter @miden-sdk/miden-sdk gen:node-reexports`, which writes the
+   `export const FooArray = _reexport("FooArray");` line into the generated
+   block of `crates/web-client/js/node-index.js`; `MidenArrays` picks it up
+   from the same list
 
-Miss step 2 or 3 and the browser build is fine while Node.js fails at import.
+Miss step 2 and `js/__tests__/node-exports.test.js` fails, since it compares
+`NODE_ARRAY_TYPES` against the macro; miss step 3 and CI's
+`check:node-reexports` fails. The Node Playwright harness still keeps its own
+array lists (`test/node-adapter.ts`, `test/test-setup.ts`,
+`test/test-helpers.ts`, tracked by #426), so add the name there too until it
+reads `NODE_ARRAY_TYPES`; nothing checks those copies.
 
 ### Node entry re-exports and name shadowing
 
@@ -602,12 +605,13 @@ WASM off the main thread. Two knobs govern it:
   need `useWorker: false`. It is also the right choice in single-WebView native
   shells (Capacitor, Tauri, Electron preload).
 
-`lastAuthError()` is likewise meaningful **only** with `useWorker: false`: the
-sign callback fires against the worker's WASM keystore while the accessor reads
+`lastAuthError()` is likewise meaningful **only** with `useWorker: false`. The
+sign callback still fires under the shim, because it is proxied back to the main
+thread, but signing runs in the worker's WASM keystore while the accessor reads
 the main-thread instance, which never signed, so under the shim it returns
-`null` (`js/client.js:376-381`). On the Node.js binding it always returns
-`null`. Consumers that need the signal already require `useWorker: false` for
-the callback to be reachable at all.
+`null` (`js/client.js:381-404`). Only the accessor misses the error: consumers
+that need the signal set `useWorker: false`. On the Node.js binding it always
+returns `null`.
 
 #### The worker-URL duplication is load-bearing
 

@@ -26,8 +26,8 @@ env:
   # Re-pin whenever Cargo.lock moves, and to the release tag once one ships.
   # A `Client PR:` marker overrides this for the test-node jobs
   # (resolve-client-ref); this value stays the fallback for pushes to next.
-  # v0.17.0-rc.4
-  MIDEN_CLIENT_REF: c3e205805cebfbe9168665d1cd1e1b3ef6f13457
+  # v0.17.0
+  MIDEN_CLIENT_REF: 24bcd27f5aa40c7de7e712691f4b0a083c15bd7a
   # Sequencer 0.17.0-rc.2 will not start without a batch-builder wallet. The
   # binary reads this variable; the node repo's local runner uses the same
   # placeholder. A node that does not know it ignores the variable.
@@ -64,13 +64,23 @@ jobs:
               - '!**/*.md'
               - '!**/*.txt'
               - '!docs/**'
+            # Every in-repo manifest that can change the shipped WASM is
+            # listed alongside Cargo.lock, including js-export-macro, which
+            # is host-compiled but expands into the WASM. A feature-only edit
+            # changes what gets compiled without moving the lockfile, so
+            # Cargo.lock alone does not catch it.
             release_wasm:
               - '.github/workflows/publish-web-sdk.yml'
               - '.github/workflows/test.yml'
               - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'crates/idxdb-store/Cargo.toml'
+              - 'crates/js-export-macro/Cargo.toml'
+              - 'crates/web-client/Cargo.toml'
               - 'crates/web-client/rollup.config.js'
               - 'crates/web-client/scripts/wasm-opt-with-masp-strip.sh'
               - 'crates/web-client/scripts/verify-release-mt.mjs'
+              - 'patches/**'
               - 'rust-toolchain.toml'
               - 'scripts/install-binaryen.sh'
               - 'scripts/verify-wasm-size.sh'
@@ -428,6 +438,8 @@ jobs:
         run: pnpm install --no-frozen-lockfile
       - name: Check bindgen type coverage
         run: pnpm --filter @miden-sdk/miden-sdk run check:wasm-types
+      - name: Check asset type imports on every entry point
+        run: pnpm --filter @miden-sdk/miden-sdk run check:asset-types
       - name: Check method classification
         run: pnpm --filter @miden-sdk/miden-sdk run check:method-classification
 
@@ -1055,8 +1067,20 @@ jobs:
         # symlink/copy in place.
         run: |
           if [ "$(uname)" = "Darwin" ]; then EXT="dylib"; else EXT="so"; fi
-          BINARY=$(find target -name "libmiden_client_web.${EXT}" -path "*/release/*" | head -1)
+          # A restored target cache can leave an older cdylib on a path that
+          # sorts first. The check has to load the binary this job just built.
+          BINARY=
+          newest=0
+          while IFS= read -r -d '' candidate; do
+            modified=$(stat -c %Y "$candidate" 2>/dev/null || stat -f %m "$candidate")
+            if [ "$modified" -gt "$newest" ]; then
+              newest=$modified
+              BINARY=$candidate
+            fi
+          done < <(find target -name "libmiden_client_web.${EXT}" -path "*/release/*" -print0)
           [ -n "$BINARY" ] || { echo "::error::napi binary not found"; exit 1; }
+          echo "napi binary: $BINARY"
+          ls -l "$BINARY"
           cp "$BINARY" crates/web-client/miden_client_web.node
       - name: Check node re-exports are in sync with the napi surface
         env:

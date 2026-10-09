@@ -107,11 +107,10 @@ impl AuthGuardedMultisigConfig {
 
 /// Create the standard guarded-multisig auth component.
 ///
-/// This returns the upstream `miden::standards::auth::guarded_multisig` component, statically
-/// linked exactly as the Rust client builds it. Compiling an equivalent MASM source through
-/// `AccountComponent.compile` instead links it dynamically, which yields a different `auth_tx`
-/// procedure root; `AccountComponentInterface::from_procedures` then fails to classify the
-/// account, and the client silently declines to attach fee conversion info to its transactions.
+/// This returns the upstream `miden::standards::auth::guarded_multisig` component exactly as the
+/// Rust client builds it, and is the supported way to install it. The client classifies an auth
+/// component by its procedure root, and silently declines to attach fee conversion info to the
+/// transactions of an account whose auth procedure matches no standard component.
 #[cfg_attr(
     feature = "browser",
     wasm_bindgen::prelude::wasm_bindgen(js_name = "createAuthGuardedMultisig")

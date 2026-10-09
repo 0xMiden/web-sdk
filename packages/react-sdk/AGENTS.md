@@ -150,12 +150,15 @@ meta?.decimals;  // 8
 Pass an array even for a single asset. The hook calls `.filter` on its argument,
 so a bare string throws a runtime `TypeError`.
 
+Metadata is read from the node the provider's client was created against
+(`client.endpoint()`), so nothing is fetched until the provider is ready.
+
 ## Writing Data (Mutation Hooks)
 
 Most mutation hooks return `{ <action>, result, isLoading, stage, error, reset }`:
 the action callback is named after the hook (`send`, `consume`, `mint`, ...) and
 the resolved value is on `result`. That holds for `useSend`, `useMultiSend`,
-`useConsume`, `useMint`, `useBridge`, `useSwap`, `useCreateNetworkNote`,
+`useBatch`, `useConsume`, `useMint`, `useBridge`, `useSwap`, `useCreateNetworkNote`,
 `useTransaction` and the `usePswap*` family.
 
 **The busy flag is not `isLoading` everywhere.** Every write hook returns its
@@ -164,7 +167,7 @@ in-progress flag, and only the transaction family has a `stage`:
 
 | Family | Hooks | Busy flag | `stage`? |
 |---|---|---|---|
-| Transaction | `useSend`, `useMultiSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `useTransaction`, all four `usePswap*` writes | `isLoading` | yes |
+| Transaction | `useSend`, `useMultiSend`, `useBatch`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `useTransaction`, all four `usePswap*` writes | `isLoading` | yes |
 | Account create / import | `useCreateWallet`, `useCreateFaucet`, `useImportAccount` | `isCreating` (`isImporting` for the last) | no |
 | Everything else names its own | `useChainAnchor().isCapturing`, `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting` | as named | no |
 
@@ -228,6 +231,26 @@ await multiSend({
   ],
 });
 ```
+
+### Submit a Multi-Transaction Batch
+```tsx
+const { batch } = useBatch();
+const client = useMidenClient();
+
+const sendReq = await client.newSendTransactionRequest(
+  alice, bob, token, NoteType.Private, 50n, null, null
+);
+const consumeReq = await client.newConsumeTransactionRequest([note], bob);
+
+const { blockNumber } = await batch({
+  items: [
+    { account: alice, request: sendReq },
+    { account: bob, request: consumeReq },  // may consume notes from earlier items in the batch
+  ],
+});
+```
+
+Each item pairs a tracked account with a pre-built `TransactionRequest`. The batch is proven and submitted atomically: either every tx lands or none. Each tx is proven inside the batch primitive by the client's built-in local prover, so `MidenProvider`'s `prover` setting and its fallback do not apply to batches. In the browser the batch runs in the client's Web Worker, so the page stays responsive while it proves; with `useWorker: false`, or without `Worker` support, it proves on the calling thread and blocks the page until it settles, so keep batches small there. Items can target multiple accounts; later items may consume notes produced by earlier ones (push order must respect producer-before-consumer).
 
 ### Claim Notes
 ```tsx
@@ -360,13 +383,15 @@ const height = await client.getSyncHeight();
 
 **Not everything is on this client.** Block headers in particular are not:
 `getBlockHeaderByNumber` lives on the standalone `RpcClient`, which you
-construct yourself with an endpoint.
+construct yourself with an endpoint. Take it from `client.endpoint()`, the URL
+of the node the client was created against, so the reads go to the network the
+provider is configured for.
 
 ```tsx
 import { RpcClient, Endpoint } from "@miden-sdk/miden-sdk";
 
 // signature: getBlockHeaderByNumber(blockNum?: number, includeMmrProof?: boolean)
-const rpc = new RpcClient(Endpoint.testnet());
+const rpc = new RpcClient(new Endpoint(client.endpoint()!));
 const header = await rpc.getBlockHeaderByNumber(100, false);
 ```
 
@@ -380,8 +405,8 @@ multisig flavour reuses that salt as its transaction summary's replay guard.
 So hooks that build their own request (`useSend`, `useMultiSend`, `useConsume`,
 `useMint`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`,
 `usePswapCancel`) declare a salt for you where the executing account needs one.
-The hooks that take a request *from you* - `useTransaction`, `usePreview`,
-`useChainAnchor` - cannot. A bare `new TransactionRequestBuilder()` is fine for
+The hooks that take a request *from you* - `useTransaction`, `useBatch`,
+`usePreview`, `useChainAnchor` - cannot. A bare `new TransactionRequestBuilder()` is fine for
 an ordinary account at any base fee; against a multisig on a fee-charging chain
 it fails with `FeeConversionInfoRequired` naming the component. So this matters
 for multisig, and for controlling the salt.
@@ -599,9 +624,12 @@ useAccount("mtst1qy35...");
 account.bech32id();  // "mtst1qy35..."
 ```
 
-The bech32 prefix tracks the active network and is inferred from `rpcUrl`:
-`mtst1` testnet, `mdev1` devnet, `mm1` mainnet. Don't hardcode a prefix and
-don't pattern-match on one you invented - `miden1` is not a Miden prefix.
+The bech32 prefix tracks the active network and is inferred from the client's
+`endpoint()`: `mtst1` testnet, `mdev1` devnet (and a local node), `mm1`
+mainnet. Until the provider has a client, and for an endpoint naming none of
+those networks, `bech32id()` and `toBech32AccountId()` return the hex ID instead
+of guessing. Don't hardcode a prefix and don't pattern-match on one you
+invented - `miden1` is not a Miden prefix.
 
 ## Hook Reference
 
@@ -635,6 +663,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | `useImportStore()` / `useExportStore()` | store import/export | bytes / `void` |
 | `useSend()` | `send({ from, to, assetId, amount, noteType })` | `SendResult` (with `txId`, `note`) |
 | `useMultiSend()` | `multiSend({ from, recipients })` | `TransactionResult` |
+| `useBatch()` | `batch({ items })` - items are `{ account, request }` pairs | `BatchResult` (with `blockNumber`) |
 | `useMint()` | `mint({ faucetId, to, amount })` | `TransactionResult` |
 | `useBridge()` | `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress })` | `TransactionResult` (emits an AggLayer B2AGG bridge-out note) |
 | `useCreateNetworkNote()` | `createNetworkNote({ accountId, target, script \| recipient, ... })` | `NetworkNoteResult` (`{ txId, note }`; note satisfies `note.isNetworkNote()`) |
@@ -789,5 +818,5 @@ import type {
 | "Client not ready" | Wrap component in `MidenProvider`, check `useMiden().isReady` |
 | Transaction stuck | Check `stage` value, network connectivity, prover availability |
 | Notes not appearing | Call `sync()` manually, check `autoSyncInterval` config |
-| Bech32 address wrong | Verify `rpcUrl` matches intended network |
+| Bech32 address wrong or shown as hex | Verify `rpcUrl` names the intended network; a custom endpoint renders hex |
 | WASM init fails | Check browser compatibility, ensure WASM served with correct MIME type |

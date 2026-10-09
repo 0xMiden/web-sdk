@@ -119,6 +119,7 @@ the SDK's own `setup.ts` mocks.
 - `useSend()` - `{ send: vi.fn(), result: null, isLoading: false, stage: "idle", error: null, reset: vi.fn() }`. Its `result` type is `SendResult { txId, note }` - distinct from `TransactionResult { transactionId }`. `note` is non-null **only** when the call passed `returnNote: true`.
 - `useMint()`, `useConsume()`, `useSwap()`, `useMultiSend()`, `useBridge()`, `usePswapCreate()`, `usePswapConsume()`, `usePswapCancel()`, `usePswapCancelByOrder()`, `useTransaction()` - same six keys, `result: TransactionResult | null`.
 - `useCreateNetworkNote()` - same six keys, `result: NetworkNoteResult | null` (`{ txId, note }`).
+- `useBatch()` - same six keys with `batch` as the action, `result: BatchResult | null` (`{ blockNumber }`).
 - `useCreateWallet()` - `{ createWallet: vi.fn(), wallet: null, isCreating: false, error: null, reset: vi.fn() }`. `useCreateFaucet` mirrors it with `faucet`; `useImportAccount` with `account` and `isImporting`.
 
 **Hooks that do not follow either shape.** These name their own busy flag, and mocking them by analogy with `useSend` gets the field names wrong:
@@ -192,6 +193,7 @@ import {
   MOCK_TRANSACTION_RESULT, // { transactionId: "0x..." } - useMint / useConsume / useSwap / useMultiSend / useBridge / usePswap* / useTransaction
   MOCK_SEND_RESULT,        // { txId: "0x...", note: null }  - useSend
   MOCK_NETWORK_NOTE_RESULT,// { txId: "0x...", note }        - useCreateNetworkNote
+  MOCK_BATCH_RESULT,       // { blockNumber: 100 }           - useBatch
   MOCK_NOTE_SUMMARY,       // { id, assets, sender }
 } from "./fixtures";
 ```
