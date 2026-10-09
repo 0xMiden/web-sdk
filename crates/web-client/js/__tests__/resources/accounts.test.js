@@ -134,8 +134,6 @@ describe("AccountsResource", () => {
         auth: "falcon",
         name: "Collectible",
         symbol: "NFT",
-        decimals: 0,
-        maxSupply: 1,
       });
       expect(inner.newNonFungibleFaucet).toHaveBeenCalledWith(
         "public",
@@ -154,8 +152,6 @@ describe("AccountsResource", () => {
         auth: "falcon",
         name: "Collectible",
         symbol: "NFT",
-        decimals: 0,
-        maxSupply: 1,
       });
       expect(inner.newNonFungibleFaucet).toHaveBeenCalledWith(
         "public",
@@ -164,6 +160,26 @@ describe("AccountsResource", () => {
         2
       );
       expect(inner.newFaucet).not.toHaveBeenCalled();
+    });
+
+    it("rejects decimals and maxSupply on a non-fungible faucet", async () => {
+      const resource = makeResource();
+      await expect(
+        resource.create({
+          type: "NonFungibleFaucet",
+          symbol: "NFT",
+          decimals: 0,
+          maxSupply: 1,
+        })
+      ).rejects.toThrow("decimals, maxSupply only apply to fungible faucets");
+      expect(inner.newNonFungibleFaucet).not.toHaveBeenCalled();
+    });
+
+    it("requires only symbol for a non-fungible faucet", async () => {
+      const resource = makeResource();
+      await expect(
+        resource.create({ type: "NonFungibleFaucet" })
+      ).rejects.toThrow("a faucet request needs symbol.");
     });
 
     it("defaults storage to 'public' when not specified for faucet", async () => {
