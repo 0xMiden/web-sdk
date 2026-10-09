@@ -102,7 +102,7 @@ describe("issue 280: note cache keying per filter", () => {
     const { result, rerender } = renderHook(
       ({ status }: { status: "committed" | "consumed" }) =>
         useNotes({ status }),
-      { initialProps: { status: "committed" as const } }
+      { initialProps: { status: "committed" as "committed" | "consumed" } }
     );
     await waitFor(() => expect(result.current.notes.length).toBe(1));
 
