@@ -173,7 +173,7 @@ Platform-native binaries consumed through `optionalDependencies`, and the native
 | Live note feed | `src/hooks/useNoteStream.ts`, `useSyncControl.ts` | Subscription and sync gating |
 | Prover selection and fallback | `src/utils/prover.ts` | `resolveTransactionProver`, `proveWithFallback` - what a `ProverTarget` / `ProverConfig` resolves to |
 | Structured error handling | `src/utils/errors.ts` | `MidenError`, `MidenErrorCode`, `CodedError`, `WasmErrorCode` - the codes FP17 says to branch on |
-| RPC URL resolution | `src/utils/network.ts` | `resolveRpcUrl` - the shorthand expansion the bech32 HRP inference then reads |
+| RPC URL resolution | `src/utils/network.ts` | `resolveRpcUrl` - the shorthand expansion `MidenProvider` hands to the client; the bech32 HRP inference reads `client.endpoint()` (`src/utils/accountBech32.ts`) |
 | Pausing auto-sync | `src/hooks/useSyncControl.ts` | `pauseSync` / `resumeSync` / `isPaused`; manual `sync()` still works while paused |
 | Compiling MASM from the raw client | `crates/web-client/js/resources/compiler.js` | `CompilerResource` - `component`, `txScript`, `noteScript` |
 
@@ -186,7 +186,7 @@ Paths in this table are relative to `packages/react-sdk/` unless they name anoth
 ### Custom Hooks Wrapping WasmWebClient
 For operations not covered by built-in hooks, create custom hooks over `useMidenClient()`. It returns the `WebClient` (WasmWebClient), so only call methods that exist on it - `crates/web-client/js/index.js` lists many of them in its `SYNC_METHODS` / `WRITE_METHODS` / `READ_METHODS` sets, but **those sets are not exhaustive**. `crates/web-client/scripts/check-method-classification.js` also accepts a method defined as an explicit wrapper on the JS `WebClient` class, which is how `newWallet`, `newFaucet`, `newAccountWithSecretKey`, `submitNewTransaction`, `submitNewTransactionWithProver`, `executeTransaction`, `executeTransactionAt`, `proveTransaction`, `applyTransaction`, `syncState`, `syncNoteTransport`, `syncChain` and `terminate` are reachable while appearing in none of the three sets. A name can also be both - `newAccount` is in `WRITE_METHODS` and has a class wrapper - so read the sets before concluding a method is absent from them. Check the class body too.
 
-Wrap **multi-call sequences** in `runExclusive` so nothing interleaves between your calls (see `frontend-pitfalls` FP2). A lone call to a forwarded async method needs no wrapper: it already serializes itself through the client proxy's `_serializeWasmCall` chain. The six `SYNC_METHODS` in `js/index.js` are the exception - the proxy binds them raw and they never join that chain. Two of them take a shared WASM borrow, `lastAuthError()` and the `keystore` getter, so those still need your own lock if any other client call may be in flight.
+Wrap **multi-call sequences** in `runExclusive` so nothing interleaves between your calls (see `frontend-pitfalls` FP2). A lone call to a forwarded async method needs no wrapper: it already serializes itself through the client proxy's `_serializeWasmCall` chain. The seven `SYNC_METHODS` in `js/index.js` are the exception - the proxy binds them raw and they never join that chain. Two of them take a shared WASM borrow, `lastAuthError()` and the `keystore` getter, so those still need your own lock if any other client call may be in flight.
 
 ```tsx
 function useSyncHeight() {
@@ -201,13 +201,15 @@ function useSyncHeight() {
 }
 ```
 
-Some operations are NOT on the `WebClient` returned by `useMidenClient()` - for example block headers. `getBlockHeaderByNumber` lives on the standalone `RpcClient` (exported from `@miden-sdk/miden-sdk`), which you construct directly with an endpoint:
+Some operations are NOT on the `WebClient` returned by `useMidenClient()` - for example block headers. `getBlockHeaderByNumber` lives on the standalone `RpcClient` (exported from `@miden-sdk/miden-sdk`), which you construct directly with an endpoint. Take it from the client, so the reads go to the node the provider is configured for:
 ```tsx
 import { RpcClient, Endpoint } from "@miden-sdk/miden-sdk";
 
-// Endpoint: new Endpoint(url), or the Endpoint.testnet() / Endpoint.devnet() /
-// Endpoint.localhost() factories (crates/web-client/src/models/endpoint.rs:20-43).
-const rpc = new RpcClient(Endpoint.testnet());
+const client = useMidenClient();
+// client.endpoint() is the node URL the client was created against, read
+// synchronously. Endpoint also has new Endpoint(url) and the Endpoint.testnet() /
+// Endpoint.devnet() / Endpoint.localhost() factories (src/models/endpoint.rs).
+const rpc = new RpcClient(new Endpoint(client.endpoint()!));
 
 // signature: getBlockHeaderByNumber(blockNum?: number, includeMmrProof?: boolean)
 const header = await rpc.getBlockHeaderByNumber(blockNumber, false);

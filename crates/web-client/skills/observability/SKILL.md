@@ -64,9 +64,9 @@ resource method: read the resource implementation in
 
 Four categories emit nothing, and each has bitten someone:
 
-- **The six raw-bound `SYNC_METHODS`** - `buildSwapTag`, `lastAuthError`,
-  `proveBlock`, `serializeMockChain`, `serializeMockNoteTransportNode`,
-  `usesMockChain`. They bypass the serialization wrapper entirely, which is
+- **The seven raw-bound `SYNC_METHODS`** - `buildSwapTag`, `endpoint`,
+  `lastAuthError`, `proveBlock`, `serializeMockChain`,
+  `serializeMockNoteTransportNode`, `usesMockChain`. They bypass the serialization wrapper entirely, which is
   where observation happens.
 - **Client construction.** `create`, `ready()` and the factories emit nothing.
   You cannot measure startup this way.

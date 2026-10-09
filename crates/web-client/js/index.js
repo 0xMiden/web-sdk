@@ -81,6 +81,7 @@ export {
 // borrow, so both can still lose the race above — don't add a third.
 const SYNC_METHODS = new Set([
   "buildSwapTag",
+  "endpoint",
   "lastAuthError",
   "proveBlock",
   "serializeMockChain",

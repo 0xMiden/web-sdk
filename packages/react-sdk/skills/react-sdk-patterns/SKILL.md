@@ -166,7 +166,7 @@ const meta = assetMetadata.get(faucetId);
 // meta.decimals - 8
 ```
 
-Pass an array even for a single asset - the hook calls `.filter` on its argument, so a bare string throws a runtime `TypeError`.
+Pass an array even for a single asset - the hook calls `.filter` on its argument, so a bare string throws a runtime `TypeError`. Metadata is read from the node the provider's client was created against (`client.endpoint()`), so nothing is fetched until the provider is ready.
 
 ### useTransactionHistory(options?)
 ```tsx
@@ -618,7 +618,7 @@ formatAssetAmount(1000000n, 8)       // "0.01"
 parseAssetAmount("0.01", 8)           // 1000000n
 const summary = getNoteSummary(note); // { id, assets, sender } | null
 formatNoteSummary(summary);           // "1.5 TEST from mtst1..."
-toBech32AccountId("0x1234...");       // "mtst1..." (testnet HRP; defaults to testnet)
+toBech32AccountId("0x1234...");       // "mtst1..." on testnet; the hex ID when the network is unknown
 ```
 
 `getNoteSummary(note, getAssetMetadata?)` takes a `ConsumableNoteRecord | InputNoteRecord` and returns `NoteSummary | null` - **`null`** when the note's id is missing or anything in the read throws, i.e. for a note whose id or metadata is not ready yet. Guard before formatting.
@@ -629,7 +629,7 @@ toBech32AccountId("0x1234...");       // "mtst1..." (testnet HRP; defaults to te
 
 `waitForWalletDetection(adapter, timeoutMs = 5000)` resolves once the adapter's `readyState` reaches `"Installed"` and otherwise rejects with `"Wallet extension not detected within <n>ms."` Its `WalletAdapterLike` argument is a duck type (`{ readyState: string; on/off("readyStateChange", cb) }`) with no dependency on any wallet-adapter package, so it works against any adapter and against a plain fake object.
 
-The HRP is inferred from the configured `rpcUrl` and defaults to testnet: mainnet=`mm`, testnet=`mtst` (default), devnet=`mdev` - there is no `miden` HRP. See `frontend-pitfalls` FP5 for the trap in that inference.
+The HRP is inferred from the client's `endpoint()`, the URL of the node it was created against (testnet when no `rpcUrl` is configured): mainnet=`mm`, testnet=`mtst`, devnet=`mdev`, and a local node gets `mdev` too - there is no `miden` HRP. Before the provider has a client, and for an endpoint naming none of those networks, the helpers return the hex ID. See `frontend-pitfalls` FP5 for the trap in that inference.
 
 ## Direct Client Access
 

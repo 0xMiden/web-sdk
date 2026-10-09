@@ -150,6 +150,9 @@ meta?.decimals;  // 8
 Pass an array even for a single asset. The hook calls `.filter` on its argument,
 so a bare string throws a runtime `TypeError`.
 
+Metadata is read from the node the provider's client was created against
+(`client.endpoint()`), so nothing is fetched until the provider is ready.
+
 ## Writing Data (Mutation Hooks)
 
 Most mutation hooks return `{ <action>, result, isLoading, stage, error, reset }`:
@@ -380,13 +383,15 @@ const height = await client.getSyncHeight();
 
 **Not everything is on this client.** Block headers in particular are not:
 `getBlockHeaderByNumber` lives on the standalone `RpcClient`, which you
-construct yourself with an endpoint.
+construct yourself with an endpoint. Take it from `client.endpoint()`, the URL
+of the node the client was created against, so the reads go to the network the
+provider is configured for.
 
 ```tsx
 import { RpcClient, Endpoint } from "@miden-sdk/miden-sdk";
 
 // signature: getBlockHeaderByNumber(blockNum?: number, includeMmrProof?: boolean)
-const rpc = new RpcClient(Endpoint.testnet());
+const rpc = new RpcClient(new Endpoint(client.endpoint()!));
 const header = await rpc.getBlockHeaderByNumber(100, false);
 ```
 
@@ -619,9 +624,12 @@ useAccount("mtst1qy35...");
 account.bech32id();  // "mtst1qy35..."
 ```
 
-The bech32 prefix tracks the active network and is inferred from `rpcUrl`:
-`mtst1` testnet, `mdev1` devnet, `mm1` mainnet. Don't hardcode a prefix and
-don't pattern-match on one you invented - `miden1` is not a Miden prefix.
+The bech32 prefix tracks the active network and is inferred from the client's
+`endpoint()`: `mtst1` testnet, `mdev1` devnet (and a local node), `mm1`
+mainnet. Until the provider has a client, and for an endpoint naming none of
+those networks, `bech32id()` and `toBech32AccountId()` return the hex ID instead
+of guessing. Don't hardcode a prefix and don't pattern-match on one you
+invented - `miden1` is not a Miden prefix.
 
 ## Hook Reference
 
@@ -810,5 +818,5 @@ import type {
 | "Client not ready" | Wrap component in `MidenProvider`, check `useMiden().isReady` |
 | Transaction stuck | Check `stage` value, network connectivity, prover availability |
 | Notes not appearing | Call `sync()` manually, check `autoSyncInterval` config |
-| Bech32 address wrong | Verify `rpcUrl` matches intended network |
+| Bech32 address wrong or shown as hex | Verify `rpcUrl` names the intended network; a custom endpoint renders hex |
 | WASM init fails | Check browser compatibility, ensure WASM served with correct MIME type |

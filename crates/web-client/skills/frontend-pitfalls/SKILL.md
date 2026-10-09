@@ -192,14 +192,11 @@ AccountId.fromBech32("mtst1...");
 
 Both hex and bech32 formats work in all hooks. Prefer hex for constants, bech32 for display.
 
-**Gotcha: the HRP is inferred from your `rpcUrl` string, not from the chain.** `bech32id()` (and `toBech32AccountId()`) read the *resolved* `rpcUrl` out of the store, lowercase it, and look for substrings in this order: `devnet` or `mdev` -> devnet, `mainnet` -> mainnet, `testnet` or `mtst` -> testnet. **Anything matching none of them falls back to testnet**, as does an unset `rpcUrl`.
+**Gotcha: the HRP is inferred from the endpoint URL, not from the chain.** `bech32id()` (and `toBech32AccountId()`) read `client.endpoint()` from the provider's client, the URL of the node it was created against, lowercase it, and look for substrings in this order: `devnet` or `mdev` -> devnet, `mainnet` -> mainnet, `testnet` or `mtst` -> testnet, `localhost` or `127.0.0.1` -> devnet. An unset `rpcUrl` is not a gap here: the client defaulted to testnet and reports that endpoint.
 
-`MidenConfig.rpcUrl` resolves only the shorthands `"testnet"`, `"devnet"` and `"localhost"` / `"local"` to concrete URLs and passes any other value through verbatim. So:
+**Anything matching none of them renders the hex ID**, and so does every call made before `MidenProvider` has a client. `MidenConfig.rpcUrl` resolves only the shorthands `"testnet"`, `"devnet"` and `"localhost"` / `"local"` to concrete URLs and passes any other value through verbatim, so a private or self-hosted RPC endpoint whose hostname names no network shows hex IDs where you might expect bech32.
 
-- A private or self-hosted RPC endpoint whose hostname contains none of those substrings silently renders `mtst1...` addresses for a network that is not testnet.
-- `"localhost"` resolves to `http://localhost:57291`, which also contains none of them, so a local node renders testnet-prefixed addresses too.
-
-If you run a custom or local network, do not treat `bech32id()` output as authoritative - key off hex, and render bech32 only where you control the network mapping yourself.
+If you run a custom network, do not rely on `bech32id()` producing bech32 - key off hex, and render bech32 yourself with `AccountId.toBech32(networkId, ...)` where you control the network mapping.
 
 The three real HRPs are `mtst` (testnet), `mdev` (devnet) and `mm` (mainnet); a custom
 network supplies its own through `NetworkId::custom`. **There is no `miden1` prefix** -
@@ -491,7 +488,7 @@ Verify: `crates/web-client/js/eager.js`.
 | FP2 | Sequences are not atomic | HIGH | Forwarded async calls serialize themselves (raw-bound `SYNC_METHODS` do not); wrap multi-call sequences in `runExclusive()` |
 | FP3 | COOP/COEP | HIGH | Default ST build needs no headers; required ONLY for the `/mt` build |
 | FP4 | BigInt | HIGH | Hooks and the high-level `MidenClient` coerce `number`; strict `bigint` only at the low-level request constructors |
-| FP5 | Bech32 mismatch | HIGH | Match network in rpcUrl and addresses; the HRP is inferred from the `rpcUrl` string and falls back to testnet |
+| FP5 | Bech32 mismatch | HIGH | Match network in rpcUrl and addresses; the HRP is inferred from `client.endpoint()`, and an unrecognised endpoint renders hex |
 | FP6 | Auto-sync | MEDIUM | Default 15000ms; prefer `useSyncControl()` over `autoSyncInterval: 0` |
 | FP7 | IndexedDB loss | HIGH | A minor SDK bump wipes the store - ship `useExportStore`/`useImportStore` BEFORE upgrading |
 | FP8 | Vite config | MEDIUM | `midenVitePlugin()` has four options; bare call is right for ST, `crossOriginIsolation: true` only for `/mt` |

@@ -446,6 +446,22 @@ export class MidenClient {
   }
 
   /**
+   * Returns the URL of the node this client was created against, e.g.
+   * `"https://rpc.devnet.miden.io"`. Shorthands are already resolved, and a
+   * client created without `rpcUrl` reports the testnet endpoint it defaulted
+   * to. A mock client talks to no node and returns `undefined`.
+   *
+   * Synchronous: the value is fixed at creation, so it never waits behind an
+   * in-flight call.
+   *
+   * @returns {string | undefined} The node URL, or `undefined` for a mock client.
+   */
+  endpoint() {
+    this.assertNotTerminated();
+    return this.#inner.endpoint();
+  }
+
+  /**
    * Returns a `TransactionRequestBuilder` that already carries the chain's fee
    * conversion info for the account that will execute the request.
    *

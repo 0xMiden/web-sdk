@@ -1961,6 +1961,20 @@ export declare class MidenClient {
   storeIdentifier(): Promise<string>;
 
   /**
+   * Returns the URL of the node this client was created against, e.g.
+   * `"https://rpc.devnet.miden.io"`.
+   *
+   * The value is fixed at creation and read synchronously. `rpcUrl` shorthands
+   * are already resolved, and a client created without `rpcUrl` reports the
+   * testnet endpoint it defaulted to. A mock client ({@link MidenClient.createMock})
+   * talks to no node and returns `undefined`.
+   *
+   * Use it to point a standalone `RpcClient` at the same node:
+   * `new RpcClient(new Endpoint(client.endpoint()!))`.
+   */
+  endpoint(): string | undefined;
+
+  /**
    * Returns a `TransactionRequestBuilder` that already declares a fee
    * conversion salt where the account that will execute the request needs one.
    *

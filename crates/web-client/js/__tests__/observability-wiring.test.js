@@ -392,6 +392,7 @@ describe("proxy fallthrough observation", () => {
       getAccount: async () => "account",
       // Classified in SYNC_METHODS — bound raw, must stay unobserved.
       usesMockChain: () => false,
+      endpoint: () => "https://rpc.devnet.miden.io",
     };
     return createClientProxy(instance);
   }
@@ -417,5 +418,15 @@ describe("proxy fallthrough observation", () => {
     expect(proxy.usesMockChain()).toBe(false);
     await Promise.resolve();
     expect(seen.map((o) => o.op)).toEqual(["getAccount"]);
+  });
+
+  // `endpoint()` is synchronous by contract: React reads it during render.
+  it("binds endpoint raw so it answers synchronously", async () => {
+    const seen = [];
+    setObserver((o) => seen.push(o));
+
+    expect(makeProxy().endpoint()).toBe("https://rpc.devnet.miden.io");
+    await Promise.resolve();
+    expect(seen).toEqual([]);
   });
 });

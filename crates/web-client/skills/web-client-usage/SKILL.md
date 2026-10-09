@@ -120,6 +120,11 @@ const client = await MidenClient.create({
 
 If `rpcUrl` is omitted, `create()` delegates to `createTestnet()`.
 
+`client.endpoint()` returns the resolved node URL synchronously, e.g.
+`"https://rpc.testnet.miden.io"` when `rpcUrl` was omitted; a `createMock()`
+client returns `undefined`. Build a standalone `RpcClient` against the same node
+with `new RpcClient(new Endpoint(client.endpoint()!))`.
+
 `seed` is `string | Uint8Array`. A string is legal: `hashSeed()` SHA-256s it to
 32 bytes before it reaches WASM, and a `Uint8Array` passes through unchanged.
 The same two forms work for `MidenClient.createMock({ seed })` and for the

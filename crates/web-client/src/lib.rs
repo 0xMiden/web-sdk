@@ -225,13 +225,17 @@ pub struct WebClient {
     fee_faucet: AsyncCell<Option<NativeAccountId>>,
     mock_rpc_api: AsyncCell<Option<Arc<MockRpcApi>>>,
     mock_note_transport_api: AsyncCell<Option<Arc<MockNoteTransportApi>>>,
+    /// Node endpoint the client was created against, kept outside `inner` so `endpoint()` can
+    /// answer synchronously without borrowing the client. `None` until creation succeeds, and for
+    /// a mock client, which talks to no node.
+    endpoint: std::sync::RwLock<Option<String>>,
 }
 
 // SAFETY: napi-rs with `tokio_rt` uses a multi-threaded tokio runtime, so async napi
 // functions run on worker threads. This is sound because the concrete types behind
 // trait objects (`SqliteStore`, `GrpcClient`, `FilesystemKeyStore`) are all Send + Sync
 // — only the `dyn Trait` bounds lack Send. All mutable state is behind `AsyncCell`
-// (tokio::sync::Mutex), which serializes access.
+// (tokio::sync::Mutex) or, for `endpoint`, a `std::sync::RwLock`, which serialize access.
 #[cfg(feature = "nodejs")]
 unsafe impl Send for WebClient {}
 #[cfg(feature = "nodejs")]
@@ -273,6 +277,7 @@ impl WebClient {
             fee_faucet: AsyncCell::new(None),
             mock_rpc_api: AsyncCell::new(None),
             mock_note_transport_api: AsyncCell::new(None),
+            endpoint: std::sync::RwLock::new(None),
         }
     }
 
@@ -325,6 +330,18 @@ impl WebClient {
         let guard = self.inner.lock().await;
         let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         Ok(client.store_identifier().to_string())
+    }
+
+    /// Returns the URL of the node this client was created against, for example
+    /// `https://rpc.devnet.miden.io`. A client created without a node URL reports the testnet
+    /// endpoint it defaulted to. Returns `undefined` before the client is created and for a mock
+    /// client, which talks to no node.
+    ///
+    /// Synchronous: the value is stored at creation, so reading it never waits on an in-flight
+    /// call.
+    #[js_export(js_name = "endpoint")]
+    pub fn endpoint(&self) -> Option<String> {
+        self.endpoint.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
     }
 
     #[js_export(js_name = "createCodeBuilder")]
@@ -459,8 +476,16 @@ impl WebClient {
 
         let fee_faucet = fee_faucet_id.map(|id| parse_fee_faucet_id(&id)).transpose()?;
 
-        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client, fee_faucet)
-            .await?;
+        self.setup_client(
+            web_rpc_client,
+            Some(endpoint.to_string()),
+            store,
+            keystore,
+            rng,
+            note_transport_client,
+            fee_faucet,
+        )
+        .await?;
 
         Ok(JsValue::from_str("Client created successfully"))
     }
@@ -527,8 +552,16 @@ impl WebClient {
 
         let fee_faucet = fee_faucet_id.map(|id| parse_fee_faucet_id(&id)).transpose()?;
 
-        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client, fee_faucet)
-            .await?;
+        self.setup_client(
+            web_rpc_client,
+            Some(endpoint.to_string()),
+            store,
+            keystore,
+            rng,
+            note_transport_client,
+            fee_faucet,
+        )
+        .await?;
 
         Ok(JsValue::from_str("Client created successfully"))
     }
@@ -537,6 +570,7 @@ impl WebClient {
     async fn setup_client(
         &self,
         rpc_client: Arc<dyn NodeRpcClient>,
+        endpoint: Option<String>,
         store: Arc<dyn Store>,
         keystore: WebKeyStore<StdRng>,
         rng: StdRng,
@@ -563,9 +597,10 @@ impl WebClient {
             .await
             .map_err(|err| js_error_with_context(err, "Failed to ensure genesis in place"))?;
 
-        // Published together with `inner`, so a creation that fails leaves neither set: the
-        // accessor reports the faucet of a client that exists, or nothing.
+        // Published together with `inner`, so a creation that fails leaves none of them set: the
+        // accessors report the faucet and endpoint of a client that exists, or nothing.
         *self.fee_faucet.lock().await = fee_faucet;
+        *self.endpoint.write().unwrap_or_else(std::sync::PoisonError::into_inner) = endpoint;
         *self.inner.lock().await = Some(client);
 
         Ok(())
@@ -627,8 +662,16 @@ impl WebClient {
 
         let fee_faucet = fee_faucet_id.map(|id| parse_fee_faucet_id(&id)).transpose()?;
 
-        self.setup_client(rpc_client, store, keystore, rng, note_transport_client, fee_faucet)
-            .await?;
+        self.setup_client(
+            rpc_client,
+            Some(endpoint.to_string()),
+            store,
+            keystore,
+            rng,
+            note_transport_client,
+            fee_faucet,
+        )
+        .await?;
 
         Ok("Client created successfully".to_string())
     }
@@ -637,6 +680,7 @@ impl WebClient {
     async fn setup_client(
         &self,
         rpc_client: Arc<dyn NodeRpcClient>,
+        endpoint: Option<String>,
         store: Arc<dyn Store>,
         keystore: FilesystemKeyStore,
         rng: StdRng,
@@ -669,6 +713,7 @@ impl WebClient {
         .await?;
 
         *self.fee_faucet.lock().await = fee_faucet;
+        *self.endpoint.write().unwrap_or_else(std::sync::PoisonError::into_inner) = endpoint;
         *self.inner.lock().await = Some(client);
 
         Ok(())

@@ -74,6 +74,24 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
   );
 
   mockTest(
+    "endpoint: a mock client reports none, an RpcClient its own",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const rpcClient = new window.RpcClient(window.Endpoint.devnet());
+        return {
+          mock: client.endpoint() ?? null,
+          rpc: rpcClient.endpoint(),
+          expected: window.Endpoint.devnet().toString(),
+        };
+      });
+
+      expect(result.mock).toBeNull();
+      expect(result.rpc).toBe(result.expected);
+    }
+  );
+
+  mockTest(
     "accounts.create defaults to private mutable wallet",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
@@ -1364,6 +1382,27 @@ nodeTest.describe("MidenClient API - Integration", () => {
       });
 
       expect(result.configured).toBe(result.reported);
+    }
+  );
+
+  // Compared with the SDK's own normalization of the configured URL, so a client
+  // that reported its testnet default, or nothing, instead fails.
+  nodeTest(
+    "endpoint reports the node the client was created against",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.create({
+          rpcUrl: window.rpcUrl,
+          feeFaucetId: window.feeFaucetId,
+          storeName: "miden_client_api_endpoint_test",
+        });
+        return {
+          expected: new window.Endpoint(window.rpcUrl).toString(),
+          reported: client.endpoint(),
+        };
+      });
+
+      expect(result.reported).toBe(result.expected);
     }
   );
 

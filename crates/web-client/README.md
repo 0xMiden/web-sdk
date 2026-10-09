@@ -941,6 +941,20 @@ const { account } = builder.build();
 
 The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional third argument (`TransactionScript.root()`). Deploying the account needs an effect: since 0.17 the auth component asserts the transaction consumed an input note, created an output note, or changed account state before it pays the fee, so an empty transaction aborts. Consume a note the account allowlists, or run an allowlisted transaction script that changes its state. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
 
+### Read the Client's Node URL
+
+`client.endpoint()` returns the URL of the node the client was created against, synchronously. Shorthands are resolved, a client created without `rpcUrl` reports the testnet endpoint, and a mock client returns `undefined`. Use it to aim a standalone `RpcClient` at the same node; `rpc.endpoint()` reports the URL an `RpcClient` was built with:
+
+```typescript
+import { Endpoint, RpcClient } from "@miden-sdk/miden-sdk";
+
+const client = await MidenClient.createDevnet();
+client.endpoint(); // "https://rpc.devnet.miden.io"
+
+const rpc = new RpcClient(new Endpoint(client.endpoint()!));
+const header = await rpc.getBlockHeaderByNumber(100, false);
+```
+
 ### Cleanup
 
 When you're finished using a MidenClient instance, call `terminate()` to release its Web Worker:
