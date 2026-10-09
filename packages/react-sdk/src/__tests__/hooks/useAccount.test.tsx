@@ -8,6 +8,7 @@ import {
   createMockAccount,
   createMockAccountId,
   createMockVault,
+  createMockNonFungibleAsset,
 } from "../mocks/miden-sdk";
 
 // Mock useMiden
@@ -220,6 +221,52 @@ describe("useAccount", () => {
       const { result } = renderHook(() => useAccount(accountId));
 
       expect(result.current.assets).toEqual([]);
+      expect(result.current.nonFungibleAssets).toEqual([]);
+    });
+
+    it("should list non-fungible assets separately from fungible ones", () => {
+      const accountId = "0x1234567890abcdef";
+      const nft = createMockNonFungibleAsset("0xnftfaucet", "0xkey", "0xvalue");
+      const mockAccount = createMockAccount();
+      mockAccount.vault = vi.fn(() =>
+        createMockVault([{ faucetId: "0xfaucet1", amount: 10n }], [nft])
+      );
+
+      const mockClient = createMockWebClient({
+        getAccount: vi.fn().mockResolvedValue(mockAccount),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+      });
+
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as any);
+        useMidenStore
+          .getState()
+          .setAccountDetails(accountId, mockAccount as any);
+      });
+
+      const { result } = renderHook(() => useAccount(accountId));
+
+      expect(result.current.assets).toHaveLength(1);
+      expect(result.current.nonFungibleAssets).toEqual([
+        {
+          faucetId: "0xnftfaucet",
+          vaultKey: "0xkey",
+          value: "0xvalue",
+          asset: nft,
+        },
+      ]);
+    });
+
+    it("should return no non-fungible assets when there is no account", () => {
+      mockUseMiden.mockReturnValue({ client: null, isReady: false });
+
+      const { result } = renderHook(() => useAccount(undefined));
+
+      expect(result.current.nonFungibleAssets).toEqual([]);
     });
   });
 
