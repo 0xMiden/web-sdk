@@ -47,55 +47,68 @@ test.describe("mint transaction tests", () => {
   test("note collections throw catchable errors for out-of-bounds getNote", async ({
     run,
   }) => {
-    const result = await run(async ({ client, helpers }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
       const { wallet, faucet } = await helpers.setupWalletAndFaucet();
       const { transactionId: mintTransactionId, createdNoteId } =
         await helpers.mockMint(wallet.id(), faucet.id());
-      const { transactionId: consumeTransactionId } = await helpers.mockConsume(
-        wallet.id(),
-        createdNoteId
-      );
 
-      const transactions = await client.getTransactions();
+      const transactions = await client.getTransactions(
+        sdk.TransactionFilter.all()
+      );
       const mintRecord = transactions.find(
         (tx) => tx.id().toHex() === mintTransactionId
       );
-      const consumeRecord = transactions.find(
-        (tx) => tx.id().toHex() === consumeTransactionId
-      );
-
-      if (!mintRecord || !consumeRecord) {
-        throw new Error("expected mint and consume transaction records");
+      if (!mintRecord) {
+        throw new Error("expected the mint transaction record");
       }
-
       const outputNotes = mintRecord.outputNotes();
-      const inputNotes = consumeRecord.inputNotes();
 
-      const outputNoteId = outputNotes.getNote(0).id().toString();
-      const inputNoteId = inputNotes.getNote(0).id().toString();
+      // A transaction record carries no input notes, so execute (without
+      // submitting) a consume of the minted note to get an InputNotes.
+      const note = (await client.getInputNote(createdNoteId)).toNote();
+      const consumeRequest = await client.newConsumeTransactionRequest(
+        [note],
+        wallet.id()
+      );
+      const inputNotes = (
+        await client.executeTransaction(wallet.id(), consumeRequest)
+      )
+        .executedTransaction()
+        .inputNotes();
 
-      let outputError = "";
-      try {
-        outputNotes.getNote(outputNotes.numNotes());
-      } catch (err) {
-        outputError = err.message;
-      }
+      // The browser build throws a bare string, the Node.js build an Error.
+      const errorOf = (call) => {
+        try {
+          call();
+          return "";
+        } catch (err) {
+          return String(err?.message ?? err);
+        }
+      };
 
-      let inputError = "";
-      try {
-        inputNotes.getNote(inputNotes.numNotes());
-      } catch (err) {
-        inputError = err.message;
-      }
-
-      return { outputNoteId, inputNoteId, outputError, inputError };
+      return {
+        createdNoteId,
+        outputNoteId: outputNotes.getNote(0).id().toString(),
+        inputNoteId: inputNotes.getNote(0).id().toString(),
+        outputCount: outputNotes.numNotes(),
+        inputCount: inputNotes.numNotes(),
+        outputError: errorOf(() => outputNotes.getNote(outputNotes.numNotes())),
+        inputError: errorOf(() => inputNotes.getNote(inputNotes.numNotes())),
+        outputError256: errorOf(() => outputNotes.getNote(256)),
+        inputError256: errorOf(() => inputNotes.getNote(256)),
+      };
     });
 
-    expect(result.outputNoteId).toBe(result.inputNoteId);
+    expect(result.outputNoteId).toBe(result.createdNoteId);
+    expect(result.inputNoteId).toBe(result.createdNoteId);
     expect(result.outputError).toContain("OutputNotes index out of bounds");
-    expect(result.outputError).toContain("index 1");
+    expect(result.outputError).toContain(`index ${result.outputCount}`);
     expect(result.inputError).toContain("InputNotes index out of bounds");
-    expect(result.inputError).toContain("index 1");
+    expect(result.inputError).toContain(`index ${result.inputCount}`);
+    expect(result.outputError256).toContain("OutputNotes index out of bounds");
+    expect(result.outputError256).toContain("index 256");
+    expect(result.inputError256).toContain("InputNotes index out of bounds");
+    expect(result.inputError256).toContain("index 256");
   });
 });
 
