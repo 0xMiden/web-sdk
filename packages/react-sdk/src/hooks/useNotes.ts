@@ -113,7 +113,8 @@ export function useNotes(options?: NotesFilter): NotesResult {
       if (isStale()) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      setLoadingNotes(false);
+      // The reset already cleared the shared flag; a post-reset fetch owns it now.
+      if (!isStale()) setLoadingNotes(false);
     }
   }, [
     client,

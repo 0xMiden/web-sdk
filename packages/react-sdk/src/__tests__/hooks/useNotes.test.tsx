@@ -262,6 +262,48 @@ describe("useNotes", () => {
       return { promise, resolve, reject };
     };
 
+    it("keeps isLoading on while the post-reset fetch runs", async () => {
+      const pendingA = deferred<unknown[]>();
+      const pendingB = deferred<unknown[]>();
+      const clientA = createMockWebClient({
+        getInputNotes: vi.fn().mockReturnValue(pendingA.promise),
+        getConsumableNotes: vi.fn().mockResolvedValue([]),
+      });
+      const clientB = createMockWebClient({
+        getInputNotes: vi.fn().mockReturnValue(pendingB.promise),
+        getConsumableNotes: vi.fn().mockResolvedValue([]),
+      });
+      mockUseMiden.mockReturnValue({ client: clientA, isReady: true });
+
+      const { result, rerender } = renderHook(() => useNotes());
+      await waitFor(() => {
+        expect(clientA.getInputNotes).toHaveBeenCalledTimes(1);
+      });
+
+      act(() => {
+        useMidenStore.getState().resetInMemoryState();
+      });
+      mockUseMiden.mockReturnValue({ client: clientB, isReady: true });
+      rerender();
+      await waitFor(() => {
+        expect(clientB.getInputNotes).toHaveBeenCalledTimes(1);
+      });
+
+      await act(async () => {
+        pendingA.resolve([createMockInputNoteRecord("0xnoteA")]);
+        await pendingA.promise;
+      });
+      expect(result.current.isLoading).toBe(true);
+
+      await act(async () => {
+        pendingB.resolve([createMockInputNoteRecord("0xnoteB")]);
+        await pendingB.promise;
+      });
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+    });
+
     it("drops a fetch result that lands after the store was reset", async () => {
       const pendingA = deferred<unknown[]>();
       const clientA = createMockWebClient({

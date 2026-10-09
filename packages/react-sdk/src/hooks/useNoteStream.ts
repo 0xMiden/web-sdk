@@ -83,10 +83,13 @@ export function useNoteStream(
     return new Set(excludeIdsKey.split("\0"));
   }, [excludeIdsKey]);
 
+  const latestRequestRef = useRef(0);
+
   // Fetch notes from client
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
 
+    const request = ++latestRequestRef.current;
     setIsLoading(true);
     setError(null);
 
@@ -106,7 +109,9 @@ export function useNoteStream(
       if (isStale()) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      if (!isStale()) setIsLoading(false);
+      // Only the latest request clears the flag, so an older fetch cannot end a
+      // newer one's loading state, and a fetch with no successor still clears it.
+      if (latestRequestRef.current === request) setIsLoading(false);
     }
   }, [client, isReady, status, setNotesIfChanged]);
 

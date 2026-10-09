@@ -147,6 +147,143 @@ describe("useNoteStream", () => {
       expect(result.current.notes.map((n) => n.id)).toEqual(["0xnoteB"]);
       expect(result.current.isLoading).toBe(false);
     });
+
+    const deferred = <T,>() => {
+      let resolve!: (value: T) => void;
+      let reject!: (reason: unknown) => void;
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    };
+
+    it("keeps isLoading on while the post-reset fetch runs", async () => {
+      const pendingA = deferred<unknown[]>();
+      const pendingB = deferred<unknown[]>();
+      const clientA = createMockWebClient({
+        getInputNotes: vi.fn().mockReturnValue(pendingA.promise),
+      });
+      const clientB = createMockWebClient({
+        getInputNotes: vi.fn().mockReturnValue(pendingB.promise),
+      });
+      mockUseMiden.mockReturnValue({
+        client: clientA,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result, rerender } = renderHook(() => useNoteStream());
+      await waitFor(() => {
+        expect(clientA.getInputNotes).toHaveBeenCalledTimes(1);
+      });
+
+      act(() => {
+        useMidenStore.getState().resetInMemoryState();
+      });
+      mockUseMiden.mockReturnValue({
+        client: clientB,
+        isReady: true,
+        sync: vi.fn(),
+      });
+      rerender();
+      await waitFor(() => {
+        expect(clientB.getInputNotes).toHaveBeenCalledTimes(1);
+      });
+
+      await act(async () => {
+        pendingA.resolve([createStreamableNote("0xnoteA")]);
+        await pendingA.promise;
+      });
+      expect(result.current.isLoading).toBe(true);
+
+      await act(async () => {
+        pendingB.resolve([createStreamableNote("0xnoteB")]);
+        await pendingB.promise;
+      });
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+    });
+
+    it("clears isLoading when the reset is followed by no client", async () => {
+      const pendingA = deferred<unknown[]>();
+      const clientA = createMockWebClient({
+        getInputNotes: vi.fn().mockReturnValue(pendingA.promise),
+      });
+      mockUseMiden.mockReturnValue({
+        client: clientA,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result, rerender } = renderHook(() => useNoteStream());
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(true);
+      });
+
+      act(() => {
+        useMidenStore.getState().resetInMemoryState();
+      });
+      mockUseMiden.mockReturnValue({
+        client: null,
+        isReady: false,
+        sync: vi.fn(),
+      });
+      rerender();
+
+      await act(async () => {
+        pendingA.resolve([createStreamableNote("0xnoteA")]);
+        await pendingA.promise;
+      });
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+      expect(result.current.notes).toEqual([]);
+    });
+
+    it("drops a fetch error that lands after the store was reset", async () => {
+      const pendingA = deferred<unknown[]>();
+      const clientA = createMockWebClient({
+        getInputNotes: vi.fn().mockReturnValue(pendingA.promise),
+      });
+      const clientB = createMockWebClient({
+        getInputNotes: vi
+          .fn()
+          .mockResolvedValue([createStreamableNote("0xnoteB")]),
+      });
+      mockUseMiden.mockReturnValue({
+        client: clientA,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result, rerender } = renderHook(() => useNoteStream());
+      await waitFor(() => {
+        expect(clientA.getInputNotes).toHaveBeenCalledTimes(1);
+      });
+
+      act(() => {
+        useMidenStore.getState().resetInMemoryState();
+      });
+      mockUseMiden.mockReturnValue({
+        client: clientB,
+        isReady: true,
+        sync: vi.fn(),
+      });
+      rerender();
+      await waitFor(() => {
+        expect(result.current.notes.map((n) => n.id)).toEqual(["0xnoteB"]);
+      });
+
+      await act(async () => {
+        pendingA.reject(new Error("old identity"));
+        await pendingA.promise.catch(() => {});
+      });
+
+      expect(result.current.error).toBeNull();
+      expect(result.current.notes.map((n) => n.id)).toEqual(["0xnoteB"]);
+    });
   });
 
   describe("filtering", () => {
