@@ -82,7 +82,7 @@ describe("useNoteStream", () => {
       });
 
       // Pre-populate the store so the hook can read from it
-      useMidenStore.getState().setNotes(noteRecords as any);
+      useMidenStore.getState().setNotes(noteRecords as any, "committed");
 
       const { result } = renderHook(() => useNoteStream());
 
@@ -118,7 +118,7 @@ describe("useNoteStream", () => {
         sync: vi.fn(),
       });
 
-      useMidenStore.getState().setNotes(notes as any);
+      useMidenStore.getState().setNotes(notes as any, "committed");
 
       const { result } = renderHook(() => useNoteStream({ sender: "0xalice" }));
 
@@ -147,7 +147,7 @@ describe("useNoteStream", () => {
         sync: vi.fn(),
       });
 
-      useMidenStore.getState().setNotes(notes as any);
+      useMidenStore.getState().setNotes(notes as any, "committed");
 
       const { result } = renderHook(() =>
         useNoteStream({ excludeIds: ["0xnote1", "0xnote3"] })
@@ -175,7 +175,7 @@ describe("useNoteStream", () => {
         sync: vi.fn(),
       });
 
-      useMidenStore.getState().setNotes(notes as any);
+      useMidenStore.getState().setNotes(notes as any, "committed");
 
       const { result } = renderHook(() =>
         useNoteStream({ excludeIds: new Set(["0xnote1"]) })
@@ -204,7 +204,7 @@ describe("useNoteStream", () => {
         sync: vi.fn(),
       });
 
-      useMidenStore.getState().setNotes(notes as any);
+      useMidenStore.getState().setNotes(notes as any, "committed");
 
       const { result } = renderHook(() =>
         useNoteStream({ amountFilter: (a) => a >= 100n })
@@ -226,7 +226,7 @@ describe("useNoteStream", () => {
         sync: vi.fn(),
       });
 
-      useMidenStore.getState().setNotes(notes as any);
+      useMidenStore.getState().setNotes(notes as any, "committed");
 
       const { result } = renderHook(() => useNoteStream({ sender: null }));
 
@@ -253,7 +253,7 @@ describe("useNoteStream", () => {
         sync: vi.fn(),
       });
 
-      useMidenStore.getState().setNotes(notes as any);
+      useMidenStore.getState().setNotes(notes as any, "committed");
 
       const { result } = renderHook(() => useNoteStream());
 
@@ -264,7 +264,7 @@ describe("useNoteStream", () => {
       act(() => {
         result.current.markHandled("0xnote1");
         // Trigger store update to cause useMemo recalculation
-        useMidenStore.getState().setNotes([...notes] as any);
+        useMidenStore.getState().setNotes([...notes] as any, "committed");
       });
 
       await waitFor(() => {
@@ -289,7 +289,7 @@ describe("useNoteStream", () => {
         sync: vi.fn(),
       });
 
-      useMidenStore.getState().setNotes(notes as any);
+      useMidenStore.getState().setNotes(notes as any, "committed");
 
       const { result } = renderHook(() => useNoteStream());
 
@@ -300,7 +300,7 @@ describe("useNoteStream", () => {
       act(() => {
         result.current.markAllHandled();
         // Trigger store update to cause useMemo recalculation
-        useMidenStore.getState().setNotes([...notes] as any);
+        useMidenStore.getState().setNotes([...notes] as any, "committed");
       });
 
       await waitFor(() => {
@@ -325,7 +325,7 @@ describe("useNoteStream", () => {
         sync: vi.fn(),
       });
 
-      useMidenStore.getState().setNotes(notes as any);
+      useMidenStore.getState().setNotes(notes as any, "committed");
 
       const { result } = renderHook(() => useNoteStream());
 
@@ -359,7 +359,7 @@ describe("useNoteStream", () => {
         sync: vi.fn(),
       });
 
-      useMidenStore.getState().setNotes(notes as any);
+      useMidenStore.getState().setNotes(notes as any, "committed");
 
       const { result } = renderHook(() => useNoteStream());
 

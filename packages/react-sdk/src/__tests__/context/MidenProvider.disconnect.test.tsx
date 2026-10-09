@@ -422,8 +422,8 @@ describe("MidenStore resetInMemoryState", () => {
     // Cached data should be cleared
     expect(after.accounts).toEqual([]);
     expect(after.accountDetails.size).toBe(0);
-    expect(after.notes).toEqual([]);
-    expect(after.consumableNotes).toEqual([]);
+    expect(after.notesByFilter.size).toBe(0);
+    expect(after.consumableNotesByAccount.size).toBe(0);
     expect(after.assetMetadata.size).toBe(0);
     expect(after.noteFirstSeen.size).toBe(0);
     expect(after.sync.syncHeight).toBe(0);
