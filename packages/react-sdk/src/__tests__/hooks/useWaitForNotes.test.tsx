@@ -96,6 +96,30 @@ describe("useWaitForNotes", () => {
     expect(Date.now() - start).toBeLessThan(1000);
   }, 10000);
 
+  it("treats a NaN intervalMs as the default instead of polling back to back", async () => {
+    const syncState = vi.fn().mockResolvedValue({});
+    const mockClient = createMockWebClient({
+      syncState,
+      getConsumableNotes: vi.fn().mockResolvedValue([]),
+    });
+
+    mockUseMiden.mockReturnValue({
+      client: mockClient,
+      isReady: true,
+    });
+
+    const { result } = renderHook(() => useWaitForNotes());
+
+    await expect(
+      result.current.waitForConsumableNotes({
+        accountId: "0xaccount",
+        timeoutMs: 50,
+        intervalMs: Number.NaN,
+      })
+    ).rejects.toThrow("Timeout waiting for consumable notes");
+    expect(syncState.mock.calls.length).toBeLessThanOrEqual(2);
+  }, 10000);
+
   it("counts time spent syncing toward timeoutMs", async () => {
     const mockClient = createMockWebClient({
       syncState: vi

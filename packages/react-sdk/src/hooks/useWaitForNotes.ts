@@ -29,7 +29,11 @@ export function useWaitForNotes(): UseWaitForNotesResult {
       }
 
       const timeoutMs = Math.max(0, options.timeoutMs ?? 10_000);
-      const intervalMs = Math.max(1, options.intervalMs ?? 1_000);
+      // A NaN interval would make every sleep a zero-length timer.
+      const flooredInterval = Math.max(1, options.intervalMs ?? 1_000);
+      const intervalMs = Number.isNaN(flooredInterval)
+        ? 1_000
+        : flooredInterval;
       const minCount = Math.max(1, options.minCount ?? 1);
       const deadline = Date.now() + timeoutMs;
 
