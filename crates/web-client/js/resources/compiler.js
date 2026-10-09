@@ -12,6 +12,12 @@ export class CompilerResource {
   /**
    * Compiles MASM code + slots into an AccountComponent ready for accounts.create().
    *
+   * Only procedures exported with `@account_procedure` or `@auth_script` become component
+   * procedures. A component with none logs a `[miden-sdk]` warning and is still returned, since a
+   * storage-only component is legitimate beside one that has procedures; nothing can call into
+   * it, and accounts.create rejects a contract none of whose components exports a non-auth
+   * procedure.
+   *
    * Dependency modules the component imports (e.g. auth libraries) are linked
    * via `libraries` before compilation, as source modules with `linkModule` -
    * the same sequence a caller would run on a raw `createCodeBuilder()`, so a
@@ -39,6 +45,15 @@ export class CompilerResource {
       ? builder.compileAccountComponentCodeWithPath(namespace, code)
       : builder.compileAccountComponentCode(code);
     const component = wasm.AccountComponent.compile(compiled, slots);
+    if (component.getProcedures().length === 0) {
+      console.warn(
+        "[miden-sdk] compile.component produced a component with no procedures. " +
+          "Only exports marked `@account_procedure` or `@auth_script` become account " +
+          "procedures, so nothing can call into this component, and accounts.create " +
+          "rejects a contract none of whose components exports a non-auth procedure. " +
+          "Ignore this warning only if the component is intentionally storage-only."
+      );
+    }
     return supportAllTypes ? component.withSupportsAllTypes() : component;
   }
 

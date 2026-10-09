@@ -63,6 +63,17 @@ function makeClient() {
   return { assertNotTerminated: vi.fn() };
 }
 
+// Stand-ins for compiled AccountComponents: accounts.create reads each one's
+// procedures to require at least one non-auth procedure across them.
+function callableComponent(name = "comp1") {
+  return { name, getProcedures: () => [{ isAuth: false }] };
+}
+function storageOnlyComponent(name = "storageOnly") {
+  return { name, getProcedures: () => [] };
+}
+function authOnlyComponent(name = "authOnly") {
+  return { name, getProcedures: () => [{ isAuth: true }] };
+}
 describe("AccountsResource", () => {
   let inner;
   let client;
@@ -263,13 +274,14 @@ describe("AccountsResource", () => {
     });
 
     it("creates immutable contract", async () => {
+      const comp1 = callableComponent();
       const resource = makeResource();
       const seed = new Uint8Array(32).fill(1);
       const result = await resource.create({
         type: "ImmutableContract",
         seed,
         auth: "authKey",
-        components: ["comp1"],
+        components: [comp1],
       });
       expect(
         wasm.AccountComponent.createAuthComponentFromSecretKey
@@ -285,13 +297,14 @@ describe("AccountsResource", () => {
     });
 
     it("creates contract when type='MutableContract'", async () => {
+      const comp1 = callableComponent();
       const resource = makeResource();
       const seed = new Uint8Array(32).fill(2);
       await resource.create({
         type: "MutableContract",
         seed,
         auth: "authKey",
-        components: ["comp1"],
+        components: [comp1],
       });
       const builderInstance = wasm.AccountBuilder.mock.results[0].value;
       expect(builderInstance.storageMode).toHaveBeenCalledWith("public");
@@ -300,14 +313,15 @@ describe("AccountsResource", () => {
     });
 
     it("creates contract when opts.components is present (no type)", async () => {
+      const comp1 = callableComponent();
       const resource = makeResource();
       await resource.create({
         seed: new Uint8Array(32),
         auth: "authKey",
-        components: ["comp1"],
+        components: [comp1],
       });
       const builderInstance = wasm.AccountBuilder.mock.results[0].value;
-      expect(builderInstance.withComponent).toHaveBeenCalledWith("comp1");
+      expect(builderInstance.withComponent).toHaveBeenCalledWith(comp1);
     });
 
     it("rejects empty components array (auth-only contracts not allowed)", async () => {
@@ -322,6 +336,52 @@ describe("AccountsResource", () => {
       ).rejects.toThrow(
         /Contract accounts require at least one non-auth procedure/
       );
+    });
+
+    it("rejects components none of which has a non-auth procedure", async () => {
+      const resource = makeResource();
+      const attempt = resource.create({
+        type: "ImmutableContract",
+        seed: new Uint8Array(32),
+        auth: "authKey",
+        components: [storageOnlyComponent()],
+      });
+      await expect(attempt).rejects.toThrow(
+        /Contract accounts require at least one non-auth procedure/
+      );
+      await expect(attempt).rejects.not.toThrow(/pass at least one entry/);
+      expect(inner.newAccountWithSecretKey).not.toHaveBeenCalled();
+    });
+
+    it("rejects components that export only auth procedures", async () => {
+      const resource = makeResource();
+      await expect(
+        resource.create({
+          type: "ImmutableContract",
+          seed: new Uint8Array(32),
+          auth: "authKey",
+          components: [authOnlyComponent()],
+        })
+      ).rejects.toThrow(
+        /Contract accounts require at least one non-auth procedure/
+      );
+      expect(inner.newAccountWithSecretKey).not.toHaveBeenCalled();
+    });
+
+    it("creates a contract with a storage-only component beside a callable one", async () => {
+      const resource = makeResource();
+      const storage = storageOnlyComponent();
+      const callable = callableComponent();
+      await resource.create({
+        type: "ImmutableContract",
+        seed: new Uint8Array(32),
+        auth: "authKey",
+        components: [storage, callable],
+      });
+      const builderInstance = wasm.AccountBuilder.mock.results[0].value;
+      expect(builderInstance.withComponent).toHaveBeenCalledWith(storage);
+      expect(builderInstance.withComponent).toHaveBeenCalledWith(callable);
+      expect(inner.newAccountWithSecretKey).toHaveBeenCalled();
     });
 
     it("rejects when components is missing entirely", async () => {
@@ -648,7 +708,7 @@ describe("AccountsResource.create selector validation", () => {
   // A complete contract request (seed and auth), so a masked selector would
   // reach the builder rather than fail a contract precondition.
   const contract = {
-    components: ["component"],
+    components: [callableComponent("component")],
     seed: new Uint8Array(32),
     auth: "secretKey",
   };
