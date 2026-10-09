@@ -42,6 +42,17 @@ const COUNTER_CODE = `
 
 const COUNTER_SLOT_NAME = "miden::tutorials::counter";
 
+// A component whose only export is not marked `@account_procedure`, so it
+// compiles to a component with no account procedures.
+const STORAGE_ONLY_CODE = `
+  use miden::core::sys
+
+  pub proc helper
+      exec.sys::truncate_stack
+  end
+`;
+const STORAGE_ONLY_SLOT_NAME = "miden::tests::storage_only";
+
 // ════════════════════════════════════════════════════════════════
 // compile.component()
 // ════════════════════════════════════════════════════════════════
@@ -596,6 +607,48 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
 
     expect(errorMsg).not.toBeNull();
     expect(errorMsg).toContain("at least one non-auth procedure");
+  });
+
+  test("contract whose only component has no account procedure rejects", async ({
+    page,
+  }) => {
+    const result = await page.evaluate(
+      async ({ code, slotName }) => {
+        const client = await window.MidenClient.createMock();
+
+        const storageOnly = await client.compile.component({
+          code,
+          namespace: "external_contract::storage_only",
+          slots: [window.StorageSlot.emptyValue(slotName)],
+        });
+
+        const seed = new Uint8Array(32);
+        seed.fill(0x05);
+        const auth = window.AuthSecretKey.rpoFalconWithRNG(seed);
+
+        let message = null;
+        try {
+          await client.accounts.create({
+            type: "ImmutableContract",
+            storage: "public",
+            seed,
+            auth,
+            components: [storageOnly],
+          });
+        } catch (e: any) {
+          message = String(e?.message ?? e);
+        }
+
+        return {
+          procedureCount: storageOnly.getProcedures().length,
+          message,
+        };
+      },
+      { code: STORAGE_ONLY_CODE, slotName: STORAGE_ONLY_SLOT_NAME }
+    );
+
+    expect(result.procedureCount).toBe(0);
+    expect(result.message).toContain("at least one non-auth procedure");
   });
 
   test("same seed yields same account ID across two builds", async ({
