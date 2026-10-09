@@ -7,7 +7,12 @@ import {
   NoteType,
   NoteArray,
 } from "@miden-sdk/miden-sdk";
-import type { SendOptions, SendResult, TransactionStage } from "../types";
+import type {
+  SendNonFungibleOptions,
+  SendOptions,
+  SendResult,
+  TransactionStage,
+} from "../types";
 import { DEFAULTS } from "../types";
 import { parseAccountId, parseAddress } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
@@ -22,6 +27,21 @@ import { useMidenStore } from "../store/MidenStore";
 export interface UseSendResult {
   /** Send tokens from one account to another */
   send: (options: SendOptions) => Promise<SendResult>;
+  /** The transaction result */
+  result: SendResult | null;
+  /** Whether the transaction is in progress */
+  isLoading: boolean;
+  /** Current stage of the transaction */
+  stage: TransactionStage;
+  /** Error if transaction failed */
+  error: Error | null;
+  /** Reset the hook state */
+  reset: () => void;
+}
+
+export interface UseSendNonFungibleResult {
+  /** Send one non-fungible asset from one account to another */
+  sendNonFungible: (options: SendNonFungibleOptions) => Promise<SendResult>;
   /** The transaction result */
   result: SendResult | null;
   /** Whether the transaction is in progress */
@@ -65,6 +85,33 @@ export interface UseSendResult {
  * ```
  */
 export function useSend(): UseSendResult {
+  return useSendAsset();
+}
+
+/**
+ * Hook to send one non-fungible asset between accounts. Takes the same options
+ * as `useSend`, with `nonFungibleAsset` (e.g. from
+ * `useAccount().nonFungibleAssets`) in place of `assetId`, `amount` and
+ * `sendAll`.
+ *
+ * @example
+ * ```tsx
+ * const { sendNonFungible, isLoading } = useSendNonFungible();
+ * const { nonFungibleAssets } = useAccount(from);
+ *
+ * await sendNonFungible({
+ *   from,
+ *   to,
+ *   nonFungibleAsset: nonFungibleAssets[0].asset,
+ * });
+ * ```
+ */
+export function useSendNonFungible(): UseSendNonFungibleResult {
+  const { send, ...state } = useSendAsset();
+  return { sendNonFungible: send, ...state };
+}
+
+function useSendAsset() {
   const { client, isReady, sync, runExclusive, prover } = useMiden();
   const runExclusiveSafe = runExclusive ?? runExclusiveDirect;
   const isBusyRef = useRef(false);
@@ -75,7 +122,9 @@ export function useSend(): UseSendResult {
   const [error, setError] = useState<Error | null>(null);
 
   const send = useCallback(
-    async (options: SendOptions): Promise<SendResult> => {
+    async (
+      options: SendOptions | SendNonFungibleOptions
+    ): Promise<SendResult> => {
       if (!client || !isReady) {
         throw new Error("Miden client is not ready");
       }
@@ -99,15 +148,20 @@ export function useSend(): UseSendResult {
         }
 
         const noteType = getNoteType(options.noteType ?? DEFAULTS.NOTE_TYPE);
+        const nonFungibleAsset =
+          "nonFungibleAsset" in options ? options.nonFungibleAsset : undefined;
+        const fungible = nonFungibleAsset
+          ? undefined
+          : (options as SendOptions);
 
         // Resolve amount — if sendAll, query the account balance
-        let amount = options.amount;
-        if (options.sendAll) {
+        let amount = fungible?.amount;
+        if (fungible?.sendAll) {
           const resolvedAmount = await runExclusiveSafe(async () => {
             const fromId = parseAccountId(options.from);
             const account = await client.getAccount(fromId);
             if (!account) throw new Error("Account not found");
-            const assetIdObj = parseAccountId(options.assetId);
+            const assetIdObj = parseAccountId(fungible.assetId);
             const balance = account.vault?.()?.getBalance?.(assetIdObj);
             if (balance === undefined || balance === null) {
               throw new Error("Could not query account balance");
@@ -121,18 +175,26 @@ export function useSend(): UseSendResult {
           amount = resolvedAmount;
         }
 
-        if (amount === undefined || amount === null) {
-          throw new Error("Amount is required (provide amount or sendAll)");
+        if (!nonFungibleAsset) {
+          if (amount === undefined || amount === null) {
+            throw new Error("Amount is required (provide amount or sendAll)");
+          }
+          amount = BigInt(amount);
         }
-        amount = BigInt(amount);
 
         const assetId =
-          options.assetId ??
-          (options as { faucetId?: string }).faucetId ??
+          fungible?.assetId ??
+          (fungible as { faucetId?: string } | undefined)?.faucetId ??
           null;
-        if (!assetId) {
+        if (!nonFungibleAsset && !assetId) {
           throw new Error("Asset ID is required");
         }
+
+        // Builds the transferred asset. Call it inside runExclusiveSafe so the
+        // WASM AccountId is not stale when it is consumed.
+        const buildAsset = () =>
+          nonFungibleAsset ??
+          new FungibleAsset(parseAccountId(assetId!), amount as bigint);
 
         // Build transaction — use attachment path if attachment provided
         const hasAttachment =
@@ -152,11 +214,8 @@ export function useSend(): UseSendResult {
           const returnResult = await runExclusiveSafe(async () => {
             const fromId = parseAccountId(options.from);
             const toId = parseAccountId(options.to);
-            const assetObj = parseAccountId(assetId);
 
-            const assets = new NoteAssets([
-              new FungibleAsset(assetObj, BigInt(amount!)),
-            ]);
+            const assets = new NoteAssets([buildAsset()]);
             const p2idNote = Note.createP2IDNote(
               fromId,
               toId,
@@ -201,16 +260,13 @@ export function useSend(): UseSendResult {
           // creation and consumption.
           const fromAccountId = parseAccountId(options.from);
           const toAccountId = parseAccountId(options.to);
-          const assetIdObj = parseAccountId(assetId);
 
           let txRequest;
 
           if (hasAttachment) {
             // Manual P2ID note construction with attachment
             const attachment = createNoteAttachment(options.attachment!);
-            const assets = new NoteAssets([
-              new FungibleAsset(assetIdObj, amount!),
-            ]);
+            const assets = new NoteAssets([buildAsset()]);
             const note = Note.createP2IDNote(
               fromAccountId,
               toAccountId,
@@ -223,13 +279,22 @@ export function useSend(): UseSendResult {
             txRequest = builder
               .withOwnOutputNotes(new NoteArray([note]))
               .build();
+          } else if (nonFungibleAsset) {
+            txRequest = await client.newSendNonFungibleAssetTransactionRequest(
+              fromAccountId,
+              toAccountId,
+              nonFungibleAsset,
+              noteType,
+              options.recallHeight ?? null,
+              options.timelockHeight ?? null
+            );
           } else {
             txRequest = await client.newSendTransactionRequest(
               fromAccountId,
               toAccountId,
-              assetIdObj,
+              parseAccountId(assetId!),
               noteType,
-              amount!,
+              amount as bigint,
               options.recallHeight ?? null,
               options.timelockHeight ?? null
             );

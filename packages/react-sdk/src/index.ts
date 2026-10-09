@@ -36,13 +36,14 @@ export { usePswapLineage } from "./hooks/usePswapLineage";
 // Mutation Hooks
 export { useCreateWallet } from "./hooks/useCreateWallet";
 export { useCreateFaucet } from "./hooks/useCreateFaucet";
+export { useCreateNonFungibleFaucet } from "./hooks/useCreateNonFungibleFaucet";
 export { useImportAccount } from "./hooks/useImportAccount";
-export { useSend } from "./hooks/useSend";
+export { useSend, useSendNonFungible } from "./hooks/useSend";
 export { useMultiSend } from "./hooks/useMultiSend";
 export { useBatch } from "./hooks/useBatch";
 export { useWaitForCommit } from "./hooks/useWaitForCommit";
 export { useWaitForNotes } from "./hooks/useWaitForNotes";
-export { useMint } from "./hooks/useMint";
+export { useMint, useMintNonFungible } from "./hooks/useMint";
 export { useBridge } from "./hooks/useBridge";
 export { useConsume } from "./hooks/useConsume";
 export { useSwap } from "./hooks/useSwap";
@@ -78,6 +79,7 @@ export type {
   AccountsResult,
   AccountResult,
   AssetBalance,
+  NonFungibleAssetInfo,
   NotesFilter,
   NotesResult,
   TransactionHistoryOptions,
@@ -88,8 +90,10 @@ export type {
   NoteSummary,
   CreateWalletOptions,
   CreateFaucetOptions,
+  CreateNonFungibleFaucetOptions,
   ImportAccountOptions,
   SendOptions,
+  SendNonFungibleOptions,
   SendResult,
   MultiSendRecipient,
   MultiSendOptions,
@@ -99,6 +103,7 @@ export type {
   WaitForCommitOptions,
   WaitForNotesOptions,
   MintOptions,
+  MintNonFungibleOptions,
   BridgeOptions,
   CreateNetworkNoteOptions,
   NetworkNoteResult,
@@ -150,6 +155,7 @@ export type {
   NoteType,
   Note,
   AccountStorageMode,
+  NonFungibleAsset,
   PswapLineageRecord,
 } from "./types";
 
@@ -185,13 +191,14 @@ export type { MigrateStorageOptions } from "./utils/storage";
 // Hook result types
 export type { UseCreateWalletResult } from "./hooks/useCreateWallet";
 export type { UseCreateFaucetResult } from "./hooks/useCreateFaucet";
+export type { UseCreateNonFungibleFaucetResult } from "./hooks/useCreateNonFungibleFaucet";
 export type { UseImportAccountResult } from "./hooks/useImportAccount";
-export type { UseSendResult } from "./hooks/useSend";
+export type { UseSendResult, UseSendNonFungibleResult } from "./hooks/useSend";
 export type { UseMultiSendResult } from "./hooks/useMultiSend";
 export type { UseBatchResult } from "./hooks/useBatch";
 export type { UseWaitForCommitResult } from "./hooks/useWaitForCommit";
 export type { UseWaitForNotesResult } from "./hooks/useWaitForNotes";
-export type { UseMintResult } from "./hooks/useMint";
+export type { UseMintResult, UseMintNonFungibleResult } from "./hooks/useMint";
 export type { UseBridgeResult } from "./hooks/useBridge";
 export type { UseConsumeResult } from "./hooks/useConsume";
 export type { UseSwapResult } from "./hooks/useSwap";

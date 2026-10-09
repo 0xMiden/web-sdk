@@ -2,9 +2,14 @@ import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { useMiden } from "../context/MidenProvider";
 import { useMidenStore, useSyncStateStore } from "../store/MidenStore";
 import { captureClientReadGuard } from "../store/clientReadGuard";
-import type { AccountResult, AssetBalance } from "../types";
+import type {
+  AccountResult,
+  AssetBalance,
+  NonFungibleAssetInfo,
+} from "../types";
 import { ensureAccountBech32 } from "../utils/accountBech32";
 import { parseAccountId, type AccountRef } from "../utils/accountParsing";
+import { toNonFungibleAssetInfo } from "../utils/nonFungibleAssets";
 import { useAssetMetadata } from "./useAssetMetadata";
 
 /**
@@ -15,7 +20,8 @@ import { useAssetMetadata } from "./useAssetMetadata";
  * @example
  * ```tsx
  * function AccountDetails({ accountId }: { accountId: string }) {
- *   const { account, assets, getBalance, isLoading } = useAccount(accountId);
+ *   const { account, assets, nonFungibleAssets, getBalance, isLoading } =
+ *     useAccount(accountId);
  *
  *   if (isLoading) return <div>Loading...</div>;
  *   if (!account) return <div>Account not found</div>;
@@ -31,6 +37,10 @@ import { useAssetMetadata } from "./useAssetMetadata";
  *         </div>
  *       ))}
  *       <p>USDC Balance: {getBalance('0x...').toString()}</p>
+ *       <h3>NFTs</h3>
+ *       {nonFungibleAssets.map(nft => (
+ *         <div key={nft.vaultKey}>{nft.faucetId}: {nft.value}</div>
+ *       ))}
  *     </div>
  *   );
  * }
@@ -120,6 +130,16 @@ export function useAccount(accountId: AccountRef | undefined): AccountResult {
     }
   }, [account]);
 
+  const nonFungibleAssets = useMemo((): NonFungibleAssetInfo[] => {
+    if (!account) return [];
+
+    try {
+      return account.vault().nonFungibleAssets().map(toNonFungibleAssetInfo);
+    } catch {
+      return [];
+    }
+  }, [account]);
+
   const assetIds = useMemo(
     () => rawAssets.map((asset) => asset.assetId),
     [rawAssets]
@@ -151,6 +171,7 @@ export function useAccount(accountId: AccountRef | undefined): AccountResult {
   return {
     account,
     assets,
+    nonFungibleAssets,
     isLoading,
     error,
     refetch,

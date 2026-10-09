@@ -5,9 +5,15 @@ import type {
   NoteInput,
   WasmWebClient as WebClient,
 } from "@miden-sdk/miden-sdk";
-import type { AssetMetadata, NoteAsset, NoteSummary } from "../types";
+import type {
+  AssetMetadata,
+  NonFungibleAssetInfo,
+  NoteAsset,
+  NoteSummary,
+} from "../types";
 import { toBech32AccountId } from "./accountBech32";
 import { formatAssetAmount } from "./amounts";
+import { toNonFungibleAssetInfo } from "./nonFungibleAssets";
 
 /**
  * Resolve a `NoteInput` (hex string | NoteId | InputNoteRecord | Note) to a
@@ -74,10 +80,11 @@ export const getNoteSummary = (
     if (!rawId) return null;
     const id = rawId.toString();
     const assets: NoteAsset[] = [];
+    let nonFungibleAssets: NonFungibleAssetInfo[] = [];
 
     try {
-      const details = record.details();
-      const assetsList = details?.assets?.().fungibleAssets?.() ?? [];
+      const noteAssets = record.details()?.assets?.();
+      const assetsList = noteAssets?.fungibleAssets?.() ?? [];
       for (const asset of assetsList) {
         const assetId = asset.faucetId().toString();
         const metadata = getAssetMetadata?.(assetId);
@@ -88,6 +95,9 @@ export const getNoteSummary = (
           decimals: metadata?.decimals,
         });
       }
+      nonFungibleAssets = (noteAssets?.nonFungibleAssets?.() ?? []).map(
+        toNonFungibleAssetInfo
+      );
     } catch {
       // Keep assets empty if details are unavailable.
     }
@@ -96,7 +106,7 @@ export const getNoteSummary = (
     const senderHex = metadata?.sender?.()?.toString?.();
     const sender = senderHex ? toBech32AccountId(senderHex) : undefined;
 
-    return { id, assets, sender };
+    return { id, assets, nonFungibleAssets, sender };
   } catch {
     return null;
   }
@@ -109,10 +119,16 @@ export const formatNoteSummary = (
       asset.symbol ?? asset.assetId
     }`
 ): string => {
-  if (!summary.assets.length) {
+  const parts = [
+    ...summary.assets.map(formatAsset),
+    ...(summary.nonFungibleAssets ?? []).map(
+      (asset) => `NFT ${asset.faucetId}`
+    ),
+  ];
+  if (!parts.length) {
     return summary.id;
   }
 
-  const assetsText = summary.assets.map(formatAsset).join(" + ");
+  const assetsText = parts.join(" + ");
   return summary.sender ? `${assetsText} from ${summary.sender}` : assetsText;
 };
