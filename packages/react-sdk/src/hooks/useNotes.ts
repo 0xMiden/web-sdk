@@ -50,8 +50,22 @@ import { getNoteFilterType } from "../utils/noteFilters";
  */
 export function useNotes(options?: NotesFilter): NotesResult {
   const { client, isReady } = useMiden();
-  const notes = useNotesStore();
-  const consumableNotes = useConsumableNotesStore();
+  const filterKey = options?.status ?? "all";
+  const accountId = options?.accountId;
+  // A string key, stable across renders that pass a new object for the same account.
+  const accountKey = useMemo(() => {
+    if (!accountId) return "default";
+    if (typeof accountId === "string") return accountId;
+    return parseAccountId(accountId).toString();
+  }, [accountId]);
+
+  const notes = useNotesStore(filterKey);
+  const consumableNotes = useConsumableNotesStore(accountKey);
+  const fetched = useMidenStore(
+    (state) =>
+      state.notesByFilter.has(filterKey) &&
+      state.consumableNotesByAccount.has(accountKey)
+  );
   const isLoadingNotes = useMidenStore((state) => state.isLoadingNotes);
   const setLoadingNotes = useMidenStore((state) => state.setLoadingNotes);
   const setNotesIfChanged = useMidenStore((state) => state.setNotesIfChanged);
@@ -68,6 +82,12 @@ export function useNotes(options?: NotesFilter): NotesResult {
     setLoadingNotes(true);
     setError(null);
 
+    // The provider resets the store on a signer identity change while the old
+    // client's fetch may still be running; its result must not land in the new cache.
+    const generation = useMidenStore.getState().cacheGeneration;
+    const isStale = () =>
+      useMidenStore.getState().cacheGeneration !== generation;
+
     try {
       const filterType = getNoteFilterType(options?.status);
       const filter = new NoteFilter(filterType);
@@ -78,8 +98,8 @@ export function useNotes(options?: NotesFilter): NotesResult {
       // yet, so they are not "consumable" here either - the same rule
       // notes.listAvailable and transactions.consumeAll apply.
       let fetchedConsumable;
-      if (options?.accountId) {
-        const accountIdObj = parseAccountId(options.accountId);
+      if (accountKey !== "default") {
+        const accountIdObj = parseAccountId(accountKey);
         const accountIdHex = accountIdObj.toString();
         fetchedConsumable = (
           await client.getConsumableNotes(accountIdObj)
@@ -90,30 +110,36 @@ export function useNotes(options?: NotesFilter): NotesResult {
         );
       }
 
+      if (isStale()) return;
+
       // Smart refetch: only update store if note IDs changed (prevents unnecessary re-renders)
-      setNotesIfChanged(fetchedNotes);
-      setConsumableNotesIfChanged(fetchedConsumable);
+      setNotesIfChanged(fetchedNotes, filterKey);
+      setConsumableNotesIfChanged(fetchedConsumable, accountKey);
     } catch (err) {
+      if (isStale()) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      setLoadingNotes(false);
+      // The reset already cleared the shared flag; a post-reset fetch owns it now.
+      if (!isStale()) setLoadingNotes(false);
     }
   }, [
     client,
     isReady,
     options?.status,
-    options?.accountId,
+    filterKey,
+    accountKey,
     setLoadingNotes,
     setNotesIfChanged,
     setConsumableNotesIfChanged,
   ]);
 
-  // Initial fetch
+  // Initial fetch: whenever this hook's buckets are missing, including after
+  // the provider resets the store on a signer identity change.
   useEffect(() => {
-    if (isReady && notes.length === 0) {
+    if (isReady && !fetched) {
       refetch();
     }
-  }, [isReady, notes.length, refetch]);
+  }, [isReady, fetched, refetch]);
 
   // Refresh after successful syncs to keep notes current
   useEffect(() => {

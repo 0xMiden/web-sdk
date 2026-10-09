@@ -881,7 +881,9 @@ describe("useNoteStream — buildStreamedNote catch paths", () => {
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    useMidenStore.getState().setNotes([noteWithBrokenDetails as any]);
+    useMidenStore
+      .getState()
+      .setNotes([noteWithBrokenDetails as any], "committed");
 
     const { result } = renderHook(() => useNoteStream());
     await waitFor(() => {
@@ -917,7 +919,7 @@ describe("useNoteStream — buildStreamedNote catch paths", () => {
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    useMidenStore.getState().setNotes([noteWithBrokenId as any]);
+    useMidenStore.getState().setNotes([noteWithBrokenId as any], "committed");
 
     const { result } = renderHook(() => useNoteStream());
     await waitFor(() => {
@@ -942,7 +944,7 @@ describe("useNoteStream — buildStreamedNote catch paths", () => {
       sync: vi.fn(),
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    useMidenStore.getState().setNotes([recordNoMetadata as any]);
+    useMidenStore.getState().setNotes([recordNoMetadata as any], "committed");
 
     const { result } = renderHook(() => useNoteStream());
     await waitFor(() => {
@@ -970,7 +972,7 @@ describe("useNoteStream — buildStreamedNote catch paths", () => {
       sync: vi.fn(),
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    useMidenStore.getState().setNotes([recordNullSender as any]);
+    useMidenStore.getState().setNotes([recordNullSender as any], "committed");
 
     const { result } = renderHook(() => useNoteStream());
     await waitFor(() => {
@@ -998,7 +1000,7 @@ describe("useNoteStream — buildStreamedNote catch paths", () => {
     });
     // Pre-populate noteFirstSeen.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    useMidenStore.getState().setNotes([record1 as any]);
+    useMidenStore.getState().setNotes([record1 as any], "committed");
     const recordedAt = useMidenStore
       .getState()
       .noteFirstSeen.get("0xseen_before");
@@ -1027,7 +1029,7 @@ describe("useNoteStream — buildStreamedNote catch paths", () => {
       sync: vi.fn(),
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    useMidenStore.getState().setNotes([oldNote as any]);
+    useMidenStore.getState().setNotes([oldNote as any], "committed");
 
     // Future since timestamp ensures the existing first-seen is excluded.
     const futureSince = Date.now() + 60_000;

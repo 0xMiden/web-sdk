@@ -11,6 +11,7 @@
 * [FIX][react] `formatAssetAmount` puts a single leading minus on a negative amount (`-525n` at 2 decimals is `"-5.25"`, was `"-5.-25"`), and `parseAssetAmount` throws for a negative or malformed amount instead of returning a wrong value (`"--1"` gave `1n`, `"-5.25"` at 2 decimals gave `-475n`) ([#275](https://github.com/0xMiden/web-sdk/pull/275)).
 * [FIX][react] `MidenProvider` rendered without a `config` prop no longer rebuilds its `WebClient` on every store update ([#269](https://github.com/0xMiden/web-sdk/pull/269)).
 * [FIX][web] `getInputNotes()` and `getOutputNotes()` now reject with a catchable error instead of aborting the WASM module when a `NoteFilter` lacks the note ids or script roots its type needs, or a `Unique` filter holds other than one note id ([#268](https://github.com/0xMiden/web-sdk/pull/268)).
+* [FIX][react] `useNotes` and `useNoteStream` with a different `status`, or `useNotes` with a different `accountId`, no longer show each other's notes, and a mounted `useNotes` fetches again when the provider switches signer identity ([#280](https://github.com/0xMiden/web-sdk/issues/280), [#284](https://github.com/0xMiden/web-sdk/pull/284)).
 
 ### Changes
 

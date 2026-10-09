@@ -50,7 +50,11 @@ export function useNoteStream(
 ): UseNoteStreamReturn {
   const { client, isReady } = useMiden();
 
-  const allNotes = useNotesStore();
+  const status = options.status ?? "committed";
+  const sender = options.sender ?? null;
+  const since = options.since;
+
+  const allNotes = useNotesStore(status);
   const noteFirstSeen = useNoteFirstSeenStore();
   const { lastSyncTime } = useSyncStateStore();
   const setNotesIfChanged = useMidenStore((state) => state.setNotesIfChanged);
@@ -59,11 +63,6 @@ export function useNoteStream(
   const [error, setError] = useState<Error | null>(null);
   const handledIdsRef = useRef<Set<string>>(new Set());
   const [handledVersion, setHandledVersion] = useState(0);
-
-  // Resolve options
-  const status = options.status ?? "committed";
-  const sender = options.sender ?? null;
-  const since = options.since;
 
   // Store amountFilter in a ref so the streamedNotes useMemo doesn't depend
   // on the function reference (callers typically pass inline lambdas).
@@ -84,22 +83,35 @@ export function useNoteStream(
     return new Set(excludeIdsKey.split("\0"));
   }, [excludeIdsKey]);
 
+  const latestRequestRef = useRef(0);
+
   // Fetch notes from client
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
 
+    const request = ++latestRequestRef.current;
     setIsLoading(true);
     setError(null);
+
+    // The provider resets the store on a signer identity change while the old
+    // client's fetch may still be running; its result must not land in the new cache.
+    const generation = useMidenStore.getState().cacheGeneration;
+    const isStale = () =>
+      useMidenStore.getState().cacheGeneration !== generation;
 
     try {
       const filterType = getNoteFilterType(status);
       const filter = new NoteFilter(filterType);
       const fetched = await client.getInputNotes(filter);
-      setNotesIfChanged(fetched);
+      if (isStale()) return;
+      setNotesIfChanged(fetched, status);
     } catch (err) {
+      if (isStale()) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      setIsLoading(false);
+      // Only the latest request clears the flag, so an older fetch cannot end a
+      // newer one's loading state, and a fetch with no successor still clears it.
+      if (latestRequestRef.current === request) setIsLoading(false);
     }
   }, [client, isReady, status, setNotesIfChanged]);
 
