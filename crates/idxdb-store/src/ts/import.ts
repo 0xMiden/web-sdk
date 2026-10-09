@@ -2,8 +2,11 @@
 // with importing DB types and we're testing this which
 // should be enough + the TS compiler.
 /* eslint-disable */
+import * as semver from "semver";
 import {
+  CLIENT_VERSION_SETTING_KEY,
   getDatabase,
+  MIGRATION_BASELINE,
   NOTE_TRANSPORT_OUTBOX_SETTING_KEY,
   SETTING_SCOPE_CLIENT,
 } from "./schema.js";
@@ -65,6 +68,49 @@ export async function transformForImport(obj: any): Promise<any> {
   });
 }
 
+// An import writes rows without the upgrade() callbacks an open runs, so it takes only a dump this
+// store could have kept: one stamped by a client at or after MIGRATION_BASELINE and not newer than
+// the client running in this realm (the version the store was opened with; with none recorded the
+// newer check is skipped). Anything else is refused before the target is cleared.
+async function refuseUnkeptDump(dbJson: any, runningVersion: string | null) {
+  const rows: any[] = Array.isArray(dbJson.settings) ? dbJson.settings : [];
+  const stampRow = rows.find(
+    (row) =>
+      row?.scope === SETTING_SCOPE_CLIENT &&
+      row?.key === CLIENT_VERSION_SETTING_KEY
+  );
+  const refuse = (reason: string) => {
+    throw new Error(
+      `Refusing to import this store dump: ${reason}. The store was not changed.`
+    );
+  };
+  if (!stampRow) {
+    refuse(
+      `it has no client version stamp, so it predates ${MIGRATION_BASELINE}`
+    );
+  }
+  const stamp = new TextDecoder().decode(
+    (await transformForImport(stampRow)).value
+  );
+  if (!semver.valid(stamp)) {
+    refuse(`"${stamp}" is not a valid client version`);
+  }
+  if (semver.lt(stamp, MIGRATION_BASELINE)) {
+    refuse(
+      `it was exported by client ${stamp}, older than ${MIGRATION_BASELINE}, whose data cannot be migrated`
+    );
+  }
+  if (
+    runningVersion &&
+    semver.valid(runningVersion) &&
+    semver.gt(stamp, runningVersion)
+  ) {
+    refuse(
+      `it was exported by a newer client (${stamp}; this client is ${runningVersion}); upgrade the Miden SDK to import it`
+    );
+  }
+}
+
 export async function forceImportStore(dbId: string, jsonStr: string) {
   try {
     const db = getDatabase(dbId);
@@ -79,6 +125,7 @@ export async function forceImportStore(dbId: string, jsonStr: string) {
     if (jsonTableNames.length === 0) {
       throw new Error("No tables found in the provided JSON.");
     }
+    await refuseUnkeptDump(dbJson, db.clientVersion || null);
 
     await db.dexie.transaction("rw", dbTableNames, async () => {
       await Promise.all(db.dexie.tables.map((t) => t.clear()));
@@ -107,6 +154,12 @@ export async function forceImportStore(dbId: string, jsonStr: string) {
         SETTING_SCOPE_CLIENT,
         NOTE_TRANSPORT_OUTBOX_SETTING_KEY,
       ]);
+
+      // The dump brought its own stamp; the store now belongs to the running client, as after an
+      // open. With no recorded version the dump's stamp stays.
+      if (db.clientVersion) {
+        await db.persistClientVersion(db.clientVersion);
+      }
     });
 
     console.log("Store imported successfully.");

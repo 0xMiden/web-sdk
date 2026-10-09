@@ -291,46 +291,82 @@ helper, e.g.
 `[Table.LatestAccountStorage]: indexes("[accountId+slotName]", "accountId")`.
 Every later change is its own `.version(N).stores({...})` block.
 
-**The current schema version is 6.**
+**The current schema version is 8.**
 
 | Version | Change |
 | --- | --- |
 | 1 | Baseline, `V1_STORES` |
 | 2 | Data-only. Deletes `tags` rows leaked by output-note registration, mirroring the sqlite-store `0002_prune_output_note_tags.sql`. A tag is kept while an inclusion-pending input note (`stateDiscriminant` 0 or 1) still needs it |
 | 3 | Rekeys the input-note consumption index to `[consumedBlockHeight+consumedTxOrder+detailsCommitment]` (was `...+noteId`), so `Store::get_input_note_after` seeks on the values an `InputNoteCursor` carries. Index-only, no `.upgrade()` hook |
-| 4 | Drops `settings`: `this.dexie.version(4).stores({ [Table.Settings]: null })` |
+| 4 | Drops `settings`: `this.dexie.version(4).stores({ [Table.Settings]: null })`. The client version stamp goes with it, so the v8 cutover clears every store that runs this step |
 | 5 | Recreates `settings` as `indexes("[scope+key]", "scope")`. A primary key cannot change in place, hence the drop-and-recreate pair |
 | 6 | Adds `accountWitnesses`, primary key `&accountId`. `witness` is null until the first sync refresh |
+| 7 | Data-only. Deletes the client-scope `note_transport_outbox` row a 0.17.1 client left behind, mirroring the sqlite-store `0002_drop_note_transport_outbox.sql` |
+| 8 | The cutover: `.upgrade(clearStoreStampedBelow(MIGRATION_BASELINE))` clears a store stamped below `"0.17.0"` or not stamped (see below) |
 
-### Migrations ARE in use
+### Migrations, not resets
 
-Migrations **coexist** with the client-version nuke; the old "migrations are
-not enabled yet, just edit `V1_STORES`" rule is dead. `ensureClientVersion`
-(`schema.ts:638-679`) still nukes the DB (close / `delete` / re-open) when the
-running client version is a higher major **or minor** than the stored one,
-because the Miden network resets on those upgrades. Same-major.minor patch
-bumps and downgrades just persist the new version without resetting (see the
-semver `sameMajorMinor` / `!semver.gt(...)` guard). The Dexie version blocks
-handle schema and data fixes for stores that survive those patch upgrades.
+A store is kept across client upgrades, as the Node `SqliteStore` is.
+**Every change to a table's shape or to a stored value's encoding ships a new
+Dexie version whose `.upgrade()` converts the existing rows.** Never edit an
+earlier version block.
 
-Two edge cases are easy to miss:
+**A cutover version is the only way a store is ever cleared.** v8's
+`.upgrade()` is `clearStoreStampedBelow(MIGRATION_BASELINE)`. It reads the
+client-scope stamp through the upgrade `tx`, then:
 
-- **An empty `clientVersion` skips enforcement entirely.** `openDatabase("x", "")`
-  warns and returns before reading the stored version, so nothing is compared
-  and nothing is persisted.
-- **A semver string that will not parse, on either side, forces a reset.** If
-  `semver.valid()` rejects the stored or the running version, the
-  same-major.minor guard is skipped entirely and the close / delete / re-open
-  path runs.
+- **No stamp, or valid semver below `MIGRATION_BASELINE` (`"0.17.0"`):
+  cleared.** Every table that exists at that step is cleared and seeded with
+  what `populate` writes (`seedFreshStore`), in the same transaction. A
+  prerelease sorts below its release, so a `0.17.0-rc.5` stamp is below
+  `0.17.0`. No stamp includes every store the v4 settings drop stripped.
+- **Valid semver at or above the baseline: kept.**
+- **Not valid semver: kept.** Never wipe on uncertainty.
+
+The clear runs inside the versionchange transaction, so it is atomic, and
+IndexedDB runs versionchange transactions one at a time across tabs and
+workers: a second context opening the same store waits, then opens it at v8
+and runs nothing. Never move a clear into a normal transaction after
+`dexie.open()`, where two contexts can both read the old stamp and clear
+twice, the second wiping what the first wrote meanwhile. A fresh database runs
+no upgrade callbacks, only `populate`. A store already at v8 never runs the
+cutover again, whatever its stamp says later.
+
+**A release that genuinely cannot migrate older data adds a NEW Dexie version
+with the same `clearStoreStampedBelow(...)` upgrade and its own threshold.**
+Raising `MIGRATION_BASELINE` clears nothing that already ran v8. State the new
+cutover up front in any upgrade plan: it destroys every locally-stored
+account, key and note in the user's browser.
+
+**An import skips every upgrade() callback.** `forceImportStore` writes a
+dump's rows in a plain transaction, so it takes only a dump this store could
+have kept: stamped by a client at or after `MIGRATION_BASELINE` and not newer
+than the running one. Anything else is refused before the target is cleared.
+A Dexie version that converts stored data must also convert, or refuse, a dump
+stamped by a client from before it, in `forceImportStore`.
+
+`ensureClientVersion` never clears. After `dexie.open()` it writes the running
+version when the stamp differs, for diagnostics and for a future cutover's
+threshold. An empty `clientVersion` warns and writes nothing.
 
 The version is `CLIENT_VERSION = env!("CARGO_PKG_VERSION")` in
 `crates/idxdb-store/src/lib.rs`, persisted under the exported
 `CLIENT_VERSION_SETTING_KEY = "clientVersion"` in `SETTING_SCOPE_CLIENT`.
 
-**State this consequence up front in any upgrade plan.** Because a *minor*
-client-version bump triggers the reset, shipping an app across a minor SDK
-version destroys every locally-stored account, key and note in the user's
-browser. Dexie version blocks only cover stores that survive patch upgrades.
+**A store written by a newer client is refused, never deleted.** Dexie 4 does
+not fail with `VersionError` when the store's schema version is above the
+declared one: it opens the store anyway, and first re-adds any table or index
+the newer schema dropped, raising the native version. So
+`MidenDatabase.open()` first reads the installed version from
+`indexedDB.databases()` and rejects when `Math.floor(version / 10)` exceeds
+`verno` (Dexie keeps version N as N * 10, plus one per schema patch), without
+opening the store through Dexie. Where `databases()` is missing, and on
+Dexie's automatic reopen after another tab upgraded the store under an open
+connection, a sticky `on("ready")` hook refuses it instead. Dexie may have
+patched the schema by then, so the message promises only that nothing was
+deleted. The error reaches the caller of `openDatabase` and the console
+through `logWebStoreError`, and `WebClient.createClient` reports it as
+`Failed to initialize IdxdbStore: <message>`.
 
 **`V1_STORES` is frozen. Never modify it.** schema.ts says so at the constant
 and again above `this.dexie.version(1)`. Adding a table or changing an index
@@ -350,13 +386,16 @@ today means:
    (e.g. account functions from `/src/js/accounts.js`, schema/registry
    functions from `/src/js/schema.js`)
 5. Run `make rust-client-ts-build` to regenerate the JS, and add a
-   migration test in `schema.test.ts` (the existing ones seed a physical v1
-   database from the exported `V1_STORES`, then reopen through
-   `MidenDatabase` so the whole chain runs)
+   migration test in `schema.test.ts` (seed a physical database at the
+   previous version from the exported `V1_STORES` or the test's `V6_STORES`,
+   then open it through `MidenDatabase` so the whole chain runs. A store
+   seeded below v4 has no stamp at v8, so the cutover clears it; the v2-v4
+   tests read what each upgrade left through `openReadingAtCutover`, which
+   observes each table as the cutover clears it)
 
 The `populate` hook fires only on first database creation, never during an
-upgrade. It seeds exactly one row, the `blockchainCheckpoint` singleton
-(`schema.ts:607-619`):
+upgrade. Through `seedFreshStore`, which the v8 cutover shares, it seeds
+exactly one row, the `blockchainCheckpoint` singleton:
 
 ```typescript
 { id: 1, blockNum: 0, partialBlockchainPeaks: new Uint8Array() }

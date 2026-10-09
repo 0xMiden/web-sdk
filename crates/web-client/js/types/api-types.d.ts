@@ -2169,7 +2169,13 @@ export declare function isConsumableNow(
 /** Exports the entire contents of an IndexedDB store as a JSON string. */
 export declare function exportStore(storeName: string): Promise<string>;
 
-/** Imports store contents from a JSON string, replacing all existing data. */
+/**
+ * Imports store contents from a JSON string, replacing all existing data.
+ *
+ * Rejects, leaving the store unchanged, a dump the store could not have kept: one with no client
+ * version stamp, or stamped by a client older than 0.17.0 (its data belongs to networks that no
+ * longer exist) or newer than this one (upgrade the SDK to import it).
+ */
 export declare function importStore(
   storeName: string,
   storeDump: string

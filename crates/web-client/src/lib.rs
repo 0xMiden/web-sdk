@@ -457,7 +457,7 @@ impl WebClient {
         let store: Arc<dyn Store> = Arc::new(
             IdxdbStore::new(store_name.clone())
                 .await
-                .map_err(|_| JsValue::from_str("Failed to initialize IdxdbStore"))?,
+                .map_err(|err| idxdb_store_init_error(&err))?,
         );
         let keystore = WebKeyStore::new_with_callbacks(
             StdRng::from_rng(&mut rng),
@@ -534,7 +534,7 @@ impl WebClient {
         let store: Arc<dyn Store> = Arc::new(
             IdxdbStore::new(store_name.clone())
                 .await
-                .map_err(|_| JsValue::from_str("Failed to initialize IdxdbStore"))?,
+                .map_err(|err| idxdb_store_init_error(&err))?,
         );
         let keystore = WebKeyStore::new_with_callbacks(
             StdRng::from_rng(&mut rng),
@@ -756,6 +756,17 @@ pub(crate) fn create_rng(seed: Option<Vec<u8>>) -> Result<StdRng, JsErr> {
 
 // ERROR HANDLING HELPERS
 // ================================================================================================
+
+/// The error a client constructor reports when the browser store fails to open, carrying the
+/// store's own reason, such as a store written by a newer client.
+#[cfg(feature = "browser")]
+pub(crate) fn idxdb_store_init_error(err: &JsValue) -> JsErr {
+    let cause = match err.dyn_ref::<js_sys::Error>() {
+        Some(error) => String::from(error.message()),
+        None => err.as_string().unwrap_or_else(|| format!("{err:?}")),
+    };
+    from_str_err(&format!("Failed to initialize IdxdbStore: {cause}"))
+}
 
 pub(crate) fn js_error_with_context<T>(err: T, context: &str) -> JsErr
 where
