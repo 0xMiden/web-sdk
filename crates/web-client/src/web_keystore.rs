@@ -2,6 +2,7 @@ use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use core::cell::RefCell;
+use core::convert::Infallible;
 
 use miden_client::account::AccountId;
 use miden_client::auth::{
@@ -15,7 +16,7 @@ use miden_client::auth::{
 use miden_client::keystore::{KeyStoreError, Keystore};
 use miden_client::utils::{RwLock, Serializable};
 use miden_client::{AuthenticationError, Word as NativeWord};
-use rand::Rng;
+use rand::{Rng, TryCryptoRng, TryRng};
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::js_sys::Function;
 
@@ -149,6 +150,30 @@ impl<R: Rng> WebKeyStore<R> {
     }
 }
 
+/// Falcon signing takes a `CryptoRng`. The keystore stores the client's coin,
+/// and that marker trait is not implemented on the foreign type, so the guard
+/// is wrapped for the one call that needs it.
+struct SigningRng<'a, R>(&'a mut R);
+
+impl<R: Rng> TryRng for SigningRng<'_, R> {
+    type Error = Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        Ok(self.0.next_u32())
+    }
+
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        Ok(self.0.next_u64())
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
+        self.0.fill_bytes(dest);
+        Ok(())
+    }
+}
+
+impl<R: Rng> TryCryptoRng for SigningRng<'_, R> {}
+
 impl<R: Rng> TransactionAuthenticator for WebKeyStore<R> {
     /// Gets a signature over a message, given a public key.
     ///
@@ -190,7 +215,8 @@ impl<R: Rng> TransactionAuthenticator for WebKeyStore<R> {
 
         let signature = match secret_key {
             Some(AuthSecretKey::Falcon512Poseidon2(k)) => {
-                Signature::Falcon512Poseidon2(k.sign_with_rng(message, &mut rng))
+                let mut signing_rng = SigningRng(&mut *rng);
+                Signature::Falcon512Poseidon2(k.sign_with_rng(message, &mut signing_rng))
             },
             Some(AuthSecretKey::EcdsaK256Keccak(k)) => Signature::EcdsaK256Keccak(k.sign(message)),
             Some(other_k) => other_k.sign(message),

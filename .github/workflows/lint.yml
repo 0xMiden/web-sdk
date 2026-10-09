@@ -36,6 +36,23 @@ jobs:
           tool: taplo-cli@0.10.0
       - run: make toml-check
 
+  agent-docs:
+    name: Agent docs published
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # Asserts every published package's AGENTS.md and skills/ actually reach its
+    # npm tarball. npm packs README and LICENSE whatever `files` says but gives
+    # AGENTS.md no such privilege, so a guide can sit on disk for releases while
+    # no consumer ever receives it - which is exactly what packages/para/* did.
+    # Reads package.json and runs `npm pack --dry-run`, so it needs no build and
+    # no pnpm install.
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: make check-agent-docs
+
   eslint:
     name: Typescript eslint checks
     runs-on: ubuntu-24.04

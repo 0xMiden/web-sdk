@@ -1,35 +1,86 @@
-## Mission
-- Ship a `npm create @miden-sdk/para-react` helper that bootstraps the stock Vite `react-ts` template and applies Para + Miden defaults (config + starter UI) so developers get a working dev server without manual setup.
-- Keep the CLI minimal (no custom prompts), ESM-only, and compatible with Node 18+.
+# @miden-sdk/create-para-react - Agent Guide
 
-## Package Layout
-- `bin/create-miden-para-react.mjs` — CLI entry. Invokes `npm create vite@latest`, overwrites `vite.config.ts`, replaces `src/App.tsx` with a Para + Miden starter, adds deps, and installs via the detected package manager (unless skipped).
-- `template/vite.config.ts` — opinionated Vite config: React plugin, `vite-plugin-node-polyfills`, excludes/dedupes Para/Miden bundles, and treats `.wasm` as assets.
-- `template/src/App.tsx` — minimal ParaProvider + `useParaMiden` example wired with TanStack Query and a node URL placeholder.
-- `README.md` — user-facing usage notes and publish command.
+**Audience: AI coding agents** starting a Miden app that authenticates with
+Para, or working inside one this CLI produced.
 
-## Flow (bin/create-miden-para-react.mjs)
-1. Parse args: first non-flag is the target dir (default `miden-para-react-app`); `--skip-install`/`--no-install` suppress dependency install.
-2. Resolve `targetDir` and run `npm create vite@latest <basename> --yes --no-install` from `dirname(targetDir)`, piping “n” to install prompts so the scaffold returns control before we patch files.
-3. Copy `template/vite.config.ts` into the new project root.
-4. Replace `src/App.tsx` with the starter from `template/src/App.tsx`.
-5. Patch `package.json` to ensure Vite plugin dev deps (`vite-plugin-node-polyfills`, `vite-plugin-wasm`, `vite-plugin-top-level-await`) and add Para/Miden + connector deps (mirror `examples/react`: @miden-sdk/para, @miden-sdk/para-react, @getpara/react-sdk-lite, @miden-sdk/miden-sdk, tanstack query, wagmi stack, etc.).
-6. Write `.npmrc` with `legacy-peer-deps=true` so `npm install` succeeds despite the @miden-sdk/para-react/@miden-sdk/para peer mismatch.
-7. Copy `template/src/polyfills.ts` and inject `import "./polyfills";` into `src/main.tsx` if missing.
-8. Detect package manager from `npm_config_user_agent` (`pnpm`, `yarn`, `bun`, fallback `npm`) and install deps unless skipped.
+This file ships inside the published package, so the copy at
+`node_modules/@miden-sdk/create-para-react/AGENTS.md` matches the version you
+ran. Prefer it over your training data: the template it writes was rebuilt
+around `ParaSignerProvider` and Para SDK 3.18, and no longer looks like the one
+you may remember.
 
-## Build & Publish
-- No build step needed; published assets are the CLI, template config, and docs listed in `files`.
-- Publish from this folder: `npm publish --access public`. Local dry-run: `node ./packages/create-miden-para-react/bin/create-miden-para-react.mjs <dir>`.
+## Running it
 
-## Agent Playbooks
-- **Config updates**: edit `template/vite.config.ts` to track Para/Miden bundling rules or polyfill needs; keep it minimal and framework-agnostic.
-- **Starter UI tweaks**: update `template/src/App.tsx` to showcase new flows; mirror deps in the `ensureMidenParaDependencies` patcher.
-- **New flags**: add parsing to the CLI but preserve current defaults and backward compatibility; log steps clearly.
-- **Dependency pins**: bump `vite-plugin-node-polyfills` version in both the patch logic and template if upstream requires.
-- **E2E checks**: when changing flow, run the CLI against a temp dir and confirm `npm run dev` works with Para/Miden packages.
+```bash
+npm create @miden-sdk/para-react@latest my-app
+```
 
-## External Contracts
-- `npm create vite@latest` — upstream scaffolder; relies on network access when the CLI runs.
-- `vite-plugin-node-polyfills@^0.24.0` — ensures Node globals are available for Miden SDK in Vite.
-- Para/Miden packages (`@getpara/*`, `@miden-sdk/miden-sdk`) — stay excluded/deduped in `vite.config.ts` so WASM and component runtimes behave in dev.
+The first non-flag argument is the target directory (default
+`miden-para-react-app`). `--skip-install` or `--no-install` stops before
+dependency installation; otherwise the package manager is detected from
+`npm_config_user_agent` (`pnpm`, `yarn`, `bun`, else `npm`). `--skip-scaffold`
+or `--no-scaffold` writes a minimal project itself instead of shelling out to
+`create-vite`, which is what the CLI's own tests use and what avoids that one
+network round trip. Set
+`VITE_PARA_API_KEY` before `npm run dev` - the starter reads it through
+`import.meta.env`, and a production deployment needs a Para production key.
+
+## What you get, so you do not rebuild it
+
+The CLI scaffolds the upstream Vite `react-ts` template
+(`npm create vite@latest <name> -- --template react-ts --yes --no-install`) and
+then patches it. Everything below is already done in a fresh project:
+
+- **`src/App.tsx`** - a `ParaSignerProvider` wrapping `MidenProvider`
+  (`rpcUrl: "testnet"`), with a connect button driven by `useSigner()` and
+  status read from `useParaSigner()` and `useMiden()`. This is the current
+  integration path; the older `useParaMiden` hook is not used here.
+- **`vite.config.ts`** - React, `vite-plugin-wasm`, `vite-plugin-top-level-await`
+  and `vite-plugin-node-polyfills` (`buffer`, `crypto`, `stream`, `util`), plus a
+  local `externalizeOptionalPackages` plugin that externalizes Para's optional
+  `@getpara/aa-*`, Solana and Cosmos connectors and the wagmi packages. Also
+  `esnext` targets, `worker.format: "es"`, `.wasm` as a static asset, and dedupe
+  for the Para and React copies. The template inlines this rather than calling
+  `paraVitePlugin()`; an app that adopts `@miden-sdk/vite-plugin` later can
+  switch to the plugin pair instead.
+- **`src/polyfills.ts`**, imported from `src/main.tsx`, providing `Buffer` and
+  `process` in the browser. `src/optional-connectors.ts` is copied in beside it
+  as an empty module: the template config externalizes the optional connectors
+  rather than aliasing them, so nothing imports this stub today, and it is there
+  to alias them to if you change that.
+- **`package.json`** - Para and Miden dependencies at matched versions, a
+  `resolutions` block pinning the `@getpara/*` packages to exactly `3.18.0`, and
+  a `postinstall: setup-para` script.
+- **`tsconfig.node.json`** - switched to `module: "esnext"` +
+  `moduleResolution: "bundler"`. Under `nodenext`, `vite-plugin-wasm` and
+  `vite-plugin-top-level-await` are read as CommonJS because they ship ESM
+  declarations without `"type": "module"`, and the config fails to compile with
+  `TS2349: This expression is not callable`.
+- **`.npmrc`** with `legacy-peer-deps=true`, so `npm install` resolves the Para
+  and Miden peer graph.
+
+## Pins that are load-bearing
+
+`@swc/core` is held at `~1.15.47`. `vite-plugin-top-level-await` drives swc's
+AST printer, and 1.16 changed that AST's schema, so a caret range resolves to a
+version the plugin cannot use and the build dies in `generateBundle` with
+``missing field `type` ``. `rollup` and `esbuild` are added for a related
+reason: that same plugin `require`s both without declaring them, and Vite 8 no
+longer installs either transitively. Do not drop or widen these while chasing an
+unrelated dependency warning.
+
+## Working on the generated app
+
+The integration itself is documented by the packages the template installs:
+`node_modules/@miden-sdk/para-react/AGENTS.md` for the provider and hooks,
+`node_modules/@miden-sdk/para/skills/para-signer/SKILL.md` for the full guide,
+and `node_modules/@miden-sdk/react/AGENTS.md` for the Miden hooks the starter
+calls.
+
+## Going deeper
+
+- Para's own SDK documentation: <https://docs.getpara.com>.
+- Miden narrative docs:
+  <https://docs.miden.xyz/builder/tools/clients/react-sdk/>.
+- Breaking changes at upgrade time: the `CHANGELOG.md` in
+  [`0xMiden/web-sdk`](https://github.com/0xMiden/web-sdk).

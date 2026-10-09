@@ -52,18 +52,21 @@ set -uo pipefail
 #
 # PACKAGES WITH NO `files` FIELD
 # ------------------------------
-# Four adopted packages — adapter/base, adapter/miden, adapter/react,
-# adapter/reactui — declare no `files` array and carry no `.npmignore`. That is
-# not "they publish nothing"; it is the opposite. With neither, npm publishes
-# everything in the package directory except its built-in excludes
-# (node_modules, .git, ...). npm-packlist only reads ignore files *inside* the
-# package folder, so this repo's root .gitignore — which lists
-# `packages/adapter/**/dist/` — has no effect on packing and dist/ does ship.
-# (Verified: `npm pack --dry-run` on packages/adapter/base lists dist/index.js
-# and dist/index.d.ts.) The side effect is that those four also ship sources,
-# tsconfig and compiled tests; that is bloat, not breakage, and out of scope
-# here. What matters for this script: "no files field" is never the reason an
-# entry point is missing.
+# Every published package now declares a `files` array, so what reaches a
+# consumer is stated rather than inferred. It is worth knowing what the
+# alternative does, because these packages used to rely on it: with neither
+# `files` nor `.npmignore`, npm publishes everything in the package directory
+# except its built-in excludes (node_modules, .git, ...). npm-packlist only
+# reads ignore files *inside* the package folder, so this repo's root
+# .gitignore, which lists `packages/adapter/**/dist/`, has no effect on
+# packing and dist/ ships either way. What it also shipped was the sources,
+# tsconfig, vitest config, the generated typedoc `docs/` tree and the compiled
+# tests under dist/ (213 KB of it on adapter/base alone).
+#
+# Note that a `files` array is the reason an entry point can be missing even
+# when the build emitted it, which is the case this script exists to catch:
+# `files` is a promise about the tarball, and only the tarball is checked
+# below.
 #
 # FAILING CLOSED
 # --------------

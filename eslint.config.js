@@ -17,6 +17,7 @@ module.exports = [
       "packages/adapter/**",
       "packages/para/**",
       "packages/turnkey/**",
+      "packages/create/**",
       "vitest.config.ts",
     ],
   },

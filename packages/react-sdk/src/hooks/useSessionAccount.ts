@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import { useMidenStore } from "../store/MidenStore";
-import { AccountStorageMode } from "@miden-sdk/miden-sdk";
+import { AccountStorageMode, isConsumableNow } from "@miden-sdk/miden-sdk";
+import type { ConsumableNoteRecord } from "@miden-sdk/miden-sdk";
 import type {
   UseSessionAccountOptions,
   UseSessionAccountReturn,
@@ -205,9 +206,7 @@ function getStorageMode(
 
 type WaitAndConsumeClient = {
   syncState: () => Promise<unknown>;
-  getConsumableNotes: (
-    accountId?: unknown
-  ) => Promise<Array<{ inputNoteRecord: () => { toNote: () => unknown } }>>;
+  getConsumableNotes: (accountId?: unknown) => Promise<ConsumableNoteRecord[]>;
   newConsumeTransactionRequest: (
     notes: unknown[],
     consumingAccountId: unknown
@@ -235,7 +234,12 @@ async function waitAndConsume(
     if (cancelledRef.current) return;
 
     const accountIdObj = parseAccountId(walletId);
-    const consumable = await client.getConsumableNotes(accountIdObj);
+    const accountIdHex = accountIdObj.toString();
+    // One block-locked note would fail the whole consume transaction, and
+    // waiting is the right answer for it, so keep only what is consumable now.
+    const consumable = (await client.getConsumableNotes(accountIdObj)).filter(
+      (record) => isConsumableNow(record, accountIdHex)
+    );
     if (consumable.length > 0) {
       const notes = consumable.map((c) => c.inputNoteRecord().toNote());
       // `accountIdObj` was consumed by getConsumableNotes above, which takes it

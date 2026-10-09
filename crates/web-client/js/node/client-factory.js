@@ -9,6 +9,7 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { wrapClient, normalizeArg } from "./napi-compat.js";
+import { validateNoteTransportRetryOptions } from "../utils.js";
 
 let _counter = 0;
 
@@ -40,8 +41,8 @@ function normBytes(val) {
  * Creates the WasmWebClient factory for Node.js.
  *
  * Matches the browser interface:
- *   WasmWebClient.createClient(rpcUrl, noteTransportUrl, seed, storeName)
- *   WasmWebClient.createClientWithExternalKeystore(rpcUrl, noteTransportUrl, seed, storeName, getKey, insertKey, sign)
+ *   WasmWebClient.createClient(rpcUrl, noteTransportUrl, seed, storeName, logLevel, useWorker, observability, feeFaucetId, noteTransportMaxRetries, noteTransportRetryIntervalMs)
+ *   WasmWebClient.createClientWithExternalKeystore(rpcUrl, noteTransportUrl, seed, storeName, getKey, insertKey, sign, logLevel, useWorker, observability, feeFaucetId, noteTransportMaxRetries, noteTransportRetryIntervalMs)
  *   WasmWebClient.buildSwapTag(...)
  *
  * @param {object} rawSdk - The raw napi SDK module.
@@ -53,7 +54,25 @@ export function createWasmWebClient(rawSdk, options) {
     buildSwapTag: (...args) =>
       rawSdk.WebClient.buildSwapTag(...args.map(normalizeArg)),
 
-    createClient: async (rpcUrl, noteTransportUrl, seed, storeName) => {
+    // The trailing parameters exist so this matches what `MidenClient.create`
+    // passes the browser factory; `feeFaucetId` and the two retry options reach
+    // the native client.
+    createClient: async (
+      rpcUrl,
+      noteTransportUrl,
+      seed,
+      storeName,
+      _logLevel,
+      _useWorker,
+      _observability,
+      feeFaucetId,
+      noteTransportMaxRetries,
+      noteTransportRetryIntervalMs
+    ) => {
+      validateNoteTransportRetryOptions(
+        noteTransportMaxRetries,
+        noteTransportRetryIntervalMs
+      );
       const dir = options?.dataDir
         ? path.join(options.dataDir, storeName || "default")
         : storeName
@@ -66,9 +85,12 @@ export function createWasmWebClient(rawSdk, options) {
         noteTransportUrl ?? null,
         normBytes(seed) ?? null,
         path.join(dir, `${storeName || "store"}.db`),
-        path.join(dir, "keystore")
+        path.join(dir, "keystore"),
+        feeFaucetId ?? null,
+        noteTransportMaxRetries ?? null,
+        noteTransportRetryIntervalMs ?? null
       );
-      return wrapClient(client, storeName);
+      return wrapClient(client, storeName, rawSdk);
     },
 
     createClientWithExternalKeystore: async () => {
@@ -104,7 +126,7 @@ export function createMockWasmWebClient(rawSdk) {
         normBytes(serializedMockChain) ?? null,
         normBytes(serializedNoteTransport) ?? null
       );
-      return wrapClient(client, "mock");
+      return wrapClient(client, "mock", rawSdk);
     },
   };
 }

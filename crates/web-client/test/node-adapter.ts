@@ -16,6 +16,9 @@ import { createRequire } from "module";
 import path from "path";
 import fs from "fs";
 import os from "os";
+import { FaucetType } from "../js/enums.js";
+import { normalizeArg, wrapClass } from "../js/node/napi-compat.js";
+import { resolveAuthScheme } from "../js/utils.js";
 
 const require = createRequire(import.meta.url);
 
@@ -106,7 +109,7 @@ function initSdk(): any {
     "getMapEntries",
     "getMapItem",
   ]);
-  patchNullToUndefined(rawSdk.NoteConsumability, ["consumableAfterBlock"]);
+  patchNullToUndefined(rawSdk.NoteConsumptionStatus, ["consumableAfterBlock"]);
 
   // Patch static methods (snake_case aliases for camelCase)
   if (rawSdk.NoteScript) {
@@ -139,52 +142,6 @@ function toNum(val: any): any {
   return val;
 }
 
-/**
- * Normalizes arguments for napi:
- * - BigUint64Array / BigInt64Array → bigint[]
- * - Uint8Array/Buffer → Array<number> (for Vec<u8> params)
- *
- * `BigInt` values are passed through — napi-rs accepts JS `BigInt` for `u64`
- * parameters via `napi::bindgen_prelude::BigInt`.
- */
-function normalizeArg(val: any): any {
-  if (val instanceof BigUint64Array) return Array.from(val);
-  if (val instanceof BigInt64Array) return Array.from(val);
-  if (val instanceof Uint8Array || Buffer.isBuffer(val)) return Array.from(val);
-  return val;
-}
-
-/**
- * Wraps a class so that constructor args and static method args are normalized.
- * Returns a Proxy that intercepts `new` and static calls.
- */
-/**
- * Wraps a class so that constructor and static method args are normalized.
- * Copies all static methods/properties, wrapping functions to normalize args.
- */
-function wrapClass(Cls: any): any {
-  const Wrapper: any = function (...args: any[]) {
-    return new Cls(...args.map(normalizeArg));
-  };
-  Wrapper.prototype = Cls.prototype;
-  // Copy static methods with arg normalization
-  for (const key of Object.getOwnPropertyNames(Cls)) {
-    if (key === "prototype" || key === "length" || key === "name") continue;
-    const desc = Object.getOwnPropertyDescriptor(Cls, key);
-    if (desc && typeof desc.value === "function") {
-      Wrapper[key] = (...args: any[]) =>
-        desc.value.apply(Cls, args.map(normalizeArg));
-    } else if (desc) {
-      try {
-        Object.defineProperty(Wrapper, key, desc);
-      } catch {
-        /* skip non-configurable */
-      }
-    }
-  }
-  return Wrapper;
-}
-
 // ── Client wrapper ────────────────────────────────────────────────────
 
 /**
@@ -213,15 +170,28 @@ function wrapClient(client: any, storeName?: string): any {
       if (prop === "wasmWebClient") {
         return target;
       }
-      // newWallet: convert Uint8Array/Buffer seed to plain Array for napi's Vec<u8>
+      // newWallet: convert Uint8Array/Buffer seed to plain Array for napi's Vec<u8>.
+      // The AuthScheme arguments here and below resolve against the native
+      // enum, as the shipped Node entry (js/node/napi-compat.js) does.
       if (prop === "newWallet") {
         return (mode: any, authScheme: any, seed?: any) => {
           const normalizedSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
-          return target.newWallet(mode, authScheme, normalizedSeed ?? null);
+          return target.newWallet(
+            mode,
+            resolveAuthScheme(authScheme, sdk),
+            normalizedSeed ?? null
+          );
         };
+      }
+      if (prop === "importPublicAccountFromSeed") {
+        return (seed: any, authScheme: any) =>
+          target.importPublicAccountFromSeed(
+            normalizeArg(seed),
+            resolveAuthScheme(authScheme, sdk)
+          );
       }
       // Methods that take JsU64 (BigInt in browser, Number in Node.js)
       if (prop === "newFaucet") {
@@ -242,7 +212,7 @@ function wrapClient(client: any, storeName?: string): any {
             symbol,
             decimals,
             toNum(maxSupply),
-            auth,
+            resolveAuthScheme(auth, sdk),
             seed
           );
       }
@@ -361,7 +331,8 @@ export const WasmWebClient = {
     rpcUrl?: string,
     noteTransportUrl?: any,
     seed?: any,
-    storeName?: string
+    storeName?: string,
+    feeFaucetId?: string
   ) => {
     const dir = tmpTestDir();
     const client = new sdk.WebClient();
@@ -375,7 +346,7 @@ export const WasmWebClient = {
       normSeed ?? null,
       path.join(dir, `${storeName || "store"}.db`),
       path.join(dir, "keystore"),
-      false
+      feeFaucetId ?? null
     );
     return wrapClient(client, storeName);
   },
@@ -539,15 +510,8 @@ export async function setupNodeGlobals(
     NoteFilter: sdk.NoteFilter,
     NoteFilterTypes: sdk.NoteFilterTypes,
     AccountId: sdk.AccountId,
-    // AccountType: the JS wrapper uses string-based types, not the napi enum
-    AccountType: {
-      MutableWallet: "MutableWallet",
-      ImmutableWallet: "ImmutableWallet",
-      FungibleFaucet: "FungibleFaucet",
-      NonFungibleFaucet: "NonFungibleFaucet",
-      ImmutableContract: "ImmutableContract",
-      MutableContract: "MutableContract",
-    },
+    AccountType: sdk.AccountType,
+    FaucetType,
     AccountInterface: sdk.AccountInterface,
     AccountBuilder: wrapClass(sdk.AccountBuilder),
     AccountComponent: wrapClass(sdk.AccountComponent),

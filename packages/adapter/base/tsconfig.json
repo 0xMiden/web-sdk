@@ -5,11 +5,18 @@
     "declaration": true,
     "outDir": "dist",
     "sourceMap": true,
+    // dist/*.js.map point at "../src/adapter.ts" etc, and "files": ["dist"]
+    // no longer ships those sources. Embed them in the map so consumer
+    // devtools can still step through original TypeScript.
+    "inlineSources": true,
     "moduleResolution": "node",
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true
   },
-  "exclude": ["node_modules", "dist"]
+  // Tests and vitest.config.ts are build tooling, not shipped API. Excluding
+  // them here keeps them out of dist entirely, rather than emitting them and
+  // subtracting them again in package.json "files".
+  "exclude": ["node_modules", "dist", "__tests__", "vitest.config.ts"]
 }

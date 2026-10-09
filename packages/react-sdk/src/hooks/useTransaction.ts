@@ -11,11 +11,15 @@ import { MidenError } from "../utils/errors";
 import { proveWithFallback } from "../utils/prover";
 import { useMidenStore } from "../store/MidenStore";
 import {
-  waitForTransactionCommit,
-  extractFullNotes,
   assertAnchorValueUsable,
   resolveTransactionRequest,
 } from "../utils/transactions";
+import {
+  privateOutputNotesOwed,
+  readOwedPrivateNotes,
+  recipientRef,
+  settlePrivateNotes,
+} from "../utils/privateNoteDelivery";
 
 export interface UseTransactionResult {
   /** Execute a transaction request end-to-end */
@@ -39,9 +43,17 @@ export interface UseTransactionResult {
  * with prover fallback support. When `privateNoteTarget` is set,
  * additionally waits for commit and delivers private output notes.
  *
+ * `privateNoteTarget` is checked before anything executes. Once the
+ * transaction is submitted, a private note that is not delivered rejects the
+ * call with a `PrivateNoteDeliveryError` carrying the transaction id and the
+ * delivered and undelivered notes; every note is attempted. The SDK keeps no
+ * queue: pass the undelivered notes to `useResendPrivateNotes` to try again.
+ *
  * Pass `anchor` to execute against a pinned reference block instead of the
  * current sync height, so a summary signed at that block reproduces exactly.
- * Capture one with `useChainAnchor`.
+ * Capture one with `useChainAnchor`. Leave it out for a multisig request built
+ * by `feeAwareTransactionRequestBuilder`, which executes at the tip once the
+ * client has synced to its bound block.
  *
  * Fees: the request is yours to build, so paying the verification fee is yours
  * too. A request assembled from `new TransactionRequestBuilder()` aborts with
@@ -125,8 +137,17 @@ export function useTransaction(): UseTransactionResult {
       setIsLoading(true);
       setStage("executing");
       setError(null);
+      setResult(null);
 
       try {
+        // Rejecting a malformed target here keeps it from failing only after
+        // the transaction is submitted.
+        const noteTarget =
+          options.privateNoteTarget != null
+            ? recipientRef(options.privateNoteTarget)
+            : null;
+        if (noteTarget !== null) parseAddress(noteTarget);
+
         // Auto-sync before transaction unless opted out
         if (!options.skipSync) {
           await sync();
@@ -167,31 +188,30 @@ export function useTransaction(): UseTransactionResult {
         const submissionHeight = await runExclusiveSafe(() =>
           client.submitProvenTransaction(provenTransaction, txResult)
         );
+        const txIdHex = txResult.id().toHex();
 
-        // Step 4: Apply
-        await runExclusiveSafe(() =>
-          client.applyTransaction(txResult, submissionHeight)
-        );
-
-        // Deliver private notes if requested
-        const txId = txResult.id();
-        if (options.privateNoteTarget != null) {
-          await waitForTransactionCommit(client, runExclusiveSafe, txId);
-
-          const targetAddress = parseAddress(options.privateNoteTarget);
-          const fullNotes = extractFullNotes(txResult);
-          for (const note of fullNotes) {
-            // Relay via the output-note convenience: it derives the recipient's
-            // scan-start block from the note's expected height, so delivery is
-            // correct even though we relay after waiting for the commit (which has
-            // advanced this client's sync height past the note's commitment block).
-            await runExclusiveSafe(() =>
-              client.sendPrivateOutputNote(note.id().toString(), targetAddress)
-            );
-          }
+        // Step 4: Apply, then deliver private notes if requested. A relay reads
+        // the inclusion proof sync stores once the note commits, so it follows
+        // the commit wait.
+        const apply = () =>
+          runExclusiveSafe(() =>
+            client.applyTransaction(txResult, submissionHeight)
+          );
+        if (noteTarget === null) {
+          await apply();
+        } else {
+          await settlePrivateNotes({
+            client,
+            runExclusiveSafe,
+            transactionId: txIdHex,
+            owed: readOwedPrivateNotes(() =>
+              privateOutputNotesOwed(txResult, noteTarget)
+            ),
+            apply,
+          });
         }
 
-        const txSummary = { transactionId: txId.toHex() };
+        const txSummary = { transactionId: txIdHex };
         setStage("complete");
         setResult(txSummary);
         await sync();

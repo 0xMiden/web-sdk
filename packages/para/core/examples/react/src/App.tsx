@@ -31,14 +31,15 @@ function App() {
   const { data: wallet } = useWallet();
   const { openModal } = useModal();
   const { logoutAsync } = useLogout();
-  const { client, accountId } = useParaMiden(
-    "https://rpc.testnet.miden.io",
-    "public",
-    {
-      accountSeed: "your-account-seed-here",
-      noteTransportUrl: "https://transport.miden.io",
-    }
-  );
+  const {
+    client,
+    accountId,
+    para,
+    error: clientError,
+  } = useParaMiden("https://rpc.testnet.miden.io", "public", {
+    accountSeed: "your-account-seed-here",
+    noteTransportUrl: "https://transport.miden.io",
+  });
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [progress, setProgress] = useState<MintAndConsumeProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +58,7 @@ function App() {
       if (accountId) {
         setAddress(
           Address.fromAccountId(AccountId.fromHex(accountId)).toBech32(
-            NetworkId.Testnet
+            NetworkId.testnet()
           )
         );
       }
@@ -72,11 +73,31 @@ function App() {
     openModal();
   };
   useEffect(() => {
-    if (!accountId) return;
+    if (!para) return;
+    const api = {
+      signMessage: async () => {
+        const wallets =
+          typeof para.getWalletsByType === "function"
+            ? para.getWalletsByType("EVM")
+            : [];
+        if (!wallets.length) {
+          throw new Error("No EVM wallet after Para login");
+        }
+        return para.signMessage({
+          walletId: wallets[0].id,
+          messageBase64: btoa("miden-para-e2e"),
+        });
+      },
+    };
+    (window as unknown as { __midenParaE2e: typeof api }).__midenParaE2e = api;
+  }, [para]);
+
+  useEffect(() => {
+    if (!accountId || !client) return;
 
     const fetchBalances = async () => {
       try {
-        const fetchedBalances = await getBalance(accountId);
+        const fetchedBalances = await getBalance(client, accountId);
         setBalances(fetchedBalances);
       } catch (err) {
         console.error("Failed to fetch balances:", err);
@@ -87,7 +108,7 @@ function App() {
     const interval = setInterval(fetchBalances, 5000);
 
     return () => clearInterval(interval);
-  }, [accountId]);
+  }, [accountId, client]);
 
   const handleMintConsume = async () => {
     if (!client || !accountId) {
@@ -141,8 +162,13 @@ function App() {
           {/* Connection Status */}
           <div className="flex items-center justify-between bg-orange-50 border border-orange-100 p-4">
             <div className="flex items-center gap-3">
-              <span className="text-sm font-medium text-gray-700 wrap-anywhere">
-                {isConnected ? address : "Disconnected"}
+              <span
+                className="text-sm font-medium text-gray-700 wrap-anywhere"
+                data-testid="para-e2e-status"
+                data-account-id={accountId}
+                data-client-error={clientError || undefined}
+              >
+                {isConnected ? address || "Connected" : "Disconnected"}
               </span>
             </div>
           </div>
@@ -152,6 +178,7 @@ function App() {
             size="lg"
             className="w-full cursor-pointer wrap-anywhere"
             variant={isConnected ? "outline" : "default"}
+            data-testid="para-e2e-connect"
           >
             <Wallet className="w-4 h-4" />
             <span className="truncate">
@@ -175,6 +202,7 @@ function App() {
               size="lg"
               className="w-full cursor-pointer"
               disabled={!isConnected}
+              data-testid="para-e2e-mint"
             >
               <Coins className="w-4 h-4" />
               Mint & Consume

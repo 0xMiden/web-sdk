@@ -43,6 +43,73 @@ test.describe("mint transaction tests", () => {
     expect(result.allHaveOneOutput).toBe(true);
     expect(result.balance).toEqual("3000");
   });
+
+  test("note collections throw catchable errors for out-of-bounds getNote", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+      const { transactionId: mintTransactionId, createdNoteId } =
+        await helpers.mockMint(wallet.id(), faucet.id());
+
+      const transactions = await client.getTransactions(
+        sdk.TransactionFilter.all()
+      );
+      const mintRecord = transactions.find(
+        (tx) => tx.id().toHex() === mintTransactionId
+      );
+      if (!mintRecord) {
+        throw new Error("expected the mint transaction record");
+      }
+      const outputNotes = mintRecord.outputNotes();
+
+      // A transaction record carries no input notes, so execute (without
+      // submitting) a consume of the minted note to get an InputNotes.
+      const note = (await client.getInputNote(createdNoteId)).toNote();
+      const consumeRequest = await client.newConsumeTransactionRequest(
+        [note],
+        wallet.id()
+      );
+      const inputNotes = (
+        await client.executeTransaction(wallet.id(), consumeRequest)
+      )
+        .executedTransaction()
+        .inputNotes();
+
+      // The browser build throws a bare string, the Node.js build an Error.
+      const errorOf = (call) => {
+        try {
+          call();
+          return "";
+        } catch (err) {
+          return String(err?.message ?? err);
+        }
+      };
+
+      return {
+        createdNoteId,
+        outputNoteId: outputNotes.getNote(0).id().toString(),
+        inputNoteId: inputNotes.getNote(0).id().toString(),
+        outputCount: outputNotes.numNotes(),
+        inputCount: inputNotes.numNotes(),
+        outputError: errorOf(() => outputNotes.getNote(outputNotes.numNotes())),
+        inputError: errorOf(() => inputNotes.getNote(inputNotes.numNotes())),
+        outputError256: errorOf(() => outputNotes.getNote(256)),
+        inputError256: errorOf(() => inputNotes.getNote(256)),
+      };
+    });
+
+    expect(result.outputNoteId).toBe(result.createdNoteId);
+    expect(result.inputNoteId).toBe(result.createdNoteId);
+    expect(result.outputError).toContain("OutputNotes index out of bounds");
+    expect(result.outputError).toContain(`index ${result.outputCount}`);
+    expect(result.inputError).toContain("InputNotes index out of bounds");
+    expect(result.inputError).toContain(`index ${result.inputCount}`);
+    expect(result.outputError256).toContain("OutputNotes index out of bounds");
+    expect(result.outputError256).toContain("index 256");
+    expect(result.inputError256).toContain("InputNotes index out of bounds");
+    expect(result.inputError256).toContain("index 256");
+  });
 });
 
 // NEW_CONSUME_TRANSACTION TESTS

@@ -11,12 +11,12 @@
     "postinstall": "setup-para"
   },
   "dependencies": {
-    "@miden-sdk/miden-sdk": "^0.15.1",
-    "@getpara/evm-wallet-connectors": "^2.2.0",
-    "@getpara/react-sdk-lite": "^2.2.0",
-    "@miden-sdk/para": "^0.15.1",
-    "@miden-sdk/para-react": "^0.15.1",
-    "@miden-sdk/react": "^0.15.1",
+    "@miden-sdk/miden-sdk": "^0.16.1",
+    "@getpara/evm-wallet-connectors": "^3.18.0",
+    "@getpara/react-sdk-lite": "^3.18.0",
+    "@miden-sdk/para": "^0.16.1",
+    "@miden-sdk/para-react": "^0.16.1",
+    "@miden-sdk/react": "^0.16.0",
     "@tanstack/react-query": "^5.90.12",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -24,7 +24,7 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwind-merge": "^3.4.0",
-    "viem": "^2.38.5",
+    "viem": "^2.39.0",
     "wagmi": "^2.14.16"
   },
   "devDependencies": {

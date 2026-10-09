@@ -1,15 +1,12 @@
-import {
-  hexStringToBase64,
-  ParaWeb,
-  SuccessfulSignatureRes,
-  Wallet,
-} from "@getpara/web-sdk";
+import { hexStringToBase64 } from "@getpara/web-sdk";
+import type { ParaWeb, SuccessfulSignatureRes, Wallet } from "@getpara/web-sdk";
 import { keccak_256 as keccak256 } from "@noble/hashes/sha3.js";
 import {
   accountSeedFromStr,
   evmPkToCommitment,
   fromHexSig,
   getUncompressedPublicKeyFromWallet,
+  resolveEvmWallets,
   txSummaryToJson,
 } from "./utils.js";
 import type { MidenAccountOpts, Opts, TxSummaryJson } from "./types.js";
@@ -124,7 +121,7 @@ export async function createParaMidenClient(
   showSigningModal: boolean = true,
   customSignConfirmStep?: CustomSignConfirmStep
 ) {
-  const evmWallets = wallets.filter((wallet) => wallet.type === "EVM");
+  const evmWallets = resolveEvmWallets(para, wallets);
 
   if (!evmWallets?.length) {
     throw new Error("No EVM wallets provided");
@@ -164,11 +161,18 @@ export async function createParaMidenClient(
     autoSync: true,
   });
 
-  const accountId = await createAccount(
-    client,
-    publicKey,
-    opts as MidenAccountOpts
-  );
+  let accountId: string;
+  try {
+    accountId = await createAccount(
+      client,
+      publicKey,
+      opts as MidenAccountOpts
+    );
+  } catch (error) {
+    // Never handed to the caller, so nothing else would terminate it.
+    client.terminate();
+    throw error;
+  }
 
   return { client, accountId };
 }

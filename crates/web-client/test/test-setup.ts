@@ -26,7 +26,14 @@ import { createRequire } from "module";
 import path from "path";
 import fs from "fs";
 import os from "os";
-import { getRpcUrl, getProverUrl, RUN_ID } from "./playwright.global.setup";
+import {
+  getRpcUrl,
+  getProverUrl,
+  getFeeFaucetId,
+  RUN_ID,
+} from "./playwright.global.setup";
+import { normalizeArg, wrapClass } from "../js/node/napi-compat.js";
+import { resolveAuthScheme } from "../js/utils.js";
 
 const require = createRequire(import.meta.url);
 
@@ -126,7 +133,7 @@ export async function createNodeIntegrationClient(
     null,
     path.join(tmpDir, `${storeName}.db`),
     path.join(tmpDir, "keystore"),
-    false
+    process.env.TEST_MIDEN_FEE_FAUCET_ID ?? null
   );
 
   const client = wrapNodeClient(rawClient, rawSdk);
@@ -186,24 +193,41 @@ export function wrapNodeClient(rawClient: any, rawSdk: any): any {
           return guard;
         };
       }
+      // The AuthScheme arguments of these three resolve against the native
+      // enum, as the shipped Node entry (js/node/napi-compat.js) does.
       if (prop === "newWallet") {
         return (mode: any, authScheme: any, seed?: any) => {
           const normSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
-          const result = target.newWallet(mode, authScheme, normSeed ?? null);
+          const result = target.newWallet(
+            mode,
+            resolveAuthScheme(authScheme, rawSdk),
+            normSeed ?? null
+          );
           if (result && typeof result.then === "function") {
             return result.then((v: any) => (v === null ? undefined : v));
           }
           return result === null ? undefined : result;
         };
       }
+      if (prop === "newFaucet" || prop === "importPublicAccountFromSeed") {
+        const authSchemeIndex = prop === "newFaucet" ? 6 : 1;
+        return (...args: any[]) => {
+          const normalizedArgs = args.map(normalizeArg);
+          normalizedArgs[authSchemeIndex] = resolveAuthScheme(
+            normalizedArgs[authSchemeIndex],
+            rawSdk
+          );
+          return target[prop](...normalizedArgs);
+        };
+      }
       const val = target[prop];
       if (typeof val === "function") {
         const bound = val.bind(target);
         return (...args: any[]) => {
-          const normalizedArgs = args.map(normalizeNapiArg);
+          const normalizedArgs = args.map(normalizeArg);
           const result = bound(...normalizedArgs);
           if (result && typeof result.then === "function") {
             return result.then((v: any) => (v === null ? undefined : v));
@@ -214,20 +238,6 @@ export function wrapNodeClient(rawClient: any, rawSdk: any): any {
       return val;
     },
   });
-}
-
-/**
- * Normalizes a single argument for napi:
- * - BigUint64Array / BigInt64Array → bigint[], Uint8Array/Buffer → number[]
- *
- * `BigInt` values are passed through untouched — napi-rs accepts JS `BigInt`
- * for `u64` parameters via `napi::bindgen_prelude::BigInt`.
- */
-function normalizeNapiArg(val: any): any {
-  if (val instanceof BigUint64Array) return Array.from(val);
-  if (val instanceof BigInt64Array) return Array.from(val);
-  if (val instanceof Uint8Array || Buffer.isBuffer(val)) return Array.from(val);
-  return val;
 }
 
 /**
@@ -268,32 +278,6 @@ function makeArrayPolyfills(): Record<string, any> {
   return result;
 }
 
-/**
- * Wraps a napi class so that constructor and static method args are normalized
- * (Uint8Array → Array, BigInt → Number, etc.).
- */
-function wrapNapiClass(Cls: any): any {
-  const Wrapper: any = function (...args: any[]) {
-    return new Cls(...args.map(normalizeNapiArg));
-  };
-  Wrapper.prototype = Cls.prototype;
-  for (const key of Object.getOwnPropertyNames(Cls)) {
-    if (key === "prototype" || key === "length" || key === "name") continue;
-    const desc = Object.getOwnPropertyDescriptor(Cls, key);
-    if (desc && typeof desc.value === "function") {
-      Wrapper[key] = (...args: any[]) =>
-        desc.value.apply(Cls, args.map(normalizeNapiArg));
-    } else if (desc) {
-      try {
-        Object.defineProperty(Wrapper, key, desc);
-      } catch {
-        /* skip non-configurable */
-      }
-    }
-  }
-  return Wrapper;
-}
-
 function patchNapiPrototypes(rawSdk: any) {
   // snake_case aliases for camelCase methods (browser uses snake_case via wasm_bindgen)
   /* eslint-disable camelcase */
@@ -314,7 +298,7 @@ function patchNapiPrototypes(rawSdk: any) {
   for (const [cls, methods] of [
     [rawSdk.AccountPatch, ["finalNonce"]],
     [rawSdk.AccountStorage, ["getItem", "getMapEntries", "getMapItem"]],
-    [rawSdk.NoteConsumability, ["consumableAfterBlock"]],
+    [rawSdk.NoteConsumptionStatus, ["consumableAfterBlock"]],
     [
       rawSdk.BasicFungibleFaucetComponent,
       ["description", "logoUri", "externalLink"],
@@ -350,13 +334,13 @@ function createNodeSdkWrapper(rawSdk: any): any {
   return {
     ...rawSdk,
     // Wrap classes whose constructors/static methods accept Uint8Array or BigInt args
-    AccountBuilder: wrapNapiClass(rawSdk.AccountBuilder),
-    AccountComponent: wrapNapiClass(rawSdk.AccountComponent),
-    AuthSecretKey: wrapNapiClass(rawSdk.AuthSecretKey),
-    Felt: wrapNapiClass(rawSdk.Felt),
-    FungibleAsset: wrapNapiClass(rawSdk.FungibleAsset),
-    Word: wrapNapiClass(rawSdk.Word),
-    NoteTag: wrapNapiClass(rawSdk.NoteTag),
+    AccountBuilder: wrapClass(rawSdk.AccountBuilder),
+    AccountComponent: wrapClass(rawSdk.AccountComponent),
+    AuthSecretKey: wrapClass(rawSdk.AuthSecretKey),
+    Felt: wrapClass(rawSdk.Felt),
+    FungibleAsset: wrapClass(rawSdk.FungibleAsset),
+    Word: wrapClass(rawSdk.Word),
+    NoteTag: wrapClass(rawSdk.NoteTag),
     // StorageView JS wrapper — browser exposes these on window via index.js.
     StorageView: sv.StorageView,
     StorageResult: sv.StorageResult,
@@ -441,11 +425,14 @@ async function getRunBrowser(projectName: string): Promise<any> {
 async function setupBrowserPage(page: any, testInfo: TestInfo) {
   const rpcUrl = getRpcUrl();
   const storeName = generateStoreName(testInfo);
+  // Every non-mock client this page builds needs it, and the page cannot read
+  // the environment itself - it has to travel through the evaluate payload.
+  const feeFaucetId = getFeeFaucetId();
 
   await page.goto("http://localhost:8080");
 
   await page.evaluate(
-    async ({ rpcUrl, storeName }) => {
+    async ({ rpcUrl, storeName, feeFaucetId }) => {
       // Import all SDK exports and attach to window
       const sdkExports = await import("./index.js");
       for (const [key, value] of Object.entries(sdkExports)) {
@@ -469,6 +456,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
       }
       window.client = client;
       window.rpcUrl = rpcUrl;
+      window.feeFaucetId = feeFaucetId;
       window.storeName = storeName;
 
       // ── Register helpers on window ──────────────────────────────
@@ -1142,16 +1130,37 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
         },
 
         createIntegrationClient: async () => {
+          // `null` from here means "no node reachable", and callers turn that
+          // into test.skip. A misconfigured fixture must not be able to borrow
+          // that meaning: without a fee faucet the client cannot be built at
+          // all, and swallowing that once turned 12 integration tests into
+          // silent skips while their shards still reported success.
+          if (!window.feeFaucetId) {
+            throw new Error(
+              "integration fixture is missing window.feeFaucetId - set it in " +
+                "setupBrowserPage from getFeeFaucetId(); a client without one " +
+                "cannot execute or screen notes on any 0.17 network"
+            );
+          }
           try {
             const uniqueName = `int_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
             const client = await window.WasmWebClient.createClient(
               window.rpcUrl,
               undefined,
               undefined,
-              uniqueName
+              uniqueName,
+              undefined, // logLevel
+              undefined, // useWorker, defaulted
+              undefined, // observability
+              window.feeFaucetId
             );
             return { client };
-          } catch {
+          } catch (err) {
+            // Keep the skip, but leave a trace: a future cause other than an
+            // unreachable node is otherwise invisible in the run output.
+            console.debug(
+              `integration client unavailable: ${err?.message ?? err}`
+            );
             return null;
           }
         },
@@ -1162,7 +1171,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
         getRpcUrl: () => window.rpcUrl,
       };
     },
-    { rpcUrl, storeName }
+    { rpcUrl, storeName, feeFaucetId }
   );
 }
 

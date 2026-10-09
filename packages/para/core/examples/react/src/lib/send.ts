@@ -15,8 +15,12 @@ export async function send(
     amount: amount * BigInt(1e8),
     type: "private",
     returnNote: true,
+    waitForConfirmation: true,
   });
-  await client.notes.sendPrivate({ note: result.note, to: toAddress });
+  await client.notes.sendPrivateOutput({
+    noteId: result.note.id(),
+    to: toAddress,
+  });
   return {
     txHash: result.txId.toHex(),
   };

@@ -1,4 +1,5 @@
 import {
+  isConsumableNow,
   resolveAccountRef,
   resolveNoteType,
   resolveTransactionIdHex,
@@ -226,9 +227,29 @@ export class TransactionsResource {
     // `note` valid so we can return it to the caller.
     const ownOutputs = new wasm.NoteArray();
     ownOutputs.push(note);
+    // Since 0.17 the kernel prices a NetworkAccountTarget note by calling
+    // `estimate_note_fee` on the target, so the emitting transaction reads
+    // foreign state. Declaring the account pins that state at the reference
+    // block instead of leaving the client to resolve it lazily, which it can
+    // only do for a public account it can reach.
+    //
+    // Pricing also caps this transaction at 20 blocks: `estimate_note_fee`
+    // applies the standards' default expiration delta, and an expiration can
+    // only be lowered, so it must be included within 20 blocks of its
+    // reference block or the node rejects it as expired.
+    const targetAccounts = new wasm.ForeignAccountArray();
+    targetAccounts.push(
+      wasm.ForeignAccount.public(
+        target.targetId(),
+        new wasm.AccountStorageRequirements()
+      )
+    );
     const builder =
       await this.#inner.feeAwareTransactionRequestBuilder(senderId);
-    const request = builder.withOwnOutputNotes(ownOutputs).build();
+    const request = builder
+      .withOwnOutputNotes(ownOutputs)
+      .withForeignAccounts(targetAccounts)
+      .build();
 
     const { txId, result } = await this.#submitOrSubmitWithProver(
       senderId,
@@ -309,9 +330,14 @@ export class TransactionsResource {
     // Save hex so we can reconstruct for submitNewTransaction.
     const accountId = resolveAccountRef(opts.account, wasm);
     const accountIdHex = accountId.toString();
-    const consumable = await this.#inner.getConsumableNotes(accountId);
+    // Block-locked notes cannot be consumed yet and would fail the whole
+    // transaction, so they are not "available" here either (notes.listAvailable
+    // applies the same rule).
+    const consumable = (
+      (await this.#inner.getConsumableNotes(accountId)) ?? []
+    ).filter((c) => isConsumableNow(c, accountIdHex));
 
-    if (!consumable || consumable.length === 0) {
+    if (consumable.length === 0) {
       return { txId: null, consumed: 0, remaining: 0 };
     }
 
@@ -449,10 +475,17 @@ export class TransactionsResource {
    *
    * With `operation: "custom"` you may pass an `anchor` from
    * {@link captureAnchor} to derive the summary at a pinned reference block
-   * rather than the current sync height. A co-signer verifying a proposal must
-   * use the proposer's anchor: since protocol 0.16 the summary binds the
-   * reference block commitment, so deriving it locally at a different height
-   * produces a different summary and the comparison always fails.
+   * rather than the current sync height. A co-signer verifying a summary that
+   * binds the reference block commitment must use the proposer's anchor:
+   * deriving such a summary locally at a different height produces a
+   * different summary and the comparison fails.
+   *
+   * The exception is a multisig request built by
+   * `client.feeAwareTransactionRequestBuilder`: its summary binds the block its
+   * auth args name, which the request declares, so previewing it without an
+   * anchor reproduces the proposal's summary at the current tip, once this
+   * client has synced to at least that block (the largest of
+   * `request.blockNumbers()`).
    */
   async preview(opts) {
     this.#client.assertNotTerminated();
@@ -767,7 +800,8 @@ export class TransactionsResource {
    * Capture a {@link ChainAnchor} at the current sync height for `request`,
    * pinning the reference block that a later execution can replay against.
    *
-   * The anchor tracks the creation blocks of the request's authenticated input
+   * The anchor tracks the blocks the request declares through
+   * `withBlockNumbers` and the creation blocks of its authenticated input
    * notes, so it stays valid for that request once the chain advances. Pass it
    * back to {@link preview}, {@link executeRequest}, or {@link submit} via
    * their `anchor` option. Serialize it with `anchor.serialize()` to ship it
@@ -788,44 +822,6 @@ export class TransactionsResource {
       );
     }
     return await this.#inner.chainAnchorForRequest(request);
-  }
-
-  /**
-   * Fetch the state and inclusion witness of each foreign account in
-   * `foreignAccounts`, anchored at `blockNum`.
-   *
-   * A `ForeignAccount.public` entry is fetched from the network, a
-   * `ForeignAccount.private` entry contributes its own state and only its
-   * inclusion proof is fetched, and a `ForeignAccount.prefetched` entry is
-   * returned as it was given. Declare the results back through
-   * `ForeignAccount.prefetched` and nothing is fetched for those accounts at
-   * execution time.
-   *
-   * Each witness opens against the account tree of `blockNum` alone, so the
-   * results are valid only for a transaction whose reference block is exactly
-   * `blockNum` — the anchor's block under {@link captureAnchor}, or the sync
-   * height at execution time otherwise. Do not sync between fetching these and
-   * executing; execution fails naming the account and the block.
-   *
-   * @param {ForeignAccount[]} foreignAccounts - Accounts to fetch inputs for.
-   * @param {number} blockNum - Block the witnesses are anchored at.
-   * @returns {Promise<AccountInputs[]>} Inputs, in the order given.
-   */
-  async foreignAccountInputs(foreignAccounts, blockNum) {
-    this.#client.assertNotTerminated();
-    const wasm = await this.#getWasm();
-    // The WASM array constructor consumes its elements; push borrows and clones
-    // each account so callers can reuse their handles after fetching inputs.
-    const accounts = new wasm.ForeignAccountArray();
-    for (const account of foreignAccounts ?? []) accounts.push(account);
-    const inputs = await this.#inner.getForeignAccountInputs(
-      accounts,
-      blockNum
-    );
-    // Browser returns the typed AccountInputsArray, Node a plain JS array.
-    return Array.isArray(inputs)
-      ? inputs
-      : Array.from({ length: inputs.length() }, (_, i) => inputs.get(i));
   }
 
   async submit(account, request, opts) {
@@ -1386,6 +1382,10 @@ class TransactionSubmission {
    * Persist the transaction into the local store, firing registered
    * transaction observers (e.g. PSWAP lineage tracking). Until this runs the
    * local store is unaware of the transaction.
+   *
+   * Browser stores require the stored account to match the execution input;
+   * a mismatch rejects before changing account state or transaction history.
+   * Check network status before resubmitting after a local apply failure.
    *
    * @returns {Promise<TransactionStoreUpdate>} The pre-apply store update.
    */

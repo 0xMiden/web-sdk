@@ -59,14 +59,24 @@ export interface UsePreviewResult {
  *
  * A returned summary proves the request, anchor and summary agree; it does not
  * prove intent. Its commitment covers the account delta, the note commitments,
- * the reference block, the expiration delta and the user params — not the
- * transaction script or advice inputs. Note that `expirationDelta()` returns 0
- * to mean no expiration was set, not that it has already expired.
+ * the reference block (the bound block, for a multisig), the expiration delta
+ * and the user params - not the transaction script or advice inputs. Note that
+ * `expirationDelta()` returns 0 to mean no expiration was set, not that it has
+ * already expired.
  *
  * Pass `anchor` to derive the summary at a pinned reference block. A co-signer
- * verifying a proposal must do this with the proposer's anchor: the summary
- * binds the reference block commitment, so deriving it at the local sync height
- * yields a different summary and the comparison always fails.
+ * verifying a summary that binds the reference block commitment must do this
+ * with the proposer's anchor: deriving it at the local sync height yields a
+ * different summary and the comparison fails.
+ *
+ * A multisig request built by `feeAwareTransactionRequestBuilder` takes no
+ * anchor. Its summary binds the block its auth args name, which the request
+ * declares, so it reproduces at the local tip once this client has synced to
+ * at least that block (the largest of `request.blockNumbers()`); below it the
+ * preview fails with "requested block N is after transaction reference block M".
+ * This hook does not sync first. Call `sync()` from `useMiden()` before
+ * previewing a received proposal, then confirm `client.getSyncHeight()` is at
+ * least that block: the provider's sync returns early while another sync runs.
  *
  * @example
  * ```tsx

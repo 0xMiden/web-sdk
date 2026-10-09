@@ -1,14 +1,13 @@
 use js_export_macro::js_export;
 use miden_client::block::BlockHeader as NativeBlockHeader;
 
-use super::account_id::AccountId;
 use super::word::Word;
 
 /// Public header for a block, containing commitments to the chain state and the proof attesting to
 /// the block's validity.
 ///
 /// Key fields include the previous block commitment, block number, chain/nullifier/note roots,
-/// transaction commitments (including the kernel), proof commitment, and a timestamp. Two derived
+/// the transaction commitment, the protocol configuration commitment, and a timestamp. Two derived
 /// values are exposed:
 /// - `sub_commitment`: sequential hash of all fields except the `note_root`.
 /// - `commitment`: a 2-to-1 hash of the `sub_commitment` and the `note_root`.
@@ -19,7 +18,7 @@ pub struct BlockHeader(NativeBlockHeader);
 #[js_export]
 impl BlockHeader {
     /// Returns the header version.
-    pub fn version(&self) -> u32 {
+    pub fn version(&self) -> u8 {
         self.0.version()
     }
 
@@ -76,10 +75,15 @@ impl BlockHeader {
         self.0.tx_commitment().into()
     }
 
-    /// Returns the transaction kernel commitment.
-    #[js_export(js_name = "txKernelCommitment")]
-    pub fn tx_kernel_commitment(&self) -> Word {
-        self.0.tx_kernel_commitment().into()
+    /// Returns the commitment to the protocol configuration this block was built under.
+    ///
+    /// The configuration itself carries the transaction, batch and block kernels and the fee
+    /// asset, which the header committed to individually before 0.17. Execution resolves the
+    /// configuration by this commitment, so a client that has not registered a matching one
+    /// cannot execute against this block.
+    #[js_export(js_name = "protocolConfigCommitment")]
+    pub fn protocol_config_commitment(&self) -> Word {
+        self.0.protocol_config_commitment().into()
     }
 
     /// Returns the block commitment, not a distinct proof commitment.
@@ -95,17 +99,6 @@ impl BlockHeader {
     /// Returns the block timestamp.
     pub fn timestamp(&self) -> u32 {
         self.0.timestamp()
-    }
-
-    /// Returns the account ID of the fungible faucet whose assets are accepted as the native
-    /// asset of the blockchain (i.e. the asset used for paying transaction verification fees).
-    ///
-    /// This is stored on-chain as part of the block's fee parameters, which means consumers can
-    /// discover the native faucet by reading any block header rather than hardcoding it per
-    /// network.
-    #[js_export(js_name = "feeFaucetId")]
-    pub fn fee_faucet_id(&self) -> AccountId {
-        self.0.fee_parameters().fee_faucet_id().into()
     }
 
     /// Returns the chain's verification base fee, in the fee asset's smallest unit.

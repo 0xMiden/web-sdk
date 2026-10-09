@@ -52,6 +52,7 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     feeAwareTransactionRequestBuilder: vi.fn().mockImplementation(async () => {
       const builder = {
         withOwnOutputNotes: vi.fn(() => builder),
+        withForeignAccounts: vi.fn(() => builder),
         withInputNotes: vi.fn(() => builder),
         withCustomScript: vi.fn(() => builder),
         build: vi.fn(() => ({})),
@@ -107,6 +108,7 @@ vi.mock("@miden-sdk/miden-sdk", () => {
       | ((pubKey: Uint8Array, signingInputs: Uint8Array) => Promise<Uint8Array>)
       | null,
     setSignCb: vi.fn(),
+    terminate: vi.fn(),
     free: vi.fn(),
   };
 
@@ -131,23 +133,53 @@ vi.mock("@miden-sdk/miden-sdk", () => {
   }
 
   return {
+    // Mirrors the real `@miden-sdk/miden-sdk` export shape (see
+    // `crates/web-client/js/index.js`) — the friendly string const, not the
+    // internal numeric WASM enum.
     AuthScheme: {
-      AuthRpoFalcon512: 2,
-      AuthEcdsaK256Keccak: 1,
+      Falcon: "falcon",
+      ECDSA: "ecdsa",
     },
+    // The numeric enum lives on the wasm module, which the package hands out
+    // through getWasmOrThrow.
+    getWasmOrThrow: vi.fn(async () => ({
+      AuthScheme: { AuthEcdsaK256Keccak: 1, AuthRpoFalcon512: 2 },
+    })),
+    // The real rule, so hooks are tested filtering rather than plumbing.
+    isConsumableNow: (
+      record: {
+        noteConsumability: () => Array<{
+          accountId: () => { toString: () => string };
+          consumptionStatus: () => { isConsumableNow: () => boolean };
+        }>;
+      },
+      accountIdHex?: string
+    ) =>
+      record
+        .noteConsumability()
+        .some(
+          (nc) =>
+            (accountIdHex == null ||
+              nc.accountId().toString() === accountIdHex) &&
+            nc.consumptionStatus().isConsumableNow()
+        ),
     WebClient,
     WasmWebClient: WebClient,
     AccountId: {
       fromHex: vi.fn((hex: string) => createMockAccountId(hex)),
       fromBech32: vi.fn((bech32: string) => createMockAccountId(bech32)),
     },
+    // `_live` lets a by-value consumer (the shared `sendPrivateOutputNote`
+    // mock) mark an address moved, so reusing one fails as it does in WASM.
     Address: {
       fromBech32: vi.fn((bech32: string) => ({
+        _live: true,
         accountId: vi.fn(() => createMockAccountId(bech32)),
         toString: vi.fn(() => bech32),
       })),
       fromAccountId: vi.fn(
         (accountId: ReturnType<typeof createMockAccountId>) => ({
+          _live: true,
           accountId: vi.fn(() => accountId),
           toString: vi.fn(() => accountId.toString()),
         })
@@ -398,6 +430,7 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     },
     TransactionRequestBuilder: class TransactionRequestBuilder {
       withOwnOutputNotes = vi.fn(() => this);
+      withForeignAccounts = vi.fn(() => this);
       withInputNotes = vi.fn(() => this);
       build = vi.fn(() => ({}));
     },
@@ -423,7 +456,15 @@ vi.mock("@miden-sdk/miden-sdk", () => {
       ),
     }),
     ForeignAccountArray: class ForeignAccountArray {
-      constructor(_accounts?: unknown[]) {}
+      // Records pushes: a test asserting a target was declared needs to read
+      // back what went in, not just that the array was constructed.
+      pushed: unknown[] = [];
+      constructor(accounts?: unknown[]) {
+        if (Array.isArray(accounts)) this.pushed = [...accounts];
+      }
+      push(account: unknown) {
+        this.pushed.push(account);
+      }
     },
     AccountStorageRequirements: class AccountStorageRequirements {},
     NoteFilter: vi.fn().mockImplementation((_type: unknown, ids?: unknown) => {
@@ -448,16 +489,34 @@ vi.mock("@miden-sdk/miden-sdk", () => {
       Unverified: 8,
     },
     TransactionId: {
-      fromHex: vi.fn((hex: string) => ({
-        toString: vi.fn(() => hex),
-        toHex: vi.fn(() => hex),
-        free: vi.fn(),
-      })),
+      fromHex: vi.fn((hex: string) => {
+        const handle = {
+          _live: true,
+          toString: vi.fn(() => hex),
+          toHex: vi.fn(() => {
+            if (!handle._live) throw new Error("null pointer passed to rust");
+            return hex;
+          }),
+          free: vi.fn(),
+        };
+        return handle;
+      }),
     },
     TransactionFilter: {
       all: vi.fn(() => ({})),
       uncommitted: vi.fn(() => ({})),
-      ids: vi.fn((ids: unknown) => ({ ids })),
+      // `ids` takes `Vec<TransactionId>`, which moves every handle out of its JS
+      // wrapper: a handle passed once is dead, and passing it again fails.
+      ids: vi.fn((ids: unknown[]) => {
+        const handles = ids.filter(
+          (id): id is { _live?: boolean } => !!id && typeof id === "object"
+        );
+        if (handles.some((id) => id._live === false)) {
+          throw new Error("null pointer passed to rust");
+        }
+        for (const id of handles) id._live = false;
+        return { ids };
+      }),
     },
     AccountFile: class AccountFile {
       account() {
