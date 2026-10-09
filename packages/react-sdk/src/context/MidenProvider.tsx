@@ -36,6 +36,13 @@ const MidenContext = createContext<MidenContextValue | null>(null);
 
 interface MidenProviderProps {
   children: ReactNode;
+  /**
+   * Client configuration. Keep its identity stable: define it outside the
+   * component, or memoize it with `useMemo` when the component that renders
+   * `MidenProvider` re-renders. Without a signer provider, each new `config`
+   * object makes `MidenProvider` re-create its client and leave the replaced
+   * one running.
+   */
   config?: MidenConfig;
   /** Custom loading component shown during WASM initialization */
   loadingComponent?: ReactNode;
@@ -43,9 +50,15 @@ interface MidenProviderProps {
   errorComponent?: ReactNode | ((error: Error) => ReactNode);
 }
 
+// Stable identity for the default config. An inline `{}` default would produce
+// a new object on every render, invalidating the `resolvedConfig` memo below
+// and re-running the init effect (and rebuilding the WebClient) on every
+// store update.
+const EMPTY_CONFIG: MidenConfig = {};
+
 export function MidenProvider({
   children,
-  config = {},
+  config = EMPTY_CONFIG,
   loadingComponent,
   errorComponent,
 }: MidenProviderProps) {

@@ -117,12 +117,21 @@ export class AccountsResource {
     const authComponent =
       wasm.AccountComponent.createAuthComponentFromSecretKey(opts.auth);
 
-    // Schema commitment from `build()` is not a substitute for contract code; require explicit
-    // `components` so auth-only contracts are rejected at this layer.
+    // Schema commitment from `build()` is not a substitute for contract code: a contract needs at
+    // least one component exporting a non-auth procedure, or the account is created but nothing
+    // can call into it. Auth-only and storage-only contracts are rejected at this layer.
     const components = opts.components ?? [];
     if (components.length === 0) {
       throw new Error(
         "Contract accounts require at least one non-auth procedure: pass at least one entry in `components`."
+      );
+    }
+    const hasNonAuthProcedure = components.some((component) =>
+      component.getProcedures().some((procedure) => !procedure.isAuth)
+    );
+    if (!hasNonAuthProcedure) {
+      throw new Error(
+        "Contract accounts require at least one non-auth procedure: none of the entries in `components` exports one (only exports marked `@account_procedure` become non-auth procedures)."
       );
     }
 

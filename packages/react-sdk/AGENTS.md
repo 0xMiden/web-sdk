@@ -72,6 +72,11 @@ leave it out to keep the point they make legible; every real provider needs it.
 >
 ```
 
+Keep the `config` object's identity stable: define it outside the component,
+or memoize it with `useMemo` when the component that renders `MidenProvider`
+re-renders. Without a signer provider, each new `config` object makes
+`MidenProvider` re-create its client and leave the replaced one running.
+
 `errorComponent` accepts either a static element or a function. Only the
 function form is handed the `Error`, so use it whenever you want to show what
 actually failed.
@@ -380,6 +385,10 @@ const display = formatAssetAmount(balance, 8);
 // User input: "0.01" with 8 decimals → 1000000n
 const amount = parseAssetAmount("0.01", 8);
 ```
+
+`parseAssetAmount` accepts an unsigned decimal string and throws for an empty,
+negative or malformed amount; `formatAssetAmount` puts a single leading minus on
+a negative value.
 
 ### Display Note Summary
 ```tsx
