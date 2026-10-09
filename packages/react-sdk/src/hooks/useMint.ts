@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import type {
+  MintNonFungibleOptions,
   MintOptions,
   TransactionStage,
   TransactionResult,
@@ -13,6 +14,23 @@ import { getNoteType } from "../utils/noteFilters";
 export interface UseMintResult {
   /** Mint tokens from a faucet to a target account */
   mint: (options: MintOptions) => Promise<TransactionResult>;
+  /** The transaction result */
+  result: TransactionResult | null;
+  /** Whether the transaction is in progress */
+  isLoading: boolean;
+  /** Current stage of the transaction */
+  stage: TransactionStage;
+  /** Error if transaction failed */
+  error: Error | null;
+  /** Reset the hook state */
+  reset: () => void;
+}
+
+export interface UseMintNonFungibleResult {
+  /** Mint one non-fungible asset from a non-fungible faucet to a target account */
+  mintNonFungible: (
+    options: MintNonFungibleOptions
+  ) => Promise<TransactionResult>;
   /** The transaction result */
   result: TransactionResult | null;
   /** Whether the transaction is in progress */
@@ -55,6 +73,31 @@ export interface UseMintResult {
  * ```
  */
 export function useMint(): UseMintResult {
+  return useMintAsset();
+}
+
+/**
+ * Hook to mint one non-fungible asset from a non-fungible faucet. The asset
+ * must be issued by `faucetId`; build it with
+ * `new NonFungibleAsset(faucetId, value)`.
+ *
+ * @example
+ * ```tsx
+ * const { mintNonFungible, isLoading } = useMintNonFungible();
+ *
+ * await mintNonFungible({
+ *   faucetId,
+ *   targetAccountId,
+ *   nonFungibleAsset: new NonFungibleAsset(AccountId.fromHex(faucetId), value),
+ * });
+ * ```
+ */
+export function useMintNonFungible(): UseMintNonFungibleResult {
+  const { mint, ...state } = useMintAsset();
+  return { mintNonFungible: mint, ...state };
+}
+
+function useMintAsset() {
   const { client, isReady, sync, runExclusive, prover } = useMiden();
   const runExclusiveSafe = runExclusive ?? runExclusiveDirect;
 
@@ -64,7 +107,9 @@ export function useMint(): UseMintResult {
   const [error, setError] = useState<Error | null>(null);
 
   const mint = useCallback(
-    async (options: MintOptions): Promise<TransactionResult> => {
+    async (
+      options: MintOptions | MintNonFungibleOptions
+    ): Promise<TransactionResult> => {
       if (!client || !isReady) {
         throw new Error("Miden client is not ready");
       }
@@ -79,15 +124,32 @@ export function useMint(): UseMintResult {
         // Convert string IDs to AccountId objects
         const targetAccountIdObj = parseAccountId(options.targetAccountId);
         const faucetIdObj = parseAccountId(options.faucetId);
+        const nonFungibleAsset =
+          "nonFungibleAsset" in options ? options.nonFungibleAsset : undefined;
+
+        if (
+          nonFungibleAsset &&
+          nonFungibleAsset.faucetId().toString() !== faucetIdObj.toString()
+        ) {
+          throw new Error(
+            "`nonFungibleAsset` must be issued by the faucet `faucetId`"
+          );
+        }
 
         setStage("proving");
         const txResult = await runExclusiveSafe(async () => {
-          const txRequest = await client.newMintTransactionRequest(
-            targetAccountIdObj,
-            faucetIdObj,
-            noteType,
-            BigInt(options.amount)
-          );
+          const txRequest = nonFungibleAsset
+            ? await client.newMintNonFungibleTransactionRequest(
+                targetAccountIdObj,
+                nonFungibleAsset,
+                noteType
+              )
+            : await client.newMintTransactionRequest(
+                targetAccountIdObj,
+                faucetIdObj,
+                noteType,
+                BigInt((options as MintOptions).amount)
+              );
 
           const txId = prover
             ? await client.submitNewTransactionWithProver(

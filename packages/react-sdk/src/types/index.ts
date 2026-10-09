@@ -27,6 +27,7 @@ import type {
   NoteExecutionHint,
   NoteRecipient,
   NoteScript,
+  NonFungibleAsset,
   StorageMode,
   PswapLineageRecord,
 } from "@miden-sdk/miden-sdk";
@@ -50,6 +51,7 @@ export type {
   NoteType,
   Note,
   AccountStorageMode,
+  NonFungibleAsset,
   PswapLineageRecord,
 };
 
@@ -206,7 +208,10 @@ export interface AccountsResult {
 
 export interface AccountResult {
   account: Account | null;
+  /** Fungible assets in the account vault. */
   assets: AssetBalance[];
+  /** Non-fungible assets in the account vault. */
+  nonFungibleAssets: NonFungibleAssetInfo[];
   isLoading: boolean;
   error: Error | null;
   refetch: () => Promise<void>;
@@ -218,6 +223,18 @@ export interface AssetBalance {
   amount: bigint;
   symbol?: string;
   decimals?: number;
+}
+
+/** A non-fungible asset in an account vault or a note. */
+export interface NonFungibleAssetInfo {
+  /** ID of the faucet that issued the asset (hex). */
+  faucetId: string;
+  /** Vault key of the asset (hex). Unique per asset. */
+  vaultKey: string;
+  /** Value word of the asset (hex). */
+  value: string;
+  /** The asset itself. Pass it as `nonFungibleAsset` to `useSendNonFungible` or `useCreateNetworkNote`. */
+  asset: NonFungibleAsset;
 }
 
 // Notes types
@@ -279,7 +296,10 @@ export interface NoteAsset {
 
 export interface NoteSummary {
   id: string;
+  /** Fungible assets on the note. */
   assets: NoteAsset[];
+  /** Non-fungible assets on the note. Always set by `getNoteSummary`. */
+  nonFungibleAssets?: NonFungibleAssetInfo[];
   sender?: string;
 }
 
@@ -303,6 +323,18 @@ export interface CreateFaucetOptions {
   decimals?: number;
   /** Maximum supply */
   maxSupply: bigint | number;
+  /** Storage mode. Default: private */
+  storageMode?: StorageMode;
+  /** Auth scheme. Default: AuthScheme.AuthRpoFalcon512 */
+  authScheme?: AuthScheme;
+}
+
+/** Options for a non-fungible faucet, which mints `NonFungibleAsset`s with `useMint`. */
+export interface CreateNonFungibleFaucetOptions {
+  /** Collection symbol (e.g., "ART") */
+  tokenSymbol: string;
+  /** Human-readable collection name. Defaults to `tokenSymbol` when omitted. */
+  tokenName?: string;
   /** Storage mode. Default: private */
   storageMode?: StorageMode;
   /** Auth scheme. Default: AuthScheme.AuthRpoFalcon512 */
@@ -347,6 +379,28 @@ export interface SendOptions {
   skipSync?: boolean;
   /** Send the full balance of this asset. When true, amount is ignored. */
   sendAll?: boolean;
+  /** true = build note in JS and return the Note object (e.g. for out-of-band delivery). Default: false */
+  returnNote?: boolean;
+}
+
+/** Options for `useSendNonFungible`: send one non-fungible asset. */
+export interface SendNonFungibleOptions {
+  /** Sender account ID */
+  from: AccountRef;
+  /** Recipient account ID */
+  to: AccountRef;
+  /** The non-fungible asset to send */
+  nonFungibleAsset: NonFungibleAsset;
+  /** Note type. Default: private */
+  noteType?: NoteVisibility;
+  /** Block height after which sender can reclaim note */
+  recallHeight?: number;
+  /** Block height after which recipient can consume note */
+  timelockHeight?: number;
+  /** Arbitrary data payload attached to the note */
+  attachment?: bigint[] | Uint8Array | number[];
+  /** Skip auto-sync before send. Default: false */
+  skipSync?: boolean;
   /** true = build note in JS and return the Note object (e.g. for out-of-band delivery). Default: false */
   returnNote?: boolean;
 }
@@ -434,6 +488,21 @@ export interface MintOptions {
   noteType?: NoteVisibility;
 }
 
+/** Options for `useMintNonFungible`: mint one non-fungible asset. */
+export interface MintNonFungibleOptions {
+  /** Target account to receive the minted asset */
+  targetAccountId: AccountRef;
+  /** Non-fungible faucet to mint from */
+  faucetId: AccountRef;
+  /**
+   * The asset to mint. It must be issued by `faucetId`; build it with
+   * `new NonFungibleAsset(faucetId, value)`.
+   */
+  nonFungibleAsset: NonFungibleAsset;
+  /** Note type. Default: private */
+  noteType?: NoteVisibility;
+}
+
 // Create-network-note options
 export interface CreateNetworkNoteOptions {
   /** Account that creates, funds, and submits the note (executing sender). */
@@ -452,6 +521,8 @@ export interface CreateNetworkNoteOptions {
   assetId?: AccountRef;
   /** Amount for `assetId`. */
   amount?: bigint | number;
+  /** Single non-fungible asset to lock into the note, in place of `assetId` and `amount`. */
+  nonFungibleAsset?: NonFungibleAsset;
   /** Extra attachment payload appended after the NetworkAccountTarget. */
   attachment?: bigint[] | Uint8Array | number[];
 }
