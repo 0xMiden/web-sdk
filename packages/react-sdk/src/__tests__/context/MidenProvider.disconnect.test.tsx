@@ -222,6 +222,20 @@ describe("MidenProvider resilient disconnect handling", () => {
         (WebClient.createClientWithExternalKeystore as ReturnType<typeof vi.fn>)
           .mock.calls.length
       ).toBe(initialCreateCount);
+
+      // The callback the client was built with now signs through signCb2.
+      const clientSignCb = (
+        WebClient.createClientWithExternalKeystore as ReturnType<typeof vi.fn>
+      ).mock.calls[0][6] as (
+        pubKey: Uint8Array,
+        signingInputs: Uint8Array
+      ) => Promise<Uint8Array>;
+      const pubKey = new Uint8Array([1]);
+      const signingInputs = new Uint8Array([2]);
+      signCb1.mockClear();
+      await clientSignCb(pubKey, signingInputs);
+      expect(signCb2).toHaveBeenCalledWith(pubKey, signingInputs);
+      expect(signCb1).not.toHaveBeenCalled();
     });
   });
 

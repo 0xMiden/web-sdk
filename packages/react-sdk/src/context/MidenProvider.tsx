@@ -206,15 +206,12 @@ export function MidenProvider({
     if (signerIsConnected === true && signerStoreName !== null) {
       const store = useMidenStore.getState();
 
-      // Same identity reconnecting and client already exists — hot-swap signCb
+      // Same identity reconnecting and client already exists: the wrapper the
+      // client was built with reads signCbRef, which the effect above keeps current.
       if (
         currentStoreNameRef.current === signerStoreName &&
         store.client !== null
       ) {
-        // Hot-swap the signCb on the existing WebClient instance.
-        // The worker reads this.signCb fresh on every callback invocation.
-        // signCbRef is already kept in sync by the dedicated useEffect above.
-        store.client.setSignCb(wrappedSignCb);
         setSignerConnected(true);
         return;
       }

@@ -496,9 +496,6 @@ export const createMockWebClient = (
       .fn()
       .mockResolvedValue({ toString: () => "0xnote_imported" }),
 
-    // Signer
-    setSignCb: vi.fn(),
-
     // Execute program
     executeProgram: vi.fn().mockResolvedValue(createMockFeltArray()),
 
@@ -555,7 +552,6 @@ type MockWebClientType = {
   storeIdentifier: ReturnType<typeof vi.fn>;
   exportNoteFile: ReturnType<typeof vi.fn>;
   importNoteFile: ReturnType<typeof vi.fn>;
-  setSignCb: ReturnType<typeof vi.fn>;
   executeProgram: ReturnType<typeof vi.fn>;
   free: ReturnType<typeof vi.fn>;
 };
