@@ -10,6 +10,7 @@ use miden_client::account::standards::auth::{
     NetworkAccount,
     NoAuth,
 };
+use miden_client::account::standards::faucets::NonFungibleFaucet;
 use miden_client::account::{
     Account as NativeAccount,
     AccountComponentInterface,
@@ -89,11 +90,15 @@ impl Account {
     // `from_procedures`, not `AccountInterface`, whose constructor asserts on exactly
     // one auth component and traps under `panic = "abort"`.
 
-    /// Returns true if the account exposes a fungible-faucet interface.
+    /// Returns true if the account exposes a fungible or non-fungible faucet interface.
     #[js_export(js_name = "isFaucet")]
     pub fn is_faucet(&self) -> bool {
         AccountComponentInterface::from_procedures(self.0.code().procedures())
             .contains(&AccountComponentInterface::FungibleFaucet)
+            || self
+                .0
+                .code()
+                .has_procedure(*NonFungibleFaucet::mint_and_send_root().mast_root())
     }
 
     /// Returns true if the account is a regular (non-faucet) account.

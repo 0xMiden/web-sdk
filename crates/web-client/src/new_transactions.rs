@@ -5,7 +5,7 @@ use js_export_macro::js_export;
 use miden_client::account::standards::auth::{FeeConversionInfo, MultisigAuthArgs};
 use miden_client::account::{AccountComponentInterfaceExt, AccountId as NativeAccountId};
 use miden_client::agglayer::B2AggNote;
-use miden_client::asset::{AssetAmount, FungibleAsset};
+use miden_client::asset::{AssetAmount, FungibleAsset, NonFungibleAsset as NativeNonFungibleAsset};
 use miden_client::crypto::FeltRng;
 use miden_client::note::{
     BlockNumber,
@@ -33,12 +33,14 @@ use miden_protocol::crypto::SequentialCommit;
 use crate::models::NoteType;
 use crate::models::account_id::AccountId;
 use crate::models::advice_inputs::AdviceInputs;
+use crate::models::asset::{AssetInput, native_asset};
 use crate::models::batch_item::BatchItem;
 use crate::models::chain_anchor::ChainAnchor;
 use crate::models::eth_address::EthAddress;
 use crate::models::felt::Felt;
 use crate::models::foreign_account::ForeignAccount;
 use crate::models::miden_arrays::{FeltArray, ForeignAccountArray};
+use crate::models::non_fungible_asset::NonFungibleAsset;
 use crate::models::note::Note;
 use crate::models::proven_transaction::ProvenTransaction;
 use crate::models::provers::TransactionProver;
@@ -142,6 +144,116 @@ impl WebClient {
             })?;
 
         Ok(send_transaction_request.into())
+    }
+
+    /// Builds a transaction request for a non-fungible faucet to mint `asset` to
+    /// `target_account_id` in a P2ID note. The request must be executed by the faucet that issued
+    /// `asset`.
+    #[js_export(js_name = "newMintNonFungibleTransactionRequest")]
+    pub async fn new_mint_non_fungible_transaction_request(
+        &self,
+        target_account_id: &AccountId,
+        asset: &NonFungibleAsset,
+        note_type: NoteType,
+    ) -> Result<TransactionRequest, JsErr> {
+        let asset: NativeNonFungibleAsset = asset.into();
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| {
+            from_str_err("Client not initialized while generating transaction request")
+        })?;
+
+        let builder = fee_aware_builder(client, asset.faucet_id()).await?;
+        let request = builder
+            .build_mint_non_fungible_asset(
+                asset,
+                target_account_id.into(),
+                note_type.into(),
+                client.rng(),
+            )
+            .map_err(|err| {
+                js_error_with_context(err, "failed to create mint transaction request")
+            })?;
+
+        Ok(request.into())
+    }
+
+    /// Builds a transaction request that sends one fungible or non-fungible asset from
+    /// `sender_account_id` to `target_account_id` in a P2ID note, or a P2IDE note when a reclaim
+    /// or timelock height is set.
+    #[js_export(js_name = "newSendAssetTransactionRequest")]
+    pub async fn new_send_asset_transaction_request(
+        &self,
+        sender_account_id: &AccountId,
+        target_account_id: &AccountId,
+        asset: AssetInput,
+        note_type: NoteType,
+        recall_height: Option<u32>,
+        timelock_height: Option<u32>,
+    ) -> Result<TransactionRequest, JsErr> {
+        let asset = native_asset(&asset)?;
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| {
+            from_str_err("Client not initialized while generating transaction request")
+        })?;
+
+        let mut payment_description = PaymentNoteDescription::new(
+            vec![asset],
+            sender_account_id.into(),
+            target_account_id.into(),
+        );
+        if let Some(recall_height) = recall_height {
+            payment_description =
+                payment_description.with_reclaim_height(BlockNumber::from(recall_height));
+        }
+        if let Some(height) = timelock_height {
+            payment_description =
+                payment_description.with_timelock_height(BlockNumber::from(height));
+        }
+
+        let builder = fee_aware_builder(client, sender_account_id.into()).await?;
+        let request = builder
+            .build_pay_to_id(payment_description, note_type.into(), client.rng())
+            .map_err(|err| {
+                js_error_with_context(err, "failed to create send transaction request")
+            })?;
+
+        Ok(request.into())
+    }
+
+    /// Builds a SWAP transaction request where either asset can be fungible or non-fungible.
+    #[js_export(js_name = "newSwapAssetsTransactionRequest")]
+    pub async fn new_swap_assets_transaction_request(
+        &self,
+        sender_account_id: &AccountId,
+        offered_asset: AssetInput,
+        requested_asset: AssetInput,
+        note_type: NoteType,
+        payback_note_type: NoteType,
+    ) -> Result<TransactionRequest, JsErr> {
+        let swap_transaction_data = SwapTransactionData::new(
+            sender_account_id.into(),
+            native_asset(&offered_asset)?,
+            native_asset(&requested_asset)?,
+        );
+
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| {
+            from_str_err("Client not initialized while generating transaction request")
+        })?;
+
+        let builder = fee_aware_builder(client, sender_account_id.into()).await?;
+        let request = builder
+            .build_swap(
+                &swap_transaction_data,
+                note_type.into(),
+                payback_note_type.into(),
+                client.rng(),
+            )
+            .map_err(|err| {
+                js_error_with_context(err, "failed to create swap transaction request")
+            })?;
+
+        Ok(request.into())
     }
 
     /// Builds a transaction request that bridges a fungible asset out to another network via the

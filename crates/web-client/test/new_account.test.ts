@@ -229,29 +229,32 @@ test.describe("new_faucet tests", () => {
     expect(result.isNew).toEqual(true);
   });
 
-  test("throws an error when attempting to create a non-fungible faucet", async ({
-    run,
-  }) => {
+  test("creates a new public, non-fungible faucet", async ({ run }) => {
     const result = await run(async ({ client, sdk }) => {
-      try {
-        await client.newFaucet(
-          sdk.AccountStorageMode.public(),
-          true,
-          "DAG",
-          "DAG",
-          8,
-          sdk.u64(10000000),
-          sdk.AuthScheme.AuthRpoFalcon512
-        );
-        return { threw: false, errorMessage: "" };
-      } catch (e) {
-        return { threw: true, errorMessage: e.message || String(e) };
-      }
+      const newFaucet = await client.newFaucet(
+        sdk.AccountStorageMode.public(),
+        true,
+        "DAG",
+        "DAG",
+        0,
+        sdk.u64(0),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      return {
+        id: newFaucet.id().toString(),
+        nonce: newFaucet.nonce().toString(),
+        isFaucet: newFaucet.isFaucet(),
+        isRegularAccount: newFaucet.isRegularAccount(),
+        isPublic: newFaucet.isPublic(),
+        isNew: newFaucet.isNew(),
+      };
     });
-    expect(result.threw).toBe(true);
-    expect(result.errorMessage).toContain(
-      "Non-fungible faucets are not supported yet"
-    );
+    expect(result.id.startsWith("0x")).toBe(true);
+    expect(result.nonce).toEqual("0");
+    expect(result.isFaucet).toEqual(true);
+    expect(result.isRegularAccount).toEqual(false);
+    expect(result.isPublic).toEqual(true);
+    expect(result.isNew).toEqual(true);
   });
 
   test("throws an error when attempting to create a faucet with an invalid token symbol", async ({
