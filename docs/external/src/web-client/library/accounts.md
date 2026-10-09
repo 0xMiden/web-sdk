@@ -26,6 +26,10 @@ const faucet = await client.accounts.create({
   decimals: 8,
   maxSupply: 10_000_000n,
 });
+const collection = await client.accounts.create({
+  type: FaucetType.NonFungibleFaucet,
+  symbol: "NFT",
+});
 ```
 
 `FaucetType.FungibleFaucet` is the string `"FungibleFaucet"` on both runtimes,
@@ -34,13 +38,18 @@ so it cannot be mistaken for an `AccountType` value. Migrate older
 enum has wallet or contract members: omit `type` for a wallet, or pass
 `components` for a contract, and choose visibility with `storage` only.
 
-`accounts.create()` still reads the legacy selectors `0`, `1` and
-`"NonFungibleFaucet"` as faucet types (`0` fungible; the non-fungible ones are
-rejected, since non-fungible faucets are not supported yet). `0` and `1` are
-also the values of `AccountType.Private` and `AccountType.Public`, so never pass
-a visibility value as `type`: it is read as a legacy faucet selector. It throws
-a `TypeError` for any other `type`, for faucet fields (`name`, `symbol`,
-`decimals`, `maxSupply`) without a faucet type, for `components` on a faucet,
-and for a faucet missing `symbol`, `decimals` or `maxSupply`.
+`FaucetType.NonFungibleFaucet` is the string `"NonFungibleFaucet"`. A
+non-fungible faucet takes `symbol` and an optional `name`, and no `decimals` or
+`maxSupply`. See [non-fungible assets](./non-fungible-assets.md) to mint and
+transfer its assets.
+
+`accounts.create()` still reads the legacy selectors `0` (fungible) and `1`
+(non-fungible) as faucet types. They are also the values of
+`AccountType.Private` and `AccountType.Public`, so never pass a visibility value
+as `type`: it is read as a legacy faucet selector. It throws a `TypeError` for
+any other `type`, for faucet fields (`name`, `symbol`, `decimals`, `maxSupply`)
+without a faucet type, for `components` on a faucet, for a fungible faucet
+missing `symbol`, `decimals` or `maxSupply`, for a non-fungible faucet missing
+`symbol`, and for a non-fungible faucet given `decimals` or `maxSupply`.
 
 Wallets default to private storage; faucets and contracts default to public.

@@ -109,12 +109,19 @@ leaves `accounts` at its last value, so don't gate UI on it. Read
 
 ### Get Account Details
 ```tsx
-const { account, assets, getBalance, isLoading, error, refetch } = useAccount(accountId);
+const { account, assets, nonFungibleAssets, getBalance, isLoading, error, refetch } =
+  useAccount(accountId);
 
 // account   - Account object: .id(), .nonce(), .bech32id(), .isFaucet()
-// assets    - AssetBalance[] of { assetId, amount, symbol?, decimals? }
+// assets    - AssetBalance[] of { assetId, amount, symbol?, decimals? } (fungible only)
+// nonFungibleAssets - NonFungibleAssetInfo[] of { faucetId, vaultKey, value, asset }
 // getBalance(faucetId) - bigint balance for one token
 ```
+
+`nonFungibleAssets` lists the NFTs in the vault. `faucetId`, `vaultKey` and
+`value` are hex strings; `vaultKey` is unique per NFT, so use it as the React
+key. `asset` is the `NonFungibleAsset` itself, which you pass to `useSend`,
+`useSwap` or `useCreateNetworkNote`.
 
 Prefer the hook's `getBalance(faucetId)`, which takes the id as a string.
 `account.vault().getBalance(...)` exists but wants an `AccountId` instance, not
@@ -219,6 +226,20 @@ await send({
 });
 ```
 
+To send an NFT, pass the `NonFungibleAsset` as `asset` in place of `assetId`
+and `amount`. `sendAll` does not apply. Passing `asset` together with
+`assetId`, `amount` or `sendAll` throws.
+
+```tsx
+const { nonFungibleAssets } = useAccount(senderAccountId);
+
+await send({
+  from: senderAccountId,
+  to: recipientAccountId,
+  asset: nonFungibleAssets[0].asset,
+});
+```
+
 ### Send to Multiple Recipients
 ```tsx
 const { multiSend } = useMultiSend();
@@ -268,8 +289,24 @@ const { mint } = useMint();
 
 await mint({
   faucetId: myFaucetId,
-  to: recipientAccountId,
+  targetAccountId: recipientAccountId,
   amount: 10000n,
+});
+```
+
+From a non-fungible faucet, pass `asset` in place of `amount`. The asset must
+be issued by `faucetId`, or the hook throws.
+
+```tsx
+import { AccountId, NonFungibleAsset, Word } from "@miden-sdk/miden-sdk";
+
+await mint({
+  faucetId: nftFaucetId,
+  targetAccountId: recipientAccountId,
+  asset: new NonFungibleAsset(
+    AccountId.fromHex(nftFaucetId),
+    new Word(new BigUint64Array([1n, 2n, 3n, 4n])) // the NFT's data
+  ),
 });
 ```
 
@@ -305,6 +342,10 @@ const { txId, note } = await createNetworkNote({
 note.isNetworkNote(); // true
 ```
 
+To lock one asset into the note, pass `assetId` and `amount` for a fungible
+asset, or `asset` for a `NonFungibleAsset`. Passing both `asset` and `assetId`
+throws.
+
 ### Create Faucet
 ```tsx
 const { createFaucet, faucet, isCreating, error, reset } = useCreateFaucet();
@@ -316,6 +357,28 @@ const account = await createFaucet({
   maxSupply: 1000000n,      // required. bigint | number
   storageMode: "public",    // "private" | "public". Default: "private"
   authScheme: 2,            // 2 = Falcon. Pass the number - see the trap above
+});
+
+// Non-fungible faucet: mints NonFungibleAssets with useMint({ asset }).
+// Takes no decimals or maxSupply; passing either throws.
+const nftFaucet = await createFaucet({
+  nonFungible: true,
+  tokenSymbol: "ART",
+  storageMode: "public",
+  authScheme: 2,
+});
+```
+
+### Swap Assets
+```tsx
+const { swap } = useSwap();
+
+// Each side is a fungible faucet id + amount, or one NonFungibleAsset.
+await swap({
+  accountId: myAccountId,
+  offeredAsset: myNft,              // or: offeredFaucetId + offeredAmount
+  requestedFaucetId: tokenFaucetId, // or: requestedAsset
+  requestedAmount: 500n,
 });
 ```
 
@@ -362,6 +425,8 @@ import { getNoteSummary, formatNoteSummary } from "@miden-sdk/react";
 
 const summary = getNoteSummary(note);
 const text = formatNoteSummary(summary);  // "1.5 TOKEN"
+// summary.nonFungibleAssets lists the note's NFTs; formatNoteSummary shows each
+// as "NFT <faucetId>", e.g. "1.5 TOKEN + NFT 0x1234... from mtst1..."
 ```
 
 ### Wait for Transaction Confirmation
@@ -639,7 +704,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | Hook | Data fields | Purpose |
 |------|-------------|---------|
 | `useAccounts()` | `accounts` (`wallets` mirrors it, `faucets` is always `[]`; both deprecated) | List local accounts. `error` is always `null` |
-| `useAccount(id)` | `account`, `assets`, `getBalance(faucetId)` | Account details + balances |
+| `useAccount(id)` | `account`, `assets`, `nonFungibleAssets`, `getBalance(faucetId)` | Account details, balances and NFTs |
 | `useNotes(filter?)` | `notes`, `consumableNotes`, `noteSummaries`, `consumableNoteSummaries` | Input notes + UI summaries |
 | `useNoteStream(filter?)` | streaming variant of `useNotes` | Auto-updates as notes arrive |
 | `useSyncState()` | `syncHeight`, `isSyncing`, `lastSyncTime`, `sync()` | Sync status + manual trigger |
@@ -656,19 +721,19 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | Hook | Action | Returns on success |
 |------|--------|--------------------|
 | `useCreateWallet()` | `createWallet({ storageMode })` | `Account` |
-| `useCreateFaucet()` | `createFaucet({ symbol, decimals, ... })` | `Account` |
+| `useCreateFaucet()` | `createFaucet({ tokenSymbol, decimals, maxSupply, ... })`, or `createFaucet({ nonFungible: true, tokenSymbol, ... })` | `Account` |
 | `useImportAccount()` | `importAccount(...)` | `Account` |
 | `useImportNote()` | `importNote(...)` | imported `InputNoteRecord` |
 | `useExportNote()` | `exportNote(...)` | serialized note bytes |
 | `useImportStore()` / `useExportStore()` | store import/export | bytes / `void` |
-| `useSend()` | `send({ from, to, assetId, amount, noteType })` | `SendResult` (with `txId`, `note`) |
+| `useSend()` | `send({ from, to, assetId, amount, noteType })`, or `asset` in place of `assetId` + `amount` for an NFT | `SendResult` (with `txId`, `note`) |
 | `useMultiSend()` | `multiSend({ from, recipients })` | `TransactionResult` |
 | `useBatch()` | `batch({ items })` - items are `{ account, request }` pairs | `BatchResult` (with `blockNumber`) |
-| `useMint()` | `mint({ faucetId, to, amount })` | `TransactionResult` |
+| `useMint()` | `mint({ faucetId, targetAccountId, amount })`, or `asset` in place of `amount` for an NFT | `TransactionResult` |
 | `useBridge()` | `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress })` | `TransactionResult` (emits an AggLayer B2AGG bridge-out note) |
 | `useCreateNetworkNote()` | `createNetworkNote({ accountId, target, script \| recipient, ... })` | `NetworkNoteResult` (`{ txId, note }`; note satisfies `note.isNetworkNote()`) |
 | `useConsume()` | `consume({ accountId, notes })` | `TransactionResult` |
-| `useSwap()` | `swap({ ... })` | `TransactionResult` |
+| `useSwap()` | `swap({ accountId, offeredFaucetId, offeredAmount, requestedFaucetId, requestedAmount })`; `offeredAsset` / `requestedAsset` for an NFT side | `TransactionResult` |
 | `usePswapCreate()` | `pswapCreate({ accountId, offeredFaucetId, offeredAmount, requestedFaucetId, requestedAmount, ... })` | `TransactionResult` (creates partial-swap note) |
 | `usePswapConsume()` | `pswapConsume({ accountId, note, fillAmount, noteFillAmount? })` - `note` accepts hex string \| `NoteId` \| `InputNoteRecord` \| `Note` | `TransactionResult` (fills PSWAP fully or partially) |
 | `usePswapCancel()` | `pswapCancel({ accountId, note })` - creator only, reclaims unfilled offered asset | `TransactionResult` |

@@ -4,6 +4,43 @@ title: Read and send non-fungible assets
 
 # Read and send non-fungible assets
 
+## Create a faucet, mint, send and swap
+
+```typescript
+import { FaucetType, NonFungibleAsset, Word } from "@miden-sdk/miden-sdk";
+
+const collection = await client.accounts.create({
+  type: FaucetType.NonFungibleFaucet,
+  name: "Collectible",
+  symbol: "NFT",
+});
+
+// The first two value elements are the token ID the faucet records as issued.
+const value = new Word(new BigUint64Array([1n, 2n, 3n, 4n]));
+const nft = new NonFungibleAsset(collection.id(), value);
+
+await client.transactions.mint({ account: collection, to: alice, asset: nft });
+// After Alice consumes the P2ID note:
+await client.transactions.send({ account: alice, to: bob, asset: nft });
+await client.transactions.swap({
+  account: bob,
+  offer: nft,
+  request: { token: tokenFaucet, amount: 100n },
+});
+```
+
+A non-fungible faucet takes `symbol` and an optional `name`; it has no
+`decimals` or `maxSupply`, and passing either throws. `Account.isFaucet()` is
+true for it. `mint` with `asset` requires that `account` is the faucet that
+issued the asset. A faucet issues each token ID once; minting the same token ID
+again fails. `send` with `asset` takes the same `type`, `reclaimAfter`,
+`timelockUntil` and `returnNote` options as a fungible send. `swap` accepts a
+`NonFungibleAsset` for `offer`, `request`, or both, and `createNetworkNote`
+accepts one in `assets`. Batch `send` and `mint` operations and `preview()`
+take the same `asset` form. Bridge and PSWAP remain fungible-only.
+
+## Read owned assets
+
 Read owned non-fungible assets after you restore and import an account with
 its complete vault. Local registration history is not required.
 
@@ -83,8 +120,8 @@ allow the note script.
 Use this note with `TransactionRequestBuilder.withOwnOutputNotes()` and the
 custom transaction flow in [Transactions](./transactions.md). The SDK does
 not supply or validate a registry-specific script or its allowlist. Use the
-contract's current script and input schema. The amount-based `send` helper
-remains a fungible-token API.
+contract's current script and input schema. For a plain transfer without a
+registry script, use `client.transactions.send({ account, to, asset })`.
 
 When the registry returns the NFA in a P2ID note, consume that note through
 the normal note-consumption flow. The asset then appears in the owner's

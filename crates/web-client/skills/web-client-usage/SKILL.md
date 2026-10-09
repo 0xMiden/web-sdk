@@ -309,6 +309,7 @@ AccountType.Public; // 1
 
 // accounts.create({ type }) selects a faucet:
 FaucetType.FungibleFaucet; // "FungibleFaucet"
+FaucetType.NonFungibleFaucet; // "NonFungibleFaucet"
 
 AuthScheme.Falcon; // default - Falcon-512 over Poseidon2
 AuthScheme.ECDSA; // EcdsaK256Keccak
@@ -323,14 +324,16 @@ separate enum exported for the low-level WASM APIs and is easy to confuse with
 `AuthScheme.Falcon` for the Poseidon2-based Falcon-512 scheme.
 
 `AccountType.Private` / `AccountType.Public` select visibility in
-`AccountBuilder.accountType()`. `FaucetType.FungibleFaucet` selects a fungible
-faucet in `accounts.create({ type })`; its value is a string, so it cannot be
-mistaken for an `AccountType` value. Replace older `AccountType.FungibleFaucet`
-references with `FaucetType.FungibleFaucet`: `create()` throws a `TypeError`
-for any unrecognised `type`, for faucet fields (`name`, `symbol`, `decimals`,
-`maxSupply`) without a faucet type, for `components` on a faucet, and for a
-faucet missing `symbol`, `decimals` or `maxSupply`. The legacy `0`, `1` and
-`"NonFungibleFaucet"` are still read as faucet types, and `0` / `1` are also
+`AccountBuilder.accountType()`. `FaucetType.FungibleFaucet` and
+`FaucetType.NonFungibleFaucet` select a faucet in `accounts.create({ type })`;
+their values are strings, so they cannot be mistaken for an `AccountType`
+value. Replace older `AccountType.FungibleFaucet` references with
+`FaucetType.FungibleFaucet`: `create()` throws a `TypeError` for any
+unrecognised `type`, for faucet fields (`name`, `symbol`, `decimals`,
+`maxSupply`) without a faucet type, for `components` on a faucet, for a fungible
+faucet missing `symbol`, `decimals` or `maxSupply`, and for a non-fungible
+faucet missing `symbol` or given `decimals` or `maxSupply`. The legacy `0`
+(fungible) and `1` (non-fungible) are still read as faucet types, and are also
 `AccountType.Private` / `Public`, so never pass a visibility value as `type`.
 
 Neither enum has wallet or contract members. Omit `type` for a wallet, or pass
@@ -340,8 +343,40 @@ are also accepted). Use `storage` to select visibility in `accounts.create()`.
 `StorageMode` has only `Public`/`Private`. There is no `StorageMode.Network`
 (accessing it yields `undefined`, which silently resolves to private).
 
-Non-fungible faucets are not supported yet, so `FaucetType` has no
-non-fungible member.
+## Mint, Send and Swap Non-Fungible Assets
+
+```typescript
+import { FaucetType, NonFungibleAsset, Word } from "@miden-sdk/miden-sdk";
+
+const collection = await client.accounts.create({
+  type: FaucetType.NonFungibleFaucet,
+  name: "Collectible",
+  symbol: "NFT",
+});
+
+// The first two value elements are the token ID the faucet records as issued.
+const value = new Word(new BigUint64Array([1n, 2n, 3n, 4n]));
+const nft = new NonFungibleAsset(collection.id(), value);
+
+await client.transactions.mint({ account: collection, to: alice, asset: nft });
+// After Alice consumes the P2ID note:
+await client.transactions.send({ account: alice, to: bob, asset: nft });
+await client.transactions.swap({
+  account: bob,
+  offer: nft,
+  request: { token: tokenFaucet, amount: 100n },
+});
+```
+
+A non-fungible faucet takes `symbol` and an optional `name`; it has no
+`decimals` or `maxSupply`, and passing either throws. `Account.isFaucet()` is
+true for it. `mint` with `asset` requires that `account` is the faucet that
+issued the asset. A faucet issues each token ID once; minting the same token ID
+again fails. `send` with `asset` takes the same `type`, `reclaimAfter`,
+`timelockUntil` and `returnNote` options as a fungible send. `swap` accepts a
+`NonFungibleAsset` for `offer`, `request`, or both, and `createNetworkNote`
+accepts one in `assets`. Batch `send` and `mint` operations and `preview()`
+take the same `asset` form. Bridge and PSWAP remain fungible-only.
 
 ## Read Non-Fungible Assets
 
@@ -384,7 +419,7 @@ For registry publishing, use `Note.withAttachments()` with a single name asset,
 public metadata, the registry's approved script and inputs, and
 `[new NetworkAccountTarget(registryId).toAttachment()]`. The registry account
 must be public. A tag alone does not make a network note. Consume the returned P2ID note to put
-the asset back in the vault. The amount-based `send` helper remains fungible-only.
+the asset back in the vault.
 
 ## Account Creation
 
