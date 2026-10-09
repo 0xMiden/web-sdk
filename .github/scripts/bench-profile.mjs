@@ -103,7 +103,7 @@ export const DEFAULT_PROFILE = Object.freeze({
    * Re-calibrate when the runner class, thread count, repetition count or the
    * workload changes; each invalidates this. See docs/benchmarks/calibration.md.
    */
-  thresholdPct: 5.4,
+  thresholdPct: 1.9,
   thresholdProvisional: false,
 
   /**
@@ -128,15 +128,15 @@ export const DEFAULT_PROFILE = Object.freeze({
     reps: 6,
     runner: "warp-ubuntu-latest-x64-8x",
     date: "2026-08-27",
-    sdPct: 1.45,
-    threeSigmaPct: 4.34,
-    maxObservedPct: 5.03,
+    sdPct: 0.62,
+    threeSigmaPct: 1.85,
+    maxObservedPct: 1.17,
     // The two workload parameters the floor is most sensitive to, recorded so a
     // port to another line cannot silently inherit a floor measured elsewhere.
     // The dominant residual noise is the proof-of-work grind, so a different
     // QUERY_POW_BITS is a different noise distribution, not a scaled one.
-    hashFn: "Blake3_256",
-    queryPowBits: 16,
+    hashFn: "Poseidon2",
+    queryPowBits: 17,
   }),
 
   /**

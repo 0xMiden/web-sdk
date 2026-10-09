@@ -68,14 +68,20 @@ export function MintConsumeDialog({
 
         <div className="space-y-4 py-4">
           {error ? (
-            <div className="bg-red-50 border border-red-200 p-4">
+            <div
+              className="bg-red-50 border border-red-200 p-4"
+              data-testid="para-e2e-mint-error"
+            >
               <p className="text-sm text-red-800 font-medium">Error</p>
               <p className="text-sm text-red-600 mt-1">{error}</p>
             </div>
           ) : progress ? (
             <>
               {/* Current Stage */}
-              <div className="flex items-center gap-4 p-4 bg-orange-50 border-2 border-[#FF5500]">
+              <div
+                className="flex items-center gap-4 p-4 bg-orange-50 border-2 border-[#FF5500]"
+                data-testid={`para-e2e-mint-stage-${progress.stage}`}
+              >
                 <div className="w-8 h-8 shrink-0">
                   {progress.stage === MintAndConsumeStage.ConsumedTokens ? (
                     <div className="w-8 h-8 bg-[#FF5500] flex items-center justify-center">

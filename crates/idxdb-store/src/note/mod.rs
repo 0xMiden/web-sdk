@@ -3,8 +3,15 @@ use alloc::vec::Vec;
 
 use miden_client::Word;
 use miden_client::account::AccountId;
-use miden_client::note::{BlockNumber, NoteDetailsCommitment, NoteScript, Nullifier};
+use miden_client::note::{
+    BlockNumber,
+    NoteDetailsCommitment,
+    NoteScript,
+    NoteScriptRoot,
+    Nullifier,
+};
 use miden_client::store::{
+    InputNoteCursor,
     InputNoteRecord,
     InputNoteState,
     NoteFilter,
@@ -21,11 +28,12 @@ use crate::promise::await_js;
 
 mod js_bindings;
 use js_bindings::{
-    idxdb_get_input_note_by_offset,
+    idxdb_get_input_note_after,
     idxdb_get_input_notes,
     idxdb_get_input_notes_from_details_commitments,
     idxdb_get_input_notes_from_ids,
     idxdb_get_input_notes_from_nullifiers,
+    idxdb_get_input_notes_from_script_roots,
     idxdb_get_note_script,
     idxdb_get_output_notes,
     idxdb_get_output_notes_from_details_commitments,
@@ -99,31 +107,33 @@ impl IdxdbStore {
             .collect::<Result<Vec<Nullifier>, _>>()
     }
 
-    pub(crate) async fn get_input_note_by_offset(
+    pub(crate) async fn get_input_note_after(
         &self,
         filter: NoteFilter,
         consumer: AccountId,
         block_start: Option<BlockNumber>,
         block_end: Option<BlockNumber>,
-        offset: u32,
+        cursor: Option<InputNoteCursor>,
     ) -> Result<Option<InputNoteRecord>, StoreError> {
         let states = input_note_state_discriminants(&filter).ok_or_else(|| {
             StoreError::QueryError(
-                "get_input_note_by_offset only supports state-based filters".to_string(),
+                "get_input_note_after only supports state-based filters".to_string(),
             )
         })?;
         let consumer_hex = consumer.to_hex();
-        let promise = idxdb_get_input_note_by_offset(
+        let promise = idxdb_get_input_note_after(
             self.db_id(),
             states,
             consumer_hex,
             block_start.map(|b| b.as_u32()),
             block_end.map(|b| b.as_u32()),
-            offset,
+            cursor.map(|c| c.consumed_block_height().as_u32()),
+            cursor.map(|c| c.consumed_tx_order()),
+            cursor.map(|c| c.details_commitment().to_hex()),
         );
 
         let notes: Vec<InputNoteIdxdbObject> =
-            await_js(promise, "failed to get input note by offset").await?;
+            await_js(promise, "failed to get input note after cursor").await?;
 
         notes.into_iter().next().map(parse_input_note_idxdb_object).transpose()
     }
@@ -159,12 +169,7 @@ fn input_note_state_discriminants(filter: &NoteFilter) -> Option<Vec<u8>> {
         NoteFilter::Consumed => Some(vec![
             InputNoteState::STATE_CONSUMED_AUTHENTICATED_LOCAL,
             InputNoteState::STATE_CONSUMED_UNAUTHENTICATED_LOCAL,
-            // `ConsumedExternal` has two serialized layouts: the legacy
-            // metadata-less one (8) and the metadata-bearing one (9) written
-            // by miden-client >= 0.15.4. Records in either layout are the
-            // same logical state, so the filter must match both.
             InputNoteState::STATE_CONSUMED_EXTERNAL,
-            InputNoteState::STATE_CONSUMED_EXTERNAL_V2,
         ]),
         NoteFilter::Committed => Some(vec![InputNoteState::STATE_COMMITTED]),
         NoteFilter::Expected => Some(vec![InputNoteState::STATE_EXPECTED]),
@@ -183,7 +188,8 @@ fn input_note_state_discriminants(filter: &NoteFilter) -> Option<Vec<u8>> {
         NoteFilter::List(_)
         | NoteFilter::Unique(_)
         | NoteFilter::Nullifiers(_)
-        | NoteFilter::DetailsCommitments(_) => None,
+        | NoteFilter::DetailsCommitments(_)
+        | NoteFilter::ScriptRoots(_) => None,
     }
 }
 
@@ -228,6 +234,11 @@ impl NoteFilterExt for NoteFilter {
                     commitments.iter().map(NoteDetailsCommitment::to_hex).collect();
                 idxdb_get_input_notes_from_details_commitments(db_id, commitments_as_str)
             },
+            NoteFilter::ScriptRoots(script_roots) => {
+                let script_roots_as_str: Vec<String> =
+                    script_roots.iter().map(NoteScriptRoot::to_hex).collect();
+                idxdb_get_input_notes_from_script_roots(db_id, script_roots_as_str)
+            },
         }
     }
 
@@ -260,7 +271,7 @@ impl NoteFilterExt for NoteFilter {
 
                 idxdb_get_output_notes(db_id, states)
             },
-            NoteFilter::Processing | NoteFilter::Unverified => {
+            NoteFilter::Processing | NoteFilter::ScriptRoots(_) | NoteFilter::Unverified => {
                 Promise::resolve(&JsValue::from(Array::new()))
             },
             NoteFilter::List(ids) => {

@@ -1,9 +1,9 @@
 {
   "name": "@miden-sdk/para-react",
-  "version": "0.15.9",
+  "version": "0.17.3",
   "description": "React hook that wires Para accounts into a Miden client",
   "license": "MIT",
-  "author": "Miden Labs",
+  "author": "Miden Contributors",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/0xMiden/web-sdk.git",
@@ -40,8 +40,10 @@
   },
   "files": [
     "dist",
+    "vite",
     "src",
     "README.md",
+    "AGENTS.md",
     "package.json"
   ],
   "sideEffects": [
@@ -52,14 +54,14 @@
     "prepack": "npm run build"
   },
   "peerDependencies": {
-    "@getpara/react-sdk-lite": "^2.11.0",
-    "@getpara/web-sdk": "^2.11.0",
-    "@miden-sdk/para": "^0.15.9",
-    "@miden-sdk/miden-sdk": "^0.15.9",
-    "@miden-sdk/react": "^0.15.9",
+    "@getpara/react-sdk-lite": "^3.18.0",
+    "@getpara/web-sdk": "^3.18.0",
+    "@miden-sdk/para": "^0.17.3",
+    "@miden-sdk/miden-sdk": "^0.17.3",
+    "@miden-sdk/react": "^0.17.3",
     "@tanstack/react-query": "^5.0.0",
     "react": "^18.0.0 || ^19.0.0",
-    "vite-plugin-node-polyfills": "^0.22.0"
+    "vite-plugin-node-polyfills": ">=0.23.1 <1.0.0"
   },
   "peerDependenciesMeta": {
     "vite-plugin-node-polyfills": {
@@ -67,16 +69,18 @@
     }
   },
   "devDependencies": {
-    "@getpara/react-sdk-lite": "^2.11.0",
-    "@getpara/web-sdk": "^2.11.0",
+    "@getpara/react-sdk-lite": "^3.18.0",
+    "@getpara/web-sdk": "^3.18.0",
     "@miden-sdk/miden-sdk": "workspace:*",
     "@miden-sdk/react": "workspace:*",
     "@tanstack/react-query": "^5.90.12",
     "@types/node": "^25.3.5",
     "@types/react": "^19.2.5",
+    "react-dom": "^19.2.8",
     "tsup": "^8.3.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
+    "viem": "^2.39.0",
     "@miden-sdk/para": "workspace:*"
   },
   "engines": {

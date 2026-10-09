@@ -13,6 +13,7 @@ const COUNTER_CODE = `
 
   #! Inputs:  []
   #! Outputs: [count]
+  @account_procedure
   pub proc get_count
       push.COUNTER_SLOT[0..2] exec.active_account::get_item
       # => [count]
@@ -23,6 +24,7 @@ const COUNTER_CODE = `
 
   #! Inputs:  []
   #! Outputs: []
+  @account_procedure
   pub proc increment_count
       push.COUNTER_SLOT[0..2] exec.active_account::get_item
       # => [count]
@@ -40,6 +42,17 @@ const COUNTER_CODE = `
 
 const COUNTER_SLOT_NAME = "miden::tutorials::counter";
 
+// A component whose only export is not marked `@account_procedure`, so it
+// compiles to a component with no account procedures.
+const STORAGE_ONLY_CODE = `
+  use miden::core::sys
+
+  pub proc helper
+      exec.sys::truncate_stack
+  end
+`;
+const STORAGE_ONLY_SLOT_NAME = "miden::tests::storage_only";
+
 // ════════════════════════════════════════════════════════════════
 // compile.component()
 // ════════════════════════════════════════════════════════════════
@@ -53,6 +66,7 @@ test.describe("compile.component()", () => {
         const client = await window.MidenClient.createMock();
         const component = await client.compile.component({
           code,
+          namespace: "external_contract::counter_contract",
           slots: [window.StorageSlot.emptyValue(slotName)],
         });
 
@@ -87,6 +101,7 @@ test.describe("compile.component()", () => {
         const client = await window.MidenClient.createMock();
         const component = await client.compile.component({
           code,
+          namespace: "external_contract::counter_contract",
           slots: [window.StorageSlot.emptyValue(slotName)],
         });
 
@@ -124,10 +139,12 @@ test.describe("compile.component()", () => {
 
         const compA = await client.compile.component({
           code,
+          namespace: "external_contract::counter_contract",
           slots: [window.StorageSlot.emptyValue(slotA)],
         });
         const compB = await client.compile.component({
           code,
+          namespace: "external_contract::counter_contract",
           slots: [window.StorageSlot.emptyValue(slotB)],
         });
 
@@ -143,6 +160,41 @@ test.describe("compile.component()", () => {
     expect(result.aHasProc).toBe(true);
     expect(result.bHasProc).toBe(true);
   });
+
+  test("links a dependency module the component imports", async ({ page }) => {
+    // Without linking, this component does not compile: it exec's a procedure
+    // from another module. The link path itself is pinned by the unit test
+    // (compiler.test.js), which asserts linkModule is used and buildLibrary is
+    // not; every link path produces the same procedure digest, so a digest
+    // comparison here could not tell them apart.
+    const result = await page.evaluate(
+      async ({ counterCode, slotName }) => {
+        const NS = "external_contract::counter_contract";
+        const componentCode = `
+          use external_contract::counter_contract
+          use miden::core::sys
+
+          @account_procedure
+          pub proc wrapped_increment
+            exec.counter_contract::increment_count
+            exec.sys::truncate_stack
+          end
+        `;
+
+        const client = await window.MidenClient.createMock();
+        const component = await client.compile.component({
+          code: componentCode,
+          slots: [window.StorageSlot.emptyValue(slotName)],
+          libraries: [{ namespace: NS, code: counterCode }],
+        });
+
+        return { hash: component.getProcedureHash("wrapped_increment") };
+      },
+      { counterCode: COUNTER_CODE, slotName: COUNTER_SLOT_NAME }
+    );
+
+    expect(result.hash).not.toBeNull();
+  });
 });
 
 // ════════════════════════════════════════════════════════════════
@@ -156,7 +208,8 @@ test.describe("compile.txScript()", () => {
       const script = await client.compile.txScript({
         code: `
           use miden::core::sys
-          begin
+          @transaction_script
+          pub proc main
             exec.sys::truncate_stack
           end
         `,
@@ -174,7 +227,8 @@ test.describe("compile.txScript()", () => {
         const script = await client.compile.txScript({
           code: `
             use external_contract::counter_contract
-            begin
+            @transaction_script
+            pub proc main
               call.counter_contract::increment_count
             end
           `,
@@ -208,7 +262,8 @@ test.describe("compile.txScript()", () => {
         const scriptWithLib = await client.compile.txScript({
           code: `
             use external_contract::counter_contract
-            begin
+            @transaction_script
+            pub proc main
               call.counter_contract::increment_count
             end
           `,
@@ -225,7 +280,8 @@ test.describe("compile.txScript()", () => {
         const scriptNoLib = await client.compile.txScript({
           code: `
             use miden::core::sys
-            begin
+            @transaction_script
+            pub proc main
               exec.sys::truncate_stack
             end
           `,
@@ -421,6 +477,7 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
 
         const component = await client.compile.component({
           code,
+          namespace: "external_contract::counter_contract",
           slots: [window.StorageSlot.emptyValue(slotName)],
         });
 
@@ -461,6 +518,7 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
 
         const component = await client.compile.component({
           code,
+          namespace: "external_contract::counter_contract",
           slots: [window.StorageSlot.emptyValue(slotName)],
         });
 
@@ -497,6 +555,7 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
 
         const component = await client.compile.component({
           code,
+          namespace: "external_contract::counter_contract",
           slots: [window.StorageSlot.emptyValue(slotName)],
         });
 
@@ -550,6 +609,48 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
     expect(errorMsg).toContain("at least one non-auth procedure");
   });
 
+  test("contract whose only component has no account procedure rejects", async ({
+    page,
+  }) => {
+    const result = await page.evaluate(
+      async ({ code, slotName }) => {
+        const client = await window.MidenClient.createMock();
+
+        const storageOnly = await client.compile.component({
+          code,
+          namespace: "external_contract::storage_only",
+          slots: [window.StorageSlot.emptyValue(slotName)],
+        });
+
+        const seed = new Uint8Array(32);
+        seed.fill(0x05);
+        const auth = window.AuthSecretKey.rpoFalconWithRNG(seed);
+
+        let message = null;
+        try {
+          await client.accounts.create({
+            type: "ImmutableContract",
+            storage: "public",
+            seed,
+            auth,
+            components: [storageOnly],
+          });
+        } catch (e: any) {
+          message = String(e?.message ?? e);
+        }
+
+        return {
+          procedureCount: storageOnly.getProcedures().length,
+          message,
+        };
+      },
+      { code: STORAGE_ONLY_CODE, slotName: STORAGE_ONLY_SLOT_NAME }
+    );
+
+    expect(result.procedureCount).toBe(0);
+    expect(result.message).toContain("at least one non-auth procedure");
+  });
+
   test("same seed yields same account ID across two builds", async ({
     page,
   }) => {
@@ -562,6 +663,7 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
         const client = await window.MidenClient.createMock();
         const component1 = await client.compile.component({
           code,
+          namespace: "external_contract::counter_contract",
           slots: [window.StorageSlot.emptyValue(slotName)],
         });
         const auth1 = window.AuthSecretKey.rpoFalconWithRNG(seed);
@@ -578,6 +680,7 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
         // duplicate-key error — all mock clients share the same DB.
         const component2 = await client.compile.component({
           code,
+          namespace: "external_contract::counter_contract",
           slots: [window.StorageSlot.emptyValue(slotName)],
         });
         const auth2 = window.AuthSecretKey.rpoFalconWithRNG(seed);
@@ -614,6 +717,7 @@ test.describe("transactions.execute()", () => {
         // Create the counter contract
         const component = await client.compile.component({
           code,
+          namespace: "external_contract::counter_contract",
           slots: [window.StorageSlot.emptyValue(slotName)],
         });
 
@@ -633,17 +737,16 @@ test.describe("transactions.execute()", () => {
         client.proveBlock();
         await client.sync();
 
-        // Compile the increment script
+        // Compile the increment script from the exact code installed on the account.
         const script = await client.compile.txScript({
           code: `
             use external_contract::counter_contract
-            begin
+            @transaction_script
+            pub proc main
               call.counter_contract::increment_count
             end
           `,
-          libraries: [
-            { namespace: "external_contract::counter_contract", code },
-          ],
+          libraries: [{ component }],
         });
 
         // Execute the transaction
@@ -670,6 +773,7 @@ test.describe("transactions.execute()", () => {
 
         const component = await client.compile.component({
           code,
+          namespace: "external_contract::counter_contract",
           slots: [window.StorageSlot.emptyValue(slotName)],
         });
 
@@ -691,13 +795,12 @@ test.describe("transactions.execute()", () => {
         const script = await client.compile.txScript({
           code: `
             use external_contract::counter_contract
-            begin
+            @transaction_script
+            pub proc main
               call.counter_contract::increment_count
             end
           `,
-          libraries: [
-            { namespace: "external_contract::counter_contract", code },
-          ],
+          libraries: [{ component }],
         });
 
         await client.transactions.execute({ account: account.id(), script });
@@ -738,6 +841,7 @@ test.describe("transactions.execute()", () => {
         // Create a target contract (the "foreign" account)
         const component = await client.compile.component({
           code,
+          namespace: "external_contract::counter_contract",
           slots: [window.StorageSlot.emptyValue(slotName)],
         });
         const seed1 = new Uint8Array(32);
@@ -762,7 +866,8 @@ test.describe("transactions.execute()", () => {
         const script = await client.compile.txScript({
           code: `
             use miden::core::sys
-            begin
+            @transaction_script
+            pub proc main
               exec.sys::truncate_stack
             end
           `,
@@ -795,6 +900,7 @@ test.describe("transactions.execute()", () => {
 
         const component = await client.compile.component({
           code,
+          namespace: "external_contract::counter_contract",
           slots: [window.StorageSlot.emptyValue(slotName)],
         });
         const seed = new Uint8Array(32);
@@ -816,7 +922,8 @@ test.describe("transactions.execute()", () => {
         const script = await client.compile.txScript({
           code: `
             use miden::core::sys
-            begin
+            @transaction_script
+            pub proc main
               exec.sys::truncate_stack
             end
           `,
@@ -851,6 +958,7 @@ test.describe("transactions.executeProgram()", () => {
 
         const component = await client.compile.component({
           code,
+          namespace: "external_contract::counter_contract",
           slots: [window.StorageSlot.emptyValue(slotName)],
         });
 
@@ -873,13 +981,12 @@ test.describe("transactions.executeProgram()", () => {
         const incrScript = await client.compile.txScript({
           code: `
             use external_contract::counter_contract
-            begin
+            @transaction_script
+            pub proc main
               call.counter_contract::increment_count
             end
           `,
-          libraries: [
-            { namespace: "external_contract::counter_contract", code },
-          ],
+          libraries: [{ component }],
         });
 
         await client.transactions.execute({
@@ -894,13 +1001,12 @@ test.describe("transactions.executeProgram()", () => {
         const readScript = await client.compile.txScript({
           code: `
             use external_contract::counter_contract
-            begin
+            @transaction_script
+            pub proc main
               call.counter_contract::get_count
             end
           `,
-          libraries: [
-            { namespace: "external_contract::counter_contract", code },
-          ],
+          libraries: [{ component }],
         });
 
         const feltArray = await client.transactions.executeProgram({

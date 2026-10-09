@@ -1,12 +1,10 @@
-export async function getBalance(accountId: string) {
-  const { MidenClient } = await import("@miden-sdk/miden-sdk");
+import type { MidenClient } from "@miden-sdk/miden-sdk";
 
-  const client = await MidenClient.create({ autoSync: true });
+export async function getBalance(client: MidenClient, accountId: string) {
   const account = await client.accounts.get(accountId);
   if (!account) {
     throw new Error("Account not found");
   }
-  client.terminate();
   return account
     .vault()
     .fungibleAssets()

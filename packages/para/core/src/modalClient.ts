@@ -1,4 +1,4 @@
-import { TxSummaryJson } from "./types";
+import { TxSummaryJson } from "./types.js";
 
 const createModalShell = (titleText: string) => {
   const existing = document.getElementById("para-signing-modal");

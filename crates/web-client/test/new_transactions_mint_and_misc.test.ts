@@ -43,6 +43,73 @@ test.describe("mint transaction tests", () => {
     expect(result.allHaveOneOutput).toBe(true);
     expect(result.balance).toEqual("3000");
   });
+
+  test("note collections throw catchable errors for out-of-bounds getNote", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+      const { transactionId: mintTransactionId, createdNoteId } =
+        await helpers.mockMint(wallet.id(), faucet.id());
+
+      const transactions = await client.getTransactions(
+        sdk.TransactionFilter.all()
+      );
+      const mintRecord = transactions.find(
+        (tx) => tx.id().toHex() === mintTransactionId
+      );
+      if (!mintRecord) {
+        throw new Error("expected the mint transaction record");
+      }
+      const outputNotes = mintRecord.outputNotes();
+
+      // A transaction record carries no input notes, so execute (without
+      // submitting) a consume of the minted note to get an InputNotes.
+      const note = (await client.getInputNote(createdNoteId)).toNote();
+      const consumeRequest = await client.newConsumeTransactionRequest(
+        [note],
+        wallet.id()
+      );
+      const inputNotes = (
+        await client.executeTransaction(wallet.id(), consumeRequest)
+      )
+        .executedTransaction()
+        .inputNotes();
+
+      // The browser build throws a bare string, the Node.js build an Error.
+      const errorOf = (call) => {
+        try {
+          call();
+          return "";
+        } catch (err) {
+          return String(err?.message ?? err);
+        }
+      };
+
+      return {
+        createdNoteId,
+        outputNoteId: outputNotes.getNote(0).id().toString(),
+        inputNoteId: inputNotes.getNote(0).id().toString(),
+        outputCount: outputNotes.numNotes(),
+        inputCount: inputNotes.numNotes(),
+        outputError: errorOf(() => outputNotes.getNote(outputNotes.numNotes())),
+        inputError: errorOf(() => inputNotes.getNote(inputNotes.numNotes())),
+        outputError256: errorOf(() => outputNotes.getNote(256)),
+        inputError256: errorOf(() => inputNotes.getNote(256)),
+      };
+    });
+
+    expect(result.outputNoteId).toBe(result.createdNoteId);
+    expect(result.inputNoteId).toBe(result.createdNoteId);
+    expect(result.outputError).toContain("OutputNotes index out of bounds");
+    expect(result.outputError).toContain(`index ${result.outputCount}`);
+    expect(result.inputError).toContain("InputNotes index out of bounds");
+    expect(result.inputError).toContain(`index ${result.inputCount}`);
+    expect(result.outputError256).toContain("OutputNotes index out of bounds");
+    expect(result.outputError256).toContain("index 256");
+    expect(result.inputError256).toContain("InputNotes index out of bounds");
+    expect(result.inputError256).toContain("index 256");
+  });
 });
 
 // NEW_CONSUME_TRANSACTION TESTS
@@ -85,6 +152,7 @@ test.describe("custom account component tests", () => {
 
         # Inputs: [KEY, VALUE]
         # Outputs: []
+        @account_procedure
         pub proc write_to_map
             # Setting the key value pair in the map
             push.MAP_SLOT[0..2]
@@ -97,6 +165,7 @@ test.describe("custom account component tests", () => {
 
         # Inputs: [KEY]
         # Outputs: [VALUE]
+        @account_procedure
         pub proc get_value_in_map
             push.MAP_SLOT[0..2]
             exec.active_account::get_map_item
@@ -105,6 +174,7 @@ test.describe("custom account component tests", () => {
 
         # Inputs: []
         # Outputs: [CURRENT_ROOT]
+        @account_procedure
         pub proc get_current_map_root
             push.MAP_SLOT[0..2] exec.active_account::get_item
             # => [CURRENT_ROOT]
@@ -117,7 +187,8 @@ test.describe("custom account component tests", () => {
         use miden_by_example::mapping_example_contract
         use miden::core::sys
 
-        begin
+        @transaction_script
+        pub proc main
             push.1.2.3.4
             push.0.0.0.0
             # => [KEY, VALUE]
@@ -145,8 +216,10 @@ test.describe("custom account component tests", () => {
       const storageMap = new sdk.StorageMap();
       const storageSlotMap = sdk.StorageSlot.map(MAP_SLOT_NAME, storageMap);
 
-      const accountComponentCode =
-        builder.compileAccountComponentCode(accountCode);
+      const accountComponentCode = builder.compileAccountComponentCodeWithPath(
+        "miden_by_example::mapping_example_contract",
+        accountCode
+      );
       const mappingAccountComponent = sdk.AccountComponent.compile(
         accountComponentCode,
         [storageSlotMap]
@@ -171,12 +244,9 @@ test.describe("custom account component tests", () => {
       );
       await client.newAccount(accountBuilderResult.account, false);
 
-      const accountCodeLib = builder.buildLibrary(
-        "miden_by_example::mapping_example_contract",
-        accountCode
+      builder.linkStaticAccountComponentCode(
+        mappingAccountComponent.componentCode()
       );
-
-      builder.linkStaticLibrary(accountCodeLib);
 
       const txScript = builder.compileTxScript(scriptCode);
 
@@ -230,6 +300,7 @@ test.describe("custom account component tests", () => {
 
         # Inputs: [KEY, VALUE]
         # Outputs: []
+        @account_procedure
         pub proc write_to_map
             # Setting the key value pair in the map
             push.MAP_SLOT[0..2]
@@ -242,6 +313,7 @@ test.describe("custom account component tests", () => {
 
         # Inputs: [KEY]
         # Outputs: [VALUE]
+        @account_procedure
         pub proc get_value_in_map
             push.MAP_SLOT[0..2]
             exec.active_account::get_map_item
@@ -250,6 +322,7 @@ test.describe("custom account component tests", () => {
 
         # Inputs: []
         # Outputs: [CURRENT_ROOT]
+        @account_procedure
         pub proc get_current_map_root
             push.MAP_SLOT[0..2] exec.active_account::get_item
             # => [CURRENT_ROOT]
@@ -262,7 +335,8 @@ test.describe("custom account component tests", () => {
         use miden_by_example::mapping_example_contract
         use miden::core::sys
 
-        begin
+        @transaction_script
+        pub proc main
             push.1.2.3.4
             push.0.0.0.0
             # => [KEY, VALUE]
@@ -290,8 +364,10 @@ test.describe("custom account component tests", () => {
       const storageMap = new sdk.StorageMap();
       const storageSlotMap = sdk.StorageSlot.map(MAP_SLOT_NAME, storageMap);
 
-      const accountComponentCode =
-        builder.compileAccountComponentCode(accountCode);
+      const accountComponentCode = builder.compileAccountComponentCodeWithPath(
+        "miden_by_example::mapping_example_contract",
+        accountCode
+      );
       const mappingAccountComponent = sdk.AccountComponent.compile(
         accountComponentCode,
         [storageSlotMap]
@@ -316,12 +392,9 @@ test.describe("custom account component tests", () => {
       );
       await client.newAccount(accountBuilderResult.account, false);
 
-      const accountCodeLib = builder.buildLibrary(
-        "miden_by_example::mapping_example_contract",
-        accountCode
+      builder.linkStaticAccountComponentCode(
+        mappingAccountComponent.componentCode()
       );
-
-      builder.linkStaticLibrary(accountCodeLib);
 
       const txScript = builder.compileTxScript(scriptCode);
 
@@ -397,6 +470,7 @@ test.describe("storage map test", () => {
 
         const MAP_SLOT = word("${MAP_SLOT_NAME}")
 
+        @account_procedure
         pub proc bump_map_item
         # map key
         push.1.1.1.1 # Map key
@@ -412,8 +486,10 @@ test.describe("storage map test", () => {
       `;
 
       const builder = await client.createCodeBuilder();
-      const accountComponentCode =
-        builder.compileAccountComponentCode(accountCode);
+      const accountComponentCode = builder.compileAccountComponentCodeWithPath(
+        "external_contract::bump_item_contract",
+        accountCode
+      );
       const bumpItemComponent = sdk.AccountComponent.compile(
         accountComponentCode,
         [sdk.StorageSlot.map(MAP_SLOT_NAME, storageMap)]
@@ -456,16 +532,14 @@ test.describe("storage map test", () => {
           .getMapItem(MAP_SLOT_NAME, MAP_KEY)
       );
 
-      const accountComponentLib = builder.buildLibrary(
-        "external_contract::bump_item_contract",
-        accountCode
+      builder.linkDynamicAccountComponentCode(
+        bumpItemComponent.componentCode()
       );
-
-      builder.linkDynamicLibrary(accountComponentLib);
 
       const txScript = builder.compileTxScript(
         `use external_contract::bump_item_contract
-        begin
+        @transaction_script
+        pub proc main
             call.bump_item_contract::bump_map_item
         end`
       );
@@ -632,7 +706,10 @@ test.describe("submitNewTransactionWithProver tests", () => {
         );
 
         const consumeTransactionRequest =
-          client.newConsumeTransactionRequest(createdNotes);
+          await client.newConsumeTransactionRequest(
+            createdNotes,
+            targetAccount.id()
+          );
 
         await client.submitNewTransaction(
           targetAccount.id(),
@@ -678,7 +755,10 @@ test.describe("submitNewTransactionWithProver tests", () => {
         );
 
         const consumeSentNoteRequest =
-          client.newConsumeTransactionRequest(sentNotes);
+          await client.newConsumeTransactionRequest(
+            sentNotes,
+            accountBuilderResult.account.id()
+          );
 
         const summary = await client.executeForSummary(
           accountBuilderResult.account.id(),
@@ -703,7 +783,7 @@ test.describe("submitNewTransactionWithProver tests", () => {
       expect(result.summaryInputNoteIds).toEqual(result.sentNoteIds);
     });
 
-    test("executeForSummary returns TransactionSummary for authorized transaction with matching salt", async ({
+    test("executeForSummary rejects when the transaction is already authorized", async ({
       run,
     }) => {
       const result = await run(async ({ client, sdk }) => {
@@ -712,30 +792,33 @@ test.describe("submitNewTransactionWithProver tests", () => {
           sdk.AuthScheme.AuthRpoFalcon512
         );
 
-        // Create a known salt value
-        const expectedSalt = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
+        // The account's key is in the keystore, so execution succeeds and no
+        // pending-authorization summary exists.
+        const transactionRequest = new sdk.TransactionRequestBuilder().build();
 
-        // Build transaction request with the salt as auth_arg
-        const transactionRequest = new sdk.TransactionRequestBuilder()
-          .withAuthArg(expectedSalt)
-          .build();
-
-        const summary = await client.executeForSummary(
-          senderAccount.id(),
-          transactionRequest
-        );
-
-        return {
-          inputNotesCount: summary.inputNotes().numNotes(),
-          outputNotesCount: summary.outputNotes().numNotes(),
-          saltHex: summary.salt().toHex(),
-          expectedSaltHex: expectedSalt.toHex(),
-        };
+        try {
+          await client.executeForSummary(
+            senderAccount.id(),
+            transactionRequest
+          );
+          return { threw: false, code: null, message: "" };
+        } catch (error) {
+          return {
+            threw: true,
+            code: (error as { code?: string }).code ?? null,
+            message: `${(error as Error).message ?? error}`,
+          };
+        }
       });
 
-      expect(result.inputNotesCount).toBe(0);
-      expect(result.outputNotesCount).toBe(0);
-      expect(result.saltHex).toBe(result.expectedSaltHex);
+      expect(result.threw).toBe(true);
+      // Browser errors carry the code as a property; the Node binding's `code`
+      // is napi's fixed Status enum, so the code prefixes the message there.
+      expect(
+        result.code === "TRANSACTION_ALREADY_AUTHORIZED" ||
+          result.message.startsWith("TRANSACTION_ALREADY_AUTHORIZED")
+      ).toBe(true);
+      expect(result.message).toContain("already fully authorized");
     });
   });
 });

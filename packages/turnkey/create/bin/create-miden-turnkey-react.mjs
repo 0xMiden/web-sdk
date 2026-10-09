@@ -76,9 +76,9 @@ try {
 
   pkg.dependencies = {
     ...pkg.dependencies,
-    "@miden-sdk/miden-sdk": "^0.15.1",
-    "@miden-sdk/turnkey": "^1.15.1",
-    "@miden-sdk/turnkey-react": "^1.15.1",
+    "@miden-sdk/miden-sdk": "^0.16.2",
+    "@miden-sdk/turnkey": "^0.16.2",
+    "@miden-sdk/turnkey-react": "^0.16.2",
     "@turnkey/react-wallet-kit": "^1.6.2",
     buffer: "^6.0.3",
     process: "^0.11.10",
@@ -88,7 +88,7 @@ try {
   pkg.devDependencies = {
     ...pkg.devDependencies,
     "@rollup/plugin-inject": "^5.0.5",
-    "vite-plugin-node-polyfills": "^0.22.0",
+    "vite-plugin-node-polyfills": "^0.24.0",
     "vite-plugin-wasm": "^3.3.0",
     "vite-plugin-top-level-await": "^1.4.4",
   };

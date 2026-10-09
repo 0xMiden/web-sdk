@@ -5,6 +5,11 @@
     "moduleResolution": "Node",
     "baseUrl": ".",
     "paths": {
+      // "baseUrl": "." makes TS try BARE specifiers against this directory
+      // first, where ./vite/ is the node10 subpath shim for
+      // "@miden-sdk/para-react/vite" -- without this mapping it shadows the
+      // real vite package and `import type { Plugin } from "vite"` breaks.
+      "vite": ["./node_modules/vite", "../../../node_modules/vite"],
       "@miden-sdk/para": ["../core/src/index.ts"],
       "@getpara/web-sdk": [
         "./node_modules/@getpara/web-sdk",

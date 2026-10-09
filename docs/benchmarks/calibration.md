@@ -8,11 +8,27 @@ The PR comment posted by the proving benchmark says whether a movement is
 "beyond the noise floor". That sentence is only worth reading if the floor is a
 number somebody measured on the runner the benchmark actually uses.
 
-**This has been done.** `thresholdPct` in `.github/scripts/bench-profile.mjs`
-is 5.4%, calibrated on
-`warp-ubuntu-latest-x64-8x` on 2026-08-27 — see *The measurement* below. This
-page is how it was derived and how to redo it, which is required whenever the
-runner class, thread count, repetition count or workload changes.
+**This line is calibrated.** `thresholdPct` in
+`.github/scripts/bench-profile.mjs` is **1.9%**, measured on
+`warp-ubuntu-latest-x64-8x` on 2026-08-27 — see *The measurement on this line*
+below. Re-run this procedure whenever the runner class, thread count,
+repetition count or workload changes; each invalidates the number.
+
+Note it is **not** `main`'s 5.4%, and the two must not be swapped. The floors
+differ by 2.8x for two measurable reasons:
+
+| | `main` (0.15) | here (0.16) |
+|---|---|---|
+| `QUERY_POW_BITS` | 16 | **17** |
+| prover hash | Blake3_256 | **Poseidon2** |
+| prove time | ~2.1 s | ~6.8 s |
+| measured σ | 1.447% | **0.618%** |
+| floor | 5.4% | **1.9%** |
+
+The grind is the dominant residual noise source for this estimator, and a
+longer proof makes it a smaller fraction of the total — which is why this line
+is *quieter* despite the larger grind parameter, and why its floor is tighter
+rather than wider.
 
 ## What a calibration run is
 
@@ -31,11 +47,40 @@ Locally:
 make bench-proving-calibrate
 ```
 
-## The measurement (2026-08-27)
+## The measurement on this line (2026-08-27)
 
 30 dispatch runs of one build against a copy of itself on
-`warp-ubuntu-latest-x64-8x` at `reps: 6`. True delta is zero by construction, so
-every number below is measurement noise.
+`warp-ubuntu-latest-x64-8x` at `reps: 6`, proving with **Poseidon2** under
+`miden-air 0.29.4`, **`QUERY_POW_BITS = 17`**. True delta is zero by
+construction, so every number is measurement noise.
+
+| | |
+|---|---|
+| runs | 30 (all succeeded) |
+| mean | **-0.085%** (standard error 0.113% — 0.76 SE from zero) |
+| standard deviation | **0.618%** |
+| 3σ | 1.85% |
+| largest observed movement | **1.17%** |
+| `thresholdPct` set to | **1.9%** |
+
+**The mean is indistinguishable from zero**, so there is no residual bias
+between the two sides — the per-prove ABBA order flip is doing its job here as
+it does on `main`.
+
+**The floor is 3σ, and here that is the procedure rather than a deviation from
+it.** On `main` one no-change run landed past 3σ, which is why that line takes
+its floor from the empirical maximum instead. Nothing like that happened here:
+the largest movement across thirty no-change runs (1.17%) sits below 3σ
+(1.85%), so there is no evidence of a heavier-than-normal tail, and 1.9% leaves
+0.7pp of margin over anything actually observed.
+
+## The measurement on `main` (2026-08-27) — does not apply here
+
+Recorded for method and for comparison — **not** as this branch's floor. It was
+taken on `main`: 30 dispatch runs of one build against a copy of itself on
+`warp-ubuntu-latest-x64-8x` at `reps: 6`, proving with **Blake3** under
+`miden-air 0.23.5`, **`QUERY_POW_BITS = 16`**. True delta is zero by
+construction, so every number below is measurement noise — of that workload.
 
 | | |
 |---|---|

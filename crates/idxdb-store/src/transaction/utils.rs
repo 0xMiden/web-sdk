@@ -12,6 +12,7 @@ use miden_client::transaction::{
     TransactionStatus,
 };
 use miden_client::utils::Serializable;
+use miden_client_proto::encode;
 use serde::Serialize;
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -44,14 +45,12 @@ pub struct SerializedTransactionData {
 
 // ================================================================================================
 
-/// Converts an `ExecutedTransaction` into a `TransactionRecord` and inserts it into the store.
+/// Converts an `ExecutedTransaction` into a pending `TransactionRecord`.
 /// `submission_height` is the block number at which the transaction was submitted to the network.
-pub async fn insert_proven_transaction_data(
-    db_id: &str,
+pub(crate) fn build_transaction_record(
     executed_transaction: &ExecutedTransaction,
     submission_height: BlockNumber,
-) -> Result<(), StoreError> {
-    // Build transaction record
+) -> TransactionRecord {
     let nullifiers: Vec<Word> = executed_transaction
         .input_notes()
         .iter()
@@ -72,12 +71,22 @@ pub async fn insert_proven_transaction_data(
         creation_timestamp: crate::current_timestamp_u64(),
     };
 
-    let transaction_record = TransactionRecord::new(
+    TransactionRecord::new(
         executed_transaction.id(),
         details,
         executed_transaction.tx_args().tx_script().cloned(),
         TransactionStatus::Pending,
-    );
+    )
+}
+
+/// Converts an `ExecutedTransaction` into a `TransactionRecord` and inserts it into the store.
+/// `submission_height` is the block number at which the transaction was submitted to the network.
+pub async fn insert_proven_transaction_data(
+    db_id: &str,
+    executed_transaction: &ExecutedTransaction,
+    submission_height: BlockNumber,
+) -> Result<(), StoreError> {
+    let transaction_record = build_transaction_record(executed_transaction, submission_height);
 
     upsert_transaction_record(db_id, &transaction_record).await?;
 
@@ -91,16 +100,16 @@ pub(crate) fn serialize_transaction_record(
     let transaction_id: String = transaction_record.id.as_word().to_hex();
 
     let script_root = transaction_record.script.as_ref().map(|script| script.root().to_bytes());
-    let tx_script = transaction_record.script.as_ref().map(TransactionScript::to_bytes);
+    let tx_script = transaction_record.script.as_ref().map(encode::<TransactionScript>);
 
     SerializedTransactionData {
         id: transaction_id,
         script_root,
         tx_script,
-        details: transaction_record.details.to_bytes(),
+        details: encode(&transaction_record.details),
         block_num: transaction_record.details.block_num.as_u32(),
         status_variant: transaction_record.status.variant() as u8,
-        status: transaction_record.status.to_bytes(),
+        status: encode(&transaction_record.status),
     }
 }
 

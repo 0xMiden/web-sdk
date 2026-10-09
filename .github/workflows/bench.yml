@@ -141,11 +141,13 @@ jobs:
     # and a proving number is least useful. `!draft` is safe on workflow_dispatch
     # too, where `pull_request` is absent and the expression reads as null.
     #
-    # The noise floor in render-bench-comment.mjs was measured on a laptop, not on
-    # this runner class, so until it is remeasured the renderer reports movements
-    # as observations and withholds every ruling — see `thresholdProvisional`
-    # there. Calibrating on this runner (workflow_dispatch, calibrate: true) is
-    # therefore the first thing to do after this lands.
+    # The noise floor in render-bench-comment.mjs is calibrated for THIS line:
+    # 30 runs on this runner class at reps=6, proving with Poseidon2 under
+    # miden-air 0.29.4 at QUERY_POW_BITS = 17, giving sd 0.618% and a floor of
+    # 1.9%. It is deliberately not `main`'s 5.4% — the grind parameter and the
+    # prover hash both differ, and a longer proof makes the grind a smaller
+    # fraction of it, so this line is quieter. Re-calibrate if the runner class,
+    # thread count, repetition count or workload changes.
     #
     # Measure the floor with `workflow_dispatch` (`calibrate: true`) and the
     # procedure in docs/benchmarks/calibration.md, then set `thresholdPct` from
@@ -503,6 +505,14 @@ jobs:
       - name: Inject linked miden-client PR
         timeout-minutes: 5
         uses: ./.github/actions/inject-linked-client-pr
+
+      # And any "Protocol PR: #N" marker. The protocol crates reach this
+      # workspace transitively through miden-client, so they're pinned with a
+      # workspace-wide [patch.crates-io] block rather than a dep rewrite —
+      # which also redirects what the git-pinned miden-client compiles against.
+      - name: Inject linked protocol PR
+        timeout-minutes: 5
+        uses: ./.github/actions/inject-linked-protocol-pr
 
       # No fallback exists for this one — a missing head dist means no benchmark
       # at all — so the cap is here to make the failure legible and leave the

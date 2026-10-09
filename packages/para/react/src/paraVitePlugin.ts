@@ -12,6 +12,16 @@ export interface ParaVitePluginOptions {
 const STUB_PACKAGES = [
   "@getpara/solana-wallet-connectors",
   "@getpara/cosmos-wallet-connectors",
+  "@getpara/aa-alchemy",
+  "@getpara/aa-biconomy",
+  "@getpara/aa-cdp",
+  "@getpara/aa-gelato",
+  "@getpara/aa-pimlico",
+  "@getpara/aa-porto",
+  "@getpara/aa-rhinestone",
+  "@getpara/aa-safe",
+  "@getpara/aa-thirdweb",
+  "@getpara/aa-zerodev",
 ];
 
 const STUB_PREFIX = "\0para-stub:";

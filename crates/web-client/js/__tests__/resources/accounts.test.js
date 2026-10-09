@@ -2,10 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AccountsResource } from "../../resources/accounts.js";
 
 function makeWasm(overrides = {}) {
-  const accountTypeEnum = {
-    RegularAccountImmutableCode: 0,
-    RegularAccountUpdatableCode: 1,
-  };
   const fakeBuilderInstance = {
     accountType: vi.fn().mockReturnThis(),
     storageMode: vi.fn().mockReturnThis(),
@@ -26,7 +22,6 @@ function makeWasm(overrides = {}) {
       AuthEcdsaK256Keccak: 1,
       AuthRpoFalcon512: 2,
     },
-    AccountType: accountTypeEnum,
     AccountComponent: {
       createAuthComponentFromSecretKey: vi.fn().mockReturnValue("authComp"),
     },
@@ -55,6 +50,7 @@ function makeInner(overrides = {}) {
     removeAccountAddress: vi.fn().mockResolvedValue(undefined),
     accountReader: vi.fn().mockReturnValue({
       getBalance: vi.fn().mockResolvedValue(BigInt(100)),
+      free: vi.fn(),
     }),
     keystore: {
       getCommitments: vi.fn().mockResolvedValue(["key1"]),
@@ -67,6 +63,17 @@ function makeClient() {
   return { assertNotTerminated: vi.fn() };
 }
 
+// Stand-ins for compiled AccountComponents: accounts.create reads each one's
+// procedures to require at least one non-auth procedure across them.
+function callableComponent(name = "comp1") {
+  return { name, getProcedures: () => [{ isAuth: false }] };
+}
+function storageOnlyComponent(name = "storageOnly") {
+  return { name, getProcedures: () => [] };
+}
+function authOnlyComponent(name = "authOnly") {
+  return { name, getProcedures: () => [{ isAuth: true }] };
+}
 describe("AccountsResource", () => {
   let inner;
   let client;
@@ -267,13 +274,14 @@ describe("AccountsResource", () => {
     });
 
     it("creates immutable contract", async () => {
+      const comp1 = callableComponent();
       const resource = makeResource();
       const seed = new Uint8Array(32).fill(1);
       const result = await resource.create({
         type: "ImmutableContract",
         seed,
         auth: "authKey",
-        components: ["comp1"],
+        components: [comp1],
       });
       expect(
         wasm.AccountComponent.createAuthComponentFromSecretKey
@@ -289,13 +297,14 @@ describe("AccountsResource", () => {
     });
 
     it("creates contract when type='MutableContract'", async () => {
+      const comp1 = callableComponent();
       const resource = makeResource();
       const seed = new Uint8Array(32).fill(2);
       await resource.create({
         type: "MutableContract",
         seed,
         auth: "authKey",
-        components: ["comp1"],
+        components: [comp1],
       });
       const builderInstance = wasm.AccountBuilder.mock.results[0].value;
       expect(builderInstance.storageMode).toHaveBeenCalledWith("public");
@@ -304,14 +313,15 @@ describe("AccountsResource", () => {
     });
 
     it("creates contract when opts.components is present (no type)", async () => {
+      const comp1 = callableComponent();
       const resource = makeResource();
       await resource.create({
         seed: new Uint8Array(32),
         auth: "authKey",
-        components: ["comp1"],
+        components: [comp1],
       });
       const builderInstance = wasm.AccountBuilder.mock.results[0].value;
-      expect(builderInstance.withComponent).toHaveBeenCalledWith("comp1");
+      expect(builderInstance.withComponent).toHaveBeenCalledWith(comp1);
     });
 
     it("rejects empty components array (auth-only contracts not allowed)", async () => {
@@ -326,6 +336,52 @@ describe("AccountsResource", () => {
       ).rejects.toThrow(
         /Contract accounts require at least one non-auth procedure/
       );
+    });
+
+    it("rejects components none of which has a non-auth procedure", async () => {
+      const resource = makeResource();
+      const attempt = resource.create({
+        type: "ImmutableContract",
+        seed: new Uint8Array(32),
+        auth: "authKey",
+        components: [storageOnlyComponent()],
+      });
+      await expect(attempt).rejects.toThrow(
+        /Contract accounts require at least one non-auth procedure/
+      );
+      await expect(attempt).rejects.not.toThrow(/pass at least one entry/);
+      expect(inner.newAccountWithSecretKey).not.toHaveBeenCalled();
+    });
+
+    it("rejects components that export only auth procedures", async () => {
+      const resource = makeResource();
+      await expect(
+        resource.create({
+          type: "ImmutableContract",
+          seed: new Uint8Array(32),
+          auth: "authKey",
+          components: [authOnlyComponent()],
+        })
+      ).rejects.toThrow(
+        /Contract accounts require at least one non-auth procedure/
+      );
+      expect(inner.newAccountWithSecretKey).not.toHaveBeenCalled();
+    });
+
+    it("creates a contract with a storage-only component beside a callable one", async () => {
+      const resource = makeResource();
+      const storage = storageOnlyComponent();
+      const callable = callableComponent();
+      await resource.create({
+        type: "ImmutableContract",
+        seed: new Uint8Array(32),
+        auth: "authKey",
+        components: [storage, callable],
+      });
+      const builderInstance = wasm.AccountBuilder.mock.results[0].value;
+      expect(builderInstance.withComponent).toHaveBeenCalledWith(storage);
+      expect(builderInstance.withComponent).toHaveBeenCalledWith(callable);
+      expect(inner.newAccountWithSecretKey).toHaveBeenCalled();
     });
 
     it("rejects when components is missing entirely", async () => {
@@ -446,6 +502,38 @@ describe("AccountsResource", () => {
       expect(client.assertNotTerminated).toHaveBeenCalledOnce();
       expect(reader.getBalance).toHaveBeenCalled();
       expect(result).toBe(BigInt(50));
+    });
+
+    it("frees the reader once it has read the balance", async () => {
+      const resource = makeResource();
+      const result = await resource.getBalance("0xaccHex", "0xfaucetHex");
+      const reader = inner.accountReader.mock.results[0].value;
+      expect(result).toBe(BigInt(100));
+      expect(reader.free).toHaveBeenCalledOnce();
+    });
+
+    it("frees the reader once and keeps the error when reading fails", async () => {
+      const failure = new Error("read failed");
+      const reader = {
+        getBalance: vi.fn().mockRejectedValue(failure),
+        free: vi.fn(),
+      };
+      inner.accountReader.mockReturnValue(reader);
+      const resource = makeResource();
+      await expect(resource.getBalance("0xaccHex", "0xfaucetHex")).rejects.toBe(
+        failure
+      );
+      expect(reader.free).toHaveBeenCalledOnce();
+    });
+
+    it("still resolves to the balance with a reader that has no free", async () => {
+      inner.accountReader.mockReturnValue({
+        getBalance: vi.fn().mockResolvedValue(BigInt(7)),
+      });
+      const resource = makeResource();
+      await expect(
+        resource.getBalance("0xaccHex", "0xfaucetHex")
+      ).resolves.toBe(BigInt(7));
     });
   });
 
@@ -571,5 +659,161 @@ describe("AccountsResource", () => {
       expect(wasm.Address.fromBech32).toHaveBeenCalledWith("mBech32Addr");
       expect(inner.removeAccountAddress).toHaveBeenCalled();
     });
+  });
+
+  describe("isInvitationCodeValid", () => {
+    it.each([true, false])("returns the node's %s answer", async (answer) => {
+      inner.isInvitationCodeValid = vi.fn().mockResolvedValue(answer);
+      expect(await makeResource().isInvitationCodeValid("code")).toBe(answer);
+      expect(inner.isInvitationCodeValid).toHaveBeenCalledExactlyOnceWith(
+        "code"
+      );
+      expect(getWasm).not.toHaveBeenCalled();
+    });
+
+    it.each(["", undefined, null, 1, {}])(
+      "rejects invalid input %s before contacting the node",
+      async (code) => {
+        inner.isInvitationCodeValid = vi.fn();
+        await expect(
+          makeResource().isInvitationCodeValid(code)
+        ).rejects.toThrow("requires a non-empty 'invitationCode' string");
+        expect(inner.isInvitationCodeValid).not.toHaveBeenCalled();
+      }
+    );
+
+    it("propagates an RPC failure", async () => {
+      const failure = new Error("RPC unavailable");
+      inner.isInvitationCodeValid = vi.fn().mockRejectedValue(failure);
+      await expect(makeResource().isInvitationCodeValid("code")).rejects.toBe(
+        failure
+      );
+    });
+
+    it("rejects a terminated client before contacting the node", async () => {
+      client.assertNotTerminated.mockImplementation(() => {
+        throw new Error("Client terminated");
+      });
+      inner.isInvitationCodeValid = vi.fn();
+      await expect(
+        makeResource().isInvitationCodeValid("code")
+      ).rejects.toThrow("Client terminated");
+      expect(inner.isInvitationCodeValid).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("AccountsResource.create selector validation", () => {
+  const faucetFields = { symbol: "TOK", decimals: 8, maxSupply: 1000n };
+  // A complete contract request (seed and auth), so a masked selector would
+  // reach the builder rather than fail a contract precondition.
+  const contract = {
+    components: [callableComponent("component")],
+    seed: new Uint8Array(32),
+    auth: "secretKey",
+  };
+
+  function setup() {
+    const inner = makeInner();
+    const wasm = makeWasm();
+    const resource = new AccountsResource(
+      inner,
+      vi.fn().mockResolvedValue(wasm),
+      makeClient()
+    );
+    return { inner, wasm, resource };
+  }
+
+  it.each([
+    [
+      "an undefined type with faucet fields",
+      { type: undefined, ...faucetFields },
+    ],
+    ["faucet fields without a type", { ...faucetFields }],
+    ["a name without a type", { name: "Token" }],
+    ["an unknown type", { type: "Foo" }],
+    ["a null type", { type: null }],
+    ["an unknown type with components", { type: "Foo", ...contract }],
+    ["components with faucet fields", { ...contract, symbol: "TOK" }],
+    [
+      "a contract type with faucet fields",
+      { type: "MutableContract", ...contract, maxSupply: 1000n },
+    ],
+    [
+      "a faucet type with components",
+      {
+        type: "FungibleFaucet",
+        ...faucetFields,
+        components: contract.components,
+      },
+    ],
+    ["legacy 0 without faucet fields", { type: 0 }],
+    [
+      "a faucet type without symbol",
+      { type: "FungibleFaucet", decimals: 8, maxSupply: 1000n },
+    ],
+    [
+      "a faucet type without decimals",
+      { type: "FungibleFaucet", symbol: "TOK", maxSupply: 1000n },
+    ],
+    [
+      "a faucet type without maxSupply",
+      { type: "FungibleFaucet", symbol: "TOK", decimals: 8 },
+    ],
+  ])("rejects %s before creating any account", async (_label, opts) => {
+    const { inner, wasm, resource } = setup();
+
+    await expect(resource.create(opts)).rejects.toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        message: expect.stringMatching(/FaucetType/),
+      })
+    );
+    expect(inner.newWallet).not.toHaveBeenCalled();
+    expect(inner.newFaucet).not.toHaveBeenCalled();
+    expect(wasm.AccountBuilder).not.toHaveBeenCalled();
+  });
+
+  it("rejects an object type whose string conversion throws", async () => {
+    const { inner, resource } = setup();
+    const type = {
+      toString() {
+        throw new Error("no string form");
+      },
+    };
+
+    await expect(resource.create({ type })).rejects.toThrow(/FaucetType/);
+    expect(inner.newWallet).not.toHaveBeenCalled();
+  });
+
+  it("treats a malformed components value as a contract request, not a wallet", async () => {
+    const { inner, resource } = setup();
+
+    await expect(
+      resource.create({ ...contract, components: null })
+    ).rejects.toThrow(/non-auth procedure/);
+    expect(inner.newWallet).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["FaucetType.FungibleFaucet", "FungibleFaucet"],
+    ["legacy 0", 0],
+  ])("still creates a faucet for %s", async (_label, type) => {
+    const { inner, resource } = setup();
+
+    await resource.create({ type, ...faucetFields });
+
+    expect(inner.newFaucet).toHaveBeenCalledOnce();
+    // 0 is also AccountType.Private: a visibility value passed as `type` is
+    // read as the legacy fungible-faucet selector, as the docs state.
+    expect(inner.newFaucet.mock.calls[0][1]).toBe(false);
+  });
+
+  it("still creates a wallet when no type and no faucet fields are given", async () => {
+    const { inner, resource } = setup();
+
+    await resource.create({ storage: "public" });
+
+    expect(inner.newWallet).toHaveBeenCalledOnce();
   });
 });

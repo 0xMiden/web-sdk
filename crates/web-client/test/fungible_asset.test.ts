@@ -18,20 +18,15 @@ test.describe("fungible asset vault entries", () => {
       const faucetId = faucet.id();
 
       const asset = new sdk.FungibleAsset(faucetId, sdk.u64(10));
-      const enabled = asset.withCallbacks(sdk.AssetCallbackFlag.Enabled);
       // The two getters feed straight back into fromVaultEntry — no decoding.
-      const disabledRoundTripped = sdk.FungibleAsset.fromVaultEntry(
+      const roundTripped = sdk.FungibleAsset.fromVaultEntry(
         asset.vaultKey(),
         asset.intoWord()
       );
-      const enabledRoundTripped = sdk.FungibleAsset.fromVaultEntry(
-        enabled.vaultKey(),
-        enabled.intoWord()
-      );
       // The key + scalar amount convenience yields the same asset.
-      const enabledFromKey = sdk.FungibleAsset.fromVaultKey(
-        enabled.vaultKey(),
-        enabled.amount()
+      const fromKey = sdk.FungibleAsset.fromVaultKey(
+        asset.vaultKey(),
+        asset.amount()
       );
 
       // An amount above the maximum (2^63 - 2^31), encoded into the value word, is rejected.
@@ -40,7 +35,7 @@ test.describe("fungible asset vault entries", () => {
         const oversizedValue = new sdk.Word(
           sdk.u64Array([1n << 63n, 0n, 0n, 0n])
         );
-        sdk.FungibleAsset.fromVaultEntry(enabled.vaultKey(), oversizedValue);
+        sdk.FungibleAsset.fromVaultEntry(asset.vaultKey(), oversizedValue);
       } catch (_error) {
         oversizedAmountRejected = true;
       }
@@ -48,7 +43,7 @@ test.describe("fungible asset vault entries", () => {
       // fromVaultKey's own amount guard rejects an over-maximum scalar amount.
       let oversizedScalarRejected = false;
       try {
-        sdk.FungibleAsset.fromVaultKey(enabled.vaultKey(), sdk.u64(1n << 63n));
+        sdk.FungibleAsset.fromVaultKey(asset.vaultKey(), sdk.u64(1n << 63n));
       } catch (_error) {
         oversizedScalarRejected = true;
       }
@@ -57,40 +52,28 @@ test.describe("fungible asset vault entries", () => {
       let dirtyValueRejected = false;
       try {
         const dirtyValue = new sdk.Word(sdk.u64Array([10, 1, 0, 0]));
-        sdk.FungibleAsset.fromVaultEntry(enabled.vaultKey(), dirtyValue);
+        sdk.FungibleAsset.fromVaultEntry(asset.vaultKey(), dirtyValue);
       } catch (_error) {
         dirtyValueRejected = true;
       }
 
       return {
-        // The constructor never enables callbacks.
+        // A faucet without transfer policies issues assets that skip callbacks.
         defaultDisabled: asset.callbacks() === sdk.AssetCallbackFlag.Disabled,
-        // withCallbacks reflects the requested flag.
-        enabledFlag: enabled.callbacks() === sdk.AssetCallbackFlag.Enabled,
-        // withCallbacks returns a copy — the original is unchanged.
-        originalUntouched: asset.callbacks() === sdk.AssetCallbackFlag.Disabled,
-        // The flag is the only thing that changes; faucet and amount survive.
-        faucetPreserved: enabled.faucetId().toString() === faucetId.toString(),
-        amountPreserved: enabled.amount() === asset.amount(),
-        disabledCallbacksPreserved:
-          disabledRoundTripped.callbacks() === sdk.AssetCallbackFlag.Disabled,
-        disabledVaultKeyPreserved:
-          disabledRoundTripped.vaultKey().toHex() === asset.vaultKey().toHex(),
+        faucetPreserved:
+          roundTripped.faucetId().toString() === faucetId.toString(),
+        amountPreserved: roundTripped.amount() === asset.amount(),
         vaultKeyPreserved:
-          enabledRoundTripped.vaultKey().toHex() === enabled.vaultKey().toHex(),
+          roundTripped.vaultKey().toHex() === asset.vaultKey().toHex(),
         valuePreserved:
-          enabledRoundTripped.intoWord().toHex() === enabled.intoWord().toHex(),
-        encodedValue: Array.from(
-          enabledRoundTripped.intoWord().toU64s(),
-          String
-        ),
-        roundTrippedCallbacks:
-          enabledRoundTripped.callbacks() === sdk.AssetCallbackFlag.Enabled,
+          roundTripped.intoWord().toHex() === asset.intoWord().toHex(),
+        encodedValue: Array.from(roundTripped.intoWord().toU64s(), String),
+        roundTrippedCallbacks: roundTripped.callbacks() === asset.callbacks(),
         // fromVaultKey(key, amount) matches fromVaultEntry(key, value).
         fromVaultKeyMatches:
-          enabledFromKey.vaultKey().toHex() === enabled.vaultKey().toHex() &&
-          enabledFromKey.intoWord().toHex() === enabled.intoWord().toHex() &&
-          enabledFromKey.callbacks() === sdk.AssetCallbackFlag.Enabled,
+          fromKey.vaultKey().toHex() === asset.vaultKey().toHex() &&
+          fromKey.intoWord().toHex() === asset.intoWord().toHex() &&
+          fromKey.callbacks() === asset.callbacks(),
         oversizedAmountRejected,
         oversizedScalarRejected,
         dirtyValueRejected,
@@ -98,12 +81,8 @@ test.describe("fungible asset vault entries", () => {
     });
 
     expect(result.defaultDisabled).toBe(true);
-    expect(result.enabledFlag).toBe(true);
-    expect(result.originalUntouched).toBe(true);
     expect(result.faucetPreserved).toBe(true);
     expect(result.amountPreserved).toBe(true);
-    expect(result.disabledCallbacksPreserved).toBe(true);
-    expect(result.disabledVaultKeyPreserved).toBe(true);
     expect(result.vaultKeyPreserved).toBe(true);
     expect(result.valuePreserved).toBe(true);
     expect(result.encodedValue).toEqual(["10", "0", "0", "0"]);

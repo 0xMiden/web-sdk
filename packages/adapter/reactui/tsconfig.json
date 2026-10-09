@@ -19,7 +19,11 @@
     "downlevelIteration": true,
     "outDir": "dist",
     "declaration": true,
-    "sourceMap": true
+    "sourceMap": true,
+    // dist/*.js.map point at "../src/WalletModalProvider.tsx" etc, and
+    // "files": ["dist"] no longer ships those sources. Embed them in the map
+    // so consumer devtools can still step through original TypeScript.
+    "inlineSources": true
   },
   "include": ["src"],
   "typedocOptions": {

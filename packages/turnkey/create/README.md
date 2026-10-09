@@ -53,12 +53,13 @@ After creating your project:
 3. Edit `.env` with your Turnkey credentials:
    ```
    VITE_TURNKEY_ORGANIZATION_ID=your-organization-id
+   VITE_AUTH_PROXY_CONFIG_ID=your-auth-proxy-config-id
    ```
 
 4. (Optional) Customize Miden settings in `src/App.tsx`:
    ```typescript
    const midenConfig = {
-     nodeUrl: "https://rpc.miden.io",
+     nodeUrl: "https://rpc.testnet.miden.io",
      transportUrl: "https://transport.miden.io",
      accountSeed: "my-unique-seed",
      storageMode: "public" as const,
@@ -75,7 +76,7 @@ After creating your project:
 | Variable | Description |
 |----------|-------------|
 | `VITE_TURNKEY_ORGANIZATION_ID` | Your Turnkey organization ID |
-| `VITE_TURNKEY_API_BASE_URL` | Turnkey API URL (default: https://api.turnkey.com) |
+| `VITE_AUTH_PROXY_CONFIG_ID` | Your Turnkey auth proxy config ID |
 
 ## Miden Configuration
 
@@ -83,7 +84,7 @@ Miden settings are configured directly in `src/App.tsx` for flexibility:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `nodeUrl` | `https://rpc.miden.io` | Miden node RPC URL |
+| `nodeUrl` | `https://rpc.testnet.miden.io` | Miden node RPC URL |
 | `transportUrl` | `https://transport.miden.io` | Note transport service URL |
 | `accountSeed` | `miden-turnkey-demo` | Seed for deterministic account generation |
 | `storageMode` | `public` | Account storage mode (`public` or `private`) |
