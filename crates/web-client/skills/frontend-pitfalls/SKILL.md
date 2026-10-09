@@ -242,7 +242,7 @@ From 0.17.4 the SDK does not open a store a newer SDK wrote (one with a newer st
 
 Mitigations:
 
-- **Ship export/import before you ship an upgrade from a pre-0.17.0 SDK**, not with it. Users need a build that can back up while their data still exists. The surface is `useExportStore()` / `useImportStore()` in `@miden-sdk/react`, backed by the standalone `exportStore(storeName)` / `importStore(storeName, dump)` from `@miden-sdk/miden-sdk`. Per-object export/import also exists on the high-level client (`accounts.export` / `accounts.import`, `notes.export` / `notes.import`).
+- **A pre-0.17.0 store cannot be carried across.** Its data belongs to networks that no longer exist, and `importStore` refuses a dump exported by a client older than 0.17.0 (or with no client version stamp), as it refuses one from a newer SDK. Export/import is for backups and moving a store between devices on 0.17.0 or later. The surface is `useExportStore()` / `useImportStore()` in `@miden-sdk/react`, backed by the standalone `exportStore(storeName)` / `importStore(storeName, dump)` from `@miden-sdk/miden-sdk`. Per-object export/import also exists on the high-level client (`accounts.export` / `accounts.import`, `notes.export` / `notes.import`).
 - Warn users that clearing browser data deletes their wallet.
 - Consider external signers (Para, Turnkey, wallet adapters) for production - the key material lives outside the browser store, so only cached chain state is lost.
 - Each signer identity gets its own database (`MidenClientDB_<storeName>`), so `SignerContextValue.storeName` must be unique per user.
@@ -498,7 +498,7 @@ Verify: `crates/web-client/js/eager.js`.
 | FP4 | BigInt | HIGH | Hooks and the high-level `MidenClient` coerce `number`; strict `bigint` only at the low-level request constructors |
 | FP5 | Bech32 mismatch | HIGH | Match network in rpcUrl and addresses; the HRP is inferred from the `rpcUrl` string and falls back to testnet |
 | FP6 | Auto-sync | MEDIUM | Default 15000ms; prefer `useSyncControl()` over `autoSyncInterval: 0` |
-| FP7 | IndexedDB loss | HIGH | Upgrading from a pre-0.17.0 SDK clears the store once - ship `useExportStore`/`useImportStore` BEFORE upgrading; a newer SDK's store is refused |
+| FP7 | IndexedDB loss | HIGH | Upgrading from a pre-0.17.0 SDK clears the store once and its export cannot be imported; a newer SDK's store and export are refused |
 | FP8 | Vite config | MEDIUM | `midenVitePlugin()` has four options; bare call is right for ST, `crossOriginIsolation: true` only for `/mt` |
 | FP9 | StrictMode | LOW | Use MidenProvider, not manual `WasmWebClient.createClient()`; there is no debug-mode argument |
 | FP10 | Fee note in `outputNotes()` | CRITICAL | The list is one longer on a fee-charging chain; use `userOutputNotes()` / `feeNote()` on `ExecutedTransaction`, filter manually elsewhere |

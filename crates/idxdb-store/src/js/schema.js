@@ -135,7 +135,7 @@ function indexes(...items) {
 }
 // This store is the client, so its own bookkeeping belongs to the `Client` scope, which the
 // user-facing settings API never reaches.
-async function readClientVersion(settings) {
+export async function readClientVersion(settings) {
     const record = await settings.get([
         SETTING_SCOPE_CLIENT,
         CLIENT_VERSION_SETTING_KEY,

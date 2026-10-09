@@ -338,6 +338,13 @@ Raising `MIGRATION_BASELINE` clears nothing that already ran v8. State the new
 cutover up front in any upgrade plan: it destroys every locally-stored
 account, key and note in the user's browser.
 
+**An import skips every upgrade() callback.** `forceImportStore` writes a
+dump's rows in a plain transaction, so it takes only a dump this store could
+have kept: stamped by a client at or after `MIGRATION_BASELINE` and not newer
+than the running one. Anything else is refused before the target is cleared.
+A Dexie version that converts stored data must also convert, or refuse, a dump
+stamped by a client from before it, in `forceImportStore`.
+
 `ensureClientVersion` never clears. After `dexie.open()` it writes the running
 version when the stamp differs, for diagnostics and for a future cutover's
 threshold. An empty `clientVersion` warns and writes nothing.

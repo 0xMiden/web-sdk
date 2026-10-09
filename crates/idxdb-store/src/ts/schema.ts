@@ -366,7 +366,7 @@ function indexes(...items: string[]): string {
 
 // This store is the client, so its own bookkeeping belongs to the `Client` scope, which the
 // user-facing settings API never reaches.
-async function readClientVersion(
+export async function readClientVersion(
   settings: Dexie.Table<ISetting, [number, string]>
 ): Promise<string | null> {
   const record = await settings.get([
