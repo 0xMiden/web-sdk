@@ -1524,7 +1524,9 @@ Returns three async methods, one per output type:
 Each `libraries` entry takes `{ namespace, code, linking? }`. `linking` accepts
 the `Linking` enum (`Linking.Dynamic`, `Linking.Static`) or the raw strings
 `"dynamic"` / `"static"`. Dynamic is the default and matches the FPI pattern
-used in the tutorials.
+used in the tutorials. It is for procedures installed on an account the
+transaction reaches; a helper library installed on no account needs
+`Linking.Static`, or the script compiles and then fails at execution.
 
 ```tsx
 import { useCompile } from '@miden-sdk/react';

@@ -913,6 +913,8 @@ const script = await noteScript({
   libraries: [{ namespace: "my_lib", code: libSource, linking: Linking.Dynamic }],
 });
 ```
+
+  `Linking.Dynamic` is for procedures installed on an account the transaction reaches; a helper library installed on no account needs `Linking.Static`, or the script compiles and then fails at execution.
 - **Inside `useTransaction`'s `request` callback** the parameter is the raw WASM client. Use `await client.createCodeBuilder()` for compile, then build the `TransactionRequest` from `await client.feeAwareTransactionRequestBuilder(accountId)` and return it. The callback may be async; `request` accepts `TransactionRequest | Promise<TransactionRequest>`. Do not re-invoke the factory if a `ChainAnchor` is in play (see "Chain-Anchored Execution"). For the higher-level `MidenClient.compile.*` and `MidenClient.transactions.execute` resource API on a standalone `MidenClient`, see `web-client-usage`.
 
 ## Cross-SDK Type Reference

@@ -715,6 +715,10 @@ const script = await noteScript({
 });
 ```
 
+`Linking.Dynamic` is for procedures installed on an account the transaction
+reaches; a helper library installed on no account needs `Linking.Static`, or the
+script compiles and then fails at execution.
+
 ### Context (provider access)
 
 These read provider state rather than chain state, so they have no `refetch` and

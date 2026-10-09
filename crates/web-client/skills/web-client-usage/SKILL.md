@@ -742,7 +742,7 @@ nullified note.
 ```typescript
 const script = await client.compile.txScript({
   code: scriptMasm,
-  libraries: [{ namespace: "my::lib", code: libMasm, linking: "dynamic" }],
+  libraries: [{ component }], // the component `contract` was created with
 });
 
 await client.transactions.execute({
@@ -1181,18 +1181,23 @@ from; use the same namespace when linking that component into a script.
 
 - `{ namespace, code, linking? }` - built and linked inline. `code` is a
   library, not a program: it exports `pub proc`s and has no `begin ... end`
-  block. With one, compilation fails with `found an executable entrypoint in a
-  package declared with non-executable type`.
+  block. A `begin ... end` block makes it a program, and compilation fails with
+  `invalid program: procedure exports are not allowed` when it also has
+  `pub proc`s, or with `found an executable entrypoint in a package declared
+  with non-executable type` when it has none.
 - `{ component, linking? }` - links the **exact** code an `AccountComponent`
   installed. Use this when a script calls procedures installed on an account, so
   procedure identities match.
-- a pre-built `Library` object, linked dynamically.
+- a pre-built `Library` object, always linked dynamically: this form takes no
+  `linking`.
 
 `linking` is `"dynamic"` (default) or `"static"`. Dynamic is for procedures that
-are installed on an account, as in the custom-script example above. A helper
-library whose procedures are not installed on any account has to be `"static"`,
-which copies its code into the script. With `"dynamic"` such a script still
-compiles, then fails at execution with `procedure with root digest 0x...`.
+are installed on an account the transaction reaches, its own or a foreign one. A
+helper library whose procedures are not installed on any account has to be
+`"static"`, which copies its code into the script, so pass it as
+`{ namespace, code, linking: "static" }`, never as a pre-built `Library`. With
+`"dynamic"` such a script still compiles, then fails at execution with
+`procedure with root digest 0x...`.
 
 ### MASM shape
 

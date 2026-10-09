@@ -35,6 +35,10 @@ export interface UseCompileResult {
  *   libraries: [{ namespace: "my_lib", code: libSource, linking: Linking.Dynamic }],
  * });
  * ```
+ *
+ * `Linking.Dynamic` is for procedures installed on an account the transaction
+ * reaches; a helper library installed on no account needs `Linking.Static`, or
+ * the script compiles and then fails at execution.
  */
 export function useCompile(): UseCompileResult {
   const { client, isReady } = useMiden();
