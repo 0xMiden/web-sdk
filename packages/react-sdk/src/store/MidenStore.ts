@@ -33,6 +33,10 @@ interface MidenStoreState {
   // Temporal note tracking — records when each note ID was first observed
   noteFirstSeen: Map<string, number>;
 
+  // Advanced by every reset, so a fetch can tell its result belongs to a cache
+  // that no longer exists.
+  cacheGeneration: number;
+
   // Loading states
   isLoadingAccounts: boolean;
   isLoadingNotes: boolean;
@@ -104,6 +108,7 @@ function freshState() {
     signerConnected: null as boolean | null,
 
     ...freshCachedState(),
+    cacheGeneration: 0,
   };
 }
 
@@ -273,9 +278,17 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
 
   setLoadingNotes: (isLoadingNotes) => set({ isLoadingNotes }),
 
-  resetInMemoryState: () => set(freshCachedState()),
+  resetInMemoryState: () =>
+    set((state) => ({
+      ...freshCachedState(),
+      cacheGeneration: state.cacheGeneration + 1,
+    })),
 
-  reset: () => set(freshState()),
+  reset: () =>
+    set((state) => ({
+      ...freshState(),
+      cacheGeneration: state.cacheGeneration + 1,
+    })),
 }));
 
 const EMPTY_INPUT_NOTES: InputNoteRecord[] = [];

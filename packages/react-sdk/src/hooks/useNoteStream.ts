@@ -90,15 +90,23 @@ export function useNoteStream(
     setIsLoading(true);
     setError(null);
 
+    // The provider resets the store on a signer identity change while the old
+    // client's fetch may still be running; its result must not land in the new cache.
+    const generation = useMidenStore.getState().cacheGeneration;
+    const isStale = () =>
+      useMidenStore.getState().cacheGeneration !== generation;
+
     try {
       const filterType = getNoteFilterType(status);
       const filter = new NoteFilter(filterType);
       const fetched = await client.getInputNotes(filter);
+      if (isStale()) return;
       setNotesIfChanged(fetched, status);
     } catch (err) {
+      if (isStale()) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      setIsLoading(false);
+      if (!isStale()) setIsLoading(false);
     }
   }, [client, isReady, status, setNotesIfChanged]);
 

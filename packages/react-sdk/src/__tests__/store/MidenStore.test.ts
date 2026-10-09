@@ -18,6 +18,16 @@ beforeEach(() => {
 });
 
 describe("MidenStore", () => {
+  describe("cacheGeneration", () => {
+    it("advances on resetInMemoryState and reset", () => {
+      const start = useMidenStore.getState().cacheGeneration;
+      useMidenStore.getState().resetInMemoryState();
+      expect(useMidenStore.getState().cacheGeneration).toBe(start + 1);
+      useMidenStore.getState().reset();
+      expect(useMidenStore.getState().cacheGeneration).toBe(start + 2);
+    });
+  });
+
   describe("initial state", () => {
     it("should have correct initial state", () => {
       const state = useMidenStore.getState();

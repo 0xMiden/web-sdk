@@ -76,6 +76,12 @@ export function useNotes(options?: NotesFilter): NotesResult {
     setLoadingNotes(true);
     setError(null);
 
+    // The provider resets the store on a signer identity change while the old
+    // client's fetch may still be running; its result must not land in the new cache.
+    const generation = useMidenStore.getState().cacheGeneration;
+    const isStale = () =>
+      useMidenStore.getState().cacheGeneration !== generation;
+
     try {
       const filterType = getNoteFilterType(options?.status);
       const filter = new NoteFilter(filterType);
@@ -98,10 +104,13 @@ export function useNotes(options?: NotesFilter): NotesResult {
         );
       }
 
+      if (isStale()) return;
+
       // Smart refetch: only update store if note IDs changed (prevents unnecessary re-renders)
       setNotesIfChanged(fetchedNotes, filterKey);
       setConsumableNotesIfChanged(fetchedConsumable, accountKey);
     } catch (err) {
+      if (isStale()) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
       setLoadingNotes(false);

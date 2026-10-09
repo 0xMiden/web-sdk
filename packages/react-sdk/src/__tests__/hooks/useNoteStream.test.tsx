@@ -101,6 +101,54 @@ describe("useNoteStream", () => {
     });
   });
 
+  describe("fetches that outlive a store reset", () => {
+    it("drops a fetch result that lands after the store was reset", async () => {
+      let resolveA!: (value: unknown[]) => void;
+      const pendingA = new Promise<unknown[]>((res) => {
+        resolveA = res;
+      });
+      const clientA = createMockWebClient({
+        getInputNotes: vi.fn().mockReturnValue(pendingA),
+      });
+      const clientB = createMockWebClient({
+        getInputNotes: vi
+          .fn()
+          .mockResolvedValue([createStreamableNote("0xnoteB")]),
+      });
+      mockUseMiden.mockReturnValue({
+        client: clientA,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result, rerender } = renderHook(() => useNoteStream());
+      await waitFor(() => {
+        expect(clientA.getInputNotes).toHaveBeenCalledTimes(1);
+      });
+
+      act(() => {
+        useMidenStore.getState().resetInMemoryState();
+      });
+      mockUseMiden.mockReturnValue({
+        client: clientB,
+        isReady: true,
+        sync: vi.fn(),
+      });
+      rerender();
+      await waitFor(() => {
+        expect(result.current.notes.map((n) => n.id)).toEqual(["0xnoteB"]);
+      });
+
+      await act(async () => {
+        resolveA([createStreamableNote("0xnoteA")]);
+        await pendingA;
+      });
+
+      expect(result.current.notes.map((n) => n.id)).toEqual(["0xnoteB"]);
+      expect(result.current.isLoading).toBe(false);
+    });
+  });
+
   describe("filtering", () => {
     it("should filter by sender", async () => {
       const notes = [
