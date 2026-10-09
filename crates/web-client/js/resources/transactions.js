@@ -1004,9 +1004,9 @@ export class TransactionsResource {
    *   client waits before giving up. Set to 0 to disable the timeout and poll
    *   indefinitely until the transaction is committed or discarded.
    * @param {number} [opts.interval=5000] - Polling interval in ms. When
-   *   `timeout` is set, the final wait between iterations is clamped to
-   *   whatever remains of the timeout, so the deadline is a hard bound rather
-   *   than "deadline, rounded up to the next interval".
+   *   `timeout` is set, the wait between polls ends at the timeout, so
+   *   `waitFor` gives up at the deadline rather than up to one interval later.
+   *   A sync or query already in flight still finishes first.
    * @param {function} [opts.onProgress] - Called with the current status on
    *   each poll iteration ("pending", "submitted", or "committed").
    */

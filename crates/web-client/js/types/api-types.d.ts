@@ -931,10 +931,10 @@ export interface WaitOptions {
   /** Wall-clock polling timeout in ms (default: 60_000). Set to 0 to disable timeout and poll indefinitely. */
   timeout?: number;
   /**
-   * Polling interval in ms (default: 5_000). When `timeout` is set, the
-   * final wait between iterations is clamped to whatever remains of the
-   * timeout, so the deadline is a hard bound rather than "deadline, rounded
-   * up to the next interval".
+   * Polling interval in ms (default: 5_000). When `timeout` is set, the wait
+   * between polls ends at the timeout, so `waitFor` gives up at the deadline
+   * rather than up to one interval later. A sync or query already in flight
+   * still finishes first.
    */
   interval?: number;
   onProgress?: (status: WaitStatus) => void;
