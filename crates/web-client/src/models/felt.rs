@@ -14,7 +14,7 @@ impl Felt {
     /// Creates a new field element.
     ///
     /// Returns an error if `value` is outside the field's representable
-    /// range (`Felt::new` is fallible on the 0.15 protocol surface).
+    /// range (`Felt::new` is fallible).
     #[js_export(constructor)]
     pub fn new(value: JsU64) -> Result<Felt, JsErr> {
         NativeFelt::new(js_u64_to_u64(value))

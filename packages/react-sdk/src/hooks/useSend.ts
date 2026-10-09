@@ -6,17 +6,21 @@ import {
   NoteAssets,
   NoteType,
   NoteArray,
-  TransactionRequestBuilder,
 } from "@miden-sdk/miden-sdk";
 import type { SendOptions, SendResult, TransactionStage } from "../types";
 import { DEFAULTS } from "../types";
-import { parseAccountId, parseAddress } from "../utils/accountParsing";
+import { parseAccountId } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
 import { createNoteAttachment, emptyAttachment } from "../utils/noteAttachment";
 import { MidenError } from "../utils/errors";
-import { getNoteType, waitForTransactionCommit } from "../utils/noteFilters";
-import type { ClientWithTransactions } from "../utils/noteFilters";
+import { getNoteType } from "../utils/noteFilters";
 import { proveWithFallback } from "../utils/prover";
+import {
+  readOwedPrivateNotes,
+  recipientRef,
+  sentNoteOwed,
+  settlePrivateNotes,
+} from "../utils/privateNoteDelivery";
 import { useMidenStore } from "../store/MidenStore";
 
 export interface UseSendResult {
@@ -36,6 +40,12 @@ export interface UseSendResult {
 
 /**
  * Hook to send tokens between accounts.
+ *
+ * A private send waits for the transaction to commit and then relays the note
+ * to the recipient. If the note is not delivered after the transaction was
+ * submitted, the call rejects with a `PrivateNoteDeliveryError` carrying the
+ * transaction id and the undelivered note; pass them to
+ * `useResendPrivateNotes` to try again.
  *
  * @example
  * ```tsx
@@ -91,6 +101,7 @@ export function useSend(): UseSendResult {
       setIsLoading(true);
       setStage("executing");
       setError(null);
+      setResult(null);
 
       try {
         // Auto-sync before send unless opted out
@@ -169,18 +180,20 @@ export function useSend(): UseSendResult {
             // to keep `p2idNote` valid so the caller can use the returned Note.
             const ownOutputs = new NoteArray();
             ownOutputs.push(p2idNote);
-            const txRequest = new TransactionRequestBuilder()
-              .withOwnOutputNotes(ownOutputs)
-              .build();
+            // The sender executes this transaction, so its auth procedure is
+            // what pays the fee; a bare builder would abort with
+            // ERR_FEE_CONVERSION_INFO_MISSING wherever the chain charges.
+            const builder =
+              await client.feeAwareTransactionRequestBuilder(fromId);
+            const txRequest = builder.withOwnOutputNotes(ownOutputs).build();
 
-            const execFromId = parseAccountId(options.from);
             const txId = prover
               ? await client.submitNewTransactionWithProver(
-                  execFromId,
+                  fromId,
                   txRequest,
                   prover
                 )
-              : await client.submitNewTransaction(execFromId, txRequest);
+              : await client.submitNewTransaction(fromId, txRequest);
 
             return { txId: txId.toHex(), note: p2idNote } as SendResult;
           });
@@ -216,7 +229,9 @@ export function useSend(): UseSendResult {
               noteType,
               attachment
             );
-            txRequest = new TransactionRequestBuilder()
+            const builder =
+              await client.feeAwareTransactionRequestBuilder(fromAccountId);
+            txRequest = builder
               .withOwnOutputNotes(new NoteArray([note]))
               .build();
           } else {
@@ -231,10 +246,7 @@ export function useSend(): UseSendResult {
             );
           }
 
-          // Fresh AccountId — the originals may have been consumed by
-          // createP2IDNote or newSendTransactionRequest above.
-          const execAccountId = parseAccountId(options.from);
-          return await client.executeTransaction(execAccountId, txRequest);
+          return await client.executeTransaction(fromAccountId, txRequest);
         });
 
         setStage("proving");
@@ -252,39 +264,26 @@ export function useSend(): UseSendResult {
           client.submitProvenTransaction(provenTransaction, txResult)
         );
 
-        // Save txId hex BEFORE applyTransaction, which consumes the WASM
-        // pointer inside txResult (and any child objects like TransactionId).
+        // Read once the transaction is submitted, so a failure from here on
+        // still reports which transaction it was.
         const txIdHex = txResult.id().toHex();
 
-        // For private notes, extract the full note BEFORE applyTransaction
-        // consumes the WASM pointers.
-        let fullNote: Note | null = null;
+        const apply = () =>
+          runExclusiveSafe(() =>
+            client.applyTransaction(txResult, submissionHeight)
+          );
         if (noteType === NoteType.Private) {
-          fullNote = extractFullNote(txResult);
-        }
-
-        await runExclusiveSafe(() =>
-          client.applyTransaction(txResult, submissionHeight)
-        );
-
-        if (noteType === NoteType.Private) {
-          if (!fullNote) {
-            throw new Error("Missing full note for private send");
-          }
-
-          await waitForTransactionCommit(
-            client as unknown as ClientWithTransactions,
+          await settlePrivateNotes({
+            client,
             runExclusiveSafe,
-            txIdHex
-          );
-
-          // Create a fresh AccountId — the original toAccountId may have been
-          // consumed by Note.createP2IDNote or newSendTransactionRequest.
-          const recipientAccountId = parseAccountId(options.to);
-          const recipientAddress = parseAddress(options.to, recipientAccountId);
-          await runExclusiveSafe(() =>
-            client.sendPrivateNote(fullNote!, recipientAddress)
-          );
+            transactionId: txIdHex,
+            owed: readOwedPrivateNotes(() =>
+              sentNoteOwed(txResult, recipientRef(options.to))
+            ),
+            apply,
+          });
+        } else {
+          await apply();
         }
 
         const sendResult: SendResult = {
@@ -326,21 +325,4 @@ export function useSend(): UseSendResult {
     error,
     reset,
   };
-}
-
-function extractFullNote(txResult: unknown): Note | null {
-  try {
-    const executedTx = (
-      txResult as { executedTransaction?: () => unknown }
-    ).executedTransaction?.() as {
-      outputNotes?: () => {
-        notes?: () => Array<{ intoFull?: () => Note | null }>;
-      };
-    };
-    const notes = executedTx?.outputNotes?.().notes?.() ?? [];
-    const note = notes[0];
-    return note?.intoFull?.() ?? null;
-  } catch {
-    return null;
-  }
 }

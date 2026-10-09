@@ -1,7 +1,9 @@
 use js_export_macro::js_export;
+use miden_client::account::Account as NativeAccount;
 use miden_client::transaction::ForeignAccount as NativeForeignAccount;
 
 use crate::js_error_with_context;
+use crate::models::account::Account;
 use crate::models::account_id::AccountId;
 use crate::models::account_storage_requirements::AccountStorageRequirements;
 use crate::platform::JsErr;
@@ -25,12 +27,23 @@ impl ForeignAccount {
         Ok(ForeignAccount(native_foreign_account?))
     }
 
+    /// Creates a foreign account entry for a private account, whose state the caller supplies.
+    pub fn private(account: &Account) -> Result<ForeignAccount, JsErr> {
+        let native_account: NativeAccount = account.into();
+        let native_foreign_account = NativeForeignAccount::private(&native_account)
+            .map_err(|e| js_error_with_context(e, "Failed to create private foreign account"))?;
+
+        Ok(ForeignAccount(native_foreign_account))
+    }
+
     /// Returns the required storage slots/keys for this foreign account.
+    #[js_export(js_name = "storageSlotRequirements")]
     pub fn storage_slot_requirements(&self) -> AccountStorageRequirements {
         self.0.storage_slot_requirements().into()
     }
 
     /// Returns the ID of the foreign account.
+    #[js_export(js_name = "accountId")]
     pub fn account_id(&self) -> AccountId {
         self.0.account_id().into()
     }

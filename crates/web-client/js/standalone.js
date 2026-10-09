@@ -99,18 +99,38 @@ export function buildSwapTag(opts) {
   );
 }
 
-function buildNoteAssets(assets, wasm) {
+function fungibleAssetsFrom(assets, wasm) {
   const assetArray = Array.isArray(assets) ? assets : [assets];
-  const fungibleAssets = assetArray.map((asset) => {
+  return assetArray.map((asset) => {
     const faucetId = resolveAccountRef(asset.token, wasm);
     return new wasm.FungibleAsset(faucetId, BigInt(asset.amount));
   });
+}
+
+function buildNoteAssets(assets, wasm) {
+  const fungibleAssets = fungibleAssetsFrom(assets, wasm);
+  if (fungibleAssets.length === 0) {
+    throw new TypeError("P2ID and P2IDE notes require at least one asset");
+  }
   return new wasm.NoteAssets(fungibleAssets);
 }
 
 /**
  * Builds a Public custom-script note carrying a NetworkAccountTarget attachment
  * (does not submit). Provide exactly one of `recipient` or `script`.
+ *
+ * Since 0.17 the kernel prices such a note by invoking a procedure on the target
+ * account, so the transaction that emits it must declare that account as a
+ * foreign account - on a fee-free chain too:
+ *
+ * ```js
+ * const targets = new ForeignAccountArray();
+ * targets.push(ForeignAccount.public(targetId, new AccountStorageRequirements()));
+ * builder.withOwnOutputNotes(notes).withForeignAccounts(targets).build();
+ * ```
+ *
+ * `client.transactions.createNetworkNote` does this for you; this function only
+ * builds the note, so its caller owns that declaration.
  *
  * @param {NetworkNoteOptions} opts
  * @returns {Note}
@@ -132,8 +152,9 @@ export function buildNetworkNote(opts) {
           opts.executionHint
         );
 
+  // A network note may carry no assets, so an empty array is valid here.
   const noteAssets = opts.assets
-    ? buildNoteAssets(opts.assets, wasm)
+    ? new wasm.NoteAssets(fungibleAssetsFrom(opts.assets, wasm))
     : new wasm.NoteAssets();
 
   const metadata = new wasm.NoteMetadata(
