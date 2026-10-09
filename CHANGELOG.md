@@ -1,11 +1,5 @@
 # Changelog
 
-## Unreleased (TBD)
-
-### Fixes
-
-* [FIX][react] `MidenProvider` no longer rebuilds the `WebClient` on every store update when rendered without a `config` prop. The `config = {}` default parameter allocated a new object per render, invalidating the `resolvedConfig` memo and re-running the client init effect; since the provider subscribes to the store without a selector, each init's own state writes triggered another render and another init. The default is now a module-level constant. ([#269](https://github.com/0xMiden/web-sdk/pull/269))
-  
 ## 0.17.4 (TBD)
 
 ### Fixes
@@ -13,6 +7,7 @@
 * [FIX][web] The Node.js SDK now runs on Alpine and other musl Linux distributions. Releases publish a new `@miden-sdk/node-linux-x64-musl` native package alongside `@miden-sdk/node-linux-x64-gnu`, and the loader picks between the two by the runtime C library, so a musl-based container (a common ECS or Docker base image) no longer fails at import with `Miden napi module not found`. Both Linux packages declare a `libc` field, so npm and pnpm install only the matching one. With npm, an install for Linux from another OS (`npm install --os=linux --cpu=x64`, as when bundling on macOS) must now also pass `--libc=glibc`, or `--libc=musl` for an Alpine target, or npm skips both Linux packages ([#234](https://github.com/0xMiden/web-sdk/pull/234)).
 * [FIX][web] When the Node.js native addon cannot be loaded, the error now names the platform, CPU and Node version, every package it tried, the real failure of each resolution step and the fixes for the common causes, instead of a generic "build it with cargo" message. A `MIDEN_MODULE_PATH` that fails to load now throws an error naming that path and the load failure ([#234](https://github.com/0xMiden/web-sdk/pull/234)).
 * [FIX][web] `InputNotes.getNote()` and `OutputNotes.getNote()` now throw a catchable out-of-bounds error naming the index and the length instead of aborting the WASM module, and `InputNotes.numNotes()` and `getNote()` handle the 1024 input notes a transaction allows instead of aborting above 255 notes or reading a different note for an index of 256 or more ([#306](https://github.com/0xMiden/web-sdk/pull/306)).
+* [FIX][react] `MidenProvider` rendered without a `config` prop no longer rebuilds its `WebClient` on every store update ([#269](https://github.com/0xMiden/web-sdk/pull/269)).
 
 ### Changes
 
