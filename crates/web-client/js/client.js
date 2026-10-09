@@ -6,7 +6,11 @@ import { SettingsResource } from "./resources/settings.js";
 import { CompilerResource } from "./resources/compiler.js";
 import { KeystoreResource } from "./resources/keystore.js";
 import { PswapResource } from "./resources/pswap.js";
-import { hashSeed, resolveAccountRef } from "./utils.js";
+import {
+  hashSeed,
+  resolveAccountRef,
+  validateNoteTransportRetryOptions,
+} from "./utils.js";
 
 /**
  * MidenClient wraps the existing proxy-wrapped WebClient with a resource-based API.
@@ -121,10 +125,22 @@ export class MidenClient {
    * If no `rpcUrl` is provided, defaults to testnet with full configuration
    * (RPC, prover, note transport, autoSync).
    *
+   * `feeFaucetId` is optional: the client receives the chain's protocol
+   * configuration, which names the fee asset, from the node when it syncs. The
+   * option only sets what `feeFaucetId()` reports before that first sync.
+   *
+   * `noteTransportMaxRetries` and `noteTransportRetryIntervalMs` are checked
+   * before anything is created; an out-of-range value throws a `TypeError`.
+   *
    * @param {ClientOptions} [options] - Client configuration options.
    * @returns {Promise<MidenClient>} A fully initialized client.
    */
   static async create(options) {
+    validateNoteTransportRetryOptions(
+      options?.noteTransportMaxRetries,
+      options?.noteTransportRetryIntervalMs
+    );
+
     if (!options?.rpcUrl) {
       return MidenClient.createTestnet(options);
     }
@@ -164,7 +180,10 @@ export class MidenClient {
         options.keystore.sign,
         undefined,
         useWorker,
-        options
+        options,
+        options?.feeFaucetId,
+        options?.noteTransportMaxRetries,
+        options?.noteTransportRetryIntervalMs
       );
     } else {
       inner = await WebClientClass.createClient(
@@ -174,20 +193,34 @@ export class MidenClient {
         options?.storeName,
         undefined,
         useWorker,
-        options
+        options,
+        options?.feeFaucetId,
+        options?.noteTransportMaxRetries,
+        options?.noteTransportRetryIntervalMs
       );
     }
 
-    let defaultProver = null;
-    if (options?.proverUrl) {
-      const wasm = await getWasm();
-      defaultProver = resolveProver(options.proverUrl, wasm);
-    }
+    let client;
+    try {
+      let defaultProver = null;
+      if (options?.proverUrl) {
+        const wasm = await getWasm();
+        defaultProver = resolveProver(options.proverUrl, wasm);
+      }
 
-    const client = new MidenClient(inner, getWasm, defaultProver);
+      client = new MidenClient(inner, getWasm, defaultProver);
 
-    if (options?.autoSync) {
-      await client.sync();
+      if (options?.autoSync) {
+        await client.sync();
+      }
+    } catch (error) {
+      // Never handed to the caller, so nothing else would terminate it.
+      if (client) {
+        client.terminate();
+      } else {
+        inner.terminate?.();
+      }
+      throw error;
     }
 
     return client;
@@ -198,6 +231,10 @@ export class MidenClient {
    *
    * Defaults: rpcUrl "testnet", proverUrl "testnet", noteTransportUrl "testnet", autoSync true.
    * All defaults can be overridden via options.
+   *
+   * `feeFaucetId` is optional: the client receives the chain's protocol
+   * configuration, which names the fee asset, from the node when it syncs. The
+   * option only sets what `feeFaucetId()` reports before that first sync.
    *
    * @param {ClientOptions} [options] - Options to override defaults.
    * @returns {Promise<MidenClient>} A fully initialized testnet client.
@@ -217,6 +254,10 @@ export class MidenClient {
    *
    * Defaults: rpcUrl "devnet", proverUrl "devnet", noteTransportUrl "devnet", autoSync true.
    * All defaults can be overridden via options.
+   *
+   * `feeFaucetId` is optional: the client receives the chain's protocol
+   * configuration, which names the fee asset, from the node when it syncs. The
+   * option only sets what `feeFaucetId()` reports before that first sync.
    *
    * @param {ClientOptions} [options] - Options to override defaults.
    * @returns {Promise<MidenClient>} A fully initialized devnet client.
@@ -388,19 +429,52 @@ export class MidenClient {
   }
 
   /**
-   * Terminates the underlying Web Worker. After this, all method calls will throw.
+   * Terminates the underlying client: stops its Web Worker if there is one,
+   * and releases the main-realm wasm client and, through it, its IndexedDB
+   * store connection once the calls already queued or running have settled.
+   * After this, all method calls will throw. To wait for the release, use
+   * `await using` or `await client[Symbol.asyncDispose]()`. The release is
+   * browser-only: on the Node.js binding nothing is released.
+   * A store handle you obtain yourself, such as an AccountReader from
+   * `accountReader`, keeps the connection open until you free it.
    */
   terminate() {
     this.#terminated = true;
     this.#inner.terminate?.();
   }
 
+  /** Terminates the client without waiting for the release; see `terminate()`. */
   [Symbol.dispose]() {
     this.terminate();
   }
 
+  /**
+   * Terminates the client, then waits until its wasm client is freed and its
+   * store connection released, so the store can be deleted or reopened once
+   * this settles. On the Node.js binding it releases nothing and resolves at
+   * once.
+   * A store handle you obtain yourself, such as an AccountReader from
+   * `accountReader`, keeps the connection open until you free it.
+   */
   async [Symbol.asyncDispose]() {
     this.terminate();
+    await this.#inner.waitForIdle?.();
+  }
+
+  /**
+   * Returns the faucet of the chain's fee asset.
+   *
+   * Replaces `BlockHeader.feeFaucetId()`: since 0.17 the fee asset lives in the
+   * protocol configuration rather than the block header. The client receives
+   * that configuration from the node when it syncs, so after the first sync
+   * this reports the faucet the chain's configuration names; before it, the
+   * `feeFaucetId` option or, for a mock client, the mock chain's own.
+   *
+   * @returns {Promise<AccountId>} The fee faucet's account ID.
+   */
+  async feeFaucetId() {
+    this.assertNotTerminated();
+    return await this.#inner.feeFaucetId();
   }
 
   /**
@@ -427,20 +501,58 @@ export class MidenClient {
    * fails with `FeeConversionInfoRequired`.
    *
    * The argument is the account that **executes** the request — the one whose
-   * auth procedure pays — not the recipient or a note's sender. On a zero-fee
-   * chain, or for an account that does not choose its own salt, the builder
-   * comes back untouched, so this is a safe drop-in. `withAuthArg` and
+   * auth procedure pays — not the recipient or a note's sender. For an account
+   * that is not a multisig the builder comes back untouched, so this is a safe
+   * drop-in; a zero base fee is not a second condition, since 0.17 a multisig
+   * resolves its auth args whatever the chain charges. `withAuthArg` and
    * `withFeeConversionSalt` are mutually exclusive: each clears the other, so
    * whichever is called last wins.
    *
+   * Three options let a caller pin what the approvers sign over. All are
+   * multisig-only and all are defaulted when omitted.
+   *
+   * `feeConversionSalt` and `boundBlockNum` are what a co-signer needs to
+   * REPRODUCE a proposal rather than receive one. Left out, the salt is drawn
+   * fresh and the block is the store's sync height: right for the party
+   * creating the proposal, wrong for anyone rebuilding it, since both are bound
+   * by the summary. A co-signer holding the proposer's serialized request needs
+   * neither - it carries the auth argument and its advice-map preimage.
+   *
+   * For a multisig the builder also declares the bound block through
+   * `withBlockNumbers`, so the request executes at the current chain tip with
+   * no anchor. The summary stays bound to the bound block while foreign
+   * accounts, the fee faucet among them, load at the tip, so the request still
+   * executes after the node has pruned the bound block's account state (about
+   * 50 blocks), and `transactions.preview` without an anchor reproduces the
+   * proposal's summary at the tip.
+   * Each party's client must first have synced to at least that bound block,
+   * the largest of `request.blockNumbers()` and by default the proposer's sync
+   * height when it built the request; below it execution fails with
+   * "requested block N is after transaction reference block M" until it syncs.
+   *
+   * Do not call `withFeeConversionSalt` or `withAuthArg` on the builder this
+   * returns for a multisig: the two setters clear each other, so either one
+   * discards the auth args this already set. Pass `feeConversionSalt` here.
+   *
    * @param {AccountRef} account - The executing account.
+   * @param {object} [options] - Multisig-only overrides.
+   * @param {number} [options.approvalExpirationDelta] - Expires the approvers'
+   *   signatures this many blocks after the block the summary binds. Omit it
+   *   for an approval that never expires; at least 1.
+   * @param {Word} [options.feeConversionSalt] - The salt the summary binds.
+   *   Consumed by the call: build a fresh `Word` per call, since a spent handle
+   *   arrives as "no salt given" rather than as an error.
+   * @param {number} [options.boundBlockNum] - The block the summary binds.
    * @returns {Promise<TransactionRequestBuilder>} A fee-aware builder.
    */
-  async feeAwareTransactionRequestBuilder(account) {
+  async feeAwareTransactionRequestBuilder(account, options) {
     this.assertNotTerminated();
     const wasm = await this.#getWasm();
     return await this.#inner.feeAwareTransactionRequestBuilder(
-      resolveAccountRef(account, wasm)
+      resolveAccountRef(account, wasm),
+      options?.approvalExpirationDelta,
+      options?.feeConversionSalt,
+      options?.boundBlockNum
     );
   }
 

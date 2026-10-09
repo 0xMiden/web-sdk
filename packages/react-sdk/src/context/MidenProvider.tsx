@@ -245,6 +245,11 @@ export function MidenProvider({
         setInitializing(true);
         setConfig(resolvedConfig);
 
+        // The provider terminates only a client it never handed to the store
+        // (a cancelled or failed init). One handed out stays alive when it is
+        // replaced or the provider unmounts: a hook flow that captured it may
+        // still be running.
+        let unowned: WebClient | null = null;
         try {
           let webClient: WebClient;
           let didSignerInit = false;
@@ -265,8 +270,13 @@ export function MidenProvider({
               signerContext.insertKeyCb,
               wrappedSignCb,
               undefined,
-              resolvedConfig.useWorker
+              resolvedConfig.useWorker,
+              undefined,
+              resolvedConfig.feeFaucetId,
+              resolvedConfig.noteTransportMaxRetries,
+              resolvedConfig.noteTransportRetryIntervalMs
             );
+            unowned = webClient;
 
             if (cancelled) return;
 
@@ -291,8 +301,13 @@ export function MidenProvider({
               seed,
               undefined,
               undefined,
-              resolvedConfig.useWorker
+              resolvedConfig.useWorker,
+              undefined,
+              resolvedConfig.feeFaucetId,
+              resolvedConfig.noteTransportMaxRetries,
+              resolvedConfig.noteTransportRetryIntervalMs
             );
+            unowned = webClient;
             if (cancelled) return;
           }
 
@@ -331,6 +346,7 @@ export function MidenProvider({
               isInitializedRef.current = true;
             }
             setClient(webClient);
+            unowned = null;
             // Mark signer as connected if in signer mode
             if (signerIsConnected === true) {
               setSignerConnected(true);
@@ -342,6 +358,8 @@ export function MidenProvider({
               error instanceof Error ? error : new Error(String(error))
             );
           }
+        } finally {
+          unowned?.terminate();
         }
       });
     };

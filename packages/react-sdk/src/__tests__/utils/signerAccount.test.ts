@@ -38,10 +38,15 @@ vi.mock("@miden-sdk/miden-sdk", async () => {
     AccountComponent: {
       createAuthComponentFromCommitment: vi.fn(() => "mockAuthComponent"),
     },
+    // The package's real AuthScheme export is the friendly string const; the
+    // numeric enum lives on the wasm module.
     AuthScheme: {
-      AuthRpoFalcon512: 2,
-      AuthEcdsaK256Keccak: 1,
+      Falcon: "falcon",
+      ECDSA: "ecdsa",
     },
+    getWasmOrThrow: vi.fn(async () => ({
+      AuthScheme: { AuthEcdsaK256Keccak: 1, AuthRpoFalcon512: 2 },
+    })),
     Word: {
       deserialize: vi.fn(() => mockCommitmentWord),
     },
@@ -73,7 +78,12 @@ vi.mock("@miden-sdk/miden-sdk", async () => {
 });
 
 // Import mocked modules for assertions
-import { AccountBuilder, AccountComponent, Word } from "@miden-sdk/miden-sdk";
+import {
+  AccountBuilder,
+  AccountComponent,
+  Word,
+  getWasmOrThrow,
+} from "@miden-sdk/miden-sdk";
 
 describe("initializeSignerAccount", () => {
   let mockClient: any;
@@ -152,6 +162,19 @@ describe("initializeSignerAccount", () => {
       expect(mockBuilder.withAuthComponent).toHaveBeenCalledWith(
         "mockAuthComponent"
       );
+    });
+
+    it("rejects when the wasm AuthScheme enum has no ECDSA value", async () => {
+      vi.mocked(getWasmOrThrow).mockResolvedValueOnce({
+        AuthScheme: {},
+      } as any);
+
+      await expect(
+        initializeSignerAccount(mockClient, createMockSignerAccountConfig())
+      ).rejects.toThrow("AuthScheme.AuthEcdsaK256Keccak");
+      expect(
+        AccountComponent.createAuthComponentFromCommitment
+      ).not.toHaveBeenCalled();
     });
 
     it("does not forward accountType to the builder (0.15 collapses it into storageMode)", async () => {

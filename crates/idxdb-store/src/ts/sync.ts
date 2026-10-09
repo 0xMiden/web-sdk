@@ -15,6 +15,7 @@ import {
 import { upsertInputNote, upsertOutputNote } from "./notes.js";
 
 import { applyFullAccountState } from "./accounts.js";
+import { updateAccountWitness } from "./witnesses.js";
 import {
   logWebStoreError,
   putPartialBlockchainNodesNoOverwrite,
@@ -163,6 +164,8 @@ interface SerializedOutputNoteData {
   attachments: Uint8Array;
   recipientDigest: string;
   metadata: Uint8Array;
+  noteScriptRoot?: string;
+  noteScript?: Uint8Array;
   nullifier?: string;
   expectedHeight: number;
   stateDiscriminant: number;
@@ -191,6 +194,12 @@ interface JsAccountUpdate {
   nonce: string;
   accountCommitment: string;
   accountSeed?: Uint8Array;
+  code?: Uint8Array;
+}
+
+interface JsAccountWitnessUpdate {
+  accountId: string;
+  witness: Uint8Array;
 }
 
 interface JsStateSyncUpdate {
@@ -206,6 +215,7 @@ interface JsStateSyncUpdate {
   serializedOutputNotes: SerializedOutputNoteData[];
   accountUpdates: JsAccountUpdate[];
   transactionUpdates: SerializedTransactionData[];
+  accountWitnesses?: JsAccountWitnessUpdate[];
 }
 
 export async function applyStateSync(
@@ -227,6 +237,7 @@ export async function applyStateSync(
     accountUpdates,
     transactionUpdates,
   } = stateUpdate;
+  const accountWitnesses = stateUpdate.accountWitnesses ?? [];
 
   const newBlockHeaders = reconstructFlattenedVec(flattenedNewBlockHeaders);
 
@@ -248,6 +259,8 @@ export async function applyStateSync(
     db.historicalStorageMapEntries,
     db.latestAccountAssets,
     db.historicalAccountAssets,
+    db.accountCodes,
+    db.accountWitnesses,
   ];
 
   return await db.dexie.transaction("rw", tablesToAccess, async (tx) => {
@@ -287,7 +300,9 @@ export async function applyStateSync(
             note.nullifier,
             note.expectedHeight,
             note.stateDiscriminant,
-            note.state
+            note.state,
+            note.noteScriptRoot,
+            note.noteScript
           );
         })
       ),
@@ -332,7 +347,13 @@ export async function applyStateSync(
             committed: accountUpdate.committed,
             accountCommitment: accountUpdate.accountCommitment,
             accountSeed: accountUpdate.accountSeed,
+            code: accountUpdate.code,
           })
+        )
+      ),
+      Promise.all(
+        accountWitnesses.map((entry) =>
+          updateAccountWitness(dbId, entry.accountId, entry.witness)
         )
       ),
       updateSyncHeight(tx, blockNum, newPeaks),

@@ -37,6 +37,7 @@ React hooks library for the Miden Web Client. Provides a simple, ergonomic inter
 - **Concurrency Safety** - Transaction hooks prevent double-sends with built-in concurrency guards
 - **Auto Pre-Sync** - Transaction hooks sync before executing by default (opt out with `skipSync`)
 - **WASM Error Wrapping** - Cryptic WASM errors are intercepted and replaced with actionable messages
+- **Private Note Delivery Reports** - `useSend`, `useMultiSend` and `useTransaction` reject with a `PrivateNoteDeliveryError` that keeps the transaction id when a private note is not delivered, and `useResendPrivateNotes()` sends it again
 
 ## Installation
 
@@ -154,9 +155,26 @@ function App() {
         // RPC endpoint (defaults to testnet). You can also use 'devnet' or 'testnet'.
         rpcUrl: 'devnet',
 
+        // Optional: the faucet the chain mints its fee asset from, bech32 or hex.
+        // The client receives the chain's protocol configuration, which names the
+        // fee asset, from the node when it syncs; this only sets what
+        // `client.feeFaucetId()` reports before that first sync.
+        feeFaucetId: FEE_FAUCET,
+
         // Auto-sync interval in milliseconds (default: 15000)
         // Set to 0 to disable auto-sync
         autoSyncInterval: 15000,
+
+        // Optional: in-call retries of a private note send after a transient
+        // note transport failure (0 to 10, default 3) and the delay before the
+        // first one in ms, doubling for each later retry (0 to 60000, default 250),
+        // with at most 120000 ms of total backoff, interval * (2^retries - 1).
+        // The retries run under the provider lock, so a slow or rate-limiting
+        // transport blocks other client calls until the send finishes; a
+        // non-zero service retry-after replaces the delay with no upper bound
+        // (a zero one falls back to it). 0 retries suits a latency-sensitive UI.
+        // noteTransportMaxRetries: 3,
+        // noteTransportRetryIntervalMs: 250,
 
         // Optional: prover selection ('local' | 'devnet' | 'testnet' | URL)
         // prover: 'local',
@@ -475,7 +493,7 @@ It wraps ID parsing and defaults so you can start with a one-liner. The hook
 also tracks creation state so you can wire UI without extra reducers.
 
 ```tsx
-import { useCreateWallet } from '@miden-sdk/react';
+import { AuthScheme, useCreateWallet } from '@miden-sdk/react';
 
 function CreateWalletButton() {
   const {
@@ -496,7 +514,7 @@ function CreateWalletButton() {
       const customWallet = await createWallet({
         storageMode: 'private',  // 'private' | 'public' | 'network'
         mutable: true,           // Allow code updates
-        authScheme: 0,           // 0 = Falcon (default), 1 = ECDSA
+        authScheme: AuthScheme.Falcon, // Default; AuthScheme.ECDSA for ECDSA
       });
     } catch (err) {
       console.error('Failed to create wallet:', err);
@@ -530,7 +548,7 @@ It handles storage/auth defaults and returns a ready faucet object. That
 removes the usual setup friction when you just want tokens to exist.
 
 ```tsx
-import { useCreateFaucet } from '@miden-sdk/react';
+import { AuthScheme, useCreateFaucet } from '@miden-sdk/react';
 
 function CreateFaucetForm() {
   const { createFaucet, faucet, isCreating, error, reset } = useCreateFaucet();
@@ -542,7 +560,7 @@ function CreateFaucetForm() {
         decimals: 6,                       // Token decimals (default: 8)
         maxSupply: 1000000000n * 10n**6n, // Max supply in smallest units
         storageMode: 'private',            // Optional (default: 'private')
-        authScheme: 0,                     // Optional (default: 0 = Falcon)
+        authScheme: AuthScheme.Falcon,     // Optional (default: AuthScheme.Falcon)
       });
       console.log('Created faucet:', newFaucet.id().toString());
     } catch (err) {
@@ -751,7 +769,7 @@ import { useSend } from '@miden-sdk/react';
 function SendForm() {
   const {
     send,       // Function to execute send
-    result,     // { transactionId } after success
+    result,     // { txId, note } after success; note is set only with returnNote
     isLoading,  // true during transaction
     stage,      // Current stage
     error,
@@ -760,7 +778,7 @@ function SendForm() {
 
   const handleSend = async () => {
     try {
-      const { transactionId } = await send({
+      const { txId } = await send({
         from: '0xsender...',      // Sender account ID
         to: '0xrecipient...',     // Recipient account ID
         assetId: '0xtoken...',    // Asset ID (token id)
@@ -774,7 +792,7 @@ function SendForm() {
         sendAll: false,           // Send full balance (ignores amount)
       });
 
-      console.log('Sent! TX:', transactionId);
+      console.log('Sent! TX:', txId);
     } catch (err) {
       console.error('Send failed:', err);
     }
@@ -788,17 +806,27 @@ function SendForm() {
         {isLoading ? `Sending (${stage})...` : 'Send Tokens'}
       </button>
 
-      {result && <div>Success! TX: {result.transactionId}</div>}
+      {result && <div>Success! TX: {result.txId}</div>}
     </div>
   );
 }
 ```
 
+A private send waits for the transaction to commit and then relays the note to
+the recipient. If the note is not delivered after the transaction was submitted,
+`send` rejects with a `PrivateNoteDeliveryError` (code
+`PRIVATE_NOTE_DELIVERY_FAILED`) carrying `transactionId` and the undelivered
+note; the transaction itself is not undone. See
+[`useResendPrivateNotes()`](#useresendprivatenotes) to try again.
+
 #### `useMultiSend()`
 
 Create multiple P2ID output notes in a single transaction. This is ideal for
 batched payouts or airdrops; with `noteType: 'private'`, the hook also delivers
-each note to recipients via `sendPrivateOutputNote`.
+each note to recipients via `sendPrivateOutputNote`. Every recipient is
+attempted even if an earlier relay fails; any note not delivered rejects the call
+with a `PrivateNoteDeliveryError` listing the `delivered` and `undelivered`
+notes, which [`useResendPrivateNotes()`](#useresendprivatenotes) takes.
 It builds the request and executes the full pipeline in one go. That means
 fewer chances to handle batching incorrectly or forget private note delivery.
 
@@ -1233,6 +1261,7 @@ Built-in features:
 - **Auto pre-sync** before executing (disable with `skipSync: true`)
 - **Concurrency guard** prevents double-executions while a transaction is in-flight
 - **Anchored execution** via `anchor` — pins the reference block so a summary signed at that block reproduces exactly (see [`useChainAnchor()`](#usechainanchor--usepreview))
+- **Private note delivery** via `privateNoteTarget`: after the transaction commits, every private output note is relayed to that account. The target is checked before anything executes; a note not delivered once the transaction is submitted rejects with a `PrivateNoteDeliveryError`, as in `useSend()`
 
 ```tsx
 import { useTransaction } from '@miden-sdk/react';
@@ -1266,39 +1295,135 @@ function CustomTransactionButton({ accountId }: { accountId: string }) {
 }
 ```
 
-#### `useChainAnchor()` / `usePreview()`
+#### `useResendPrivateNotes()`
 
-Capture a reference block, derive the summary pending authorization at it, and
-execute against it later — the pair behind multisig proposals and offline
-co-signing.
-
-Since protocol 0.16 a signed transaction summary binds the reference block
-commitment, so signatures only authorize an execution at that exact block. In a
-flow that collects signatures and executes later, the proposer, co-signers, and
-executor are all at different sync heights — a `ChainAnchor` is what makes them
-agree on one summary.
+Relay private notes that a transaction hook could not deliver. The SDK keeps no
+queue and never re-sends a note on its own, so a `PrivateNoteDeliveryError` is
+the only record of what is still owed. `resend` syncs once, so a note whose
+transaction has committed since then has the proof the relay needs, and
+attempts every note through the provider's `runExclusive` lock. Delivery is
+idempotent by note id, so repeating a resend is safe; a note that still fails
+comes back in a new `PrivateNoteDeliveryError` with `commitment: 'unknown'`.
 
 ```tsx
-import { useChainAnchor, usePreview, useTransaction } from '@miden-sdk/react';
-import { ChainAnchor } from '@miden-sdk/miden-sdk';
+import { useState } from 'react';
+import {
+  PrivateNoteDeliveryError,
+  useResendPrivateNotes,
+  useSend,
+} from '@miden-sdk/react';
 
-// Proposer: capture the anchor, derive the summary at it, ship both.
-function Propose({ multisigId, buildRequest }) {
-  const { captureAnchor, anchoredRequest } = useChainAnchor();
+function PrivateSend({ from, to, assetId }) {
+  const { send } = useSend();
+  const { resend, isLoading, error } = useResendPrivateNotes();
+  const [owed, setOwed] = useState(null);
+
+  const handleSend = async () => {
+    try {
+      await send({ from, to, assetId, amount: 100n, noteType: 'private' });
+    } catch (err) {
+      if (err instanceof PrivateNoteDeliveryError) {
+        // The transaction went through; only the delivery is outstanding.
+        setOwed({ transactionId: err.transactionId, notes: err.undelivered });
+      }
+    }
+  };
+
+  return (
+    <div>
+      <button onClick={handleSend}>Send</button>
+      {owed && (
+        <button onClick={() => resend(owed).then(() => setOwed(null))} disabled={isLoading}>
+          Retry delivery
+        </button>
+      )}
+      {error && <div>Still not delivered: {error.message}</div>}
+    </div>
+  );
+}
+```
+
+A note whose transaction this client could not apply is not in its store, so it
+cannot be resent from this client.
+
+#### `useChainAnchor()` / `usePreview()`
+
+`usePreview()` derives the summary pending authorization without submitting.
+`useChainAnchor()` pins the reference block that summary is derived at, for
+flows whose summary binds that block, such as single-signature co-signing.
+
+**Multisig proposals need no anchor.** Since protocol 0.17 a multisig summary
+binds a bound block named in its auth args. Build the request with
+`client.feeAwareTransactionRequestBuilder(accountId)`, which declares that
+block with `withBlockNumbers`, ship the request bytes, and let every party
+preview and execute at its own tip once its client has synced to at least the
+bound block (the largest of `request.blockNumbers()`); below it the call fails
+with `requested block N is after transaction reference block M`. `usePreview`
+does not sync, and `useTransaction` syncs through the provider's `sync()`, which
+returns early while another sync runs, so sync and then check the height before
+verifying or executing. Re-executing an older multisig proposal at an anchor
+fails once the node prunes that block's account state (50 blocks).
+
+```tsx
+import { useMiden, usePreview } from '@miden-sdk/react';
+import { TransactionRequest } from '@miden-sdk/miden-sdk';
+
+// Multisig co-signer: re-derive at the local tip from the proposer's bytes.
+function VerifyMultisig({ accountId, requestBytes, proposed }) {
+  const { client, sync } = useMiden();
   const { preview } = usePreview();
 
   return (
     <button
       onClick={async () => {
-        const anchor = await captureAnchor({ request: buildRequest });
-        // anchoredRequest, not buildRequest: a factory resolves to a new
-        // request each call, and the anchor pins only the one it captured.
-        const summary = await preview({
-          accountId: multisigId,
-          request: anchoredRequest,
-          anchor,
-        });
-        await shipToCosigners(anchor.serialize(), summary.serialize());
+        const request = TransactionRequest.deserialize(requestBytes);
+        await sync();
+        // sync() returns early while another sync runs; confirm the height.
+        const bound = Math.max(0, ...request.blockNumbers());
+        if ((await client.getSyncHeight()) < bound) {
+          throw new Error("not synced to the proposal's bound block yet; retry");
+        }
+        const derived = await preview({ accountId, request });
+        if (derived.toCommitment().toHex() === proposed.toCommitment().toHex()) {
+          await sign(derived);
+        }
+      }}
+    >
+      Verify and sign
+    </button>
+  );
+}
+```
+
+A summary that binds the reference block only authorizes an execution at that
+exact block. In a flow that collects such signatures and executes later, the
+signer, co-signers and executor are all at different sync heights, and a
+`ChainAnchor` is what makes them agree on one summary.
+
+```tsx
+import { useChainAnchor, useMiden, usePreview, useTransaction } from '@miden-sdk/react';
+import { ChainAnchor } from '@miden-sdk/miden-sdk';
+
+// Signer: capture the anchor, derive the summary at it, ship both.
+function Propose({ accountId, buildRequest }) {
+  const { client } = useMiden();
+  const { captureAnchor } = useChainAnchor();
+  const { preview } = usePreview();
+
+  return (
+    <button
+      onClick={async () => {
+        // Resolve the factory once and pass that object to both calls. A
+        // factory builds a new request per call, and anchoredRequest is state,
+        // so inside this handler it still holds the previous value.
+        const request = await buildRequest(client);
+        const anchor = await captureAnchor({ request });
+        const summary = await preview({ accountId, request, anchor });
+        await shipToCosigners(
+          request.serialize(),
+          anchor.serialize(),
+          summary.serialize()
+        );
       }}
     >
       Propose
@@ -1306,16 +1431,16 @@ function Propose({ multisigId, buildRequest }) {
   );
 }
 
-// Co-signer: re-derive at the proposer's anchor and compare before signing.
-// Deriving at the local sync height yields a different summary every time.
-function Verify({ multisigId, request, anchorBytes, proposed }) {
+// Co-signer: re-derive at the signer's anchor and compare before signing.
+// Deriving such a summary at the local sync height yields a different one.
+function Verify({ accountId, request, anchorBytes, proposed }) {
   const { preview } = usePreview();
 
   return (
     <button
       onClick={async () => {
         const anchor = ChainAnchor.deserialize(anchorBytes);
-        const derived = await preview({ accountId: multisigId, request, anchor });
+        const derived = await preview({ accountId, request, anchor });
         if (derived.toCommitment().toHex() === proposed.toCommitment().toHex()) {
           await sign(derived);
         }
@@ -1327,10 +1452,10 @@ function Verify({ multisigId, request, anchorBytes, proposed }) {
 }
 
 // Executor: replay at the same anchor, whatever the local height is by now.
-function Execute({ multisigId, request, anchor }) {
+function Execute({ accountId, request, anchor }) {
   const { execute } = useTransaction();
   return (
-    <button onClick={() => execute({ accountId: multisigId, request, anchor })}>
+    <button onClick={() => execute({ accountId, request, anchor })}>
       Execute
     </button>
   );
@@ -1340,9 +1465,11 @@ function Execute({ multisigId, request, anchor }) {
 `useChainAnchor()` returns
 `{ captureAnchor, anchor, anchoredRequest, isCapturing, error, reset }` and
 `usePreview()` returns `{ preview, summary, isPreviewing, error, reset }`.
-`anchoredRequest` is the exact request the anchor was captured for; preview and
-execute against it rather than re-resolving a factory, which would build a
-different transaction than the one the anchor pins.
+`anchoredRequest` is the exact request the anchor was captured for; on a later
+interaction, preview and execute against it rather than re-resolving a factory,
+which would build a different transaction than the one the anchor pins. Inside
+the handler that captured, it still holds the previous value, so pass the object
+you resolved there, as `Propose` does.
 `preview` rejects with `code: "TRANSACTION_ALREADY_AUTHORIZED"` when the
 transaction needs no further signatures — submit it with `useTransaction`
 instead. Both reject with `code: "OPERATION_BUSY"` if called while a previous
@@ -1397,7 +1524,10 @@ Returns three async methods, one per output type:
 Each `libraries` entry takes `{ namespace, code, linking? }`. `linking` accepts
 the `Linking` enum (`Linking.Dynamic`, `Linking.Static`) or the raw strings
 `"dynamic"` / `"static"`. Dynamic is the default and matches the FPI pattern
-used in the tutorials.
+used in the tutorials: it is for procedures installed on an account the
+transaction reaches. A helper library installed on no account, like the one
+below, needs `Linking.Static`, which copies it into the script; linked
+dynamically, the script compiles and then fails at execution.
 
 ```tsx
 import { useCompile } from '@miden-sdk/react';
@@ -1410,7 +1540,7 @@ function ScriptBuilder({ libSource, noteSource }: { libSource: string; noteSourc
     const script = await noteScript({
       code: noteSource,
       libraries: [
-        { namespace: 'my_lib::module', code: libSource, linking: Linking.Dynamic },
+        { namespace: 'my_lib::module', code: libSource, linking: Linking.Static },
       ],
     });
     // pass `script` to useTransaction, useExecuteProgram, or your own flow
@@ -1486,7 +1616,7 @@ function SessionWallet({ mainWalletId, assetId }: { mainWalletId: string; assetI
       },
       assetId,
       // Optional:
-      // walletOptions: { storageMode: 'public', mutable: true, authScheme: 0 },
+      // walletOptions: { storageMode: 'public', mutable: true },
       // pollIntervalMs: 3000,
       // storagePrefix: 'miden-session',
     });
@@ -1611,6 +1741,13 @@ try {
   console.log(wrapped.message); // Human-readable with fix suggestions
 }
 ```
+
+`PrivateNoteDeliveryError` is the `MidenError` with code
+`PRIVATE_NOTE_DELIVERY_FAILED` that `useSend`, `useMultiSend` and
+`useTransaction` reject with when a private note is not delivered after the
+transaction was submitted. It carries `transactionId`, `commitment`
+(`'committed'` or `'unknown'`), `delivered`, `undelivered` and `cause`; see
+[`useResendPrivateNotes()`](#useresendprivatenotes).
 
 ## Common Patterns
 
@@ -1931,7 +2068,7 @@ The SDK uses privacy-first defaults:
 |---------|---------|-------------|
 | `storageMode` | `'private'` | Account data stored off-chain |
 | `mutable` | `true` | Wallet code can be updated |
-| `authScheme` | `0` (Falcon) | Post-quantum secure signatures |
+| `authScheme` | `AuthScheme.Falcon` | Post-quantum secure signatures |
 | `noteType` | `'private'` | Note contents are private |
 | `skipSync` | `false` | Auto-sync before transactions |
 | `decimals` | `8` | Token decimal places |
@@ -1989,6 +2126,8 @@ import type {
   NoteAttachmentData,
   MidenErrorCode,
   MigrateStorageOptions,
+  PrivateNoteDelivery,
+  PrivateNoteResendRequest,
 } from '@miden-sdk/react';
 ```
 

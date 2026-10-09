@@ -1,13 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, act, waitFor } from "@testing-library/react";
+import { render, renderHook, act, waitFor } from "@testing-library/react";
+import { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk";
 import { useSend } from "../../hooks/useSend";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
 import {
+  createMockNote,
+  createMockOutputNote,
   createMockWebClient,
   createMockTransactionRequest,
   createMockTransactionResult,
 } from "../mocks/miden-sdk";
+import { createMockSignerContext } from "../mocks/signer-context";
 
 // Mock useMiden
 vi.mock("../../context/MidenProvider", () => ({
@@ -771,16 +775,18 @@ describe("useSend", () => {
   });
 
   describe("private note branch coverage", () => {
-    it("should throw Missing full note when extractFullNote returns null (lines 276-277)", async () => {
-      // Return a txResult whose executedTransaction throws so extractFullNote catches and returns null
+    it("reports a note the relay rejects without details as undelivered, with the transaction id", async () => {
+      const partialNote = createMockOutputNote(createMockNote("0xpartial"));
+      partialNote.intoFull.mockReturnValue(null as never);
       const brokenTxResult = {
         id: vi.fn(() => ({
           toHex: vi.fn(() => "0xtxbad"),
           toString: vi.fn(() => "0xtxbad"),
         })),
-        executedTransaction: vi.fn(() => {
-          throw new Error("no output notes");
-        }),
+        executedTransaction: vi.fn(() => ({
+          outputNotes: vi.fn(() => ({ notes: vi.fn(() => [partialNote]) })),
+          userOutputNotes: vi.fn(() => [partialNote]),
+        })),
       };
 
       const record = {
@@ -802,6 +808,11 @@ describe("useSend", () => {
         applyTransaction: vi.fn().mockResolvedValue({}),
         getTransactions: vi.fn().mockResolvedValue([record]),
         sendPrivateNote: vi.fn().mockResolvedValue(undefined),
+        sendPrivateOutputNote: vi
+          .fn()
+          .mockRejectedValue(
+            new Error("output note has no details to relay (recipient unknown)")
+          ),
       });
 
       mockUseMiden.mockReturnValue({
@@ -821,8 +832,61 @@ describe("useSend", () => {
             amount: 100n,
             noteType: "private",
           })
-        ).rejects.toThrow("Missing full note for private send");
+        ).rejects.toMatchObject({
+          code: "PRIVATE_NOTE_DELIVERY_FAILED",
+          transactionId: "0xtxbad",
+          commitment: "committed",
+          undelivered: [{ noteId: "0xpartial", to: "0x2" }],
+          message: expect.stringContaining("no details to relay"),
+        });
       });
+      expect(mockClient.applyTransaction).toHaveBeenCalledTimes(1);
+      expect(mockClient.sendPrivateOutputNote).toHaveBeenCalledWith(
+        "0xpartial",
+        expect.anything()
+      );
+    });
+
+    it("relays the user note's id, never the fee note listed first in outputNotes()", async () => {
+      const userNote = createMockOutputNote(createMockNote("0xuser"));
+      const feeNote = createMockOutputNote(createMockNote("0xfee"));
+      const txResult = {
+        id: vi.fn(() => ({ toHex: vi.fn(() => "0xtxfee") })),
+        executedTransaction: vi.fn(() => ({
+          outputNotes: vi.fn(() => ({
+            notes: vi.fn(() => [feeNote, userNote]),
+          })),
+          userOutputNotes: vi.fn(() => [userNote]),
+        })),
+      };
+      const mockClient = createMockWebClient({
+        newSendTransactionRequest: vi
+          .fn()
+          .mockReturnValue(createMockTransactionRequest()),
+        executeTransaction: vi.fn().mockResolvedValue(txResult),
+        submitProvenTransaction: vi.fn().mockResolvedValue(100),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useSend());
+      await act(async () => {
+        await result.current.send({
+          from: "0x1",
+          to: "0x2",
+          assetId: "0x3",
+          amount: 100n,
+          noteType: "private",
+        });
+      });
+
+      const relayed = mockClient.sendPrivateOutputNote.mock.calls.map(
+        ([noteId]) => noteId
+      );
+      expect(relayed).toEqual(["0xuser"]);
     });
 
     it("should use submitNewTransactionWithProver in returnNote path (line 183)", async () => {
@@ -1045,6 +1109,113 @@ describe("useSend", () => {
           } as any)
         ).rejects.toThrow("Amount is required");
       });
+    });
+  });
+});
+
+describe("useSend with the real provider", () => {
+  const deferred = <T,>() => {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  };
+
+  it("applies a submitted send on its original client after the signer identity changes", async () => {
+    // This file mocks the provider module; this case needs the real one, and
+    // the SignerContext of the same module graph.
+    const actual = await vi.importActual<
+      typeof import("../../context/MidenProvider")
+    >("../../context/MidenProvider");
+    const { SignerContext } = await import("../../context/SignerContext");
+    mockUseMiden.mockImplementation(actual.useMiden);
+
+    const base = await (
+      WebClient.createClientWithExternalKeystore as ReturnType<typeof vi.fn>
+    )();
+    const submitting = deferred<number>();
+    let firstTerminated = false;
+    const firstClient = {
+      ...base,
+      executeTransaction: vi
+        .fn()
+        .mockResolvedValue(createMockTransactionResult("0xtx_first")),
+      submitProvenTransaction: vi.fn(() => submitting.promise),
+      applyTransaction: vi.fn(async () => {
+        if (firstTerminated) throw new Error("WebClient terminated");
+        return {};
+      }),
+      terminate: vi.fn(() => {
+        firstTerminated = true;
+      }),
+    };
+    const secondClient = { ...base, terminate: vi.fn() };
+    vi.mocked(WebClient.createClientWithExternalKeystore)
+      .mockResolvedValueOnce(firstClient as unknown as WebClient)
+      .mockResolvedValueOnce(secondClient as unknown as WebClient);
+
+    let miden: ReturnType<typeof actual.useMiden> | null = null;
+    let sendHook: ReturnType<typeof useSend> | null = null;
+    function Harness() {
+      miden = actual.useMiden();
+      sendHook = useSend();
+      return null;
+    }
+    const config = { rpcUrl: "https://rpc.testnet.miden.io" };
+    const Tree = ({ storeName }: { storeName: string }) => (
+      <SignerContext.Provider
+        value={createMockSignerContext({ isConnected: true, storeName })}
+      >
+        <actual.MidenProvider config={config}>
+          <Harness />
+        </actual.MidenProvider>
+      </SignerContext.Provider>
+    );
+
+    const { rerender } = render(<Tree storeName="wallet_A" />);
+    await waitFor(() => {
+      expect(miden?.client).toBe(firstClient);
+    });
+
+    let sending!: Promise<unknown>;
+    act(() => {
+      sending = sendHook!.send({
+        from: "0xsender",
+        to: "0xrecipient",
+        assetId: "0xfaucet",
+        amount: 100n,
+        noteType: "public",
+        skipSync: true,
+      });
+    });
+    // Asserted below; a rejection must not also surface as unhandled.
+    sending.catch(() => {});
+    await waitFor(() => {
+      expect(firstClient.submitProvenTransaction).toHaveBeenCalled();
+    });
+    // Holds the lock after the submit, so the identity change lands between
+    // the submit and the apply.
+    const holding = deferred<void>();
+    void miden!.runExclusive(() => holding.promise);
+    await act(async () => {
+      submitting.resolve(100);
+    });
+    expect(firstClient.applyTransaction).not.toHaveBeenCalled();
+
+    rerender(<Tree storeName="wallet_B" />);
+    await act(async () => {
+      holding.resolve();
+    });
+
+    await expect(sending).resolves.toEqual({
+      txId: "0xtx_first",
+      note: null,
+    });
+    expect(firstClient.applyTransaction).toHaveBeenCalledTimes(1);
+    expect(firstClient.terminate).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(miden?.client).toBe(secondClient);
     });
   });
 });

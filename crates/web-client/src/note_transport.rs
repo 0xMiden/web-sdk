@@ -7,23 +7,24 @@ use crate::{WebClient, js_error_with_context};
 
 #[js_export]
 impl WebClient {
-    /// Relay a private note through the note-transport layer with an explicit block hint.
+    /// Relay a private note through the note-transport layer with its inclusion proof.
     ///
-    /// `scan_after_block_num` is the block from which the recipient starts scanning FORWARD for the
-    /// note's on-chain commitment. It MUST be at or below the note's commitment block — a hint
-    /// above the commitment is never scanned back to, so the recipient silently never receives
-    /// the note. A safe, always-valid choice is the chain tip at the moment the note's
-    /// transaction was submitted (the note cannot have committed earlier); a tighter value just
-    /// means the recipient scans fewer blocks.
+    /// The transport verifies `inclusion_proof` and tells the recipient to scan from that
+    /// block. The proof exists once the creating transaction is committed and this client has
+    /// synced past it. For one of this client's own output notes, prefer
+    /// [`WebClient::send_private_output_note`], which reads the stored proof.
     ///
-    /// For one of this client's own output notes, prefer [`WebClient::send_private_output_note`],
-    /// which derives this block from the note's stored `expected_height` for you.
+    /// A rejection means the note did not reach the transport or the outcome is not known, and
+    /// it is final: the client keeps no queue and no sync sends the note again. Transient
+    /// transport failures are already retried within the call, as the client's
+    /// `noteTransportMaxRetries` option sets. To try again later, send the same note again; a
+    /// send is idempotent by note id.
     #[js_export(js_name = "sendPrivateNote")]
     pub async fn send_private_note(
         &self,
         note: crate::models::note::Note,
         address: crate::models::address::Address,
-        scan_after_block_num: u32,
+        inclusion_proof: crate::models::note_inclusion_proof::NoteInclusionProof,
     ) -> Result<(), JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard
@@ -33,11 +34,7 @@ impl WebClient {
         let native_note: NativeNote = note.into();
 
         client
-            .send_private_note_with_block_hint(
-                native_note,
-                &address.into(),
-                scan_after_block_num.into(),
-            )
+            .send_private_note_with_proof(native_note, &address.into(), inclusion_proof.into())
             .await
             .map_err(|e| js_error_with_context(e, "failed sending private note"))?;
 
@@ -46,12 +43,16 @@ impl WebClient {
 
     /// Relay one of this client's own private output notes through the note-transport layer.
     ///
-    /// The recipient's scan-start block is derived from the output note's stored `expected_height`
-    /// (the chain tip when the note's transaction was submitted), so delivery is correct regardless
-    /// of how far this client has since synced past the note — unlike a bare sync-height hint,
-    /// which overshoots the commitment once the sender advances past it (e.g. relaying after
-    /// waiting for the transaction to commit) and silently drops delivery. The note must exist
-    /// in this client's store as an output note (i.e. its transaction has been applied).
+    /// The inclusion proof is the one sync stored on the output note. It is absent until this
+    /// client has synced past the block that committed the note, and the call fails in that
+    /// case rather than relaying a note the recipient cannot locate. The note must exist in
+    /// this client's store as an output note (its transaction has been applied).
+    ///
+    /// A rejection means the note did not reach the transport or the outcome is not known, and
+    /// it is final: the client keeps no queue and no sync sends the note again. Transient
+    /// transport failures are already retried within the call, as the client's
+    /// `noteTransportMaxRetries` option sets. To try again later, call this again with the same
+    /// note id; a send is idempotent by note id.
     #[js_export(js_name = "sendPrivateOutputNote")]
     pub async fn send_private_output_note(
         &self,
@@ -74,13 +75,19 @@ impl WebClient {
             .map_err(|e| js_error_with_context(e, "failed reading output note"))?
             .ok_or_else(|| from_str_err("No output note found for the given id"))?;
 
-        let scan_after_block_num = record.expected_height();
+        // Clone before `try_into` consumes the record. The proof is what the recipient scans
+        // from; it is not filled in until sync has passed the commitment block.
+        let proof = record.inclusion_proof().cloned().ok_or_else(|| {
+            from_str_err(
+                "output note has no inclusion proof; sync past the block that committed it",
+            )
+        })?;
         let native_note: NativeNote = record.try_into().map_err(|e| {
             js_error_with_context(e, "output note has no details to relay (recipient unknown)")
         })?;
 
         client
-            .send_private_note_with_block_hint(native_note, &address.into(), scan_after_block_num)
+            .send_private_note_with_proof(native_note, &address.into(), proof)
             .await
             .map_err(|e| js_error_with_context(e, "failed sending private output note"))?;
 

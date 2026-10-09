@@ -3,9 +3,17 @@
  *
  * Search order:
  * 1. MIDEN_MODULE_PATH environment variable (explicit override)
- * 2. Platform-specific npm package (@miden-sdk/node-darwin-arm64, etc.)
+ * 2. Platform-specific npm package (@miden-sdk/node-darwin-arm64,
+ *    @miden-sdk/node-linux-x64-gnu, @miden-sdk/node-linux-x64-musl, ...)
  * 3. Package prebuilds directory
  * 4. Repo target directory (for local development)
+ *
+ * On linux-x64 the process report decides which platform packages to try: a
+ * glibc version, or a glibc loader in the process image, picks the glibc
+ * binary, and a musl loader picks the musl binary. A report with none of
+ * these (or no report at all) tries both, glibc first. When resolution fails,
+ * the thrown error reports the platform, every package it tried, and the real
+ * reason each step failed instead of a generic "not found".
  */
 import { createRequire } from "module";
 import path from "path";
@@ -15,6 +23,9 @@ import os from "os";
 const require = createRequire(import.meta.url);
 
 let _sdk = null;
+
+const LINUX_X64_GNU = "@miden-sdk/node-linux-x64-gnu";
+const LINUX_X64_MUSL = "@miden-sdk/node-linux-x64-musl";
 
 /**
  * Loads the napi SDK module. Caches the result after first load.
@@ -26,22 +37,38 @@ let _sdk = null;
 export function loadNativeModule(options) {
   if (_sdk) return _sdk;
 
-  // 1. Explicit path (option or env var)
+  // Each resolution step records why it failed, so the final error can
+  // report the real cause instead of a generic "not found".
+  const attempts = [];
+
+  // 1. Explicit path (option or env var). This is an authoritative override:
+  // if it is set but fails to load, surface that directly rather than
+  // silently falling back to a different (possibly stale) installed binary.
   const explicit = options?.modulePath || process.env.MIDEN_MODULE_PATH;
   if (explicit) {
-    _sdk = require(explicit);
-    return _sdk;
+    try {
+      _sdk = require(explicit);
+      return _sdk;
+    } catch (err) {
+      throw new Error(
+        `Miden napi module at MIDEN_MODULE_PATH="${explicit}" failed to ` +
+          `load: ${firstLine(err)}`
+      );
+    }
   }
 
-  // 2. Platform-specific npm package (installed via optionalDependencies)
-  const platformPackage = getPlatformPackageName();
-  if (platformPackage) {
+  // 2. Platform-specific npm packages (installed via optionalDependencies)
+  const platformPackages = getPlatformPackages();
+  for (const platformPackage of platformPackages) {
     try {
       _sdk = require(platformPackage);
       return _sdk;
-    } catch {
-      // Not installed -- fall through to other methods
+    } catch (err) {
+      attempts.push(`require("${platformPackage}") -> ${firstLine(err)}`);
     }
+  }
+  if (platformPackages.length === 0) {
+    attempts.push(`no prebuilt package published for ${platformLabel()}`);
   }
 
   const archMap = { arm64: "aarch64", x64: "x86_64" };
@@ -66,8 +93,12 @@ export function loadNativeModule(options) {
 
   for (const p of prebuildCandidates) {
     if (fs.existsSync(p)) {
-      _sdk = require(p);
-      return _sdk;
+      try {
+        _sdk = require(p);
+        return _sdk;
+      } catch (err) {
+        attempts.push(`require("${p}") -> ${firstLine(err)}`);
+      }
     }
   }
 
@@ -91,31 +122,127 @@ export function loadNativeModule(options) {
         ) {
           fs.copyFileSync(p, nodeFile);
         }
-        _sdk = require(nodeFile);
-        return _sdk;
+        try {
+          _sdk = require(nodeFile);
+          return _sdk;
+        } catch (err) {
+          attempts.push(`require("${nodeFile}") -> ${firstLine(err)}`);
+        }
       }
     }
   }
 
-  throw new Error(
-    `Miden napi module not found.\n\n` +
-      `Build it with:\n` +
-      `  cargo build -p miden-client-web --no-default-features --features nodejs --release\n\n` +
-      `Or set MIDEN_MODULE_PATH to the .node file location.`
-  );
+  throw new Error(buildNotFoundMessage(platformPackages, attempts));
 }
 
 /**
- * Returns the platform-specific npm package name for the current OS/arch,
- * or null if the platform is not supported.
+ * Returns the platform-specific npm packages to try, in order; empty if the
+ * platform has no published binary.
  */
-function getPlatformPackageName() {
+function getPlatformPackages() {
+  const key = `${os.platform()}-${os.arch()}`;
+  if (key === "linux-x64") return linuxX64Packages();
   const platformMap = {
     "darwin-arm64": "@miden-sdk/node-darwin-arm64",
     "darwin-x64": "@miden-sdk/node-darwin-x64",
-    "linux-x64": "@miden-sdk/node-linux-x64-gnu",
   };
-  return platformMap[`${os.platform()}-${os.arch()}`] || null;
+  return platformMap[key] ? [platformMap[key]] : [];
+}
+
+/**
+ * Reads the runtime C library from the process report. Any confident reading
+ * picks one package, so an Alpine host with gcompat never falls back to the
+ * glibc binary. Some runtimes and shims give no report, a throwing one, or one
+ * without these fields; only then are both packages tried.
+ */
+function linuxX64Packages() {
+  let report;
+  try {
+    report = getReportWithoutNetwork();
+  } catch {
+    return [LINUX_X64_GNU, LINUX_X64_MUSL];
+  }
+  if (report?.header?.glibcVersionRuntime) return [LINUX_X64_GNU];
+  const objs = Array.isArray(report?.sharedObjects) ? report.sharedObjects : [];
+  if (objs.some((f) => /ld-musl-/.test(f))) return [LINUX_X64_MUSL];
+  if (objs.some((f) => /ld-linux|\/libc\.so/.test(f))) return [LINUX_X64_GNU];
+  return [LINUX_X64_GNU, LINUX_X64_MUSL];
+}
+
+/**
+ * Network interface enumeration is the slow part of a report and says nothing
+ * about the C library, so leave it out (as detect-libc does). The setting is
+ * restored only once it was changed; any throw reaches the caller's fallback.
+ */
+function getReportWithoutNetwork() {
+  const previousExcludeNetwork = process.report.excludeNetwork;
+  process.report.excludeNetwork = true;
+  try {
+    return process.report.getReport();
+  } finally {
+    process.report.excludeNetwork = previousExcludeNetwork;
+  }
+}
+
+function platformLabel() {
+  return `${os.platform()}-${os.arch()}`;
+}
+
+/** First line of an error's message, prefixed with its code when present. */
+function firstLine(err) {
+  const code = err && err.code ? `${err.code}: ` : "";
+  const message = (err && err.message ? err.message : String(err)).split(
+    "\n"
+  )[0];
+  return `${code}${message}`;
+}
+
+/**
+ * Builds an actionable "module not found" error: the platform we are on, the
+ * packages we tried, the real failure of each attempt, and how to fix the
+ * common deployment causes.
+ */
+function buildNotFoundMessage(platformPackages, attempts) {
+  const lines = [
+    `Miden napi module not found for ${platformLabel()}, Node ${process.version}.`,
+    "",
+    "Resolution attempts:",
+    ...attempts.map((a) => `  - ${a}`),
+    "",
+  ];
+
+  if (platformPackages.length > 0) {
+    const names = platformPackages.map((p) => `"${p}"`).join(" or ");
+    lines.push(
+      `Expected the optional dependency ${names} to be installed ` +
+        `and loadable. Common causes:`,
+      "  - The optional dependency was skipped at install time (npm's " +
+        "cross-platform lockfile bug, --omit=optional / --no-optional, or a " +
+        "pruned or partially-copied node_modules in a Docker build).",
+      "  - The base image's libc or CPU does not match a published binary " +
+        "(e.g. an Alpine/musl or arm64 image).",
+      ""
+    );
+  } else {
+    lines.push("No prebuilt binary is published for this platform.", "");
+  }
+
+  lines.push(
+    "Fixes:",
+    "  - Reinstall with optional dependencies on the target platform, e.g. " +
+      "`npm install --include=optional` (or delete node_modules + " +
+      "package-lock.json and reinstall on Linux; pnpm avoids this npm bug).",
+    "  - On Alpine/musl, ensure @miden-sdk/node-linux-x64-musl is installed, " +
+      "or switch to a glibc base image such as node:22-bookworm-slim.",
+    "  - Installing with npm for Linux from another OS (`--os=linux " +
+      "--cpu=x64`)? Also pass `--libc=glibc`, or `--libc=musl` for Alpine: " +
+      "npm skips both Linux packages when it cannot detect the C library.",
+    "  - Or set MIDEN_MODULE_PATH to a prebuilt .node file.",
+    "  - Or build from source: `cargo build -p miden-client-web " +
+      "--no-default-features --features nodejs --release`."
+  );
+
+  return lines.join("\n");
 }
 
 /**

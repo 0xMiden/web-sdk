@@ -30,7 +30,7 @@ use miden_client::account::{
     StorageSlotName,
 };
 use miden_client::asset::{Asset, AssetId, AssetVault, AssetWitness, StorageMapWitness};
-use miden_client::block::BlockHeader;
+use miden_client::block::{AccountWitness, BlockHeader};
 use miden_client::crypto::{InOrderIndex, MmrPeaks};
 use miden_client::note::{BlockNumber, NoteScript, Nullifier};
 use miden_client::store::{
@@ -84,10 +84,15 @@ extern "C" {
 // Initialize IndexedDB
 #[wasm_bindgen(module = "/src/js/schema.js")]
 extern "C" {
-    /// Opens the database and registers it in the JS registry.
-    /// Returns the database ID (network name) which can be used to look up the database.
+    /// Opens the database, or joins the connection already open under `network`, and counts the
+    /// caller as one holder of it. Returns the database ID (network name) which can be used to
+    /// look up the database.
     #[wasm_bindgen(js_name = openDatabase)]
     fn open_database(network: &str, client_version: &str) -> js_sys::Promise;
+
+    /// Releases one holder of the database opened under `network`; the last one closes it.
+    #[wasm_bindgen(js_name = closeDatabase)]
+    fn close_database(network: &str);
 }
 
 /// `IdxdbStore` provides an `IndexedDB`-backed implementation of the Store trait.
@@ -102,77 +107,32 @@ pub struct IdxdbStore {
 
 impl IdxdbStore {
     pub async fn new(database_name: String) -> Result<IdxdbStore, JsValue> {
-        let promise = open_database(database_name.as_str(), CLIENT_VERSION);
-        let _db_id = JsFuture::from(promise).await?;
-
+        // Built before the open: once the open counts this store as a holder, only `Drop`
+        // releases it, so nothing after the open may fail.
         let smt_forest = AccountForest::new()
             .map_err(|e| JsValue::from_str(&format!("Failed to create SMT forest: {e:?}")))?;
 
-        let store = IdxdbStore {
+        let promise = open_database(database_name.as_str(), CLIENT_VERSION);
+        let _db_id = JsFuture::from(promise).await?;
+
+        Ok(IdxdbStore {
             database_id: database_name,
             smt_forest: RwLock::new(smt_forest),
-        };
-
-        // Initialize SMT forest
-        store.build_smt_forest().await?;
-
-        Ok(store)
-    }
-
-    /// Builds the SMT forest by loading all existing account vault and storage data.
-    ///
-    /// This ensures that the forest contains all necessary Merkle nodes for generating
-    /// witnesses when creating partial accounts or executing transactions.
-    async fn build_smt_forest(&self) -> Result<(), JsValue> {
-        let account_ids = self
-            .get_account_ids()
-            .await
-            .map_err(|e| JsValue::from_str(&format!("Failed to get account IDs: {e:?}")))?;
-
-        for account_id in account_ids {
-            self.rebuild_account_forest(account_id).await.map_err(|e| {
-                JsValue::from_str(&format!(
-                    "Failed to insert account state for {account_id}: {e:?}"
-                ))
-            })?;
-        }
-
-        Ok(())
-    }
-
-    /// Rebuilds an account's forest lineages from the store tables, which are the source of truth.
-    ///
-    /// Used on store open, and to recover from a write that did not land: forest updates are
-    /// forward-only, so a caller that advanced the forest and then failed (or undid) the write
-    /// rebuilds rather than rolling back.
-    ///
-    /// An account the tables no longer track is reduced to an empty vault.
-    pub(crate) async fn rebuild_account_forest(
-        &self,
-        account_id: AccountId,
-    ) -> Result<(), StoreError> {
-        let state = match self.get_account_header(account_id).await? {
-            Some(_) => {
-                let vault = self.get_account_vault(account_id).await?;
-                let storage =
-                    self.get_account_storage(account_id, AccountStorageFilter::All).await?;
-                Some((vault, storage))
-            },
-            None => None,
-        };
-
-        let mut smt_forest = self.smt_forest.write();
-        match &state {
-            Some((vault, storage)) => {
-                smt_forest.rebuild(account_id, vault.assets(), storage.slots().iter())
-            },
-            None => smt_forest.rebuild(account_id, core::iter::empty(), [].iter()),
-        }
+        })
     }
 
     /// Returns the database ID as a string slice for passing to JS functions.
     pub(crate) fn db_id(&self) -> &str {
         self.database_id.as_str()
+    }
+}
+
+/// Releases this store's hold on the `IndexedDB` connection it opened, so the connection closes
+/// once no store on the same name is left, whether the owning client is released by `free()` or
+/// by the `FinalizationRegistry`.
+impl Drop for IdxdbStore {
+    fn drop(&mut self) {
+        close_database(&self.database_id);
     }
 }
 
@@ -455,6 +415,36 @@ impl Store for IdxdbStore {
         // Tag removal moved upstream — `Self::remove_note_tag` is the
         // caller's responsibility per the new trait contract.
         self.remove_address(address).await
+    }
+
+    // ACCOUNT WITNESSES
+    // --------------------------------------------------------------------------------------------
+
+    async fn track_account_witness(&self, account_id: AccountId) -> Result<bool, StoreError> {
+        self.track_account_witness(account_id).await
+    }
+
+    async fn untrack_account_witness(&self, account_id: AccountId) -> Result<bool, StoreError> {
+        self.untrack_account_witness(account_id).await
+    }
+
+    async fn tracked_account_witnesses(&self) -> Result<Vec<AccountId>, StoreError> {
+        self.tracked_account_witnesses().await
+    }
+
+    async fn get_account_witness(
+        &self,
+        account_id: AccountId,
+    ) -> Result<Option<AccountWitness>, StoreError> {
+        self.get_account_witness(account_id).await
+    }
+
+    async fn update_account_witness(
+        &self,
+        account_id: AccountId,
+        witness: &AccountWitness,
+    ) -> Result<bool, StoreError> {
+        self.update_account_witness(account_id, witness).await
     }
 
     // SETTINGS

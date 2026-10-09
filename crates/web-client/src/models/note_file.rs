@@ -2,12 +2,11 @@ use js_export_macro::js_export;
 use miden_client::block::BlockNumber as NativeBlockNumber;
 use miden_client::note::{
     NoteDetails as NativeNoteDetails,
+    NoteFile as NativeNoteFile,
     NoteId as NativeNoteId,
     NoteSyncHint as NativeNoteSyncHint,
     NoteTag as NativeNoteTag,
 };
-use miden_client::notes::NoteFile as NativeNoteFile;
-use miden_client::{Deserializable, Serializable};
 #[cfg(feature = "nodejs")]
 use napi_derive::napi;
 #[cfg(feature = "browser")]
@@ -118,19 +117,20 @@ impl NoteFile {
         }
     }
 
-    /// Turn a notefile into its byte representation.
+    /// Encodes this file as protobuf note-file bytes.
+    ///
+    /// Bytes written by web-sdk 0.17.0-rc.1 used the old `Serializable` codec and do not decode.
     #[js_export(js_name = serialize)]
     pub fn serialize(&self) -> Vec<u8> {
-        let mut buffer = vec![];
-        self.inner.write_into(&mut buffer);
-        buffer
+        self.inner.to_bytes()
     }
 
-    /// Given a valid byte representation of a `NoteFile`,
-    /// return it as a struct.
+    /// Decodes protobuf note-file bytes.
+    ///
+    /// Rejects bytes produced by web-sdk 0.17.0-rc.1.
     #[js_export(js_name = deserialize)]
     pub fn deserialize(bytes: &[u8]) -> Result<Self, JsErr> {
-        let deserialized = NativeNoteFile::read_from_bytes(bytes)
+        let deserialized = NativeNoteFile::try_from_bytes(bytes)
             .map_err(|err| js_error_with_context(err, "notefile deserialization failed"))?;
         Ok(Self { inner: deserialized })
     }

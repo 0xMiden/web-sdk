@@ -1,6 +1,6 @@
 ---
 name: frontend-pitfalls
-description: Critical pitfalls and safety rules for Miden frontend development. Covers per-hook readiness, non-atomic client sequences, COOP/COEP headers, BigInt boundaries, Bech32 network inference, IndexedDB state loss including the minor-version store wipe, auto-sync side effects, Vite configuration, React rendering race conditions, the Web Worker shim and callback-prover downgrade, structured error codes, eager vs lazy entry points, the fee note now included in outputNotes(), the removed expiredBefore filter, sendPrivate block hints, block-pinned foreign-account inputs, and transaction preview authorization. Use when reviewing, debugging, or writing Miden frontend code, or when upgrading from 0.15 to 0.16.
+description: Critical pitfalls and safety rules for Miden frontend development. Covers per-hook readiness, non-atomic client sequences, COOP/COEP headers, BigInt boundaries, Bech32 network inference, IndexedDB state loss including the one-time 0.17 store clear and the refusal of a newer client's store, auto-sync side effects, Vite configuration, React rendering race conditions, the Web Worker shim and callback-prover downgrade, structured error codes, eager vs lazy entry points, the fee note now included in outputNotes(), the removed expiredBefore filter, sendPrivate inclusion proofs, block-pinned foreign-account inputs, and transaction preview authorization. Use when reviewing, debugging, or writing Miden frontend code, or when upgrading from 0.15 to 0.16.
 ---
 
 # Miden Frontend Pitfalls
@@ -234,18 +234,20 @@ const { pauseSync, resumeSync, isPaused } = useSyncControl();
 The client persists accounts, keys, notes and transaction history in IndexedDB. There are **two** distinct ways to lose all of it, and the second one is under your control:
 
 1. **The user or the browser deletes it** - "Clear site data", private browsing, storage pressure.
-2. **An SDK version bump deletes it.** On open, `ensureClientVersion` compares the running client version against the one stored in the database. If both parse as semver and the running version's **major or minor is higher** than the stored one, the store is closed, `delete()`d and reopened **empty**. A version that does not parse as semver on either side forces the same reset. Same-major-minor (a patch bump) and downgrades are preserved and handled by Dexie migrations; the major/minor nuke is deliberate, tied to network resets.
+2. **The one-time clear when upgrading from an SDK older than 0.17.0.** From 0.17.4 the store is kept across SDK upgrades, and a schema change migrates the existing data in place. The first open by 0.17.4 or later clears, once, a store last written by a client older than 0.17.0 (a 0.17.0 release candidate included) or carrying no client version; a store any 0.17.0 or later client wrote is kept. Earlier SDKs reset the store on every minor or major version bump.
 
-**Upgrading the SDK across a minor version destroys every locally-stored account, key and note on every user's device.** Nothing prompts, nothing warns, and the user's wallet is simply gone on next load. This is the single most consequential item on this page: it turns a routine dependency bump into data loss for your whole userbase.
+**Upgrading a userbase from a pre-0.17.0 SDK destroys every locally-stored account, key and note on every user's device.** Nothing prompts, nothing warns, and the user's wallet is simply gone on next load.
+
+From 0.17.4 the SDK does not open a store a newer SDK wrote (one with a newer store schema): client creation fails with `Failed to initialize IdxdbStore: IndexedDB store "..." was written by a newer Miden client ...`, and nothing in the store is deleted. Rolling an app back to a 0.17.4 or later SDK with an older store schema therefore fails for every user who already ran the newer one, until you roll forward again or they clear the site's data.
 
 Mitigations:
 
-- **Ship export/import before you ship the bump**, not with it. Users need a build that can back up while their data still exists. The surface is `useExportStore()` / `useImportStore()` in `@miden-sdk/react`, backed by the standalone `exportStore(storeName)` / `importStore(storeName, dump)` from `@miden-sdk/miden-sdk`. Per-object export/import also exists on the high-level client (`accounts.export` / `accounts.import`, `notes.export` / `notes.import`).
+- **A pre-0.17.0 store cannot be carried across.** Its data belongs to networks that no longer exist, and `importStore` refuses a dump exported by a client older than 0.17.0 (or with no client version stamp), as it refuses one from a newer SDK. Export/import is for backups and moving a store between devices on 0.17.0 or later. The surface is `useExportStore()` / `useImportStore()` in `@miden-sdk/react`, backed by the standalone `exportStore(storeName)` / `importStore(storeName, dump)` from `@miden-sdk/miden-sdk`. Per-object export/import also exists on the high-level client (`accounts.export` / `accounts.import`, `notes.export` / `notes.import`).
 - Warn users that clearing browser data deletes their wallet.
 - Consider external signers (Para, Turnkey, wallet adapters) for production - the key material lives outside the browser store, so only cached chain state is lost.
 - Each signer identity gets its own database (`MidenClientDB_<storeName>`), so `SignerContextValue.storeName` must be unique per user.
 
-Verify before relying on this: `crates/idxdb-store/src/ts/schema.ts`, `ensureClientVersion`.
+Verify before relying on this: `crates/idxdb-store/src/ts/schema.ts`, the `version(8)` cutover and `MIGRATION_BASELINE`.
 
 ## FP8: Vite Configuration Requirements (MEDIUM)
 
@@ -292,22 +294,24 @@ useEffect(() => {
 <MidenProvider config={{ rpcUrl: "testnet" }}>
 ```
 
-If you genuinely need the low-level constructors, these are the current signatures. Note the trailing `observability` bag, and that there is **no debug-mode argument** anywhere (nor a `ClientOptions.debugMode`):
+If you genuinely need the low-level constructors, these are the current signatures. Note the `observability` bag and the arguments after it, and that there is **no debug-mode argument** anywhere (nor a `ClientOptions.debugMode`):
 
 ```ts
 WasmWebClient.createClient(
   rpcUrl, noteTransportUrl, seed, network,
-  logLevel, useWorker = true, observability
+  logLevel, useWorker = true, observability,
+  feeFaucetId, noteTransportMaxRetries, noteTransportRetryIntervalMs
 ): Promise<WebClient>
 
 WasmWebClient.createClientWithExternalKeystore(
   rpcUrl, noteTransportUrl, seed, storeName,
   getKeyCb, insertKeyCb, signCb,
-  logLevel, useWorker = true, observability
+  logLevel, useWorker = true, observability,
+  feeFaucetId, noteTransportMaxRetries, noteTransportRetryIntervalMs
 ): Promise<WebClient>
 ```
 
-`observability` is `{ observer?: (observation: object) => void, observeSensitive?: boolean }`. The fourth positional argument is the store name in both; `createClient` documents it as `network` and `createClientWithExternalKeystore` as `storeName`, but it is the same slot and the same meaning - set it when several clients share one browser.
+`observability` is `{ observer?: (observation: object) => void, observeSensitive?: boolean }`. The fourth positional argument is the store name in both; `createClient` documents it as `network` and `createClientWithExternalKeystore` as `storeName`, but it is the same slot and the same meaning - set it when several clients share one browser. The last three mirror the `ClientOptions` fields of the same names; the two retry options throw a `TypeError` when out of range (0 to 10 and 0 to 60000, and at most 120000 ms of total computed backoff, `interval * (2^retries - 1)` with an omitted value at its default). The retries run inside the client's serialized call, so a slow or rate-limiting transport blocks other client calls until the send finishes; a non-zero service `retry-after` replaces the computed delay with no upper bound and a zero one falls back to it. `noteTransportMaxRetries: 0` bounds a send to one attempt, which suits a latency-sensitive UI.
 
 ## FP10: outputNotes() Includes the Fee Note (CRITICAL - fails silently)
 
@@ -345,38 +349,39 @@ const expired = txs.filter((t) => t.expirationBlockNum() < height);
 
 It throws only where the filter was actually applied: a query that also carries `status` or `ids` is served by those, and an undefined `expiredBefore` still means "no filter".
 
-## FP12: sendPrivate Requires scanAfterBlockNum, and Overshooting Drops Delivery (HIGH)
+## FP12: sendPrivate Requires an Inclusion Proof (HIGH)
 
-`client.notes.sendPrivate({ note, to })` now requires an explicit `scanAfterBlockNum` - the block the recipient scans **forward** from for the note's on-chain commitment. The SDK no longer infers it from the current sync height, because that inference silently dropped delivery once the sender had synced past the note (for example when relaying *after* waiting for the transaction to commit).
+`client.notes.sendPrivate({ note, to, inclusionProof })` requires a `NoteInclusionProof`. The transport verifies it and the recipient scans from the block the proof names. The proof exists once the creating transaction is committed and this client has synced past that block.
 
-The value must be at or below the commitment block. A hint above it is never scanned back to and the recipient simply never receives the note - no error, on either side.
+For one of this client's own output notes, `sendPrivateOutput({ noteId, to })` reads the stored proof and throws if sync has not produced it yet. Call it after the transaction commits.
+
+`NoteInclusionProof.mockAtBlock(blockNum)` builds an empty-path proof. The published package includes it because that build enables the `testing` feature. The mock transport accepts it. A real node rejects it.
 
 ```tsx
-// CORRECT for an arbitrary note - pin the chain tip at submission time
-await client.notes.sendPrivate({ note, to, scanAfterBlockNum: tipAtSubmit });
+await client.notes.sendPrivate({ note, to, inclusionProof });
 
-// BETTER for one of this client's own output notes - the block is derived for you
 await client.notes.sendPrivateOutput({ noteId, to });
 ```
 
+A rejection from either is final. The SDK keeps no queue, and neither `sync()` nor `syncNoteTransport()` sends the note again; only transient transport failures are retried, inside the call (`noteTransportMaxRetries` / `noteTransportRetryIntervalMs` on `ClientOptions`, at most 120000 ms of backoff in total). Those retries hold the client's serialized call, and the React provider lock in the hooks, so other calls wait until the send finishes. Keep the note id and send the same note again: delivery is idempotent by note id. The React hooks report the same situation as a `PrivateNoteDeliveryError` and retry it with `useResendPrivateNotes`.
+
 Related: `notes.fetchPrivate({ mode: "all" })` is gone. `fetchPrivate()` takes no arguments and always fetches incrementally from the stored cursor; historical notes for a newly tracked tag are backfilled by `sync()`, so after adding a tag just sync.
 
-## FP13: Foreign-Account Inputs Are Pinned to One Block (HIGH)
+## FP13: Foreign-Account State Is Read at the Reference Block (HIGH)
 
-`client.transactions.foreignAccountInputs(accounts, blockNum)` (0.16.1) fetches each foreign account's state and inclusion witness so you can supply it instead of having it fetched at execution time. Each witness opens against the account tree of `blockNum` alone.
+A foreign account's state and witness are fetched against the transaction's own reference block, and the vault entries and storage-map keys the foreign code reads are resolved during execution as per-asset and per-key witnesses. Nothing is prefetched: `foreignAccountInputs` and `ForeignAccount.prefetched` were removed in 0.17 along with the upstream types behind them.
 
-**Do not sync between fetching these and executing.** The results are valid only for a transaction whose reference block is exactly `blockNum` - the anchor's block when executing against a `ChainAnchor`, or the sync height at execution time otherwise. Execution fails naming the account and the block. With auto-sync on a 15 s timer (FP6), a fetch-then-execute gap is easy to open by accident; capture a `ChainAnchor` or disable auto-sync across the window.
+**The reference block must be one the node still serves account state for.** Nodes keep a bounded window of account history (50 blocks at the time of writing), so a transaction pinned to an older block - an anchor captured minutes earlier, say - fails naming the account and the block, and there is no longer a way to carry the state along with the request. Capture the `ChainAnchor` close to execution. For a multisig proposal, do not anchor at all: execute at the tip with the bound block in `withBlockNumbers` (chain-anchored-execution R0).
 
 ```tsx
-const inputs = await client.transactions.foreignAccountInputs(
-  [ForeignAccount.public(id, storageRequirements)],
-  anchor.blockNum() // a method, not a property
-);
-// re-declare them so nothing is fetched at execution time
-const accounts = inputs.map((i) => ForeignAccount.prefetched(i));
+const foreign = ForeignAccount.public(id, storageRequirements);
+const request = builder
+  .withCustomScript(script)
+  .withForeignAccounts(new ForeignAccountArray([foreign]))
+  .build();
 ```
 
-Second trap: **only the accounts you name are fetched.** This does not discover the accounts a transaction loads on its own, such as faucets whose asset callbacks it triggers. Each returned `AccountInputs` entry serializes on its own (`entry.serialize()`), which is how you ship prefetched state to another client.
+Second trap: **only the accounts you name are declared.** This does not discover the accounts a transaction loads on its own, such as faucets whose asset callbacks it triggers.
 
 ## FP14: transactions.preview Rejects When Already Authorized (MEDIUM)
 
@@ -476,7 +481,7 @@ Verify: `crates/web-client/js/eager.js`.
 - `FungibleAsset.withCallbacks(flag)` removed. The flag is an immutable property of the issuing faucet's account id; `FungibleAsset.callbacks()` still reports it.
 - `TransactionSummary.salt()` replaced by `userParams()` (the seven user-defined field elements the summary commitment binds).
 - `ExecutedTransaction.accountDelta()` and `TransactionStoreUpdate.accountDelta()` replaced by `accountPatch()`, exposing the absolute-valued `AccountPatch` / `AccountStoragePatch` / `AccountVaultPatch`. `TransactionSummary.accountDelta()` remains relative. `AccountStorageDelta` was removed.
-- `AccountComponent.createNetworkAuth` renamed to `createNetworkAuthComponents(NoteScriptFee[], feeFaucetId)`, which returns an **array**. Add every returned component to the builder with `AccountBuilder.withComponent`.
+- `AccountComponent.createNetworkAuth` renamed to `createNetworkAuthComponents(NoteScriptFee[], feeFaucetId)`, which returns an **array**. Add every returned component to the builder with `AccountBuilder.withComponent`. Since 0.17 `feeFaucetId` must be the chain's own (`client.feeFaucetId()`): the node never runs network transactions for an account whose fee asset differs from the chain's protocol configuration, and the notes sent to it silently go unconsumed.
 - MASM: note scripts calling `basic_wallet::add_assets_to_account` must switch to `basic_wallet::move_note_assets_to_account` (a stale script fails to compile with `undefined item 'add_assets_to_account'`). Account-component procedures now require `@account_procedure`, and transaction scripts use `@transaction_script pub proc main`.
 - `newConsumeTransactionRequest` is async and takes the consuming account as a second argument. `newPswapConsumeTransactionRequest` and `newPswapCancelTransactionRequest` are async too (parameters unchanged). Code going through `client.transactions.consume(...)` / `consumeAll(...)` or the `useConsume` hook is unaffected.
 - `TransactionProver.newLocalProver()` now produces Poseidon2 proofs, matching the client's own default prover instead of the prover crate's Blake3 default. Expect local proving to take roughly 1.6-2.6x longer. This is an alignment, not a regression - do not go hunting for a performance bug.
@@ -493,12 +498,12 @@ Verify: `crates/web-client/js/eager.js`.
 | FP4 | BigInt | HIGH | Hooks and the high-level `MidenClient` coerce `number`; strict `bigint` only at the low-level request constructors |
 | FP5 | Bech32 mismatch | HIGH | Match network in rpcUrl and addresses; the HRP is inferred from the `rpcUrl` string and falls back to testnet |
 | FP6 | Auto-sync | MEDIUM | Default 15000ms; prefer `useSyncControl()` over `autoSyncInterval: 0` |
-| FP7 | IndexedDB loss | HIGH | A minor SDK bump wipes the store - ship `useExportStore`/`useImportStore` BEFORE upgrading |
+| FP7 | IndexedDB loss | HIGH | Upgrading from a pre-0.17.0 SDK clears the store once and its export cannot be imported; a newer SDK's store and export are refused |
 | FP8 | Vite config | MEDIUM | `midenVitePlugin()` has four options; bare call is right for ST, `crossOriginIsolation: true` only for `/mt` |
 | FP9 | StrictMode | LOW | Use MidenProvider, not manual `WasmWebClient.createClient()`; there is no debug-mode argument |
 | FP10 | Fee note in `outputNotes()` | CRITICAL | The list is one longer on a fee-charging chain; use `userOutputNotes()` / `feeNote()` on `ExecutedTransaction`, filter manually elsewhere |
 | FP11 | `expiredBefore` removed | HIGH | `transactions.list({ expiredBefore })` throws; use `{ status: "uncommitted" }` + `expirationBlockNum()` |
-| FP12 | `sendPrivate` block hint | HIGH | Pass `scanAfterBlockNum` at or below the commitment block, or prefer `sendPrivateOutput` |
+| FP12 | `sendPrivate` inclusion proof | HIGH | Pass a `NoteInclusionProof`, or `sendPrivateOutput` after the note commits; a rejected send is final, so send it again yourself |
 | FP13 | Foreign-account inputs | HIGH | Pinned to one block; do not sync between fetching and executing |
 | FP14 | `preview` already authorized | MEDIUM | Summary only while auth is pending; otherwise rejects `TRANSACTION_ALREADY_AUTHORIZED` |
 | FP15 | `useAccounts().faucets` | MEDIUM | Always empty; classify from `accounts` with `isFaucet()` |
