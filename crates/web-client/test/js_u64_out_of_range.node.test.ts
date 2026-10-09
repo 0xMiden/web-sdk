@@ -1,9 +1,9 @@
 // @ts-nocheck
 import { test, expect } from "./test-setup";
 
-// Regression coverage for the js_u64_to_u64 fix: an out-of-range BigInt
-// (negative, or >= 2^64) reaching any JsU64-typed parameter used to panic
-// the WASM/native module. It must now throw a catchable JS error instead.
+// An out-of-range BigInt (negative, or >= 2^64) passed to a bigint parameter
+// throws a catchable error on the Node.js build. The browser build receives a
+// u64 already reduced by wasm-bindgen, so this spec runs on the napi build only.
 test.describe("out-of-range BigInt inputs throw instead of panicking", () => {
   test("Felt.new rejects a negative BigInt", async ({ run }) => {
     const result = await run(async ({ sdk }) => {
@@ -15,6 +15,7 @@ test.describe("out-of-range BigInt inputs throw instead of panicking", () => {
       }
     });
     expect(result.threw).toBe(true);
+    expect(result.message).toContain("outside the u64 range");
   });
 
   test("Felt.new rejects a BigInt >= 2^64", async ({ run }) => {
@@ -27,6 +28,7 @@ test.describe("out-of-range BigInt inputs throw instead of panicking", () => {
       }
     });
     expect(result.threw).toBe(true);
+    expect(result.message).toContain("outside the u64 range");
   });
 
   test("Felt.new still accepts a valid u64 BigInt", async ({ run }) => {
@@ -49,6 +51,7 @@ test.describe("out-of-range BigInt inputs throw instead of panicking", () => {
       }
     });
     expect(result.threw).toBe(true);
+    expect(result.message).toContain("outside the u64 range");
   });
 
   test("FungibleAsset.new rejects an out-of-range amount", async ({ run }) => {
@@ -70,6 +73,7 @@ test.describe("out-of-range BigInt inputs throw instead of panicking", () => {
       }
     });
     expect(result.threw).toBe(true);
+    expect(result.message).toContain("outside the u64 range");
   });
 
   test("TransactionStatus.committed rejects an out-of-range timestamp", async ({
@@ -84,5 +88,6 @@ test.describe("out-of-range BigInt inputs throw instead of panicking", () => {
       }
     });
     expect(result.threw).toBe(true);
+    expect(result.message).toContain("outside the u64 range");
   });
 });
