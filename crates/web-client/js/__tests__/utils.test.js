@@ -228,6 +228,54 @@ describe("resolveAuthScheme", () => {
     expect(resolveAuthScheme(undefined, wasm)).toBe(2);
   });
 
+  it("passes through an already-resolved numeric value unchanged", () => {
+    expect(resolveAuthScheme(1, wasm)).toBe(1);
+    expect(resolveAuthScheme(2, wasm)).toBe(2);
+  });
+
+  // The browser entry gets wasm-bindgen's frozen literal (enumerable members
+  // plus reverse name keys); the Node entry gets napi-rs's object, whose
+  // members are not enumerable.
+  it.each([
+    [
+      "wasm-bindgen",
+      Object.freeze({
+        AuthEcdsaK256Keccak: 1,
+        1: "AuthEcdsaK256Keccak",
+        AuthRpoFalcon512: 2,
+        2: "AuthRpoFalcon512",
+      }),
+    ],
+    [
+      "napi-rs",
+      Object.defineProperties(
+        {},
+        {
+          AuthEcdsaK256Keccak: { value: 1 },
+          AuthRpoFalcon512: { value: 2 },
+        }
+      ),
+    ],
+  ])("accepts exactly the %s enum's values", (_shape, AuthScheme) => {
+    const module = { AuthScheme };
+    expect(resolveAuthScheme(2, module)).toBe(2);
+    expect(resolveAuthScheme(1, module)).toBe(1);
+    expect(resolveAuthScheme("falcon", module)).toBe(2);
+    expect(resolveAuthScheme("ecdsa", module)).toBe(1);
+    expect(() => resolveAuthScheme(99, module)).toThrow(
+      'Unknown auth scheme: "99"'
+    );
+  });
+
+  it("throws for a number that is not an AuthScheme value", () => {
+    expect(() => resolveAuthScheme(99, wasm)).toThrow(
+      'Unknown auth scheme: "99"'
+    );
+    expect(() => resolveAuthScheme(0, wasm)).toThrow(
+      'Unknown auth scheme: "0"'
+    );
+  });
+
   // NOTE: main exposes a hardcoded-discriminant fallback when `wasm` is
   // omitted (1 for ecdsa, 2 for falcon); next dropped that and now
   // requires the WASM module to read enum values from

@@ -58,6 +58,12 @@ export function useTurnkeyMiden(
     }
 
     let mounted = true;
+    // The client this run creates, captured locally. The cleanup below cannot
+    // read it out of React state: the closure captures the state value from
+    // when the effect ran, which is null on the first pass, and `client` is
+    // deliberately not in the dependency array. Without this the created
+    // client was never terminated and leaked on every unmount or dep change.
+    let createdClient: { terminate?: () => void } | null = null;
     const loadClient = async () => {
       const { AccountStorageMode } = await import("@miden-sdk/miden-sdk");
 
@@ -82,8 +88,12 @@ export function useTurnkeyMiden(
         );
 
       if (mounted) {
+        createdClient = midenClient as unknown as { terminate?: () => void };
         setClient(midenClient as any);
         setAccountId(newAccountId);
+      } else {
+        // Finished after unmount: terminate rather than strand it.
+        (midenClient as unknown as { terminate?: () => void })?.terminate?.();
       }
     };
 
@@ -93,7 +103,8 @@ export function useTurnkeyMiden(
 
     return () => {
       mounted = false;
-      client?.terminate();
+      createdClient?.terminate?.();
+      createdClient = null;
       setClient(null);
       setAccountId(null);
     };

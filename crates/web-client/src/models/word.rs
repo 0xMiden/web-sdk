@@ -14,8 +14,8 @@ impl Word {
     /// Creates a word from four numeric values.
     ///
     /// Each input must be a canonical field element, i.e. strictly less than the field modulus.
-    /// `Felt::new` (now fallible on the 0.15 surface) errors out on inputs at or beyond the
-    /// modulus; the error is surfaced to JS.
+    /// `Felt::new` is fallible and errors out on inputs at or beyond the modulus; the error is
+    /// surfaced to JS.
     #[js_export(constructor)]
     pub fn new(u64_vec: Vec<JsU64>) -> Result<Word, JsErr> {
         if u64_vec.len() != 4 {

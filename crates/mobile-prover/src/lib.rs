@@ -21,12 +21,7 @@
 //! pinned to the same miden-client line. Hosts must rebuild and ship the
 //! native binary together with every SDK protocol bump.
 
-use miden_client::transaction::{
-    LocalTransactionProver,
-    ProvenTransaction,
-    ProvingOptions,
-    TransactionInputs,
-};
+use miden_client::transaction::{LocalTransactionProver, ProvenTransaction, TransactionInputs};
 use miden_client::utils::{Deserializable, Serializable};
 
 /// Status codes returned by [`miden_prove_transaction`].
@@ -79,12 +74,12 @@ pub unsafe extern "C" fn miden_prove_transaction(
         },
     };
 
-    let prover = LocalTransactionProver::new(ProvingOptions::default());
-    // The prove future is CPU-bound (no real async I/O); a tiny single-
-    // thread executor suffices to drive it to completion. rayon-backed
-    // parallelism inside the prover spawns its own threads via the
-    // `concurrent` feature, independent of this outer executor.
-    let proven: ProvenTransaction = match futures_executor::block_on(prover.prove(inputs)) {
+    // `LocalTransactionProver::default()`, not `new(ProvingOptions::default())`:
+    // the native mobile prover must produce the same kind of proof as the WASM
+    // client, and only the former tracks the client's own default hash function.
+    // See the note on `newLocalProver` in crates/web-client/src/models/provers.rs.
+    let prover = LocalTransactionProver::default();
+    let proven: ProvenTransaction = match prover.prove(inputs) {
         Ok(p) => p,
         Err(_) => {
             unsafe { *output_written = 0 };

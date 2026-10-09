@@ -13,6 +13,7 @@ const COUNTER_CODE = `
 
   #! Inputs:  []
   #! Outputs: [count]
+  @account_procedure
   pub proc get_count
       push.COUNTER_SLOT[0..2] exec.active_account::get_item
       # => [count]
@@ -23,6 +24,7 @@ const COUNTER_CODE = `
 
   #! Inputs:  []
   #! Outputs: []
+  @account_procedure
   pub proc increment_count
       push.COUNTER_SLOT[0..2] exec.active_account::get_item
       # => [count]
@@ -53,6 +55,7 @@ test.describe("compile.component()", () => {
     const client = await MidenClient.createMock();
     const component = await client.compile.component({
       code: COUNTER_CODE,
+      namespace: "external_contract::counter_contract",
       slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
     });
 
@@ -76,6 +79,7 @@ test.describe("compile.component()", () => {
     const client = await MidenClient.createMock();
     const component = await client.compile.component({
       code: COUNTER_CODE,
+      namespace: "external_contract::counter_contract",
       slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
     });
 
@@ -108,16 +112,49 @@ test.describe("compile.component()", () => {
 
     const compA = await client.compile.component({
       code: COUNTER_CODE,
+      namespace: "external_contract::counter_contract",
       slots: [sdk.StorageSlot.emptyValue(slotA)],
     });
     const compB = await client.compile.component({
       code: COUNTER_CODE,
+      namespace: "external_contract::counter_contract",
       slots: [sdk.StorageSlot.emptyValue(slotB)],
     });
 
     // Both should succeed independently (no cross-call contamination)
     expect(compA.getProcedureHash("get_count")).not.toBeNull();
     expect(compB.getProcedureHash("get_count")).not.toBeNull();
+  });
+
+  test("links a dependency module the component imports", async ({ sdk }) => {
+    // Without linking, this component does not compile: it exec's a procedure
+    // from another module. The link path itself is pinned by the unit test
+    // (compiler.test.js), which asserts linkModule is used and buildLibrary is
+    // not; every link path produces the same procedure digest, so a digest
+    // comparison here could not tell them apart.
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+
+    const NS = "external_contract::counter_contract";
+    const componentCode = `
+      use external_contract::counter_contract
+      use miden::core::sys
+
+      @account_procedure
+      pub proc wrapped_increment
+        exec.counter_contract::increment_count
+        exec.sys::truncate_stack
+      end
+    `;
+
+    const client = await MidenClient.createMock();
+    const component = await client.compile.component({
+      code: componentCode,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+      libraries: [{ namespace: NS, code: COUNTER_CODE }],
+    });
+
+    expect(component.getProcedureHash("wrapped_increment")).not.toBeNull();
   });
 });
 
@@ -133,7 +170,8 @@ test.describe("compile.txScript()", () => {
     const script = await client.compile.txScript({
       code: `
         use miden::core::sys
-        begin
+        @transaction_script
+        pub proc main
           exec.sys::truncate_stack
         end
       `,
@@ -148,7 +186,8 @@ test.describe("compile.txScript()", () => {
     const script = await client.compile.txScript({
       code: `
         use external_contract::counter_contract
-        begin
+        @transaction_script
+        pub proc main
           call.counter_contract::increment_count
         end
       `,
@@ -177,7 +216,8 @@ test.describe("compile.txScript()", () => {
     const scriptWithLib = await client.compile.txScript({
       code: `
         use external_contract::counter_contract
-        begin
+        @transaction_script
+        pub proc main
           call.counter_contract::increment_count
         end
       `,
@@ -194,7 +234,8 @@ test.describe("compile.txScript()", () => {
     const scriptNoLib = await client.compile.txScript({
       code: `
         use miden::core::sys
-        begin
+        @transaction_script
+        pub proc main
           exec.sys::truncate_stack
         end
       `,
@@ -358,6 +399,7 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
 
     const component = await client.compile.component({
       code: COUNTER_CODE,
+      namespace: "external_contract::counter_contract",
       slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
     });
 
@@ -388,6 +430,7 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
 
     const component = await client.compile.component({
       code: COUNTER_CODE,
+      namespace: "external_contract::counter_contract",
       slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
     });
 
@@ -416,6 +459,7 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
 
     const component = await client.compile.component({
       code: COUNTER_CODE,
+      namespace: "external_contract::counter_contract",
       slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
     });
 
@@ -475,6 +519,7 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
     const client = await MidenClient.createMock();
     const component1 = await client.compile.component({
       code: COUNTER_CODE,
+      namespace: "external_contract::counter_contract",
       slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
     });
     const auth1 = sdk.AuthSecretKey.rpoFalconWithRNG(seed);
@@ -491,6 +536,7 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
     // duplicate-key error — all mock clients share the same DB.
     const component2 = await client.compile.component({
       code: COUNTER_CODE,
+      namespace: "external_contract::counter_contract",
       slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
     });
     const auth2 = sdk.AuthSecretKey.rpoFalconWithRNG(seed);
@@ -522,6 +568,7 @@ test.describe("transactions.execute()", () => {
     // Create the counter contract
     const component = await client.compile.component({
       code: COUNTER_CODE,
+      namespace: "external_contract::counter_contract",
       slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
     });
 
@@ -541,20 +588,16 @@ test.describe("transactions.execute()", () => {
     client.proveBlock();
     await client.sync();
 
-    // Compile the increment script
+    // Compile the increment script from the exact code installed on the account.
     const script = await client.compile.txScript({
       code: `
         use external_contract::counter_contract
-        begin
+        @transaction_script
+        pub proc main
           call.counter_contract::increment_count
         end
       `,
-      libraries: [
-        {
-          namespace: "external_contract::counter_contract",
-          code: COUNTER_CODE,
-        },
-      ],
+      libraries: [{ component }],
     });
 
     // Execute the transaction
@@ -574,6 +617,7 @@ test.describe("transactions.execute()", () => {
 
     const component = await client.compile.component({
       code: COUNTER_CODE,
+      namespace: "external_contract::counter_contract",
       slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
     });
 
@@ -595,16 +639,12 @@ test.describe("transactions.execute()", () => {
     const script = await client.compile.txScript({
       code: `
         use external_contract::counter_contract
-        begin
+        @transaction_script
+        pub proc main
           call.counter_contract::increment_count
         end
       `,
-      libraries: [
-        {
-          namespace: "external_contract::counter_contract",
-          code: COUNTER_CODE,
-        },
-      ],
+      libraries: [{ component }],
     });
 
     await client.transactions.execute({ account: account.id(), script });
@@ -638,6 +678,7 @@ test.describe("transactions.execute()", () => {
     // Create a target contract (the "foreign" account)
     const component = await client.compile.component({
       code: COUNTER_CODE,
+      namespace: "external_contract::counter_contract",
       slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
     });
     const seed1 = new Uint8Array(32);
@@ -662,7 +703,8 @@ test.describe("transactions.execute()", () => {
     const script = await client.compile.txScript({
       code: `
         use miden::core::sys
-        begin
+        @transaction_script
+        pub proc main
           exec.sys::truncate_stack
         end
       `,
@@ -711,7 +753,8 @@ test.describe("transactions.execute()", () => {
     const script = await client.compile.txScript({
       code: `
         use miden::core::sys
-        begin
+        @transaction_script
+        pub proc main
           exec.sys::truncate_stack
         end
       `,
@@ -748,6 +791,7 @@ test.describe("transactions.executeProgram()", () => {
 
         const component = await client.compile.component({
           code,
+          namespace: "external_contract::counter_contract",
           slots: [window.StorageSlot.emptyValue(slotName)],
         });
 
@@ -770,13 +814,12 @@ test.describe("transactions.executeProgram()", () => {
         const incrScript = await client.compile.txScript({
           code: `
             use external_contract::counter_contract
-            begin
+            @transaction_script
+            pub proc main
               call.counter_contract::increment_count
             end
           `,
-          libraries: [
-            { namespace: "external_contract::counter_contract", code },
-          ],
+          libraries: [{ component }],
         });
 
         await client.transactions.execute({
@@ -791,13 +834,12 @@ test.describe("transactions.executeProgram()", () => {
         const readScript = await client.compile.txScript({
           code: `
             use external_contract::counter_contract
-            begin
+            @transaction_script
+            pub proc main
               call.counter_contract::get_count
             end
           `,
-          libraries: [
-            { namespace: "external_contract::counter_contract", code },
-          ],
+          libraries: [{ component }],
         });
 
         const feltArray = await client.transactions.executeProgram({

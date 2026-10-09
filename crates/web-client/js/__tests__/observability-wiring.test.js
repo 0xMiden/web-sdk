@@ -290,7 +290,7 @@ describe("proxy fallthrough observation", () => {
       // Classified in READ_METHODS — routed through _serializeWasmCall.
       getAccount: async () => "account",
       // Classified in SYNC_METHODS — bound raw, must stay unobserved.
-      setDebugMode: () => "debug-set",
+      usesMockChain: () => false,
     };
     return createClientProxy(instance);
   }
@@ -313,7 +313,7 @@ describe("proxy fallthrough observation", () => {
     expect(seen.map((o) => o.op)).toEqual(["getAccount"]);
 
     // Raw-bound: returns the value itself, not a promise, and emits nothing.
-    expect(proxy.setDebugMode()).toBe("debug-set");
+    expect(proxy.usesMockChain()).toBe(false);
     await Promise.resolve();
     expect(seen.map((o) => o.op)).toEqual(["getAccount"]);
   });

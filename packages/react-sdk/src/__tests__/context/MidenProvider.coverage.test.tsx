@@ -7,6 +7,8 @@ import {
   useMidenClient,
 } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
+import { SignerContext } from "../../context/SignerContext";
+import { createMockSignerContext } from "../mocks/signer-context";
 
 // Coverage-targeted tests for branches that the main MidenProvider.test.tsx
 // doesn't exercise (custom loading/error UI, init failure path, useMidenClient
@@ -15,6 +17,127 @@ import { useMidenStore } from "../../store/MidenStore";
 beforeEach(() => {
   useMidenStore.getState().reset();
   vi.clearAllMocks();
+});
+
+describe("MidenProvider — fee faucet", () => {
+  it("passes config.feeFaucetId to createClient at index 7", async () => {
+    // A 0.17 client cannot execute or screen notes without a protocol
+    // configuration, and this is the only thing the provider is given to build
+    // one from, so a dropped argument leaves every consumer of the provider
+    // unable to transact.
+    render(
+      <MidenProvider
+        config={{
+          rpcUrl: "https://rpc.testnet.miden.io",
+          feeFaucetId: "0x1234567890abcdef",
+        }}
+      >
+        <div data-testid="children">ready</div>
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(vi.mocked(WebClient.createClient)).toHaveBeenCalled();
+    });
+    // Length plus absolute index, not a position from the end: passing the
+    // value last makes `args[args.length - 1]` true by construction, so
+    // deleting an earlier placeholder would shift every later argument one slot
+    // left and still satisfy it.
+    const args = vi.mocked(WebClient.createClient).mock.calls[0];
+    expect(args).toHaveLength(10);
+    expect(args[7]).toBe("0x1234567890abcdef");
+  });
+
+  // The branch every signer provider takes, and the harder of the two: eleven
+  // positional arguments with `undefined` placeholders, which is exactly what
+  // rots. The createClient case above cannot catch a regression here.
+  it("passes config.feeFaucetId to the external-keystore factory at index 10", async () => {
+    const signer = createMockSignerContext({
+      isConnected: true,
+      storeName: "signer_fee_faucet",
+    });
+
+    render(
+      <SignerContext.Provider value={signer}>
+        <MidenProvider
+          config={{
+            rpcUrl: "https://rpc.testnet.miden.io",
+            feeFaucetId: "0xfeedfacecafebeef",
+          }}
+        >
+          <div data-testid="children">ready</div>
+        </MidenProvider>
+      </SignerContext.Provider>
+    );
+
+    await waitFor(() => {
+      expect(
+        vi.mocked(WebClient.createClientWithExternalKeystore)
+      ).toHaveBeenCalled();
+    });
+    const args = vi.mocked(WebClient.createClientWithExternalKeystore).mock
+      .calls[0];
+    expect(args).toHaveLength(13);
+    expect(args[10]).toBe("0xfeedfacecafebeef");
+  });
+});
+
+// The SDK validates both values in the WebClient constructor before any WASM
+// call, so the provider only has to put them where the statics read them.
+describe("MidenProvider - note transport retry options", () => {
+  it("passes them to createClient after feeFaucetId", async () => {
+    render(
+      <MidenProvider
+        config={{
+          rpcUrl: "https://rpc.testnet.miden.io",
+          noteTransportMaxRetries: 5,
+          noteTransportRetryIntervalMs: 1000,
+        }}
+      >
+        <div data-testid="children">ready</div>
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(vi.mocked(WebClient.createClient)).toHaveBeenCalled();
+    });
+    const args = vi.mocked(WebClient.createClient).mock.calls[0];
+    expect(args).toHaveLength(10);
+    expect(args[8]).toBe(5);
+    expect(args[9]).toBe(1000);
+  });
+
+  it("passes them to the external-keystore factory after feeFaucetId", async () => {
+    const signer = createMockSignerContext({
+      isConnected: true,
+      storeName: "signer_retry_options",
+    });
+
+    render(
+      <SignerContext.Provider value={signer}>
+        <MidenProvider
+          config={{
+            rpcUrl: "https://rpc.testnet.miden.io",
+            noteTransportMaxRetries: 0,
+            noteTransportRetryIntervalMs: 60000,
+          }}
+        >
+          <div data-testid="children">ready</div>
+        </MidenProvider>
+      </SignerContext.Provider>
+    );
+
+    await waitFor(() => {
+      expect(
+        vi.mocked(WebClient.createClientWithExternalKeystore)
+      ).toHaveBeenCalled();
+    });
+    const args = vi.mocked(WebClient.createClientWithExternalKeystore).mock
+      .calls[0];
+    expect(args).toHaveLength(13);
+    expect(args[11]).toBe(0);
+    expect(args[12]).toBe(60000);
+  });
 });
 
 describe("MidenProvider — custom loading + error rendering", () => {
@@ -186,6 +309,7 @@ describe("MidenProvider — auto-sync + state-change listener", () => {
         syncState: syncSpy,
         getSyncHeight: vi.fn().mockResolvedValue(100),
         onStateChanged: vi.fn(() => () => {}),
+        terminate: vi.fn(),
         free: vi.fn(),
       };
       vi.mocked(WebClient.createClient).mockResolvedValueOnce(
@@ -225,6 +349,7 @@ describe("MidenProvider — auto-sync + state-change listener", () => {
       syncState: vi.fn().mockResolvedValue({ blockNum: () => 100 }),
       getSyncHeight: vi.fn().mockResolvedValue(100),
       onStateChanged: vi.fn(() => unsub),
+      terminate: vi.fn(),
       free: vi.fn(),
     };
     vi.mocked(WebClient.createClient).mockResolvedValueOnce(
@@ -254,6 +379,7 @@ describe("MidenProvider — auto-sync + state-change listener", () => {
       syncState: vi.fn().mockRejectedValue(new Error("syncState boom")),
       getSyncHeight: vi.fn().mockResolvedValue(100),
       onStateChanged: vi.fn(() => () => {}),
+      terminate: vi.fn(),
       free: vi.fn(),
     };
     vi.mocked(WebClient.createClient).mockResolvedValueOnce(
@@ -283,6 +409,7 @@ describe("MidenProvider — auto-sync + state-change listener", () => {
       syncState: vi.fn().mockResolvedValue({ blockNum: () => 100 }),
       getSyncHeight: vi.fn().mockResolvedValue(100),
       onStateChanged: vi.fn(() => () => {}),
+      terminate: vi.fn(),
       free: vi.fn(),
     };
     vi.mocked(WebClient.createClient).mockResolvedValueOnce(
@@ -310,6 +437,7 @@ describe("MidenProvider — auto-sync + state-change listener", () => {
         registeredCb = cb;
         return () => {};
       }),
+      terminate: vi.fn(),
       free: vi.fn(),
     };
     vi.mocked(WebClient.createClient).mockResolvedValueOnce(
@@ -350,6 +478,7 @@ describe("MidenProvider — auto-sync + state-change listener", () => {
         .mockRejectedValue(new Error("explicit sync boom")),
       getSyncHeight: vi.fn().mockResolvedValue(100),
       onStateChanged: vi.fn(() => () => {}),
+      terminate: vi.fn(),
       free: vi.fn(),
     };
     vi.mocked(WebClient.createClient).mockResolvedValueOnce(
@@ -391,6 +520,7 @@ describe("MidenProvider — auto-sync + state-change listener", () => {
         registeredCb = cb;
         return () => {};
       }),
+      terminate: vi.fn(),
       free: vi.fn(),
     };
     vi.mocked(WebClient.createClient).mockResolvedValueOnce(

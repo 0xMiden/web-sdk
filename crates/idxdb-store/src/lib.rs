@@ -6,12 +6,9 @@
 //!
 //! **Note:** This implementation is only available when targeting WebAssembly
 
-// `#[wasm_bindgen(getter_with_clone)]` expands to a `.clone()` per field, including
-// the `Copy` ones, and clippy attributes the generated calls to the attribute's own
-// span — so an `allow` on the struct or the attribute does not reach them. Nothing
-// here is hand-written, and the attribute is required for the `String` and `Vec`
-// fields on the same structs. wasm-bindgen 0.2.108 predates the fix upstream; drop
-// this once that dependency moves.
+// `#[wasm_bindgen(getter_with_clone)]` generates a `self.field.clone()` getter for every field,
+// including Copy ones (u8/u32/bool/Option<u32>), which clippy's `clone_on_copy` flags. The clones
+// are macro-generated and harmless, so the lint is allowed crate-wide.
 #![allow(clippy::clone_on_copy)]
 
 extern crate alloc;
@@ -32,22 +29,23 @@ use miden_client::account::{
     StorageMapKey,
     StorageSlotName,
 };
-use miden_client::asset::{Asset, AssetVault, AssetVaultKey, AssetWitness, StorageMapWitness};
-use miden_client::block::BlockHeader;
+use miden_client::asset::{Asset, AssetId, AssetVault, AssetWitness, StorageMapWitness};
+use miden_client::block::{AccountWitness, BlockHeader};
 use miden_client::crypto::{InOrderIndex, MmrPeaks};
 use miden_client::note::{BlockNumber, NoteScript, Nullifier};
 use miden_client::store::{
     AccountRecord,
-    AccountSmtForest,
     AccountStatus,
     AccountStorageFilter,
     BlockRelevance,
     ClientAccountType,
+    InputNoteCursor,
     InputNoteRecord,
     NoteFilter,
     OutputNoteRecord,
     PartialBlockchainFilter,
     SettingMutation,
+    SettingScope,
     Store,
     StoreError,
     TransactionFilter,
@@ -65,12 +63,15 @@ pub mod account;
 pub mod auth;
 pub mod chain_data;
 pub mod export;
+mod forest;
 pub mod import;
 pub mod note;
 mod promise;
 pub mod settings;
 pub mod sync;
 pub mod transaction;
+
+use forest::AccountForest;
 
 pub(crate) const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -83,10 +84,15 @@ extern "C" {
 // Initialize IndexedDB
 #[wasm_bindgen(module = "/src/js/schema.js")]
 extern "C" {
-    /// Opens the database and registers it in the JS registry.
-    /// Returns the database ID (network name) which can be used to look up the database.
+    /// Opens the database, or joins the connection already open under `network`, and counts the
+    /// caller as one holder of it. Returns the database ID (network name) which can be used to
+    /// look up the database.
     #[wasm_bindgen(js_name = openDatabase)]
     fn open_database(network: &str, client_version: &str) -> js_sys::Promise;
+
+    /// Releases one holder of the database opened under `network`; the last one closes it.
+    #[wasm_bindgen(js_name = closeDatabase)]
+    fn close_database(network: &str);
 }
 
 /// `IdxdbStore` provides an `IndexedDB`-backed implementation of the Store trait.
@@ -96,65 +102,37 @@ extern "C" {
 /// which would prevent the struct from being Send + Sync.
 pub struct IdxdbStore {
     database_id: String,
-    smt_forest: RwLock<AccountSmtForest>,
+    smt_forest: RwLock<AccountForest>,
 }
 
 impl IdxdbStore {
     pub async fn new(database_name: String) -> Result<IdxdbStore, JsValue> {
+        // Built before the open: once the open counts this store as a holder, only `Drop`
+        // releases it, so nothing after the open may fail.
+        let smt_forest = AccountForest::new()
+            .map_err(|e| JsValue::from_str(&format!("Failed to create SMT forest: {e:?}")))?;
+
         let promise = open_database(database_name.as_str(), CLIENT_VERSION);
         let _db_id = JsFuture::from(promise).await?;
 
-        let store = IdxdbStore {
+        Ok(IdxdbStore {
             database_id: database_name,
-            smt_forest: RwLock::new(AccountSmtForest::new()),
-        };
-
-        // Initialize SMT forest
-        store.build_smt_forest().await?;
-
-        Ok(store)
-    }
-
-    /// Builds the SMT forest by loading all existing account vault and storage data.
-    ///
-    /// This ensures that the forest contains all necessary Merkle nodes for generating
-    /// witnesses when creating partial accounts or executing transactions.
-    async fn build_smt_forest(&self) -> Result<(), JsValue> {
-        let account_ids = self
-            .get_account_ids()
-            .await
-            .map_err(|e| JsValue::from_str(&format!("Failed to get account IDs: {e:?}")))?;
-
-        for account_id in account_ids {
-            let vault = self.get_account_vault(account_id).await.map_err(|e| {
-                JsValue::from_str(&format!("Failed to get vault for account {account_id}: {e:?}"))
-            })?;
-
-            let storage = self
-                .get_account_storage(account_id, AccountStorageFilter::All)
-                .await
-                .map_err(|e| {
-                    JsValue::from_str(&format!(
-                        "Failed to get storage for account {account_id}: {e:?}"
-                    ))
-                })?;
-
-            self.smt_forest
-                .write()
-                .insert_and_register_account_state(account_id, &vault, &storage)
-                .map_err(|e| {
-                    JsValue::from_str(&format!(
-                        "Failed to insert account state for {account_id}: {e:?}"
-                    ))
-                })?;
-        }
-
-        Ok(())
+            smt_forest: RwLock::new(smt_forest),
+        })
     }
 
     /// Returns the database ID as a string slice for passing to JS functions.
     pub(crate) fn db_id(&self) -> &str {
         self.database_id.as_str()
+    }
+}
+
+/// Releases this store's hold on the `IndexedDB` connection it opened, so the connection closes
+/// once no store on the same name is left, whether the owning client is released by `free()` or
+/// by the `FinalizationRegistry`.
+impl Drop for IdxdbStore {
+    fn drop(&mut self) {
+        close_database(&self.database_id);
     }
 }
 
@@ -228,15 +206,15 @@ impl Store for IdxdbStore {
         self.get_output_notes(note_filter).await
     }
 
-    async fn get_input_note_by_offset(
+    async fn get_input_note_after(
         &self,
         filter: NoteFilter,
         consumer: AccountId,
         block_start: Option<BlockNumber>,
         block_end: Option<BlockNumber>,
-        offset: u32,
+        cursor: Option<InputNoteCursor>,
     ) -> Result<Option<InputNoteRecord>, StoreError> {
-        self.get_input_note_by_offset(filter, consumer, block_start, block_end, offset)
+        self.get_input_note_after(filter, consumer, block_start, block_end, cursor)
             .await
     }
 
@@ -258,9 +236,10 @@ impl Store for IdxdbStore {
     async fn insert_block_header(
         &self,
         block_header: &BlockHeader,
+        nodes: &[(InOrderIndex, Word)],
         has_client_notes: bool,
     ) -> Result<(), StoreError> {
-        self.insert_block_header(block_header, has_client_notes).await
+        self.insert_block_header(block_header, nodes, has_client_notes).await
     }
 
     async fn get_block_headers(
@@ -283,13 +262,6 @@ impl Store for IdxdbStore {
         filter: PartialBlockchainFilter,
     ) -> Result<BTreeMap<InOrderIndex, Word>, StoreError> {
         self.get_partial_blockchain_nodes(filter).await
-    }
-
-    async fn insert_partial_blockchain_nodes(
-        &self,
-        nodes: &[(InOrderIndex, Word)],
-    ) -> Result<(), StoreError> {
-        self.insert_partial_blockchain_nodes(nodes).await
     }
 
     async fn get_current_blockchain_peaks(&self) -> Result<MmrPeaks, StoreError> {
@@ -408,9 +380,9 @@ impl Store for IdxdbStore {
     async fn get_account_asset(
         &self,
         account_id: AccountId,
-        vault_key: AssetVaultKey,
+        vault_id: AssetId,
     ) -> Result<Option<(Asset, AssetWitness)>, StoreError> {
-        self.get_account_asset(account_id, vault_key).await
+        self.get_account_asset(account_id, vault_id).await
     }
 
     async fn get_account_map_item(
@@ -439,36 +411,76 @@ impl Store for IdxdbStore {
         self.insert_address(address, &account_id).await
     }
 
-    async fn remove_address(&self, address: Address) -> Result<(), StoreError> {
+    async fn remove_address(&self, address: Address) -> Result<bool, StoreError> {
         // Tag removal moved upstream — `Self::remove_note_tag` is the
         // caller's responsibility per the new trait contract.
         self.remove_address(address).await
     }
 
+    // ACCOUNT WITNESSES
+    // --------------------------------------------------------------------------------------------
+
+    async fn track_account_witness(&self, account_id: AccountId) -> Result<bool, StoreError> {
+        self.track_account_witness(account_id).await
+    }
+
+    async fn untrack_account_witness(&self, account_id: AccountId) -> Result<bool, StoreError> {
+        self.untrack_account_witness(account_id).await
+    }
+
+    async fn tracked_account_witnesses(&self) -> Result<Vec<AccountId>, StoreError> {
+        self.tracked_account_witnesses().await
+    }
+
+    async fn get_account_witness(
+        &self,
+        account_id: AccountId,
+    ) -> Result<Option<AccountWitness>, StoreError> {
+        self.get_account_witness(account_id).await
+    }
+
+    async fn update_account_witness(
+        &self,
+        account_id: AccountId,
+        witness: &AccountWitness,
+    ) -> Result<bool, StoreError> {
+        self.update_account_witness(account_id, witness).await
+    }
+
     // SETTINGS
     // --------------------------------------------------------------------------------------------
 
-    async fn set_setting(&self, key: String, value: Vec<u8>) -> Result<(), StoreError> {
-        self.set_setting(key, value).await
+    async fn set_setting(
+        &self,
+        scope: SettingScope,
+        key: String,
+        value: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        self.set_setting(scope, key, value).await
     }
 
-    async fn get_setting(&self, key: String) -> Result<Option<Vec<u8>>, StoreError> {
-        self.get_setting(key).await
+    async fn get_setting(
+        &self,
+        scope: SettingScope,
+        key: String,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        self.get_setting(scope, key).await
     }
 
-    async fn remove_setting(&self, key: String) -> Result<(), StoreError> {
-        self.remove_setting(key).await
+    async fn remove_setting(&self, scope: SettingScope, key: String) -> Result<bool, StoreError> {
+        self.remove_setting(scope, key).await
     }
 
-    async fn list_setting_keys(&self) -> Result<Vec<String>, StoreError> {
-        self.list_setting_keys().await
+    async fn list_setting_keys(&self, scope: SettingScope) -> Result<Vec<String>, StoreError> {
+        self.list_setting_keys(scope).await
     }
 
     async fn apply_settings_mutations(
         &self,
+        scope: SettingScope,
         mutations: Vec<SettingMutation>,
     ) -> Result<(), StoreError> {
-        self.apply_settings_mutations(mutations).await
+        self.apply_settings_mutations(scope, mutations).await
     }
 }
 

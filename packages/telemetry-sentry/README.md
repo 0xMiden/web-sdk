@@ -30,6 +30,7 @@ Sentry.init({ dsn: "..." }); // yours to call, once, in your entry point
 
 const client = await MidenClient.create({
   rpcUrl: "testnet",
+  feeFaucetId: FEE_FAUCET,
   observer: createSentryObserver({ client: Sentry, minDurationMs: 5_000 }),
 });
 ```

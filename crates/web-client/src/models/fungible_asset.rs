@@ -40,7 +40,7 @@ impl FungibleAsset {
     /// asset amount, `2^63 - 2^31`).
     #[js_export(js_name = "fromVaultEntry")]
     pub fn from_vault_entry(key: &Word, value: &Word) -> Result<FungibleAsset, JsErr> {
-        FungibleAssetNative::from_key_value_words(key.into(), value.into())
+        FungibleAssetNative::from_id_and_value_words(key.into(), value.into())
             .map(FungibleAsset)
             .map_err(|e| from_str_err(&format!("Failed to create FungibleAsset: {e}")))
     }
@@ -66,7 +66,7 @@ impl FungibleAsset {
             NativeFelt::ZERO,
             NativeFelt::ZERO,
         ]);
-        FungibleAssetNative::from_key_value_words(key.into(), value)
+        FungibleAssetNative::from_id_and_value_words(key.into(), value)
             .map(FungibleAsset)
             .map_err(|e| from_str_err(&format!("Failed to create FungibleAsset: {e}")))
     }
@@ -84,19 +84,11 @@ impl FungibleAsset {
     }
 
     /// Returns whether this asset invokes its faucet's callbacks.
+    ///
+    /// The flag is an immutable property of the issuing faucet's account id, so every asset from
+    /// a given faucet carries the same value and it cannot be set per asset.
     pub fn callbacks(&self) -> AssetCallbackFlag {
         self.0.callbacks().into()
-    }
-
-    /// Returns a copy of this asset carrying the given callback flag.
-    ///
-    /// The flag is part of the asset's vault key, so it must match the flag the issuing faucet
-    /// applies — an asset built with the wrong flag addresses a different vault slot than the one
-    /// holding the balance. The constructor always produces `Disabled`; pass `Enabled` only for
-    /// assets from a faucet that registers transfer policies.
-    #[js_export(js_name = "withCallbacks")]
-    pub fn with_callbacks(&self, callbacks: AssetCallbackFlag) -> FungibleAsset {
-        FungibleAsset(self.0.with_callbacks(callbacks.into()))
     }
 
     /// Returns the key word under which this asset is stored in an account vault.
@@ -106,7 +98,7 @@ impl FungibleAsset {
     /// into [`fromVaultEntry`](Self::from_vault_entry) to reconstruct the asset.
     #[js_export(js_name = "vaultKey")]
     pub fn vault_key(&self) -> Word {
-        self.0.to_key_word().into()
+        self.0.to_id_word().into()
     }
 
     /// Returns the value word stored under [`vaultKey`](Self::vault_key) in an
