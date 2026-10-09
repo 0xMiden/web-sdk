@@ -63,6 +63,8 @@ import { MidenProvider } from "@miden-sdk/react";
 </MidenProvider>
 ```
 
+Keep the `config` object's identity stable: define it outside the component, or memoize it with `useMemo` when the component that renders `MidenProvider` re-renders. Without a signer provider, each new `config` object makes `MidenProvider` re-create its client and leave the replaced one running.
+
 | Network | rpcUrl | Use When |
 |---------|--------|----------|
 | Testnet | `"testnet"` | Recommended for new projects - primary development network |

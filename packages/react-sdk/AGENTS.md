@@ -72,6 +72,11 @@ leave it out to keep the point they make legible; every real provider needs it.
 >
 ```
 
+Keep the `config` object's identity stable: define it outside the component,
+or memoize it with `useMemo` when the component that renders `MidenProvider`
+re-renders. Without a signer provider, each new `config` object makes
+`MidenProvider` re-create its client and leave the replaced one running.
+
 `errorComponent` accepts either a static element or a function. Only the
 function form is handed the `Error`, so use it whenever you want to show what
 actually failed.

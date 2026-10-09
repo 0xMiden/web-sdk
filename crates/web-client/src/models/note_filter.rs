@@ -4,6 +4,7 @@ use miden_client::store::NoteFilter as NativeNoteFilter;
 
 use super::note_id::NoteId;
 use super::word::Word;
+use crate::platform::{JsErr, from_str_err};
 
 // TODO: Add nullifier support
 
@@ -47,15 +48,19 @@ pub enum NoteFilterTypes {
 // CONVERSIONS
 // ================================================================================================
 
-impl From<NoteFilter> for NativeNoteFilter {
-    fn from(filter: NoteFilter) -> Self {
-        (&filter).into()
+impl TryFrom<NoteFilter> for NativeNoteFilter {
+    type Error = JsErr;
+
+    fn try_from(filter: NoteFilter) -> Result<Self, Self::Error> {
+        (&filter).try_into()
     }
 }
 
-impl From<&NoteFilter> for NativeNoteFilter {
-    fn from(filter: &NoteFilter) -> Self {
-        match filter.note_type {
+impl TryFrom<&NoteFilter> for NativeNoteFilter {
+    type Error = JsErr;
+
+    fn try_from(filter: &NoteFilter) -> Result<Self, Self::Error> {
+        Ok(match filter.note_type {
             NoteFilterTypes::All => NativeNoteFilter::All,
             NoteFilterTypes::Consumed => NativeNoteFilter::Consumed,
             NoteFilterTypes::Committed => NativeNoteFilter::Committed,
@@ -65,18 +70,20 @@ impl From<&NoteFilter> for NativeNoteFilter {
                 let note_ids = filter
                     .note_ids
                     .clone()
-                    .unwrap_or_else(|| panic!("Note IDs required for List filter"));
+                    .ok_or_else(|| from_str_err("Note IDs required for List filter"))?;
                 NativeNoteFilter::List(note_ids.iter().map(Into::into).collect())
             },
             NoteFilterTypes::Unique => {
                 let note_ids = filter
                     .note_ids
                     .clone()
-                    .unwrap_or_else(|| panic!("Note ID required for Unique filter"));
+                    .ok_or_else(|| from_str_err("Note ID required for Unique filter"))?;
 
-                assert!(note_ids.len() == 1, "Only one Note ID can be provided");
+                if note_ids.len() != 1 {
+                    return Err(from_str_err("Only one Note ID can be provided"));
+                }
 
-                NativeNoteFilter::Unique(note_ids.first().unwrap().into())
+                NativeNoteFilter::Unique(note_ids.first().expect("length checked above").into())
             },
             NoteFilterTypes::Nullifiers => NativeNoteFilter::Nullifiers(vec![]),
             NoteFilterTypes::Unverified => NativeNoteFilter::Unverified,
@@ -84,7 +91,7 @@ impl From<&NoteFilter> for NativeNoteFilter {
                 let script_roots = filter
                     .script_roots
                     .clone()
-                    .unwrap_or_else(|| panic!("Script roots required for ScriptRoots filter"));
+                    .ok_or_else(|| from_str_err("Script roots required for ScriptRoots filter"))?;
 
                 NativeNoteFilter::ScriptRoots(
                     script_roots
@@ -93,7 +100,7 @@ impl From<&NoteFilter> for NativeNoteFilter {
                         .collect(),
                 )
             },
-        }
+        })
     }
 }
 
