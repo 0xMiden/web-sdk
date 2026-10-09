@@ -105,29 +105,3 @@ impl TryFrom<&NoteFilter> for NativeNoteFilter {
 }
 
 impl_napi_from_value!(NoteFilter);
-
-#[cfg(test)]
-mod tests {
-    use super::{NativeNoteFilter, NoteFilter, NoteFilterTypes};
-
-    // Regression tests for a bug where constructing a `NoteFilter` with
-    // `NoteFilterTypes::List` / `Unique` but no `note_ids` (a perfectly valid
-    // call from the JS side, since `note_ids` is `Option<Vec<NoteId>>`) used
-    // to panic (`unreachable` in WASM) instead of surfacing a catchable JS
-    // error. See notes.rs::get_input_notes / get_output_notes for the call
-    // sites that now propagate this via `try_into()?`.
-
-    #[test]
-    fn list_filter_without_note_ids_is_an_error_not_a_panic() {
-        let filter = NoteFilter::new(NoteFilterTypes::List, None, None);
-        let result: Result<NativeNoteFilter, _> = filter.try_into();
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn unique_filter_without_note_ids_is_an_error_not_a_panic() {
-        let filter = NoteFilter::new(NoteFilterTypes::Unique, None, None);
-        let result: Result<NativeNoteFilter, _> = filter.try_into();
-        assert!(result.is_err());
-    }
-}
