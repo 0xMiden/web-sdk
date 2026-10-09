@@ -35,12 +35,12 @@ test.describe("remove_tag tests", () => {
     const result = await run(async ({ client, sdk, helpers }) => {
       const wallet = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const faucet = await client.newFaucet(
         sdk.AccountStorageMode.private(),
         false,
+        "DAG",
         "DAG",
         8,
         sdk.u64(10000000),

@@ -35,8 +35,8 @@ impl TransactionScriptInputPair {
 impl From<TransactionScriptInputPair> for (NativeWord, Vec<NativeFelt>) {
     fn from(transaction_script_input_pair: TransactionScriptInputPair) -> Self {
         let native_word: NativeWord = transaction_script_input_pair.word.into();
-        let felts = transaction_script_input_pair.felts;
-        let native_felts: Vec<NativeFelt> = Vec::from(felts).into_iter().map(Into::into).collect();
+        let native_felts: Vec<NativeFelt> =
+            transaction_script_input_pair.felts.into_iter().map(Into::into).collect();
         (native_word, native_felts)
     }
 }
@@ -44,23 +44,21 @@ impl From<TransactionScriptInputPair> for (NativeWord, Vec<NativeFelt>) {
 impl From<&TransactionScriptInputPair> for (NativeWord, Vec<NativeFelt>) {
     fn from(transaction_script_input_pair: &TransactionScriptInputPair) -> Self {
         let native_word: NativeWord = transaction_script_input_pair.word.clone().into();
-        let felts = &transaction_script_input_pair.felts;
-        let native_felts: Vec<NativeFelt> = Vec::from(felts).into_iter().map(Into::into).collect();
+        let native_felts: Vec<NativeFelt> =
+            transaction_script_input_pair.felts.iter().map(Into::into).collect();
         (native_word, native_felts)
     }
 }
 
 impl From<TransactionScriptInputPairArray> for Vec<(NativeWord, Vec<NativeFelt>)> {
     fn from(transaction_script_input_pair_array: TransactionScriptInputPairArray) -> Self {
-        let items: Vec<TransactionScriptInputPair> = transaction_script_input_pair_array.into();
-        items.into_iter().map(Into::into).collect()
+        transaction_script_input_pair_array.into_iter().map(Into::into).collect()
     }
 }
 
 impl From<&TransactionScriptInputPairArray> for Vec<(NativeWord, Vec<NativeFelt>)> {
     fn from(transaction_script_input_pair_array: &TransactionScriptInputPairArray) -> Self {
-        let items: Vec<TransactionScriptInputPair> = transaction_script_input_pair_array.into();
-        items.into_iter().map(Into::into).collect()
+        transaction_script_input_pair_array.iter().map(Into::into).collect()
     }
 }
 

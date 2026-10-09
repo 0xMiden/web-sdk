@@ -1,5 +1,6 @@
 import { AuthScheme } from "@miden-sdk/miden-sdk";
 import type { AccountRef } from "../utils/accountParsing";
+import type { TransactionRequestInput } from "../utils/transactions";
 import type {
   WasmWebClient as WebClient,
   Account,
@@ -13,14 +14,21 @@ import type {
   TransactionRecord,
   TransactionRequest,
   TransactionScript,
+  TransactionSummary,
+  ChainAnchor,
   AdviceInputs,
   AccountStorageRequirements,
   NoteType,
   NoteId,
   AccountStorageMode,
   Note,
+  NoteInput,
   NoteVisibility,
+  NoteExecutionHint,
+  NoteRecipient,
+  NoteScript,
   StorageMode,
+  PswapLineageRecord,
 } from "@miden-sdk/miden-sdk";
 
 // Re-export SDK types for convenience
@@ -37,9 +45,12 @@ export type {
   TransactionId,
   TransactionRecord,
   TransactionRequest,
+  TransactionSummary,
+  ChainAnchor,
   NoteType,
   Note,
   AccountStorageMode,
+  PswapLineageRecord,
 };
 
 export type { AccountRef } from "../utils/accountParsing";
@@ -95,6 +106,14 @@ export interface MidenConfig {
   rpcUrl?: RpcUrlConfig;
   /** Note transport URL for streaming notes. */
   noteTransportUrl?: string;
+  /**
+   * Faucet of the chain's fee asset, as a bech32 address or a hex account ID.
+   *
+   * Optional. Since 0.17 the fee asset lives in the protocol configuration, which the client
+   * receives from the node when it syncs, so execution does not need this. It only sets what
+   * `client.feeFaucetId()` reports before the first sync.
+   */
+  feeFaucetId?: string;
   /** Auto-sync interval in milliseconds. Set to 0 to disable. Default: 15000ms */
   autoSyncInterval?: number;
   /** Initial seed for deterministic RNG (must be 32 bytes if provided) */
@@ -105,6 +124,23 @@ export interface MidenConfig {
   proverUrls?: ProverUrls;
   /** Default timeout for remote prover requests in milliseconds. */
   proverTimeoutMs?: number | bigint;
+  /**
+   * Enable the Web Worker shim that runs WASM calls, batch submission
+   * (`useBatch`) included, off the main thread.
+   * Defaults to `true` — leave it that way in browsers/extensions so the UI
+   * stays responsive while WASM is busy.
+   *
+   * Set to `false` when:
+   * - You pass a `CallbackProver` (e.g. a native iOS/Android prover via
+   *   a Capacitor plugin). The worker boundary serializes the prover with
+   *   `TransactionProver.serialize()`, which has no encoding for the
+   *   callback variant and silently downgrades to `"local"` — your
+   *   callback would never fire.
+   * - You're embedding the client in a single-WebView native shell
+   *   (Capacitor host, Tauri, Electron preload), where the UI thread
+   *   isn't competing with the WASM thread anyway.
+   */
+  useWorker?: boolean;
 }
 
 // Provider state
@@ -152,7 +188,16 @@ export interface SyncState {
 // Account types
 export interface AccountsResult {
   accounts: AccountHeader[];
+  /**
+   * @deprecated Protocol 0.15 removed faucet-vs-wallet from the account id, so
+   * accounts can no longer be split from headers alone. `wallets` mirrors
+   * `accounts`. Use `accounts` and detect faucets per-account from its components.
+   */
   wallets: AccountHeader[];
+  /**
+   * @deprecated Always empty as of protocol 0.15 (see `wallets`). Detect faucets
+   * per-account from its components instead.
+   */
   faucets: AccountHeader[];
   isLoading: boolean;
   error: Error | null;
@@ -242,8 +287,6 @@ export interface NoteSummary {
 export interface CreateWalletOptions {
   /** Storage mode. Default: private */
   storageMode?: StorageMode;
-  /** Whether code can be updated. Default: true */
-  mutable?: boolean;
   /** Auth scheme. Default: AuthScheme.AuthRpoFalcon512 */
   authScheme?: AuthScheme;
   /** Initial seed for deterministic account ID */
@@ -254,6 +297,8 @@ export interface CreateWalletOptions {
 export interface CreateFaucetOptions {
   /** Token symbol (e.g., "TEST") */
   tokenSymbol: string;
+  /** Human-readable token name. Defaults to `tokenSymbol` when omitted. */
+  tokenName?: string;
   /** Number of decimals. Default: 8 */
   decimals?: number;
   /** Maximum supply */
@@ -277,7 +322,6 @@ export type ImportAccountOptions =
   | {
       type: "seed";
       seed: Uint8Array;
-      mutable?: boolean;
       authScheme?: AuthScheme;
     };
 
@@ -337,6 +381,29 @@ export interface MultiSendOptions {
   skipSync?: boolean;
 }
 
+/** A single (account, request) pair for {@link BatchOptions.items}. */
+export interface BatchItemInput {
+  /** Local account that executes this transaction. */
+  account: AccountRef;
+  /** Pre-built `TransactionRequest`. */
+  request: TransactionRequest;
+}
+
+export interface BatchOptions {
+  /** Per-tx `(account, request)` pairs. Must be non-empty. */
+  items: BatchItemInput[];
+  /** Skip auto-sync before submit. Default: false */
+  skipSync?: boolean;
+}
+
+export interface BatchResult {
+  /**
+   * The node's chain tip as of submission, not the block the batch commits in.
+   * Sync to learn where it landed.
+   */
+  blockNumber: number;
+}
+
 export interface WaitForCommitOptions {
   /** Timeout in milliseconds. Default: 10000 */
   timeoutMs?: number;
@@ -367,6 +434,52 @@ export interface MintOptions {
   noteType?: NoteVisibility;
 }
 
+// Create-network-note options
+export interface CreateNetworkNoteOptions {
+  /** Account that creates, funds, and submits the note (executing sender). */
+  accountId: AccountRef;
+  /** The network account the note targets. */
+  target: AccountRef;
+  /** Execution hint. Defaults to `always`. */
+  executionHint?: NoteExecutionHint;
+  /** Recipient carrying the custom script (advanced; else pass `script`). */
+  recipient?: NoteRecipient;
+  /** Custom consumption script; the recipient is built for you. */
+  script?: NoteScript;
+  /** Note storage / inputs the script reads (used with `script`). */
+  inputs?: bigint[];
+  /** Single asset to lock into the note. Optional — omit for a zero-asset note. */
+  assetId?: AccountRef;
+  /** Amount for `assetId`. */
+  amount?: bigint | number;
+  /** Extra attachment payload appended after the NetworkAccountTarget. */
+  attachment?: bigint[] | Uint8Array | number[];
+}
+
+// Create-network-note result — mirrors SendResult (txId + built note)
+export interface NetworkNoteResult {
+  txId: string;
+  note: Note;
+}
+
+// Bridge (AggLayer bridge-out) options
+export interface BridgeOptions {
+  /** Account that creates and funds the bridge note (the sender) */
+  from: AccountRef;
+  /** Bridge account that consumes the note and burns the bridged assets */
+  bridgeAccount: AccountRef;
+  /** Faucet/token ID of the fungible asset to bridge */
+  assetId: AccountRef;
+  /** Amount of the asset to bridge */
+  amount: bigint | number;
+  /** AggLayer-assigned network ID of the destination chain */
+  destinationNetwork: number;
+  /** Destination Ethereum address on the destination network (0x-prefixed hex) */
+  destinationAddress: string;
+  /** Skip auto-sync after bridging. Default: false */
+  skipSync?: boolean;
+}
+
 // Consume options
 export interface ConsumeOptions {
   /** Account ID that will consume the notes */
@@ -393,14 +506,94 @@ export interface SwapOptions {
   paybackNoteType?: NoteVisibility;
 }
 
+// PSWAP options — partial-swap notes can be filled by multiple consumers.
+export interface PswapCreateOptions {
+  /** Account that creates the PSWAP note */
+  accountId: AccountRef;
+  /** Faucet ID of the offered asset */
+  offeredFaucetId: AccountRef;
+  /** Amount being offered */
+  offeredAmount: bigint | number;
+  /** Faucet ID of the requested asset */
+  requestedFaucetId: AccountRef;
+  /** Amount being requested */
+  requestedAmount: bigint | number;
+  /** Visibility of the PSWAP note. Default: private */
+  noteType?: NoteVisibility;
+  /** Visibility of the payback note. Default: private */
+  paybackNoteType?: NoteVisibility;
+}
+
+export interface PswapConsumeOptions {
+  /** Consumer account filling the PSWAP note */
+  accountId: AccountRef;
+  /**
+   * PSWAP note to consume. Accepts a hex string ID, `NoteId` object,
+   * `InputNoteRecord`, or `Note` — string/NoteId values are looked up from
+   * the local store; record/Note values are used directly.
+   */
+  note: NoteInput;
+  /**
+   * Amount of the requested asset the consumer is providing from its own
+   * vault. Receives a proportional share of the offered asset; partial fills
+   * also produce a remainder PSWAP note carrying the unfilled portion.
+   */
+  fillAmount: bigint | number;
+  /**
+   * Amount of the requested asset supplied by other (in-flight) notes routed
+   * into the same transaction. Defaults to `0`; most callers should leave
+   * this unset.
+   */
+  noteFillAmount?: bigint | number;
+}
+
+export interface PswapCancelOptions {
+  /** Creator account reclaiming the offered asset */
+  accountId: AccountRef;
+  /**
+   * PSWAP note to cancel. Accepts a hex string ID, `NoteId` object,
+   * `InputNoteRecord`, or `Note` — string/NoteId values are looked up from
+   * the local store; record/Note values are used directly.
+   */
+  note: NoteInput;
+}
+
+// Cancel a PSWAP lineage by its stable order id — the creator account and
+// current tip note are resolved from the locally tracked lineage.
+export interface PswapCancelByOrderOptions {
+  /**
+   * Stable order id of the lineage to cancel (decimal string or bigint).
+   * `number` is not accepted: a PSWAP order id is `u64`-shaped and routinely
+   * exceeds `Number.MAX_SAFE_INTEGER`, which a JS `number` cannot represent
+   * without silent precision loss.
+   */
+  orderId: string | bigint;
+}
+
+// Result of the PSWAP lineage list query hooks.
+export interface PswapLineagesResult {
+  /** Tracked PSWAP lineages. */
+  lineages: PswapLineageRecord[];
+  isLoading: boolean;
+  error: Error | null;
+  refetch: () => Promise<void>;
+}
+
+// Result of the single-lineage query hook.
+export interface PswapLineageResult {
+  /** The tracked lineage, or `null` if not tracked. */
+  lineage: PswapLineageRecord | null;
+  isLoading: boolean;
+  error: Error | null;
+  refetch: () => Promise<void>;
+}
+
 // Arbitrary transaction options
 export interface ExecuteTransactionOptions {
   /** Account ID the transaction applies to */
   accountId: AccountRef;
   /** Transaction request or builder */
-  request:
-    | TransactionRequest
-    | ((client: WebClient) => TransactionRequest | Promise<TransactionRequest>);
+  request: TransactionRequestInput;
   /** Skip auto-sync before transaction. Default: false */
   skipSync?: boolean;
   /**
@@ -409,6 +602,38 @@ export interface ExecuteTransactionOptions {
    * AccountRef form (hex string, bech32, AccountId, Account, AccountHeader).
    */
   privateNoteTarget?: AccountRef;
+  /**
+   * Execute against a pinned reference block instead of the current sync
+   * height, so a summary signed at that block reproduces exactly. Capture one
+   * with {@link useChainAnchor}. Leave it out for a multisig request built by
+   * `feeAwareTransactionRequestBuilder`, which executes at the tip once the
+   * client has synced to its bound block.
+   */
+  anchor?: ChainAnchor;
+}
+
+// Chain anchor
+
+/** Options for capturing a {@link ChainAnchor}. */
+export interface CaptureAnchorOptions {
+  /** The request the anchor is captured for. */
+  request: TransactionRequestInput;
+}
+
+/** Options for deriving a {@link TransactionSummary} without submitting. */
+export interface PreviewTransactionOptions {
+  /** Account ID the transaction applies to */
+  accountId: AccountRef;
+  /** Transaction request or builder */
+  request: TransactionRequestInput;
+  /**
+   * Derive the summary at a pinned reference block. Required when verifying a
+   * summary that binds the reference block commitment, since deriving it at the
+   * local sync height produces a different summary. Leave it out for a multisig
+   * request built by `feeAwareTransactionRequestBuilder`, which previews at the
+   * tip once the client has synced to its bound block.
+   */
+  anchor?: ChainAnchor;
 }
 
 // Transaction result
@@ -497,7 +722,6 @@ export interface UseSessionAccountOptions {
   /** Wallet creation options */
   walletOptions?: {
     storageMode?: "private" | "public";
-    mutable?: boolean;
     authScheme?: AuthScheme;
   };
   /** Polling interval for funding note detection (ms). Default: 3000 */
@@ -535,7 +759,6 @@ export const DEFAULTS = {
   RPC_URL: undefined, // Will use SDK's testnet default
   AUTO_SYNC_INTERVAL: 15000,
   STORAGE_MODE: "private" as const,
-  WALLET_MUTABLE: true,
   AUTH_SCHEME: AuthScheme.AuthRpoFalcon512,
   NOTE_TYPE: "private" as const,
   FAUCET_DECIMALS: 8,

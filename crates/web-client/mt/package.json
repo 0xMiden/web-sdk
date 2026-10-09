@@ -1,0 +1,4 @@
+{
+  "main": "../dist/mt/eager.js",
+  "types": "../dist/mt/index.d.ts"
+}

@@ -1,10 +1,9 @@
-import { getDatabase } from "./schema.js";
+import { getDatabase, } from "./schema.js";
 import { logWebStoreError, mapOption, uint8ArrayToBase64 } from "./utils.js";
+import { applyAccountPatch, applyFullAccountState } from "./accounts.js";
+import { upsertInputNote, upsertOutputNote } from "./notes.js";
 const IDS_FILTER_PREFIX = "Ids:";
-const EXPIRED_BEFORE_FILTER_PREFIX = "ExpiredPending:";
 const STATUS_PENDING_VARIANT = 0;
-const STATUS_COMMITTED_VARIANT = 1;
-const STATUS_DISCARDED_VARIANT = 2;
 export async function getTransactions(dbId, filter) {
     let transactionRecords = [];
     try {
@@ -26,15 +25,6 @@ export async function getTransactions(dbId, filter) {
             else {
                 transactionRecords = [];
             }
-        }
-        else if (filter.startsWith(EXPIRED_BEFORE_FILTER_PREFIX)) {
-            const blockNumString = filter.substring(EXPIRED_BEFORE_FILTER_PREFIX.length);
-            const blockNum = parseInt(blockNumString);
-            transactionRecords = await db.transactions
-                .filter((tx) => tx.blockNum < blockNum &&
-                tx.statusVariant !== STATUS_COMMITTED_VARIANT &&
-                tx.statusVariant !== STATUS_DISCARDED_VARIANT)
-                .toArray();
         }
         else {
             transactionRecords = await db.transactions.toArray();
@@ -97,6 +87,7 @@ export async function insertTransactionScript(dbId, scriptRoot, txScript, tx) {
     }
     catch (error) {
         logWebStoreError(error, "Failed to insert transaction script");
+        throw error;
     }
 }
 export async function upsertTransactionRecord(dbId, transactionId, details, blockNum, statusVariant, status, scriptRoot, tx) {
@@ -114,5 +105,85 @@ export async function upsertTransactionRecord(dbId, transactionId, details, bloc
     }
     catch (err) {
         logWebStoreError(err, "Failed to insert proven transaction data");
+        throw err;
     }
+}
+/**
+ * Applies a batch of transaction updates atomically inside a single Dexie transaction.
+ *
+ * All sub-operations that internally call `db.dexie.transaction()` are auto-joined by Dexie
+ * as nested sub-transactions when run inside this parent transaction, provided the parent
+ * scope is a superset of every sub-transaction scope.
+ */
+export async function applyTransactionBatch(dbId, payloads) {
+    const db = getDatabase(dbId);
+    await db.dexie.transaction("rw", [
+        db.transactions,
+        db.transactionScripts,
+        db.latestAccountStorages,
+        db.historicalAccountStorages,
+        db.latestStorageMapEntries,
+        db.historicalStorageMapEntries,
+        db.latestAccountAssets,
+        db.historicalAccountAssets,
+        db.latestAccountHeaders,
+        db.historicalAccountHeaders,
+        db.accountCodes,
+        db.inputNotes,
+        db.outputNotes,
+        db.notesScripts,
+        db.tags,
+    ], async () => {
+        for (const payload of payloads) {
+            const acct = payload.accountState;
+            const accountId = acct.kind === "full" ? acct.account.accountId : acct.accountId;
+            const current = await db.latestAccountHeaders.get(accountId);
+            if (current?.accountCommitment !== payload.initialAccountCommitment) {
+                throw new Error(`transaction input account commitment does not match persisted state for ${accountId}`);
+            }
+            // 1. Insert the transaction record (script first, then record)
+            const rec = payload.transactionRecord;
+            if (rec.scriptRoot && rec.txScript) {
+                await insertTransactionScript(dbId, rec.scriptRoot, rec.txScript);
+            }
+            await upsertTransactionRecord(dbId, rec.id, rec.details, rec.blockNum, rec.statusVariant, rec.status, rec.scriptRoot);
+            // 2. Apply account state (full or delta)
+            if (acct.kind === "full") {
+                await applyFullAccountState(dbId, acct.account);
+            }
+            else {
+                await applyAccountPatch(dbId, acct.accountId, acct.nonce, acct.updatedSlots, acct.changedMapEntries, acct.changedAssets, acct.codeRoot, acct.storageRoot, acct.vaultRoot, acct.committed, acct.commitment, acct.code);
+            }
+            // 3. Upsert input and output notes
+            for (const note of payload.inputNotes) {
+                await upsertInputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.serialNumber, note.inputs, note.noteScriptRoot, note.noteScript, note.nullifier, note.createdAt, note.stateDiscriminant, note.state, note.consumedBlockHeight ?? null, note.consumedTxOrder ?? null, note.consumerAccountId ?? null);
+            }
+            for (const note of payload.outputNotes) {
+                await upsertOutputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.recipientDigest, note.metadata, note.nullifier, note.expectedHeight, note.stateDiscriminant, note.state, note.noteScriptRoot, note.noteScript);
+            }
+            // 4. Add note tags (deduplicated within the transaction)
+            for (const tagEntry of payload.tags) {
+                const tagArray = new Uint8Array(tagEntry.tag);
+                const tagBase64 = uint8ArrayToBase64(tagArray);
+                const sourceNoteId = tagEntry.sourceNoteId ?? "";
+                const sourceAccountId = tagEntry.sourceAccountId ?? "";
+                const sourceSubscriptionKey = tagEntry.sourceSubscriptionKey ?? "";
+                // Check for existing tag to avoid duplicates (mirrors the Rust add_note_tag logic).
+                // sourceSubscriptionKey is unindexed, so filter on it in memory — distinct
+                // subscriptions may share a tag and must remain separate rows.
+                const existing = await db.tags
+                    .where({ tag: tagBase64, sourceNoteId, sourceAccountId })
+                    .filter((t) => (t.sourceSubscriptionKey ?? "") === sourceSubscriptionKey)
+                    .first();
+                if (!existing) {
+                    await db.tags.add({
+                        tag: tagBase64,
+                        sourceNoteId,
+                        sourceAccountId,
+                        sourceSubscriptionKey,
+                    });
+                }
+            }
+        }
+    });
 }

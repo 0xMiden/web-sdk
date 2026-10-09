@@ -87,19 +87,32 @@ export function MidenProvider({
     }),
     [config]
   );
-  const defaultProver = useMemo(
-    () => resolveTransactionProver(resolvedConfig),
-    [
-      resolvedConfig.prover,
-      resolvedConfig.proverTimeoutMs,
-      resolvedConfig.proverUrls?.devnet,
-      resolvedConfig.proverUrls?.testnet,
-    ]
-  );
+  // Resolving a prover constructs WASM objects (TransactionProver), which
+  // is only safe after the WASM module has initialized. On the lazy
+  // entries no top-level await precedes first render, so resolving in a
+  // render-time useMemo crashes with `__wbindgen_malloc` undefined before
+  // the provider's own init effect ever runs. Resolve as state gated on
+  // `isReady` instead — by then the WebClient exists, so WASM is up.
+  const [defaultProver, setDefaultProver] =
+    useState<ReturnType<typeof resolveTransactionProver>>(null);
+  useEffect(() => {
+    if (!isReady) {
+      setDefaultProver(null);
+      return;
+    }
+    setDefaultProver(resolveTransactionProver(resolvedConfig));
+  }, [
+    isReady,
+    resolvedConfig.prover,
+    resolvedConfig.proverTimeoutMs,
+    resolvedConfig.proverUrls?.devnet,
+    resolvedConfig.proverUrls?.testnet,
+  ]);
 
-  // Exposed for advanced consumers who need to serialize custom multi-step
-  // operations against the client. Built-in hooks no longer use this since
-  // the WebClient handles concurrency internally via Layers 1-3.
+  // Serializes custom multi-step operations against the client. The WebClient
+  // already serializes each individual call, so this is for sequences that must
+  // not interleave, not for single calls. Built-in hooks DO still use it: most
+  // of src/hooks/ pulls it out of useMiden() and wraps its own multi-call work.
   const runExclusive = useCallback(
     async <T,>(fn: () => Promise<T>): Promise<T> =>
       clientLockRef.current.runExclusive(fn),
@@ -143,11 +156,10 @@ export function MidenProvider({
   // when the signer provider creates a new object reference on every render.
   const signerIsConnected = signerContext?.isConnected ?? null;
   const signerStoreName = signerContext?.storeName ?? null;
-  // Stable identity for accountConfig — only re-init when the account type or
-  // storage mode actually changes (publicKeyCommitment is a Uint8Array so we
-  // use its length + first byte as a cheap fingerprint; full comparison happens
-  // inside initializeSignerAccount).
-  const signerAccountType = signerContext?.accountConfig?.accountType ?? null;
+  // Stable identity for accountConfig: only re-init when the storage mode
+  // actually changes. (publicKeyCommitment is a Uint8Array so we use its length
+  // plus first byte as a cheap fingerprint, with the full comparison happening
+  // inside initializeSignerAccount. accountType is ignored as of protocol 0.15.)
   const signerStorageMode =
     signerContext?.accountConfig?.storageMode?.toString() ?? null;
 
@@ -251,7 +263,11 @@ export function MidenProvider({
               storeName,
               signerContext.getKeyCb,
               signerContext.insertKeyCb,
-              wrappedSignCb
+              wrappedSignCb,
+              undefined,
+              resolvedConfig.useWorker,
+              undefined,
+              resolvedConfig.feeFaucetId
             );
 
             if (cancelled) return;
@@ -274,7 +290,12 @@ export function MidenProvider({
             webClient = await WebClient.createClient(
               resolvedConfig.rpcUrl,
               resolvedConfig.noteTransportUrl,
-              seed
+              seed,
+              undefined,
+              undefined,
+              resolvedConfig.useWorker,
+              undefined,
+              resolvedConfig.feeFaucetId
             );
             if (cancelled) return;
           }
@@ -348,12 +369,11 @@ export function MidenProvider({
     setSignerConnected,
     signerIsConnected,
     signerStoreName,
-    signerAccountType,
     signerStorageMode,
     wrappedSignCb,
-    // Note: signerContext is intentionally NOT a dep — we use stable primitives
-    // (signerIsConnected, signerStoreName, signerAccountType, signerStorageMode)
-    // to avoid re-running when the signer provider creates a new object ref.
+    // Note: signerContext is intentionally NOT a dep. We use stable primitives
+    // (signerIsConnected, signerStoreName, signerStorageMode) to avoid
+    // re-running when the signer provider creates a new object ref.
     // signCb changes are handled by the dedicated useEffect + signCbRef above,
     // not by this effect.
   ]);

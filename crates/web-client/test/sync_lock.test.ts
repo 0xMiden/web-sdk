@@ -1,6 +1,10 @@
 // @ts-nocheck
 import { expect } from "@playwright/test";
-import test, { getRpcUrl, RUN_ID } from "./playwright.global.setup";
+import test, {
+  getFeeFaucetId,
+  getRpcUrl,
+  RUN_ID,
+} from "./playwright.global.setup";
 import { BrowserContext, Page } from "@playwright/test";
 
 test.describe("Sync Lock Tests", () => {
@@ -88,92 +92,54 @@ test.describe("Sync Lock Tests", () => {
     });
   });
 
-  test.describe("Timeout Behavior", () => {
-    test("syncStateWithTimeout with 0 timeout works like syncState", async ({
-      page,
-    }) => {
-      const result = await page.evaluate(async () => {
-        const client = window.client;
-
-        const result1 = await client.syncState();
-        const result2 = await client.syncStateWithTimeout(0);
-
-        return {
-          blockNum1: result1.blockNum(),
-          blockNum2: result2.blockNum(),
-        };
-      });
-
-      expect(typeof result.blockNum1).toBe("number");
-      expect(typeof result.blockNum2).toBe("number");
-    });
-
-    test("syncStateWithTimeout with positive timeout succeeds", async ({
-      page,
-    }) => {
-      const result = await page.evaluate(async () => {
-        const client = window.client;
-
-        // Use a generous timeout
-        const result = await client.syncStateWithTimeout(30000);
-
-        return {
-          blockNum: result.blockNum(),
-          committedNotes: result.committedNotes().length,
-          consumedNotes: result.consumedNotes().length,
-        };
-      });
-
-      expect(typeof result.blockNum).toBe("number");
-      expect(result.blockNum).toBeGreaterThanOrEqual(0);
-    });
-
-    test("concurrent syncs with timeout all complete", async ({ page }) => {
-      const result = await page.evaluate(async () => {
-        const client = window.client;
-
-        const syncPromises = [
-          client.syncStateWithTimeout(30000),
-          client.syncStateWithTimeout(30000),
-          client.syncStateWithTimeout(30000),
-        ];
-
-        const results = await Promise.all(syncPromises);
-        const blockNums = results.map((r) => r.blockNum());
-
-        return {
-          blockNums,
-          allSame: blockNums.every((n) => n === blockNums[0]),
-        };
-      });
-
-      expect(result.blockNums.length).toBe(3);
-      expect(result.allSame).toBe(true);
-    });
-  });
-
   test.describe("Error Handling", () => {
-    test("sync after failed sync works correctly", async ({ page }) => {
-      // This test ensures that the lock is properly released after an error
+    test("withSyncLock cleans up inFlight after fn rejects", async ({
+      page,
+    }) => {
+      // After fn rejects, the in-flight entry must be cleared so that a later
+      // call with the same (dbId, methodId) starts a fresh execution. Without
+      // this, a single failure would permanently coalesce all subsequent
+      // callers onto the rejected promise and no further sync could run.
       const result = await page.evaluate(async () => {
-        const client = window.client;
+        const dbId = "withSyncLock-cleanup-test";
+        const methodId = "syncTest";
 
-        // First successful sync
-        const result1 = await client.syncState();
+        let firstRan = 0;
+        let secondRan = 0;
 
-        // Another successful sync (verifies lock was released)
-        const result2 = await client.syncState();
+        let firstError: Error | null = null;
+        try {
+          await window.withSyncLock(dbId, methodId, async () => {
+            firstRan++;
+            throw new Error("forced failure");
+          });
+        } catch (err) {
+          firstError = err as Error;
+        }
+
+        const secondResult = await window.withSyncLock(
+          dbId,
+          methodId,
+          async () => {
+            secondRan++;
+            return "second-success";
+          }
+        );
 
         return {
-          blockNum1: result1.blockNum(),
-          blockNum2: result2.blockNum(),
+          firstErrorMessage: firstError?.message,
+          firstRan,
+          secondRan,
+          secondResult,
         };
       });
 
-      expect(typeof result.blockNum1).toBe("number");
-      expect(typeof result.blockNum2).toBe("number");
-      // Block numbers should be monotonically non-decreasing
-      expect(result.blockNum2).toBeGreaterThanOrEqual(result.blockNum1);
+      expect(result.firstErrorMessage).toBe("forced failure");
+      expect(result.firstRan).toBe(1);
+      // The second fn must actually execute — proves the in-flight entry was
+      // cleared after the first rejection rather than coalescing onto it.
+      expect(result.secondRan).toBe(1);
+      expect(result.secondResult).toBe("second-success");
     });
   });
 
@@ -184,12 +150,7 @@ test.describe("Sync Lock Tests", () => {
       const result = await page.evaluate(async () => {
         // Create two clients pointing to the same store
         const client1 = window.client;
-        const client2 = await window.WasmWebClient.createClient(
-          window.rpcUrl,
-          undefined,
-          undefined,
-          window.storeName // Same store name as client1
-        );
+        const client2 = await window.helpers.createClient(window.storeName);
 
         // Fire concurrent syncs from both clients
         const syncPromises = [client1.syncState(), client2.syncState()];
@@ -216,18 +177,8 @@ test.describe("Sync Lock Tests", () => {
     }) => {
       const result = await page.evaluate(async () => {
         const client1 = window.client;
-        const client2 = await window.WasmWebClient.createClient(
-          window.rpcUrl,
-          undefined,
-          undefined,
-          window.storeName
-        );
-        const client3 = await window.WasmWebClient.createClient(
-          window.rpcUrl,
-          undefined,
-          undefined,
-          window.storeName
-        );
+        const client2 = await window.helpers.createClient(window.storeName);
+        const client3 = await window.helpers.createClient(window.storeName);
 
         // Fire many concurrent syncs
         const syncPromises = [
@@ -258,18 +209,8 @@ test.describe("Sync Lock Tests", () => {
     }) => {
       const result = await page.evaluate(async () => {
         const client1 = window.client; // Uses window.storeName
-        const client2 = await window.WasmWebClient.createClient(
-          window.rpcUrl,
-          undefined,
-          undefined,
-          "SyncLockTestStore1"
-        );
-        const client3 = await window.WasmWebClient.createClient(
-          window.rpcUrl,
-          undefined,
-          undefined,
-          "SyncLockTestStore2"
-        );
+        const client2 = await window.helpers.createClient("SyncLockTestStore1");
+        const client3 = await window.helpers.createClient("SyncLockTestStore2");
 
         // Fire concurrent syncs to different stores
         const syncPromises = [
@@ -302,7 +243,6 @@ test.describe("Sync Lock Tests", () => {
         // Create a wallet before syncing
         const wallet = await client.newWallet(
           window.AccountStorageMode.private(),
-          true,
           window.AuthScheme.AuthRpoFalcon512
         );
         const walletId = wallet.id().toString();
@@ -432,7 +372,7 @@ test.describe("Cross-Tab Sync Lock Tests", () => {
       const setupPage = async (page: Page) => {
         await page.goto("http://localhost:8080");
         await page.evaluate(
-          async ({ rpcUrl, storeName }) => {
+          async ({ rpcUrl, storeName, feeFaucetId }) => {
             const sdkExports = await import("./index.js");
             for (const [key, value] of Object.entries(sdkExports)) {
               window[key] = value;
@@ -440,15 +380,26 @@ test.describe("Cross-Tab Sync Lock Tests", () => {
 
             window.rpcUrl = rpcUrl;
             // Both pages use the same store name for cross-tab coordination
+            // These pages set themselves up from a bare goto, so the global
+            // fixture never ran on them and window.helpers does not exist here;
+            // this is the one place the positional list is spelled out twice.
             const client = await window.WasmWebClient.createClient(
               rpcUrl,
               undefined,
               undefined,
-              storeName
+              storeName,
+              undefined, // logLevel
+              undefined, // useWorker, defaulted
+              undefined, // observability
+              feeFaucetId
             );
             window.client = client;
           },
-          { rpcUrl, storeName: crossTabStoreName }
+          {
+            rpcUrl,
+            storeName: crossTabStoreName,
+            feeFaucetId: getFeeFaucetId(),
+          }
         );
       };
 
@@ -501,22 +452,29 @@ test.describe("Cross-Tab Sync Lock Tests", () => {
       const setupPage = async (page: Page) => {
         await page.goto("http://localhost:8080");
         await page.evaluate(
-          async ({ rpcUrl, storeName }) => {
+          async ({ rpcUrl, storeName, feeFaucetId }) => {
             const sdkExports = await import("./index.js");
             for (const [key, value] of Object.entries(sdkExports)) {
               window[key] = value;
             }
 
             window.rpcUrl = rpcUrl;
+            // These pages set themselves up from a bare goto, so the global
+            // fixture never ran on them and window.helpers does not exist here;
+            // this is the one place the positional list is spelled out twice.
             const client = await window.WasmWebClient.createClient(
               rpcUrl,
               undefined,
               undefined,
-              storeName
+              storeName,
+              undefined, // logLevel
+              undefined, // useWorker, defaulted
+              undefined, // observability
+              feeFaucetId
             );
             window.client = client;
           },
-          { rpcUrl, storeName: rapidStoreName }
+          { rpcUrl, storeName: rapidStoreName, feeFaucetId: getFeeFaucetId() }
         );
       };
 
@@ -577,7 +535,7 @@ test.describe("Sync Lock Timeout Race Condition", () => {
 
       for (let i = 0; i < 3; i++) {
         try {
-          const result = await client.syncStateWithTimeout(30000);
+          const result = await client.syncState();
           results.push(result.blockNum());
         } catch (e) {
           results.push(-1); // Mark failures
@@ -691,10 +649,10 @@ test.describe("Sync Lock Timeout Race Condition", () => {
 
       // Fire many concurrent syncs with various timeouts
       const promises = [
-        client.syncStateWithTimeout(50000),
-        client.syncStateWithTimeout(50000),
         client.syncState(),
-        client.syncStateWithTimeout(50000),
+        client.syncState(),
+        client.syncState(),
+        client.syncState(),
         client.syncState(),
       ];
 
@@ -739,21 +697,20 @@ test.describe("Sync Lock Timeout Race Condition", () => {
       // Create an account to track state consistency
       const wallet = await client.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512
       );
       const walletId = wallet.id().toString();
 
       // Do several syncs with timeouts
       for (let i = 0; i < 3; i++) {
-        await client.syncStateWithTimeout(30000);
+        await client.syncState();
       }
 
       // Do concurrent syncs
       await Promise.all([
         client.syncState(),
         client.syncState(),
-        client.syncStateWithTimeout(30000),
+        client.syncState(),
       ]);
 
       // Verify account state is still consistent

@@ -12,11 +12,8 @@ test.describe("import from seed", () => {
       const walletSeed = new Uint8Array(32);
       crypto.getRandomValues(walletSeed);
 
-      const mutable = false;
-
       const initialWallet = await intClient.newWallet(
         sdk.AccountStorageMode.public(),
-        mutable,
         sdk.AuthScheme.AuthRpoFalcon512,
         walletSeed
       );
@@ -25,6 +22,7 @@ test.describe("import from seed", () => {
       const faucet = await intClient.newFaucet(
         sdk.AccountStorageMode.public(),
         false,
+        "DAG",
         "DAG",
         8,
         sdk.u64(10000000),
@@ -72,7 +70,10 @@ test.describe("import from seed", () => {
       await intClient.syncState();
       const inputNoteRecord = await intClient.getInputNote(createdNoteId);
       const note = inputNoteRecord.toNote();
-      const consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      const consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        initialWalletId
+      );
       execResult = await intClient.executeTransaction(
         initialWalletId,
         consumeRequest
@@ -111,7 +112,6 @@ test.describe("import from seed", () => {
       await freshClient.syncState();
       const restoredAccount = await freshClient.importPublicAccountFromSeed(
         walletSeed,
-        mutable,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 
@@ -159,11 +159,8 @@ test.describe("import public account by id", () => {
       const walletSeed = new Uint8Array(32);
       crypto.getRandomValues(walletSeed);
 
-      const mutable = false;
-
       const initialWallet = await intClient.newWallet(
         sdk.AccountStorageMode.public(),
-        mutable,
         sdk.AuthScheme.AuthRpoFalcon512,
         walletSeed
       );
@@ -172,6 +169,7 @@ test.describe("import public account by id", () => {
       const faucet = await intClient.newFaucet(
         sdk.AccountStorageMode.public(),
         false,
+        "DAG",
         "DAG",
         8,
         sdk.u64(10000000),
@@ -219,7 +217,10 @@ test.describe("import public account by id", () => {
       await intClient.syncState();
       const inputNoteRecord = await intClient.getInputNote(createdNoteId);
       const note = inputNoteRecord.toNote();
-      const consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      const consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        initialWalletId
+      );
       execResult = await intClient.executeTransaction(
         initialWalletId,
         consumeRequest

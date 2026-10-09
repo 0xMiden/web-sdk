@@ -7,7 +7,7 @@ import {
   installAccountBech32,
   ensureAccountBech32,
 } from "@miden-sdk/react";
-import { WasmWebClient, MockWebClient } from "@miden-sdk/miden-sdk";
+import { WasmWebClient, MockWebClient, Endpoint } from "@miden-sdk/miden-sdk";
 
 // -- Initial status flags (polled by the test) --------------------------------
 window.testAppError = null;
@@ -39,15 +39,25 @@ window.addEventListener("unhandledrejection", (event) => {
 // wasm-bindgen low-level class and only has an INSTANCE createClient, so
 // patching that one is a no-op and lets MidenProvider hit a real RPC call.
 //
-// We deliberately drop all args because `MockWebClient.createClient` has a
+// The args are not forwarded because `MockWebClient.createClient` has a
 // different signature (`(serializedMockChain, ..., seed, logLevel)`) than
-// `WasmWebClient.createClient` (`(rpcUrl, noteTransportUrl, seed, ...)`).
-// Passing the rpcUrl through would feed it into `serializedMockChain` which
-// expects a Uint8Array — wasm-bindgen would crash. The tests don't need the
-// real rpcUrl on the client; they exercise inferNetworkId() via the store's
-// config.rpcUrl which MidenProvider sets independently of createClient.
+// `WasmWebClient.createClient` (`(rpcUrl, noteTransportUrl, seed, ...)`), and
+// an rpcUrl fed into `serializedMockChain` would crash wasm-bindgen.
+//
+// The bech32 network is read from `client.endpoint()`, and a mock client talks
+// to no node, so it reports none. The mock is given the endpoint a real client
+// created with the same rpcUrl would report: the SDK's own `Endpoint`
+// normalization, defaulting to testnet. An own property wins over the proxy's
+// forwarding to the WASM client.
 const patchWebClient = () => {
-  WasmWebClient.createClient = () => MockWebClient.createClient();
+  WasmWebClient.createClient = async (rpcUrl) => {
+    const client = await MockWebClient.createClient();
+    const endpoint = (
+      rpcUrl ? new Endpoint(rpcUrl) : Endpoint.testnet()
+    ).toString();
+    client.endpoint = () => endpoint;
+    return client;
+  };
 };
 
 // -- Load full WASM SDK exports onto window -----------------------------------
@@ -78,7 +88,7 @@ window.__bech32 = {
 };
 
 // -- Reads optional ?rpcUrl=<network> query parameter ------------------------
-// Allows a single HTML page to exercise different inferNetworkId() branches.
+// Allows a single HTML page to exercise different resolveNetworkId() branches.
 const getConfigFromQuery = () => {
   try {
     const params = new URLSearchParams(window.location.search);
@@ -90,9 +100,8 @@ const getConfigFromQuery = () => {
 };
 
 // -- React harness ------------------------------------------------------------
-// Sets reactSdkReady=true only once MidenProvider reports isReady=true.
-// This guarantees the store's config has been populated (setConfig is called
-// before setClient inside MidenProvider's initClient effect).
+// Sets reactSdkReady=true only once MidenProvider reports isReady=true, which
+// is when the store holds the client whose endpoint the bech32 helpers read.
 const Harness = () => {
   const { isReady } = useMiden();
 

@@ -1,0 +1,17 @@
+diff --git a/src/cargo.js b/src/cargo.js
+index f105786c6e2a7841845f75c35155afffdb1c3867..e47e826950845b30ccbf0a83e9b32dcba8023355 100644
+--- a/src/cargo.js
++++ b/src/cargo.js
+@@ -151,7 +151,11 @@ export async function run({ dir, verbose, cargoArgs, rustcArgs, release, optimiz
+                 }
+ 
+                 args.push("-Z", "build-std=panic_abort,core,std,alloc,proc_macro");
+-                args.push("-Z", "build-std-features=optimize_for_size");
++                // PATCHED for @miden-sdk/miden-sdk: this flag trades runtime
++                // speed for binary size in std (smaller sort, simpler memcpy,
++                // smaller HashMap hash). For a STARK prover where hot std
++                // paths dominate, that's a 3-5× regression in prove time.
++                // args.push("-Z", "build-std-features=optimize_for_size");
+             }
+         }
+ 

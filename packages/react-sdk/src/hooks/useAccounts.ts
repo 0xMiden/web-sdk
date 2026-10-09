@@ -1,9 +1,7 @@
 import { useCallback, useEffect } from "react";
 import { useMiden } from "../context/MidenProvider";
 import { useMidenStore, useAccountsStore } from "../store/MidenStore";
-import type { AccountHeader } from "@miden-sdk/miden-sdk";
 import type { AccountsResult } from "../types";
-import { isFaucetId } from "../utils/accountParsing";
 
 /**
  * Hook to list all accounts in the client.
@@ -55,25 +53,10 @@ export function useAccounts(): AccountsResult {
     }
   }, [isReady, accounts.length, refetch]);
 
-  // Categorize accounts
-  const wallets: AccountHeader[] = [];
-  const faucets: AccountHeader[] = [];
-
-  for (const account of accounts) {
-    const accountId = account.id();
-    // Check if account is a faucet based on account ID type
-    // Faucet IDs have a specific bit pattern
-    if (isFaucetId(accountId)) {
-      faucets.push(account);
-    } else {
-      wallets.push(account);
-    }
-  }
-
   return {
     accounts,
-    wallets,
-    faucets,
+    wallets: accounts,
+    faucets: [],
     isLoading: isLoadingAccounts,
     error: null,
     refetch,

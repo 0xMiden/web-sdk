@@ -6,7 +6,6 @@ test.describe("Address instantiation tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const newAccount = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       try {
@@ -39,7 +38,6 @@ test.describe("Address instantiation tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const newAccount = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const address = sdk.Address.fromAccountId(newAccount.id(), "BasicWallet");
@@ -76,7 +74,6 @@ test.describe("Bech32 tests", () => {
       const parsedNetworkId = helpers.parseNetworkId("mtst");
       const newAccount = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const address = sdk.Address.fromAccountId(newAccount.id(), "BasicWallet");
@@ -95,7 +92,6 @@ test.describe("Bech32 tests", () => {
       const parsedNetworkId = helpers.parseNetworkId("mm");
       const newAccount = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const address = sdk.Address.fromAccountId(newAccount.id(), "BasicWallet");
@@ -109,7 +105,6 @@ test.describe("Bech32 tests", () => {
       const parsedNetworkId = helpers.parseNetworkId("mtst");
       const newAccount = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const address = sdk.Address.fromAccountId(newAccount.id(), "BasicWallet");
@@ -123,7 +118,6 @@ test.describe("Bech32 tests", () => {
       const parsedNetworkId = helpers.parseNetworkId("mdev");
       const newAccount = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const address = sdk.Address.fromAccountId(newAccount.id(), "BasicWallet");
@@ -137,7 +131,6 @@ test.describe("Bech32 tests", () => {
       const parsedNetworkId = helpers.parseNetworkId("cstm");
       const newAccount = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const address = sdk.Address.fromAccountId(newAccount.id(), "BasicWallet");
@@ -150,7 +143,6 @@ test.describe("Bech32 tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const newAccount = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const accountId = newAccount.id();
@@ -173,7 +165,6 @@ test.describe("Note tag tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const newAccount = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const address = sdk.Address.fromAccountId(newAccount.id(), "BasicWallet");

@@ -1,0 +1,5 @@
+{
+  "main": "../../dist/mt/lazy.mjs",
+  "module": "../../dist/mt/lazy.mjs",
+  "types": "../../dist/mt/lazy.d.ts"
+}

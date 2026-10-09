@@ -12,6 +12,7 @@ import type {
 import type {
   GetKeyCallback,
   InsertKeyCallback,
+  MidenObservation,
   SignCallback,
 } from "./api-types";
 
@@ -61,6 +62,9 @@ export declare class StorageResult {
 
   /** Returns all four Felts of the stored Word. Pass-through to Word.toFelts(). */
   toFelts(): Felt[];
+
+  /** Returns all four elements of the stored Word as a BigUint64Array. Pass-through to Word.toU64s(). */
+  toU64s(): BigUint64Array;
 
   /** The first Felt of the stored Word. */
   felt(): Felt | undefined;
@@ -134,6 +138,15 @@ export declare function wordToBigInt(word: Word): bigint;
 // Internal exports (not public API — for tests and advanced usage)
 // ════════════════════════════════════════════════════════════════
 
+/**
+ * @internal Observability fields `MidenClient.create` forwards to the low-level
+ * factories. Mirrors the pair on {@link ClientOptions}; both are construction-only.
+ */
+export interface ClientObservabilityOptions {
+  observer?: (observation: MidenObservation) => void;
+  observeSensitive?: boolean;
+}
+
 /** @internal Low-level WebClient wrapper. Use MidenClient instead. */
 export declare class WasmWebClient extends WasmWebClientBase {
   static createClient(
@@ -141,7 +154,10 @@ export declare class WasmWebClient extends WasmWebClientBase {
     noteTransportUrl?: string,
     seed?: Uint8Array,
     storeName?: string,
-    logLevel?: LogLevel
+    logLevel?: LogLevel,
+    useWorker?: boolean,
+    observability?: ClientObservabilityOptions,
+    feeFaucetId?: string
   ): Promise<WasmWebClient>;
 
   static createClientWithExternalKeystore(
@@ -152,11 +168,15 @@ export declare class WasmWebClient extends WasmWebClientBase {
     getKeyCb?: GetKeyCallback,
     insertKeyCb?: InsertKeyCallback,
     signCb?: SignCallback,
-    logLevel?: LogLevel
+    logLevel?: LogLevel,
+    useWorker?: boolean,
+    observability?: ClientObservabilityOptions,
+    feeFaucetId?: string
   ): Promise<WasmWebClient>;
 
   syncState(): Promise<SyncSummary>;
-  syncStateWithTimeout(timeoutMs: number): Promise<SyncSummary>;
+  syncChain(): Promise<SyncSummary>;
+  syncNoteTransport(): Promise<void>;
   setSignCb(signCb: SignCallback | null | undefined): void;
   onStateChanged(callback: (event: any) => void): (() => void) | undefined;
   terminate(): void;

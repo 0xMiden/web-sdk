@@ -1,10 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { AccountId, Address } from "@miden-sdk/miden-sdk";
-import {
-  parseAccountId,
-  parseAddress,
-  isFaucetId,
-} from "../../utils/accountParsing";
+import { parseAccountId, parseAddress } from "../../utils/accountParsing";
 
 describe("parseAccountId", () => {
   it("strips the 'miden:' URI prefix from a string input", () => {
@@ -137,51 +133,5 @@ describe("parseAddress", () => {
       override,
       "BasicWallet"
     );
-  });
-});
-
-describe("isFaucetId", () => {
-  // Account-type bits live in nibble (4..7) of the first hex byte:
-  //   0b00 = Regular off-chain      (e.g. 0x0...)
-  //   0b01 = Regular on-chain       (e.g. 0x1...)
-  //   0b10 = Fungible faucet        (e.g. 0x2..., 0xa...)
-  //   0b11 = Non-fungible faucet    (e.g. 0x3..., 0xb...)
-  // (The shift is `(byte >> 4) & 0b11`, so it keys off the high nibble.)
-  it("identifies a fungible faucet from hex", () => {
-    expect(isFaucetId({ toHex: () => "0x20abcdef" })).toBe(true);
-  });
-
-  it("identifies a non-fungible faucet from hex", () => {
-    expect(isFaucetId({ toHex: () => "0x30abcdef" })).toBe(true);
-  });
-
-  it("rejects a regular off-chain account", () => {
-    expect(isFaucetId({ toHex: () => "0x00abcdef" })).toBe(false);
-  });
-
-  it("rejects a regular on-chain account", () => {
-    expect(isFaucetId({ toHex: () => "0x10abcdef" })).toBe(false);
-  });
-
-  it("accepts an upper-case 0X prefix", () => {
-    expect(isFaucetId({ toHex: () => "0X20abcdef" })).toBe(true);
-  });
-
-  it("accepts a hex string without an 0x prefix (via String() fallback)", () => {
-    expect(isFaucetId("20abcdef")).toBe(true);
-  });
-
-  it("returns false when toHex throws", () => {
-    expect(
-      isFaucetId({
-        toHex: () => {
-          throw new Error("boom");
-        },
-      })
-    ).toBe(false);
-  });
-
-  it("returns false when input has no toHex (and stringifies to non-hex)", () => {
-    expect(isFaucetId({ unrelated: 1 } as never)).toBe(false);
   });
 });

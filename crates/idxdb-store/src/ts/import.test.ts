@@ -134,6 +134,7 @@ describe("forceImportStore", () => {
 
     // Insert a row into DB-A
     await dbA.inputNotes.put({
+      detailsCommitment: "commitment-round-trip",
       noteId: "round-trip-note",
       stateDiscriminant: 0,
       assets: assetBytes,

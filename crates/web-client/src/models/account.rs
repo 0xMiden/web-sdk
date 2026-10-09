@@ -1,11 +1,23 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
+use miden_client::account::component::{AuthNetworkAccount, AuthTxFeeCollector, NetworkAccount};
 use miden_client::account::{
     Account as NativeAccount,
-    AccountInterfaceExt,
-    AccountType as NativeAccountType,
+    AccountComponentInterface,
+    AccountComponentInterfaceExt,
+    AccountProcedureRoot,
+    StorageSlot,
+    StorageSlotContent,
 };
-use miden_client::transaction::AccountInterface;
+use miden_client::auth::{
+    AuthGuardedMultisig,
+    AuthMultisig,
+    AuthMultisigSmart,
+    AuthSingleSig,
+    NoAuth,
+};
+use miden_client::testing::standards::account_interface::get_public_keys_from_account;
+use miden_protocol::account::component::AUTH_SCRIPT_ATTRIBUTE;
 
 use crate::models::account_code::AccountCode;
 use crate::models::account_id::AccountId;
@@ -13,7 +25,7 @@ use crate::models::account_storage::AccountStorage;
 use crate::models::asset_vault::AssetVault;
 use crate::models::felt::Felt;
 use crate::models::word::Word;
-use crate::platform::{JsBytes, JsErr};
+use crate::platform::{JsBytes, JsErr, from_str_err};
 use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
 
 /// An account which can store assets and define rules for manipulating them.
@@ -70,22 +82,22 @@ impl Account {
         self.0.code().into()
     }
 
-    /// Returns true if the account is a faucet.
+    // Faucet-ness is encoded in the account's code, so it is derived from the
+    // account's component interface rather than from its `AccountId`. It uses
+    // `from_procedures`, not `AccountInterface`, whose constructor asserts on exactly
+    // one auth component and traps under `panic = "abort"`.
+
+    /// Returns true if the account exposes a fungible-faucet interface.
     #[js_export(js_name = "isFaucet")]
     pub fn is_faucet(&self) -> bool {
-        self.0.is_faucet()
+        AccountComponentInterface::from_procedures(self.0.code().procedures())
+            .contains(&AccountComponentInterface::FungibleFaucet)
     }
 
-    /// Returns true if the account is a regular account (immutable or updatable code).
+    /// Returns true if the account is a regular (non-faucet) account.
     #[js_export(js_name = "isRegularAccount")]
     pub fn is_regular_account(&self) -> bool {
-        self.0.is_regular_account()
-    }
-
-    /// Returns true if the account can update its code.
-    #[js_export(js_name = "isUpdatable")]
-    pub fn is_updatable(&self) -> bool {
-        matches!(self.0.account_type(), NativeAccountType::RegularAccountUpdatableCode)
+        !self.is_faucet()
     }
 
     /// Returns true if the account exposes public storage.
@@ -100,16 +112,33 @@ impl Account {
         self.0.is_private()
     }
 
-    /// Returns true if this is a network-owned account.
-    #[js_export(js_name = "isNetwork")]
-    pub fn is_network(&self) -> bool {
-        self.0.is_network()
-    }
-
     /// Returns true if the account has not yet been committed to the chain.
     #[js_export(js_name = "isNew")]
     pub fn is_new(&self) -> bool {
         self.0.is_new()
+    }
+
+    /// Returns true if this is a network account.
+    ///
+    /// A network account is a public account whose storage
+    /// carries the standardized network-account note-script allowlist slot.
+    #[js_export(js_name = "isNetworkAccount")]
+    pub fn is_network_account(&self) -> bool {
+        NetworkAccount::new(self.0.clone()).is_ok()
+    }
+
+    /// Returns the note-script roots this network account is allowed to
+    /// consume, or `undefined` if this is not a network account.
+    #[js_export(js_name = "networkNoteAllowlist")]
+    pub fn network_note_allowlist(&self) -> Option<Vec<Word>> {
+        NetworkAccount::new(self.0.clone()).ok().map(|network_account| {
+            network_account
+                .allowed_notes()
+                .allowed_script_roots()
+                .iter()
+                .map(|root| Word::from(NativeWord::from(*root)))
+                .collect()
+        })
     }
 
     /// Serializes the account into bytes.
@@ -123,18 +152,127 @@ impl Account {
     }
 
     /// Returns the public key commitments derived from the account's authentication scheme.
+    ///
+    /// Reads the keys out of account state, so it answers "who may authorize this account": for
+    /// a multisig that is every approver, including keys this client does not hold. For "which
+    /// keys do I hold for this account", use `client.keystore.getCommitments(accountId)` instead.
+    ///
+    /// Throws unless exactly one standard auth component bundled with this SDK owns the account's
+    /// auth procedure. The causes, and what to do about each:
+    /// - A custom auth component, which defines its own key storage layout: read its keys through
+    ///   the package that defines it, or use `client.keystore.getCommitments(accountId)` for the
+    ///   keys this client holds.
+    /// - A standard component built from a different miden-standards revision: use an SDK version
+    ///   that matches the revision the account was built with.
+    ///
+    /// Two kinds of standard auth component return `[]`: `NoAuth` and the network account hold no
+    /// key, and the tx fee collector's key is not read here (the SDK cannot build such an
+    /// account).
+    ///
+    /// Also throws when a multisig's threshold config declares more approvers than its approver
+    /// key storage holds, which only a tampered account can do.
     #[js_export(js_name = "getPublicKeyCommitments")]
-    pub fn get_public_key_commitments(&self) -> Vec<Word> {
-        let inner_account = &self.0;
-        let mut pks = vec![];
-        let interface: AccountInterface = AccountInterface::from_account(inner_account);
+    pub fn get_public_key_commitments(&self) -> Result<Vec<Word>, JsErr> {
+        let procedures = self.0.code().procedures();
+        let components = AccountComponentInterface::from_procedures(procedures);
+        let auth_components: Vec<&AccountComponentInterface> =
+            components.iter().filter(|component| component.is_auth_component()).collect();
 
-        for auth in interface.auth() {
-            pks.extend(auth.get_public_key_commitments());
+        // The account's auth procedure is the one at index 0. Classification matches components
+        // by root containment, so any other procedure can match a standard auth component's
+        // roots; only that component's own auth procedure at index 0 proves it is the
+        // account's auth component.
+        let owned_by_one_standard_component = match auth_components.as_slice() {
+            [only] => standard_auth_procedure_root(only)
+                .is_some_and(|auth_root| procedures.first() == Some(&auth_root)),
+            _ => false,
+        };
+
+        if !owned_by_one_standard_component {
+            let found = if auth_components.is_empty() {
+                "none".to_string()
+            } else {
+                auth_components
+                    .iter()
+                    .map(|component| component.name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            return Err(from_str_err(&format!(
+                "cannot derive public key commitments from account state: the account's auth \
+                 procedure is not owned by exactly one standard auth component bundled with this \
+                 SDK (auth components found: {found}). If it is a custom auth component, read its \
+                 keys through the package that defines it, or use \
+                 client.keystore.getCommitments(accountId) for the keys this client holds. If it \
+                 is a standard component built from a different miden-standards revision, use an \
+                 SDK version that matches it."
+            )));
         }
 
-        pks.into_iter().map(NativeWord::from).map(Into::into).collect()
+        // `get_public_keys_from_account` looks up as many approver keys as the threshold config
+        // declares, so a count above the stored entries would loop over keys that do not exist.
+        let multisig_slots = match auth_components[0] {
+            AccountComponentInterface::AuthMultisig => Some((
+                AuthMultisig::threshold_config_slot(),
+                AuthMultisig::approver_public_keys_slot(),
+            )),
+            AccountComponentInterface::AuthMultisigSmart => Some((
+                AuthMultisigSmart::threshold_config_slot(),
+                AuthMultisigSmart::approver_public_keys_slot(),
+            )),
+            AccountComponentInterface::AuthGuardedMultisig => Some((
+                AuthGuardedMultisig::threshold_config_slot(),
+                AuthGuardedMultisig::approver_public_keys_slot(),
+            )),
+            _ => None,
+        };
+        if let Some((config_slot, keys_slot)) = multisig_slots
+            && let Ok(config) = self.0.storage().get_item(config_slot)
+        {
+            // Truncated exactly as the upstream loop bound is.
+            #[allow(clippy::cast_possible_truncation)]
+            let count = config[1].as_canonical_u64() as u32;
+            let stored = match self.0.storage().get(keys_slot).map(StorageSlot::content) {
+                Some(StorageSlotContent::Map(map)) => map.num_entries(),
+                _ => 0,
+            };
+            if count as usize > stored {
+                return Err(from_str_err(&format!(
+                    "cannot derive public key commitments from account state: the multisig auth \
+                     component declares {count} approvers but its approver key storage holds \
+                     {stored} entries"
+                )));
+            }
+        }
+
+        // Exactly one auth component was classified, so the `AccountInterface` this builds
+        // internally cannot assert.
+        Ok(get_public_keys_from_account(&self.0).into_iter().map(Into::into).collect())
     }
+}
+
+/// The root of the auth procedure of the bundled standard auth component that `component` names,
+/// or `None` for a custom or non-auth component.
+///
+/// This is the export the component's code marks `@auth_script`, the flag
+/// `AccountComponent::procedures` reports and account code places at index 0.
+fn standard_auth_procedure_root(
+    component: &AccountComponentInterface,
+) -> Option<AccountProcedureRoot> {
+    let code = match component {
+        AccountComponentInterface::AuthSingleSig => AuthSingleSig::code(),
+        AccountComponentInterface::AuthMultisig => AuthMultisig::code(),
+        AccountComponentInterface::AuthMultisigSmart => AuthMultisigSmart::code(),
+        AccountComponentInterface::AuthGuardedMultisig => AuthGuardedMultisig::code(),
+        AccountComponentInterface::AuthNoAuth => NoAuth::code(),
+        AccountComponentInterface::AuthNetworkAccount => AuthNetworkAccount::code(),
+        AccountComponentInterface::AuthTxFeeCollector => AuthTxFeeCollector::code(),
+        _ => return None,
+    };
+    // `procedure_roots` maps `exports` one to one and in order.
+    code.exports()
+        .zip(code.procedure_roots())
+        .find_map(|(export, root)| export.attributes.has(AUTH_SCRIPT_ATTRIBUTE).then_some(root))
 }
 
 // CONVERSIONS

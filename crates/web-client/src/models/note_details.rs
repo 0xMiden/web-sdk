@@ -1,15 +1,20 @@
 use js_export_macro::js_export;
-use miden_client::Word as NativeWord;
 use miden_client::note::NoteDetails as NativeNoteDetails;
 
 use super::note_assets::NoteAssets;
-use super::note_id::NoteId;
 use super::note_recipient::NoteRecipient;
-use super::word::Word;
 
 /// Details of a note consisting of assets, script, inputs, and a serial number.
 ///
 /// See the {@link Note} type for more details.
+///
+/// Migration note (miden-client PR #2214): `NoteDetails::id()` and
+/// `NoteDetails::nullifier()` were removed on the 0.15 protocol surface —
+/// the ID now requires a `NoteMetadata` to compute (see `NoteId::new`),
+/// and the nullifier moved onto `InputNoteRecord` where it is optional.
+/// Use `details_commitment()` on a containing record (e.g.
+/// `InputNoteRecord::details_commitment`) for the metadata-independent
+/// identifier.
 #[derive(Clone)]
 #[js_export]
 pub struct NoteDetails(NativeNoteDetails);
@@ -22,11 +27,6 @@ impl NoteDetails {
         NoteDetails(NativeNoteDetails::new(note_assets.into(), note_recipient.into()))
     }
 
-    /// Returns the note identifier derived from these details.
-    pub fn id(&self) -> NoteId {
-        self.0.id().into()
-    }
-
     /// Returns the assets locked by the note.
     pub fn assets(&self) -> NoteAssets {
         self.0.assets().into()
@@ -35,15 +35,6 @@ impl NoteDetails {
     /// Returns the recipient which controls when the note can be consumed.
     pub fn recipient(&self) -> NoteRecipient {
         self.0.recipient().into()
-    }
-
-    /// Returns the note nullifier as a word.
-    pub fn nullifier(&self) -> Word {
-        let nullifier = self.0.nullifier();
-        let elements: [miden_client::Felt; 4] =
-            nullifier.as_elements().try_into().expect("nullifier has 4 elements");
-        let native_word: NativeWord = NativeWord::from(&elements);
-        native_word.into()
     }
 }
 

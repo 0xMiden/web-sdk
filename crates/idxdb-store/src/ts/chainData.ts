@@ -1,45 +1,58 @@
 import { getDatabase } from "./schema.js";
-import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
+import {
+  logWebStoreError,
+  putPartialBlockchainNodesNoOverwrite,
+  uint8ArrayToBase64,
+} from "./utils.js";
 
 export async function insertBlockHeader(
   dbId: string,
   blockNum: number,
   header: Uint8Array,
-  partialBlockchainPeaks: Uint8Array,
-  hasClientNotes: boolean
+  hasClientNotes: boolean,
+  nodeIds: string[],
+  nodes: string[]
 ) {
   try {
     const db = getDatabase(dbId);
-    const data = {
+    if (nodeIds.length !== nodes.length) {
+      throw new Error("nodeIds and nodes arrays must be of the same length");
+    }
+
+    const headerData = {
       blockNum: blockNum,
       header,
-      partialBlockchainPeaks,
       hasClientNotes: hasClientNotes.toString(),
     };
+    const nodeData = nodes.map((node, index) => ({
+      id: Number(nodeIds[index]),
+      node: node,
+    }));
 
-    // Mirror SQLite's `insert_block_header_tx`: do an INSERT OR IGNORE on the
-    // row, then explicitly upgrade `has_client_notes` to true if the caller
-    // says so. Two callers hit this:
-    //   - Genesis flow — no existing row; the add succeeds.
-    //   - `get_and_store_authenticated_block` for a past block — a row
-    //     written by `applyStateSync` typically already exists. Overwriting
-    //     it would clobber the correct historical peaks (popcount ==
-    //     block_num) with peaks from the caller's current `PartialMmr`
-    //     forest (popcount == current sync height). Later reads of those
-    //     peaks trip `MmrPeaks::new`'s InvalidPeaks validation and wedge
-    //     sync for the rest of the session.
-    //
-    // The `has_client_notes` upgrade is load-bearing: `get_tracked_block_
-    // header_numbers` filters by this flag to seed `tracked_leaves`, which
-    // `get_partial_blockchain_nodes(Forest)` relies on. A private-note
-    // import at a block previously synced as irrelevant must flip the flag
-    // to true or the auth paths won't be tracked.
-    await db.blockHeaders.add(data).catch(async (err: unknown) => {
-      if (!isConstraintError(err)) throw err;
-      if (hasClientNotes) {
-        await db.blockHeaders.update(blockNum, { hasClientNotes: "true" });
+    // Persist the header and its MMR nodes in one transaction so a header is never stored
+    // without the nodes that rebuild its `PartialMmr` (mirrors miden-client's atomic insert).
+    await db.dexie.transaction(
+      "rw",
+      db.blockHeaders,
+      db.partialBlockchainNodes,
+      async () => {
+        // Header: INSERT OR IGNORE, then one-way upgrade `has_client_notes` to true (load-bearing:
+        // `get_tracked_block_header_numbers` filters on it to seed forest-node tracking).
+        await db.blockHeaders.add(headerData).catch(async (err: unknown) => {
+          if (!isConstraintError(err)) throw err;
+          if (hasClientNotes) {
+            await db.blockHeaders.update(blockNum, { hasClientNotes: "true" });
+          }
+        });
+
+        // Nodes: insert-if-missing with overwrite protection; a conflicting value throws and
+        // aborts the transaction, rolling back the header write too.
+        await putPartialBlockchainNodesNoOverwrite(
+          db.partialBlockchainNodes,
+          nodeData
+        );
       }
-    });
+    );
   } catch (err) {
     logWebStoreError(err);
   }
@@ -74,7 +87,15 @@ export async function insertPartialBlockchainNodes(
       node: node,
     }));
 
-    await db.partialBlockchainNodes.bulkPut(data);
+    // Wrap the read/check/add in a single transaction so the conflict check
+    // and the insert are atomic: a concurrent writer cannot slip a row in
+    // between the `bulkGet` and the `bulkAdd`.
+    await db.dexie.transaction("rw", db.partialBlockchainNodes, async () => {
+      await putPartialBlockchainNodesNoOverwrite(
+        db.partialBlockchainNodes,
+        data
+      );
+    });
   } catch (err) {
     logWebStoreError(err, "Failed to insert partial blockchain nodes");
   }
@@ -91,14 +112,10 @@ export async function getBlockHeaders(dbId: string, blockNumbers: number[]) {
           return null;
         } else {
           const headerBase64 = uint8ArrayToBase64(result.header);
-          const partialBlockchainPeaksBase64 = uint8ArrayToBase64(
-            result.partialBlockchainPeaks
-          );
 
           return {
             blockNum: result.blockNum,
             header: headerBase64,
-            partialBlockchainPeaks: partialBlockchainPeaksBase64,
             hasClientNotes: result.hasClientNotes === "true",
           };
         }
@@ -123,14 +140,9 @@ export async function getTrackedBlockHeaders(dbId: string) {
       allMatchingRecords.map((record) => {
         const headerBase64 = uint8ArrayToBase64(record.header);
 
-        const partialBlockchainPeaksBase64 = uint8ArrayToBase64(
-          record.partialBlockchainPeaks
-        );
-
         return {
           blockNum: record.blockNum,
           header: headerBase64,
-          partialBlockchainPeaks: partialBlockchainPeaksBase64,
           hasClientNotes: record.hasClientNotes === "true",
         };
       })
@@ -152,30 +164,6 @@ export async function getTrackedBlockHeaderNumbers(dbId: string) {
     return blockNums;
   } catch (err) {
     logWebStoreError(err, "Failed to get tracked block header numbers");
-  }
-}
-
-export async function getPartialBlockchainPeaksByBlockNum(
-  dbId: string,
-  blockNum: number
-) {
-  try {
-    const db = getDatabase(dbId);
-    const blockHeader = await db.blockHeaders.get(blockNum);
-    if (blockHeader == undefined) {
-      return {
-        peaks: undefined,
-      };
-    }
-    const partialBlockchainPeaksBase64 = uint8ArrayToBase64(
-      blockHeader.partialBlockchainPeaks
-    );
-
-    return {
-      peaks: partialBlockchainPeaksBase64,
-    };
-  } catch (err) {
-    logWebStoreError(err, "Failed to get partial blockchain peaks");
   }
 }
 
@@ -229,9 +217,11 @@ export async function pruneIrrelevantBlocks(
     const db = getDatabase(dbId);
     const numericNodeIds = nodeIdsToRemove.map(Number);
 
-    const syncHeight = await db.stateSync.get(1);
+    const syncHeight = await db.blockchainCheckpoint.get(1);
     if (syncHeight == undefined) {
-      throw Error("SyncHeight is undefined -- is the state sync table empty?");
+      throw Error(
+        "SyncHeight is undefined -- is the blockchain_checkpoint table empty?"
+      );
     }
 
     await db.dexie.transaction(

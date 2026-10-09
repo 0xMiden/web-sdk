@@ -16,6 +16,7 @@ import { getRpcUrl, RUN_ID } from "./playwright.global.setup";
 import path from "path";
 import fs from "fs";
 import os from "os";
+import { normalizeArg, wrapClass } from "../js/node/napi-compat.js";
 
 let _helperCounter = 0;
 
@@ -26,13 +27,6 @@ function tmpDir(): string {
   );
   fs.mkdirSync(path.join(dir, "keystore"), { recursive: true });
   return dir;
-}
-
-function norm(val: any): any {
-  if (val instanceof BigUint64Array) return Array.from(val);
-  if (val instanceof BigInt64Array) return Array.from(val);
-  if (val instanceof Uint8Array || Buffer.isBuffer(val)) return Array.from(val);
-  return val;
 }
 
 // ── Mock chain transaction helpers ───────────────────────────────────
@@ -49,12 +43,12 @@ export async function setupWalletAndFaucet(
 }> {
   const wallet = await client.newWallet(
     sdk.AccountStorageMode.private(),
-    true,
     sdk.AuthScheme.AuthRpoFalcon512
   );
   const faucet = await client.newFaucet(
     sdk.AccountStorageMode.private(),
     false,
+    "DAG",
     "DAG",
     8,
     sdk.u64(10000000),
@@ -67,6 +61,88 @@ export async function setupWalletAndFaucet(
     wallet,
     faucet,
   };
+}
+
+/**
+ * Builds a 2-of-3 multisig account and leaves a note sitting consumable by it.
+ *
+ * Transactions on this account do not self-authorize, which is what makes
+ * `executeForSummary`/`executeForSummaryAt` return a summary rather than
+ * rejecting with `TRANSACTION_ALREADY_AUTHORIZED`. That is the co-signing shape
+ * chain anchors exist to serve.
+ */
+export async function setupMultisigWithConsumableNote(
+  client: any,
+  sdk: any
+): Promise<{ multisigAccountId: any; notes: any[] }> {
+  const walletSeed = new Uint8Array(32);
+  crypto.getRandomValues(walletSeed);
+
+  const approverKeys = [
+    sdk.AuthSecretKey.rpoFalconWithRNG(),
+    sdk.AuthSecretKey.rpoFalconWithRNG(),
+    sdk.AuthSecretKey.rpoFalconWithRNG(),
+  ];
+  const multisigComponent = sdk.createAuthFalcon512RpoMultisig(
+    new sdk.AuthFalcon512RpoMultisigConfig(
+      approverKeys.map((key) => key.publicKey().toCommitment()),
+      2
+    )
+  );
+
+  const built = new sdk.AccountBuilder(walletSeed)
+    .storageMode(sdk.AccountStorageMode.private())
+    .withAuthComponent(multisigComponent)
+    .withBasicWalletComponent()
+    .build();
+
+  const multisigAccountId = built.account.id();
+  await client.newAccount(built.account, false);
+  for (const key of approverKeys) {
+    await client.keystore.insert(multisigAccountId, key);
+  }
+
+  // Fund a regular wallet, then have it send a note to the multisig. Minting
+  // straight to the multisig would leave nothing for it to consume.
+  const { wallet, faucet } = await setupWalletAndFaucet(client, sdk);
+  const { createdNoteId } = await mockMint(
+    client,
+    sdk,
+    wallet.id(),
+    faucet.id()
+  );
+  await mockConsume(client, sdk, wallet.id(), createdNoteId);
+
+  const sendRequest = await client.newSendTransactionRequest(
+    wallet.id(),
+    multisigAccountId,
+    faucet.id(),
+    sdk.NoteType.Public,
+    sdk.u64(100),
+    null,
+    null
+  );
+  const sendTxId = await client.submitNewTransaction(wallet.id(), sendRequest);
+  await client.proveBlock();
+  await client.syncState();
+
+  const [sendTxRecord] = await client.getTransactions(
+    sdk.TransactionFilter.ids([sendTxId])
+  );
+  const notes = await Promise.all(
+    sendTxRecord
+      .outputNotes()
+      .notes()
+      .map(async (note: any) => {
+        const record = await client.getInputNote(note.id().toString());
+        if (!record) {
+          throw new Error(`Note ${note.id().toString()} not found`);
+        }
+        return record.toNote();
+      })
+  );
+
+  return { multisigAccountId, notes };
 }
 
 /**
@@ -134,7 +210,10 @@ export async function mockConsume(
   if (!inputNoteRecord) throw new Error(`Note ${noteId} not found`);
 
   const note = inputNoteRecord.toNote();
-  const consumeRequest = client.newConsumeTransactionRequest([note]);
+  const consumeRequest = await client.newConsumeTransactionRequest(
+    [note],
+    accountId
+  );
   const txId = await client.submitNewTransaction(accountId, consumeRequest);
   await client.proveBlock();
   await client.syncState();
@@ -266,11 +345,8 @@ export async function mockSwap(
   );
 
   const expectedOutputNotes = swapRequest.expectedOutputOwnNotes();
-  const expectedPaybackNoteDetails = swapRequest
-    .expectedFutureNotes()
-    .map((futureNote: any) => futureNote.noteDetails);
 
-  const swapTxId = await client.submitNewTransaction(accountAId, swapRequest);
+  await client.submitNewTransaction(accountAId, swapRequest);
   await client.proveBlock();
   await client.syncState();
 
@@ -280,19 +356,37 @@ export async function mockSwap(
   if (!swapNoteRecord) throw new Error(`Swap note ${swapNoteId} not found`);
 
   const swapNote = swapNoteRecord.toNote();
-  const consumeRequest1 = client.newConsumeTransactionRequest([swapNote]);
-  await client.submitNewTransaction(accountBId, consumeRequest1);
+  const consumeRequest1 = await client.newConsumeTransactionRequest(
+    [swapNote],
+    accountBId
+  );
+  const consumeTxId1 = await client.submitNewTransaction(
+    accountBId,
+    consumeRequest1
+  );
   await client.proveBlock();
   await client.syncState();
 
-  // Consume payback note for account A
-  const paybackNoteId = expectedPaybackNoteDetails[0].id().toString();
+  // Account B's consume of the swap note emits the payback note that account A
+  // consumes. Derive its id from the consume transaction's output notes
+  // (NoteDetails no longer exposes id()).
+  const [consumeTxRecord1] = await client.getTransactions(
+    sdk.TransactionFilter.ids([consumeTxId1])
+  );
+  const paybackNoteId = consumeTxRecord1
+    .outputNotes()
+    .notes()[0]
+    .id()
+    .toString();
   const paybackNoteRecord = await client.getInputNote(paybackNoteId);
   if (!paybackNoteRecord)
     throw new Error(`Payback note ${paybackNoteId} not found`);
 
   const paybackNote = paybackNoteRecord.toNote();
-  const consumeRequest2 = client.newConsumeTransactionRequest([paybackNote]);
+  const consumeRequest2 = await client.newConsumeTransactionRequest(
+    [paybackNote],
+    accountAId
+  );
   await client.submitNewTransaction(accountAId, consumeRequest2);
   await client.proveBlock();
   await client.syncState();
@@ -317,6 +411,298 @@ export async function mockSwap(
     }));
 
   return { accountAAssets, accountBAssets };
+}
+
+function vaultAssets(account: any): { assetId: string; amount: string }[] {
+  return account
+    ?.vault()
+    .fungibleAssets()
+    .map((asset: any) => ({
+      assetId: asset.faucetId().toString(),
+      amount: asset.amount().toString(),
+    }));
+}
+
+/**
+ * Creates a PSWAP note from `creatorId` and fills it from `fillerId` supplying
+ * `fillAmount` of the requested asset. Returns the filler's consume output
+ * notes so the caller can assert on the full-fill (one payback note) vs.
+ * partial-fill (payback note + remainder PSWAP note) shapes.
+ */
+async function createAndFillPswapNote(
+  client: any,
+  sdk: any,
+  creatorId: any,
+  fillerId: any,
+  offeredFaucetId: any,
+  offeredAmount: number,
+  requestedFaucetId: any,
+  requestedAmount: number,
+  fillAmount: number,
+  pswapNoteType: string,
+  paybackNoteType: string
+): Promise<{ consumeOutputNotes: any[] }> {
+  const noteType =
+    pswapNoteType === "public" ? sdk.NoteType.Public : sdk.NoteType.Private;
+  const pbNoteType =
+    paybackNoteType === "public" ? sdk.NoteType.Public : sdk.NoteType.Private;
+
+  // 1. Creator builds and submits the PSWAP note.
+  const createRequest = await client.newPswapCreateTransactionRequest(
+    creatorId,
+    offeredFaucetId,
+    sdk.u64(offeredAmount),
+    requestedFaucetId,
+    sdk.u64(requestedAmount),
+    noteType,
+    pbNoteType
+  );
+  const createTxId = await client.submitNewTransaction(
+    creatorId,
+    createRequest
+  );
+  await client.proveBlock();
+  await client.syncState();
+
+  const [createTxRecord] = await client.getTransactions(
+    sdk.TransactionFilter.ids([createTxId])
+  );
+  const pswapNoteId = createTxRecord.outputNotes().notes()[0].id().toString();
+
+  // 2. Filler consumes (fills) the PSWAP note from its own vault.
+  const pswapNoteRecord = await client.getInputNote(pswapNoteId);
+  if (!pswapNoteRecord) throw new Error(`PSWAP note ${pswapNoteId} not found`);
+  const consumeRequest = await client.newPswapConsumeTransactionRequest(
+    pswapNoteRecord.toNote(),
+    fillerId,
+    sdk.u64(fillAmount),
+    sdk.u64(0)
+  );
+  // Submit the fill but leave the block unproven: the creator consumes the
+  // payback note in the same block (see the callers below). A private payback
+  // note carries a PSWAP attachment that the store cannot reconstruct from chain
+  // data once committed, so it must be consumed as a same-block unauthenticated
+  // note using the full note emitted here.
+  const consumeTxId = await client.submitNewTransaction(
+    fillerId,
+    consumeRequest
+  );
+
+  const [consumeTxRecord] = await client.getTransactions(
+    sdk.TransactionFilter.ids([consumeTxId])
+  );
+  return { consumeOutputNotes: consumeTxRecord.outputNotes().notes() };
+}
+
+/**
+ * Performs a full-fill partial-swap (PSWAP) between two accounts on the mock
+ * chain. The filler supplies the entire requested amount, so the consume
+ * produces exactly one payback note (no remainder PSWAP note). The creator
+ * then consumes the payback note. End state is identical to a plain swap of
+ * the same amounts.
+ */
+export async function mockPswapFullFill(
+  client: any,
+  sdk: any,
+  creatorId: any,
+  fillerId: any,
+  offeredFaucetId: any,
+  offeredAmount: number,
+  requestedFaucetId: any,
+  requestedAmount: number,
+  pswapNoteType: string = "private",
+  paybackNoteType: string = "private"
+): Promise<{
+  creatorAssets: { assetId: string; amount: string }[];
+  fillerAssets: { assetId: string; amount: string }[];
+  consumeOutputNoteCount: number;
+}> {
+  const { consumeOutputNotes } = await createAndFillPswapNote(
+    client,
+    sdk,
+    creatorId,
+    fillerId,
+    offeredFaucetId,
+    offeredAmount,
+    requestedFaucetId,
+    requestedAmount,
+    requestedAmount, // full fill: filler supplies the entire requested amount
+    pswapNoteType,
+    paybackNoteType
+  );
+
+  if (consumeOutputNotes.length !== 1) {
+    throw new Error(
+      `Expected exactly one payback note from a full fill, got ${consumeOutputNotes.length}`
+    );
+  }
+
+  // Creator consumes the payback note carrying the requested asset, in the same
+  // block the filler created it, using the full note emitted by the filler's
+  // consume transaction (a private payback note's PSWAP attachment cannot be
+  // rebuilt from the store once committed).
+  const paybackNote = consumeOutputNotes[0].intoFull();
+  if (!paybackNote)
+    throw new Error("Payback note is not available in full form");
+  const paybackConsume = await client.newConsumeTransactionRequest(
+    [paybackNote],
+    creatorId
+  );
+  await client.submitNewTransaction(creatorId, paybackConsume);
+  await client.proveBlock();
+  await client.syncState();
+
+  return {
+    creatorAssets: vaultAssets(await client.getAccount(creatorId)),
+    fillerAssets: vaultAssets(await client.getAccount(fillerId)),
+    consumeOutputNoteCount: consumeOutputNotes.length,
+  };
+}
+
+/**
+ * Performs a partial-fill PSWAP. The filler supplies less than the requested
+ * amount, so the consume emits two notes: a payback note carrying the filled
+ * portion of the requested asset (which the creator consumes) and a remainder
+ * PSWAP note carrying the unfilled portion of the offered asset (left on-chain
+ * for another filler). Returns the remainder note's offered-asset amount so
+ * callers can assert the unfilled portion was carried forward correctly.
+ */
+export async function mockPswapPartialFill(
+  client: any,
+  sdk: any,
+  creatorId: any,
+  fillerId: any,
+  offeredFaucetId: any,
+  offeredAmount: number,
+  requestedFaucetId: any,
+  requestedAmount: number,
+  fillAmount: number,
+  pswapNoteType: string = "private",
+  paybackNoteType: string = "private"
+): Promise<{
+  creatorAssets: { assetId: string; amount: string }[];
+  fillerAssets: { assetId: string; amount: string }[];
+  consumeOutputNoteCount: number;
+  remainderOfferedAmount: string | undefined;
+}> {
+  const { consumeOutputNotes } = await createAndFillPswapNote(
+    client,
+    sdk,
+    creatorId,
+    fillerId,
+    offeredFaucetId,
+    offeredAmount,
+    requestedFaucetId,
+    requestedAmount,
+    fillAmount,
+    pswapNoteType,
+    paybackNoteType
+  );
+
+  if (consumeOutputNotes.length !== 2) {
+    throw new Error(
+      `Expected a payback note and a remainder PSWAP note from a partial fill, got ${consumeOutputNotes.length}`
+    );
+  }
+
+  // The remainder PSWAP note carries the offered asset; the payback note
+  // carries the requested asset destined for the creator.
+  const offeredFaucetStr = offeredFaucetId.toString();
+  let paybackOutputNote: any;
+  let remainderOfferedAmount: string | undefined;
+  for (const note of consumeOutputNotes) {
+    const asset = note.assets()?.fungibleAssets()[0];
+    if (asset && asset.faucetId().toString() === offeredFaucetStr) {
+      remainderOfferedAmount = asset.amount().toString();
+    } else {
+      paybackOutputNote = note;
+    }
+  }
+
+  if (!paybackOutputNote)
+    throw new Error("Payback note not found in consume output");
+
+  // Consume the full payback note emitted by the filler's consume transaction,
+  // in the same block it was created; a private payback note's PSWAP attachment
+  // cannot be rebuilt from the store once committed.
+  const paybackNote = paybackOutputNote.intoFull();
+  if (!paybackNote)
+    throw new Error("Payback note is not available in full form");
+  const paybackConsume = await client.newConsumeTransactionRequest(
+    [paybackNote],
+    creatorId
+  );
+  await client.submitNewTransaction(creatorId, paybackConsume);
+  await client.proveBlock();
+  await client.syncState();
+
+  return {
+    creatorAssets: vaultAssets(await client.getAccount(creatorId)),
+    fillerAssets: vaultAssets(await client.getAccount(fillerId)),
+    consumeOutputNoteCount: consumeOutputNotes.length,
+    remainderOfferedAmount,
+  };
+}
+
+/**
+ * Creates a PSWAP note and immediately cancels it from the creator account,
+ * exercising the `build_pswap_cancel` Rust path. Returns the creator's vault
+ * after the offered asset has been reclaimed.
+ */
+export async function mockPswapCancel(
+  client: any,
+  sdk: any,
+  creatorId: any,
+  offeredFaucetId: any,
+  offeredAmount: number,
+  requestedFaucetId: any,
+  requestedAmount: number,
+  pswapNoteType: string = "private"
+): Promise<{ creatorAssets: { assetId: string; amount: string }[] }> {
+  const noteType =
+    pswapNoteType === "public" ? sdk.NoteType.Public : sdk.NoteType.Private;
+
+  const createRequest = await client.newPswapCreateTransactionRequest(
+    creatorId,
+    offeredFaucetId,
+    sdk.u64(offeredAmount),
+    requestedFaucetId,
+    sdk.u64(requestedAmount),
+    noteType,
+    noteType
+  );
+  const createTxId = await client.submitNewTransaction(
+    creatorId,
+    createRequest
+  );
+  await client.proveBlock();
+  await client.syncState();
+
+  const [createTxRecord] = await client.getTransactions(
+    sdk.TransactionFilter.ids([createTxId])
+  );
+  const pswapNoteId = createTxRecord.outputNotes().notes()[0].id().toString();
+
+  const pswapNoteRecord = await client.getInputNote(pswapNoteId);
+  if (!pswapNoteRecord) throw new Error(`PSWAP note ${pswapNoteId} not found`);
+  const cancelRequest = await client.newPswapCancelTransactionRequest(
+    pswapNoteRecord.toNote(),
+    creatorId
+  );
+  await client.submitNewTransaction(creatorId, cancelRequest);
+  await client.proveBlock();
+  await client.syncState();
+
+  const creator = await client.getAccount(creatorId);
+  const creatorAssets = creator
+    ?.vault()
+    .fungibleAssets()
+    .map((asset: any) => ({
+      assetId: asset.faucetId().toString(),
+      amount: asset.amount().toString(),
+    }));
+
+  return { creatorAssets };
 }
 
 // ── Utility helpers ──────────────────────────────────────────────────
@@ -344,7 +730,11 @@ export function parseNetworkId(sdk: any, networkId: string): any {
  * Creates a fresh mock client (separate from the test fixture's client).
  * Useful for tests that need multiple independent clients.
  */
-export async function createFreshMockClient(sdk: any): Promise<any | null> {
+export async function createFreshMockClient(
+  sdk: any,
+  serializedMockChain?: any,
+  serializedNoteTransport?: any
+): Promise<any | null> {
   let rawSdk;
   try {
     rawSdk = loadNodeSdk();
@@ -358,8 +748,8 @@ export async function createFreshMockClient(sdk: any): Promise<any | null> {
     path.join(dir, "store.db"),
     path.join(dir, "keystore"),
     null,
-    null,
-    null
+    serializedMockChain ?? null,
+    serializedNoteTransport ?? null
   );
 
   return wrapNodeClient(rawClient, rawSdk);
@@ -386,30 +776,10 @@ function makeArrayPolyfill() {
   };
 }
 
-function wrapClass(Cls: any): any {
-  const Wrapper: any = function (...args: any[]) {
-    return new Cls(...args.map(norm));
-  };
-  Wrapper.prototype = Cls.prototype;
-  for (const key of Object.getOwnPropertyNames(Cls)) {
-    if (key === "prototype" || key === "length" || key === "name") continue;
-    const desc = Object.getOwnPropertyDescriptor(Cls, key);
-    if (desc && typeof desc.value === "function") {
-      Wrapper[key] = (...args: any[]) => desc.value.apply(Cls, args.map(norm));
-    } else if (desc) {
-      try {
-        Object.defineProperty(Wrapper, key, desc);
-      } catch {
-        /* skip */
-      }
-    }
-  }
-  return Wrapper;
-}
-
 /**
  * Wraps a raw napi WebClient for MidenClient compatibility.
- * Handles syncState → syncStateImpl, BigInt → Number, null → undefined.
+ * Handles syncState → syncStateImpl (and the new split-sync siblings),
+ * BigInt → Number, null → undefined.
  */
 function wrapClientForMidenClient(
   rawClient: any,
@@ -420,23 +790,27 @@ function wrapClientForMidenClient(
     get(target, prop) {
       if (prop === "syncState")
         return (...args: any[]) => target.syncStateImpl(...args);
-      if (prop === "syncStateWithTimeout") return () => target.syncStateImpl();
+      if (prop === "syncChain")
+        return (...args: any[]) => target.syncChainImpl(...args);
+      if (prop === "syncNoteTransport")
+        return (...args: any[]) => target.syncNoteTransportImpl(...args);
       if (prop === "storeName") return storeName || "mock";
       if (prop === "wasmWebClient") return target;
       if (prop === "proveBlock") return async () => target.proveBlock();
       if (prop === "newWallet") {
-        return (mode: any, mutable: any, authScheme: any, seed?: any) => {
+        return (mode: any, authScheme: any, seed?: any) => {
           const normSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
-          return target.newWallet(mode, mutable, authScheme, normSeed ?? null);
+          return target.newWallet(mode, authScheme, normSeed ?? null);
         };
       }
       if (prop === "newFaucet") {
         return (
           mode: any,
           nonFungible: any,
+          name: any,
           symbol: any,
           decimals: any,
           maxSupply: any,
@@ -446,9 +820,10 @@ function wrapClientForMidenClient(
           target.newFaucet(
             mode,
             nonFungible,
+            name,
             symbol,
             decimals,
-            norm(maxSupply),
+            normalizeArg(maxSupply),
             auth,
             seed
           );
@@ -459,7 +834,7 @@ function wrapClientForMidenClient(
             wallet,
             faucet,
             noteType,
-            norm(amount)
+            normalizeArg(amount)
           );
       }
       if (prop === "newSendTransactionRequest") {
@@ -476,7 +851,7 @@ function wrapClientForMidenClient(
             targetId,
             faucet,
             noteType,
-            norm(amount),
+            normalizeArg(amount),
             ...rest
           );
       }
@@ -492,9 +867,9 @@ function wrapClientForMidenClient(
           target.newSwapTransactionRequest(
             accountId,
             assetAFaucet,
-            norm(assetAAmount),
+            normalizeArg(assetAAmount),
             assetBFaucet,
-            norm(assetBAmount),
+            normalizeArg(assetBAmount),
             ...rest
           );
       }
@@ -502,7 +877,7 @@ function wrapClientForMidenClient(
       if (typeof val === "function") {
         const bound = val.bind(target);
         return (...args: any[]) => {
-          const normalizedArgs = args.map(norm);
+          const normalizedArgs = args.map(normalizeArg);
           const result = bound(...normalizedArgs);
           if (result && typeof result.then === "function") {
             return result.then((v: any) => (v === null ? undefined : v));
@@ -574,9 +949,9 @@ export async function createMidenClient(sdk: any): Promise<any> {
       await client.createMockClient(
         path.join(dir, "store.db"),
         path.join(dir, "keystore"),
-        norm(seed) ?? null,
-        norm(serializedMockChain) ?? null,
-        norm(serializedNoteTransport) ?? null
+        normalizeArg(seed) ?? null,
+        normalizeArg(serializedMockChain) ?? null,
+        normalizeArg(serializedNoteTransport) ?? null
       );
       return wrapClientForMidenClient(client, rawSdk, "mock");
     },
@@ -585,22 +960,29 @@ export async function createMidenClient(sdk: any): Promise<any> {
   // WasmWebClient (for integration tests)
   const WasmWebClient = {
     buildSwapTag: (...args: any[]) =>
-      rawSdk.WebClient.buildSwapTag(...args.map(norm)),
+      rawSdk.WebClient.buildSwapTag(...args.map(normalizeArg)),
     createClient: async (
       rpcUrl?: string,
       noteTransportUrl?: any,
       seed?: any,
-      storeName?: string
+      storeName?: string,
+      _logLevel?: unknown,
+      _useWorker?: unknown,
+      _observability?: unknown,
+      feeFaucetId?: string
     ) => {
       const dir = tmpDir();
       const client = new rawSdk.WebClient();
       await client.createClient(
         rpcUrl ?? null,
         noteTransportUrl ?? null,
-        norm(seed) ?? null,
+        normalizeArg(seed) ?? null,
         path.join(dir, `${storeName || "store"}.db`),
         path.join(dir, "keystore"),
-        false
+        // Forward what the caller passed; the environment is only the fixture
+        // default. Reconstructing it here meant deleting `options?.feeFaucetId`
+        // from client.js failed no node-mode test.
+        feeFaucetId ?? process.env.TEST_MIDEN_FEE_FAUCET_ID ?? null
       );
       return wrapClientForMidenClient(client, rawSdk, storeName);
     },
@@ -649,9 +1031,24 @@ export async function createIntegrationClient(): Promise<{
 } | null> {
   const rpcUrl = getRpcUrl();
   const storeName = `integration_${RUN_ID}_${++_integrationCounter}`;
+  // `null` from here means "no node reachable", and callers turn that into
+  // test.skip. A misconfiguration must not be able to borrow that meaning: the
+  // browser twin swallowed a missing fee faucet once and turned 12 integration
+  // tests into silent skips while their shards reported success.
+  if (!process.env.TEST_MIDEN_FEE_FAUCET_ID) {
+    throw new Error(
+      "TEST_MIDEN_FEE_FAUCET_ID is unset - a client without a fee faucet " +
+        "cannot execute or screen notes on any 0.17 network"
+    );
+  }
   try {
     return await createNodeIntegrationClient(rpcUrl, storeName);
-  } catch {
+  } catch (err) {
+    // Keep the skip for an unreachable node, but leave a trace: a future cause
+    // is otherwise invisible in the run output.
+    console.debug(
+      `integration client unavailable: ${(err as Error)?.message ?? err}`
+    );
     return null;
   }
 }

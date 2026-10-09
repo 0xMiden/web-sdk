@@ -1,6 +1,8 @@
 use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
+use core::cell::RefCell;
+use core::convert::Infallible;
 
 use miden_client::account::AccountId;
 use miden_client::auth::{
@@ -14,7 +16,8 @@ use miden_client::auth::{
 use miden_client::keystore::{KeyStoreError, Keystore};
 use miden_client::utils::{RwLock, Serializable};
 use miden_client::{AuthenticationError, Word as NativeWord};
-use rand::Rng;
+use rand::{Rng, TryCryptoRng, TryRng};
+use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::js_sys::Function;
 
 use crate::models::auth_secret_key::AuthSecretKey as WebAuthSecretKey;
@@ -49,10 +52,19 @@ struct JsCallbacks {
     get_key: Option<GetKeyCallback>,
     insert_key: Option<InsertKeyCallback>,
     sign: Option<SignCallback>,
+    /// The raw [`JsValue`] that the JS sign callback most recently threw, or
+    /// [`JsValue::NULL`] if the last sign call succeeded (or no call has
+    /// happened yet). Consumers read this from [`crate::WebClient::last_auth_error`]
+    /// to recover structured info the thrown JS error carried (e.g. a
+    /// `reason` property indicating the wallet was locked). Single-writer,
+    /// single-reader in practice: all mutating `WebClient` calls are serialized
+    /// through `_serializeWasmCall`, so no race.
+    last_sign_error: RefCell<JsValue>,
 }
 
-// Since Function is not Send/Sync, we need to explicitly mark our struct as Send + Sync
-// This is safe in WASM because it's single-threaded
+// Since Function / JsValue are not Send/Sync, we need to explicitly mark
+// our struct as Send + Sync. This is safe in WASM because it's
+// single-threaded; RefCell's !Sync nature is also absorbed here.
 unsafe impl Send for JsCallbacks {}
 unsafe impl Sync for JsCallbacks {}
 
@@ -65,6 +77,7 @@ impl<R: Rng> WebKeyStore<R> {
                 get_key: None,
                 insert_key: None,
                 sign: None,
+                last_sign_error: RefCell::new(JsValue::NULL),
             }),
             db_id,
         }
@@ -85,9 +98,33 @@ impl<R: Rng> WebKeyStore<R> {
                 get_key: get_key.map(GetKeyCallback),
                 insert_key: insert_key.map(InsertKeyCallback),
                 sign: sign.map(SignCallback),
+                last_sign_error: RefCell::new(JsValue::NULL),
             }),
             db_id,
         }
+    }
+
+    /// Returns the raw [`JsValue`] that the JS sign callback most recently
+    /// threw. Returns [`JsValue::NULL`] if the last sign call succeeded or
+    /// no sign call has happened yet.
+    ///
+    /// Exposed publicly so [`crate::WebClient`] can surface it to JS
+    /// consumers.
+    pub fn last_sign_error(&self) -> JsValue {
+        self.callbacks.last_sign_error.borrow().clone()
+    }
+
+    /// Records the raw [`JsValue`] thrown by the JS sign callback, or clears
+    /// it on success. Called internally by [`WebKeyStore::get_signature`]
+    /// around invocations of the sign callback.
+    fn record_sign_error(&self, err: JsValue) {
+        *self.callbacks.last_sign_error.borrow_mut() = err;
+    }
+
+    /// Clears any previously recorded sign error (call before a successful
+    /// sign completes so consumers don't see stale data).
+    fn clear_sign_error(&self) {
+        *self.callbacks.last_sign_error.borrow_mut() = JsValue::NULL;
     }
 
     /// Adds a secret key to the keystore without updating account mappings.
@@ -113,6 +150,30 @@ impl<R: Rng> WebKeyStore<R> {
     }
 }
 
+/// Falcon signing takes a `CryptoRng`. The keystore stores the client's coin,
+/// and that marker trait is not implemented on the foreign type, so the guard
+/// is wrapped for the one call that needs it.
+struct SigningRng<'a, R>(&'a mut R);
+
+impl<R: Rng> TryRng for SigningRng<'_, R> {
+    type Error = Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        Ok(self.0.next_u32())
+    }
+
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        Ok(self.0.next_u64())
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
+        self.0.fill_bytes(dest);
+        Ok(())
+    }
+}
+
+impl<R: Rng> TryCryptoRng for SigningRng<'_, R> {}
+
 impl<R: Rng> TransactionAuthenticator for WebKeyStore<R> {
     /// Gets a signature over a message, given a public key.
     ///
@@ -127,8 +188,21 @@ impl<R: Rng> TransactionAuthenticator for WebKeyStore<R> {
         signing_inputs: &SigningInputs,
     ) -> Result<Signature, AuthenticationError> {
         // If a JavaScript signing callback is provided, use it directly.
+        // On success, clear any previously-recorded sign error; on failure,
+        // capture the raw JsValue thrown so consumers can recover structured
+        // info (e.g. a `reason` property indicating the wallet was locked)
+        // via [`crate::WebClient::last_auth_error`].
         if let Some(sign_cb) = &self.callbacks.as_ref().sign {
-            return sign_cb.sign(pub_key.into(), signing_inputs).await;
+            match sign_cb.sign(pub_key.into(), signing_inputs).await {
+                Ok(sig) => {
+                    self.clear_sign_error();
+                    return Ok(sig);
+                },
+                Err(err) => {
+                    self.record_sign_error(err.raw);
+                    return Err(err.auth_err);
+                },
+            }
         }
         let message = signing_inputs.to_commitment();
 
@@ -141,7 +215,8 @@ impl<R: Rng> TransactionAuthenticator for WebKeyStore<R> {
 
         let signature = match secret_key {
             Some(AuthSecretKey::Falcon512Poseidon2(k)) => {
-                Signature::Falcon512Poseidon2(k.sign_with_rng(message, &mut rng))
+                let mut signing_rng = SigningRng(&mut *rng);
+                Signature::Falcon512Poseidon2(k.sign_with_rng(message, &mut signing_rng))
             },
             Some(AuthSecretKey::EcdsaK256Keccak(k)) => Signature::EcdsaK256Keccak(k.sign(message)),
             Some(other_k) => other_k.sign(message),

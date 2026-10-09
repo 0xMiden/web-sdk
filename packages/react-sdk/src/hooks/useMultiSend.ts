@@ -4,10 +4,8 @@ import {
   FungibleAsset,
   Note,
   NoteAssets,
-  NoteAttachment,
   NoteType,
   NoteArray,
-  TransactionRequestBuilder,
 } from "@miden-sdk/miden-sdk";
 import type {
   MultiSendOptions,
@@ -16,7 +14,7 @@ import type {
 } from "../types";
 import { DEFAULTS } from "../types";
 import { parseAccountId, parseAddress } from "../utils/accountParsing";
-import { createNoteAttachment } from "../utils/noteAttachment";
+import { createNoteAttachment, emptyAttachment } from "../utils/noteAttachment";
 import { MidenError, assertSignerConnected } from "../utils/errors";
 import { getNoteType, waitForTransactionCommit } from "../utils/noteFilters";
 import type { ClientWithTransactions } from "../utils/noteFilters";
@@ -123,7 +121,7 @@ export function useMultiSend(): UseMultiSendResult {
             const noteAttachment =
               attachment !== undefined && attachment !== null
                 ? createNoteAttachment(attachment)
-                : new NoteAttachment();
+                : emptyAttachment();
             const note = Note.createP2IDNote(
               iterSenderId,
               receiverId,
@@ -140,11 +138,34 @@ export function useMultiSend(): UseMultiSendResult {
           }
         );
 
-        const txRequest = new TransactionRequestBuilder()
-          .withOwnOutputNotes(new NoteArray(outputs.map((o) => o.note)))
-          .build();
-
+        // NoteArray constructor consumes its elements via Vec<Note>; use
+        // push(&note) so each output.note handle stays valid for the
+        // sendPrivateOutputNote loop below.
+        const ownOutputs = new NoteArray();
+        for (const o of outputs) {
+          ownOutputs.push(o.note);
+        }
+        // The sender executes this transaction, so its auth procedure is what
+        // pays the fee; a bare builder would abort with
+        // ERR_FEE_CONVERSION_INFO_MISSING wherever the chain charges.
+        //
+        // These two run serialized only by the proxy's own per-call lock:
+        // `feeAwareTransactionRequestBuilder` is a WRITE_METHOD and
+        // `executeTransaction` is an explicitly serialized wrapper, so neither is
+        // raw-bound and neither can alias the client. That rules out the aliasing
+        // panic, not a state change between them — and the AsyncLock the other
+        // send hooks hold would not close that gap either, since the provider
+        // drives auto-sync outside it. The window is real but narrow: the builder
+        // reads the verification base fee at the store's current sync height
+        // while execution resolves fee parameters from the reference block, so a
+        // sync that moves the base fee across zero in between leaves the request
+        // carrying info the execution no longer wants, or wanting info it does
+        // not carry.
         const txSenderId = parseAccountId(options.from);
+        const builder =
+          await client.feeAwareTransactionRequestBuilder(txSenderId);
+        const txRequest = builder.withOwnOutputNotes(ownOutputs).build();
+
         const txResult = await client.executeTransaction(txSenderId, txRequest);
 
         setStage("proving");
@@ -163,10 +184,9 @@ export function useMultiSend(): UseMultiSendResult {
           txResult
         );
 
-        // Save txId hex/string BEFORE applyTransaction, which consumes the
+        // Save txId hex BEFORE applyTransaction, which consumes the
         // WASM pointer inside txResult (and any child objects).
         const txIdHex = txResult.id().toHex();
-        const txIdString = txResult.id().toString();
 
         await client.applyTransaction(txResult, submissionHeight);
 
@@ -181,15 +201,15 @@ export function useMultiSend(): UseMultiSendResult {
 
           for (const output of outputs) {
             if (output.noteType === NoteType.Private) {
-              await client.sendPrivateNote(
-                output.note,
+              await client.sendPrivateOutputNote(
+                output.note.id().toString(),
                 output.recipientAddress
               );
             }
           }
         }
 
-        const txSummary = { transactionId: txIdString };
+        const txSummary = { transactionId: txIdHex };
 
         setStage("complete");
         setResult(txSummary);

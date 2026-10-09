@@ -46,7 +46,6 @@ test.describe("prune_account_history tests", () => {
       // Create a wallet but don't transact: it has only one historical state
       const wallet = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 

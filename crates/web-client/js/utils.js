@@ -62,6 +62,29 @@ export function resolveAddress(ref, wasm) {
 }
 
 /**
+ * True when `record` can be consumed right now, as of the client's last sync.
+ *
+ * Reads each entry's status rather than inferring it: a missing
+ * `consumableAfterBlock()` alone would also match a note that is never
+ * consumable. With `accountIdHex`, only that account's entry counts, so a note
+ * locked for it is excluded even when another tracked account could spend it;
+ * without one (a listing that spans accounts), any account's entry counts.
+ *
+ * @param {ConsumableNoteRecord} record - A record from `getConsumableNotes`.
+ * @param {string} [accountIdHex] - The account the record was screened for.
+ * @returns {boolean} True when a counted entry reports a consumable-now status.
+ */
+export function isConsumableNow(record, accountIdHex) {
+  return record
+    .noteConsumability()
+    .some(
+      (nc) =>
+        (accountIdHex == null || nc.accountId().toString() === accountIdHex) &&
+        nc.consumptionStatus().isConsumableNow()
+    );
+}
+
+/**
  * Resolves a NoteVisibility string to a WASM NoteType value.
  *
  * @param {string | undefined} type - "public" or "private". Defaults to "public".
@@ -83,7 +106,7 @@ export function resolveNoteType(type, wasm) {
 /**
  * Resolves a storage mode string to a WASM AccountStorageMode instance.
  *
- * @param {string | undefined} mode - "private", "public", or "network". Defaults to "private".
+ * @param {string | undefined} mode - "private" or "public". Defaults to "private".
  * @param {object} wasm - The WASM module.
  * @returns {AccountStorageMode} The storage mode instance.
  */
@@ -91,15 +114,13 @@ export function resolveStorageMode(mode, wasm) {
   switch (mode) {
     case "public":
       return wasm.AccountStorageMode.public();
-    case "network":
-      return wasm.AccountStorageMode.network();
     case "private":
     case undefined:
     case null:
       return wasm.AccountStorageMode.private();
     default:
       throw new Error(
-        `Unknown storage mode: "${mode}". Expected "private", "public", or "network".`
+        `Unknown storage mode: "${mode}". Expected "private" or "public".`
       );
   }
 }
@@ -120,33 +141,6 @@ export function resolveAuthScheme(scheme, wasm) {
   }
   throw new Error(
     `Unknown auth scheme: "${scheme}". Expected "falcon" or "ecdsa".`
-  );
-}
-
-/**
- * Resolves an AccountType value to a boolean `mutable` flag
- * for the underlying WASM `newWallet()` / `importPublicAccountFromSeed()` calls.
- *
- * Accepts the numeric WASM enum values (2 = immutable, 3 = mutable) or the
- * legacy string aliases ("MutableWallet", "ImmutableWallet"). Defaults to
- * mutable when undefined.
- *
- * @param {number | string | undefined} accountType
- * @returns {boolean} Whether the account code is mutable.
- */
-export function resolveAccountMutability(accountType) {
-  if (
-    accountType == null ||
-    accountType === "MutableWallet" ||
-    accountType === 3
-  ) {
-    return true;
-  }
-  if (accountType === "ImmutableWallet" || accountType === 2) {
-    return false;
-  }
-  throw new Error(
-    `Unknown wallet account type: "${accountType}". Expected AccountType.MutableWallet (3) or AccountType.ImmutableWallet (2).`
   );
 }
 
@@ -229,4 +223,31 @@ export async function hashSeed(seed) {
   throw new TypeError(
     `Invalid seed type: expected string or Uint8Array, got ${typeof seed}`
   );
+}
+
+/**
+ * Check that `items` is an array of `BatchItem`s before a batch is routed.
+ *
+ * Shared by `WebClient` and `MockWebClient`, and applied before the worker
+ * branch, so a given input fails the same way whether or not a worker exists.
+ * In-thread, wasm-bindgen would reject a wrong element itself, but with a
+ * generic "array contains a value of the wrong type" naming no index; on the
+ * worker path the element would fail later, while being serialized.
+ *
+ * @param {unknown} items
+ * @param {Function} BatchItem - The `BatchItem` class of this thread's WASM
+ *   module, the same `instanceof` check wasm-bindgen applies.
+ */
+export function assertBatchItems(items, BatchItem) {
+  if (!Array.isArray(items)) {
+    throw new TypeError("expected an array of BatchItem");
+  }
+
+  // Indexed rather than `.every`, which skips holes: a sparse array would
+  // otherwise pass and reach WASM with `undefined` entries.
+  for (let index = 0; index < items.length; index++) {
+    if (!(items[index] instanceof BatchItem)) {
+      throw new TypeError(`batch item at index ${index} is not a BatchItem`);
+    }
+  }
 }

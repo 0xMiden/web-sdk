@@ -7,9 +7,15 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
+// Post-dual-build the wasm-bindgen types live under the variant subdir.
+// Both ST + MT generate the same type signatures (the WASM surface is
+// feature-gated but the type declarations are uniform), so checking just
+// the ST output is sufficient. See rollup.config.js for the dual-build
+// rationale.
 const wasmTypesPath = path.join(
   rootDir,
   "dist",
+  "st",
   "crates",
   "miden_client_web.d.ts"
 );
@@ -28,7 +34,7 @@ for (const filePath of requiredFiles) {
 
 if (missingFiles.length > 0) {
   console.error(
-    "Bindgen type check failed because expected files are missing. Run `yarn build` first."
+    "Bindgen type check failed because expected files are missing. Run `make build-web-client` first."
   );
   for (const filePath of missingFiles) {
     console.error(`- ${filePath}`);
@@ -114,10 +120,11 @@ const { names: wasmExports } = await collectExports(wasmTypesPath);
 const { names: publicExports, starExportModules } =
   await collectExports(publicTypesPath);
 
-// Resolve star exports to get all re-exported names
-// Use dist/ as base directory since that's where the file will be deployed
-// and where the relative imports (./crates/...) will be resolved from
-const distDir = path.join(rootDir, "dist");
+// Resolve star exports to get all re-exported names. Use dist/st/ as the
+// base directory since that's the canonical published layout (the MT
+// variant has identical type declarations — see comment on wasmTypesPath
+// above). Relative imports (./crates/...) resolve from there.
+const distDir = path.join(rootDir, "dist", "st");
 const starExportedNames = await resolveStarExports(
   publicTypesPath,
   starExportModules,

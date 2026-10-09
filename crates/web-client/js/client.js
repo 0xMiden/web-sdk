@@ -5,7 +5,8 @@ import { TagsResource } from "./resources/tags.js";
 import { SettingsResource } from "./resources/settings.js";
 import { CompilerResource } from "./resources/compiler.js";
 import { KeystoreResource } from "./resources/keystore.js";
-import { hashSeed } from "./utils.js";
+import { PswapResource } from "./resources/pswap.js";
+import { hashSeed, resolveAccountRef } from "./utils.js";
 
 /**
  * MidenClient wraps the existing proxy-wrapped WebClient with a resource-based API.
@@ -37,6 +38,81 @@ export class MidenClient {
     this.settings = new SettingsResource(inner, getWasm, this);
     this.compile = new CompilerResource(inner, getWasm, this);
     this.keystore = new KeystoreResource(inner, this);
+    this.pswap = new PswapResource(inner, getWasm, this);
+  }
+
+  /**
+   * Escape hatch: runs `fn` with exclusive access to the proxied JS
+   * WebClient that backs this MidenClient.
+   *
+   * The proxy forwards missing properties to the underlying wasm-bindgen
+   * `WebClient`, so `fn` can reach lower-level methods like
+   * `executeTransaction`, `proveTransaction[WithProver]`,
+   * `submitProvenTransaction`, `applyTransaction`,
+   * `newSendTransactionRequest`, `newConsumeTransactionRequest`, etc.
+   *
+   * Intended for advanced consumers that need to split the bundled
+   * execute → prove → submit → apply pipeline across contexts — for example,
+   * a Chrome MV3 extension that runs `executeTransaction` in its service
+   * worker, dispatches the prove step to a `chrome.offscreen` document
+   * (where wasm-bindgen-rayon can spawn a real thread pool), then runs
+   * `submitProvenTransaction` + `applyTransaction` back in the SW.
+   *
+   * The callback runs inside `_serializeWasmCall`, so the WASM RefCell is
+   * held for the duration of `fn`. Concurrent SDK calls (sync, other
+   * transactions, etc.) queue on the same chain and run after `fn`
+   * settles. Without this serialization, raw inner-client access would
+   * race the proxy's chain and trip wasm-bindgen's "recursive use of an
+   * object detected" panic.
+   *
+   * Re-entrancy: while `fn` is running, the underlying client's
+   * `_withInnerLockDepth` counter is bumped so that `_serializeWasmCall`
+   * invocations made BY `fn` (or any proxy-dispatched method it calls)
+   * run inline rather than enqueuing on the chain. Without this, every
+   * `await inner.X(...)` inside `fn` would enqueue behind the outer
+   * `_withInnerWebClient` slot which is itself awaiting `fn` —
+   * a classic re-entrant-lock deadlock. The depth counter restores the
+   * intent of the docstring above: the lock is held for the duration
+   * of `fn`, and inner-client calls "borrow" that already-held lock
+   * instead of trying to re-acquire it.
+   *
+   * SAFETY CONTRACT for re-entrancy: callers MUST hold an external
+   * mutex preventing concurrent access to this same client instance
+   * via other code paths during `fn`. The chain still serializes
+   * against external callers — they queue behind the outer slot — but
+   * if an external task runs during one of `fn`'s awaits and calls
+   * into the SDK, it will see `_withInnerLockDepth > 0` and run
+   * inline, racing wasm-bindgen's borrow check. The wallet pattern
+   * (own outer mutex around `_withInnerWebClient`) satisfies this.
+   *
+   * Stability: marked `@internal`. The shape of the proxied client is
+   * intentionally not part of the documented public API and may change
+   * between SDK versions. If you depend on this method, pin the SDK
+   * version and test the lower-level surface carefully on each upgrade.
+   * If your use case is common enough to warrant a stable public API,
+   * file an issue.
+   *
+   * @internal
+   * @template T
+   * @param {(inner: object) => Promise<T>} fn - Async callback receiving
+   *   the proxied JS WebClient. Must not return references that escape
+   *   the callback's lifetime (the lock is released on settle).
+   * @returns {Promise<T>} The resolved value of `fn`.
+   */
+  _withInnerWebClient(fn) {
+    this.assertNotTerminated();
+    if (typeof fn !== "function") {
+      throw new TypeError("_withInnerWebClient: fn must be a function");
+    }
+    const inner = this.#inner;
+    return inner._serializeWasmCall(async () => {
+      inner._withInnerLockDepth = (inner._withInnerLockDepth || 0) + 1;
+      try {
+        return await fn(inner);
+      } finally {
+        inner._withInnerLockDepth--;
+      }
+    });
   }
 
   /**
@@ -44,6 +120,10 @@ export class MidenClient {
    *
    * If no `rpcUrl` is provided, defaults to testnet with full configuration
    * (RPC, prover, note transport, autoSync).
+   *
+   * `feeFaucetId` is optional: the client receives the chain's protocol
+   * configuration, which names the fee asset, from the node when it syncs. The
+   * option only sets what `feeFaucetId()` reports before that first sync.
    *
    * @param {ClientOptions} [options] - Client configuration options.
    * @returns {Promise<MidenClient>} A fully initialized client.
@@ -67,6 +147,15 @@ export class MidenClient {
     const rpcUrl = resolveRpcUrl(options?.rpcUrl);
     const noteTransportUrl = resolveNoteTransportUrl(options?.noteTransportUrl);
 
+    // `useWorker: false` opts out of the Web Worker shim that wraps WASM
+    // calls. The shim exists to keep the main thread responsive in
+    // browser/extension contexts, but it serializes the prover via
+    // `TransactionProver.serialize()` — a format that has no encoding for
+    // `newCallbackProver(jsFn)` and silently downgrades it to `"local"`.
+    // Mobile/Tauri/native-prover consumers must pass `useWorker: false`.
+    const useWorker = options?.useWorker;
+    // The observability options reach the wrapper's constructor, which is the
+    // only place `observeSensitive` can be set — see `applyObserverOptions`.
     let inner;
     if (options?.keystore) {
       inner = await WebClientClass.createClientWithExternalKeystore(
@@ -77,7 +166,10 @@ export class MidenClient {
         options.keystore.getKey,
         options.keystore.insertKey,
         options.keystore.sign,
-        options?.debugMode
+        undefined,
+        useWorker,
+        options,
+        options?.feeFaucetId
       );
     } else {
       inner = await WebClientClass.createClient(
@@ -85,7 +177,10 @@ export class MidenClient {
         noteTransportUrl,
         seed,
         options?.storeName,
-        options?.debugMode
+        undefined,
+        useWorker,
+        options,
+        options?.feeFaucetId
       );
     }
 
@@ -110,6 +205,10 @@ export class MidenClient {
    * Defaults: rpcUrl "testnet", proverUrl "testnet", noteTransportUrl "testnet", autoSync true.
    * All defaults can be overridden via options.
    *
+   * `feeFaucetId` is optional: the client receives the chain's protocol
+   * configuration, which names the fee asset, from the node when it syncs. The
+   * option only sets what `feeFaucetId()` reports before that first sync.
+   *
    * @param {ClientOptions} [options] - Options to override defaults.
    * @returns {Promise<MidenClient>} A fully initialized testnet client.
    */
@@ -129,6 +228,10 @@ export class MidenClient {
    * Defaults: rpcUrl "devnet", proverUrl "devnet", noteTransportUrl "devnet", autoSync true.
    * All defaults can be overridden via options.
    *
+   * `feeFaucetId` is optional: the client receives the chain's protocol
+   * configuration, which names the fee asset, from the node when it syncs. The
+   * option only sets what `feeFaucetId()` reports before that first sync.
+   *
    * @param {ClientOptions} [options] - Options to override defaults.
    * @returns {Promise<MidenClient>} A fully initialized devnet client.
    */
@@ -140,6 +243,32 @@ export class MidenClient {
       autoSync: true,
       ...options,
     });
+  }
+
+  /**
+   * Resolves once the WASM module is initialized and safe to use.
+   *
+   * Idempotent and shared across callers: the underlying loader memoizes the
+   * in-flight promise, so concurrent `ready()` calls await the same
+   * initialization and post-init callers resolve immediately from a cached
+   * module. Safe to call from `MidenProvider`, tutorial helpers, and any
+   * other consumer simultaneously.
+   *
+   * Useful on the `/lazy` entry (e.g. Next.js / Capacitor), where no
+   * top-level await runs at import time. On the default (eager) entry this
+   * is redundant — importing the module already awaits WASM — but calling it
+   * is still harmless.
+   *
+   * @returns {Promise<void>} Resolves when WASM is initialized.
+   */
+  static async ready() {
+    const getWasm = MidenClient._getWasmOrThrow;
+    if (!getWasm) {
+      throw new Error(
+        "MidenClient not initialized. Import from the SDK package entry point."
+      );
+    }
+    await getWasm();
   }
 
   /**
@@ -177,15 +306,34 @@ export class MidenClient {
   }
 
   /**
-   * Syncs the client state with the Miden node.
+   * Syncs the client: fetches private notes from the Note Transport Layer, then syncs on-chain
+   * state with the Miden node. Fails fast on either.
    *
-   * @param {object} [opts] - Sync options.
-   * @param {number} [opts.timeout] - Timeout in milliseconds (0 = no timeout).
    * @returns {Promise<SyncSummary>} The sync summary.
    */
-  async sync(opts) {
+  async sync() {
     this.assertNotTerminated();
-    return await this.#inner.syncStateWithTimeout(opts?.timeout ?? 0);
+    return await this.#inner.syncState();
+  }
+
+  /**
+   * Syncs on-chain state only (no NTL fetch).
+   *
+   * @returns {Promise<SyncSummary>}
+   */
+  async syncChain() {
+    this.assertNotTerminated();
+    return await this.#inner.syncChain();
+  }
+
+  /**
+   * Fetches private notes from the Note Transport Layer.
+   *
+   * @returns {Promise<void>}
+   */
+  async syncNoteTransport() {
+    this.assertNotTerminated();
+    return await this.#inner.syncNoteTransport();
   }
 
   /**
@@ -196,6 +344,63 @@ export class MidenClient {
   async getSyncHeight() {
     this.assertNotTerminated();
     return await this.#inner.getSyncHeight();
+  }
+
+  /**
+   * Resolves once every serialized WASM call that was already on the
+   * internal `_serializeWasmCall` chain when `waitForIdle()` was called
+   * (execute, submit, prove, apply, sync, or account creation) has
+   * settled. Use this from callers that need to perform a non-WASM-side
+   * action — e.g. clearing an in-memory auth key on wallet lock — after
+   * the kernel finishes, so its auth callback doesn't race with the key
+   * being cleared.
+   *
+   * Does NOT wait for calls enqueued after `waitForIdle()` returns —
+   * intentional, so a caller can drain and proceed without being blocked
+   * indefinitely by concurrent workload.
+   *
+   * Caveat for `syncState`: it awaits the sync lock
+   * (`withSyncLock`, which uses Web Locks where available and an
+   * in-process promise chain otherwise) BEFORE putting its WASM
+   * call onto the chain, so a `syncState` that is queued on the sync
+   * lock — but has not yet begun its WASM phase — is not visible to
+   * `waitForIdle` and will not be awaited. Other methods (`newWallet`,
+   * `executeTransaction`, etc.) route through the chain synchronously
+   * on call and are always observed.
+   *
+   * Safe to call at any time; returns immediately if nothing was in
+   * flight.
+   *
+   * @returns {Promise<void>}
+   */
+  async waitForIdle() {
+    this.assertNotTerminated();
+    await this.#inner.waitForIdle();
+  }
+
+  /**
+   * Returns the raw JS value that the most recent sign-callback invocation
+   * threw, or `null` if the last sign call succeeded (or no call has
+   * happened yet).
+   *
+   * Useful for recovering structured metadata (e.g. a `reason: 'locked'`
+   * property) that the kernel-level `auth::request` diagnostic would
+   * otherwise erase. Call immediately after catching a failed
+   * `transactions.submit` / `transactions.send` / `transactions.consume`.
+   *
+   * Meaningful only with `useWorker: false`: under the worker shim the
+   * sign callback fires against the worker's WASM keystore, while this
+   * accessor reads the main-thread instance — which never signed — so it
+   * returns `null`. The callback itself still fires under the worker (it is
+   * proxied back to the main thread); it is only this accessor that cannot
+   * see the error, so consumers who need the signal require
+   * `useWorker: false`.
+   *
+   * @returns {any} The raw thrown value, or `null`.
+   */
+  lastAuthError() {
+    this.assertNotTerminated();
+    return this.#inner.lastAuthError();
   }
 
   /**
@@ -215,6 +420,22 @@ export class MidenClient {
   }
 
   /**
+   * Returns the faucet of the chain's fee asset.
+   *
+   * Replaces `BlockHeader.feeFaucetId()`: since 0.17 the fee asset lives in the
+   * protocol configuration rather than the block header. The client receives
+   * that configuration from the node when it syncs, so after the first sync
+   * this reports the faucet the chain's configuration names; before it, the
+   * `feeFaucetId` option or, for a mock client, the mock chain's own.
+   *
+   * @returns {Promise<AccountId>} The fee faucet's account ID.
+   */
+  async feeFaucetId() {
+    this.assertNotTerminated();
+    return await this.#inner.feeFaucetId();
+  }
+
+  /**
    * Returns the identifier of the underlying store (e.g. IndexedDB database name, file path).
    *
    * @returns {string} The store identifier.
@@ -222,6 +443,91 @@ export class MidenClient {
   async storeIdentifier() {
     this.assertNotTerminated();
     return await this.#inner.storeIdentifier();
+  }
+
+  /**
+   * Returns the URL of the node this client was created against, e.g.
+   * `"https://rpc.devnet.miden.io"`. Shorthands are already resolved, and a
+   * client created without `rpcUrl` reports the testnet endpoint it defaulted
+   * to. A mock client talks to no node and returns `undefined`.
+   *
+   * Synchronous: the value is fixed at creation, so it never waits behind an
+   * in-flight call.
+   *
+   * @returns {string | undefined} The node URL, or `undefined` for a mock client.
+   */
+  endpoint() {
+    this.assertNotTerminated();
+    return this.#inner.endpoint();
+  }
+
+  /**
+   * Returns a `TransactionRequestBuilder` that already carries the chain's fee
+   * conversion info for the account that will execute the request.
+   *
+   * Use this instead of `new TransactionRequestBuilder()` whenever you assemble
+   * a request yourself for a MULTISIG account. Since protocol 0.16 the
+   * verification fee is paid inside the account's auth procedure, which reads it
+   * from the transaction's auth argument. Fees settle in the chain's native fee
+   * asset at rate 1/1 and miden-client commits that itself, so an ordinary
+   * account needs nothing; a multisig reuses the fee conversion salt as its
+   * summary's replay guard, so miden-client refuses to invent one and execution
+   * fails with `FeeConversionInfoRequired`.
+   *
+   * The argument is the account that **executes** the request — the one whose
+   * auth procedure pays — not the recipient or a note's sender. For an account
+   * that is not a multisig the builder comes back untouched, so this is a safe
+   * drop-in; a zero base fee is not a second condition, since 0.17 a multisig
+   * resolves its auth args whatever the chain charges. `withAuthArg` and
+   * `withFeeConversionSalt` are mutually exclusive: each clears the other, so
+   * whichever is called last wins.
+   *
+   * Three options let a caller pin what the approvers sign over. All are
+   * multisig-only and all are defaulted when omitted.
+   *
+   * `feeConversionSalt` and `boundBlockNum` are what a co-signer needs to
+   * REPRODUCE a proposal rather than receive one. Left out, the salt is drawn
+   * fresh and the block is the store's sync height: right for the party
+   * creating the proposal, wrong for anyone rebuilding it, since both are bound
+   * by the summary. A co-signer holding the proposer's serialized request needs
+   * neither - it carries the auth argument and its advice-map preimage.
+   *
+   * For a multisig the builder also declares the bound block through
+   * `withBlockNumbers`, so the request executes at the current chain tip with
+   * no anchor. The summary stays bound to the bound block while foreign
+   * accounts, the fee faucet among them, load at the tip, so the request still
+   * executes after the node has pruned the bound block's account state (about
+   * 50 blocks), and `transactions.preview` without an anchor reproduces the
+   * proposal's summary at the tip.
+   * Each party's client must first have synced to at least that bound block,
+   * the largest of `request.blockNumbers()` and by default the proposer's sync
+   * height when it built the request; below it execution fails with
+   * "requested block N is after transaction reference block M" until it syncs.
+   *
+   * Do not call `withFeeConversionSalt` or `withAuthArg` on the builder this
+   * returns for a multisig: the two setters clear each other, so either one
+   * discards the auth args this already set. Pass `feeConversionSalt` here.
+   *
+   * @param {AccountRef} account - The executing account.
+   * @param {object} [options] - Multisig-only overrides.
+   * @param {number} [options.approvalExpirationDelta] - Expires the approvers'
+   *   signatures this many blocks after the block the summary binds. Omit it
+   *   for an approval that never expires; at least 1.
+   * @param {Word} [options.feeConversionSalt] - The salt the summary binds.
+   *   Consumed by the call: build a fresh `Word` per call, since a spent handle
+   *   arrives as "no salt given" rather than as an error.
+   * @param {number} [options.boundBlockNum] - The block the summary binds.
+   * @returns {Promise<TransactionRequestBuilder>} A fee-aware builder.
+   */
+  async feeAwareTransactionRequestBuilder(account, options) {
+    this.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    return await this.#inner.feeAwareTransactionRequestBuilder(
+      resolveAccountRef(account, wasm),
+      options?.approvalExpirationDelta,
+      options?.feeConversionSalt,
+      options?.boundBlockNum
+    );
   }
 
   // ── Mock-only methods ──

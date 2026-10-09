@@ -2,9 +2,29 @@ import {
   resolveAccountRef,
   resolveStorageMode,
   resolveAuthScheme,
-  resolveAccountMutability,
   hashSeed,
 } from "../utils.js";
+
+// Legacy numeric 0/1 and "NonFungibleFaucet" are still accepted; non-fungible
+// requests reach the Rust rejection.
+const FAUCET_TYPES = new Set(["FungibleFaucet", "NonFungibleFaucet", 0, 1]);
+const CONTRACT_TYPES = new Set(["ImmutableContract", "MutableContract"]);
+const FAUCET_FIELDS = ["name", "symbol", "decimals", "maxSupply"];
+const REQUIRED_FAUCET_FIELDS = ["symbol", "decimals", "maxSupply"];
+
+function display(value) {
+  try {
+    return String(value);
+  } catch {
+    return typeof value;
+  }
+}
+
+function selectorError(problem) {
+  return new TypeError(
+    `accounts.create(): ${problem} Pass type: FaucetType.FungibleFaucet for a faucet, omit type for a wallet, or pass components for a contract.`
+  );
+}
 
 export class AccountsResource {
   #inner;
@@ -17,46 +37,73 @@ export class AccountsResource {
     this.#client = client;
   }
 
+  /**
+   * Create a wallet by default, a faucet via `FaucetType`, or a contract via
+   * `components`. Visibility is selected separately with `storage`.
+   *
+   * The legacy 0, 1 and "NonFungibleFaucet" still select a faucet; 0 and 1 are
+   * also AccountType.Private/Public, so a visibility value passed as `type` is
+   * read as a faucet selector. Throws a TypeError naming `FaucetType`, before
+   * creating anything, for an unrecognised `type`, for faucet fields (`name`,
+   * `symbol`, `decimals`, `maxSupply`) without a faucet type, for `components`
+   * on a faucet, and for a faucet missing `symbol`, `decimals` or `maxSupply`.
+   */
   async create(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
     const type = opts?.type;
 
-    if (
-      type === 0 ||
-      type === 1 ||
-      type === "FungibleFaucet" ||
-      type === "NonFungibleFaucet"
-    ) {
+    if (FAUCET_TYPES.has(type)) {
+      if (opts.components !== undefined) {
+        throw selectorError("a faucet request cannot carry components.");
+      }
+      const missing = REQUIRED_FAUCET_FIELDS.filter(
+        (field) => opts[field] === undefined
+      );
+      if (missing.length > 0) {
+        throw selectorError(`a faucet request needs ${missing.join(", ")}.`);
+      }
       const storageMode = resolveStorageMode(opts.storage ?? "public", wasm);
       const authScheme = resolveAuthScheme(opts.auth, wasm);
       return await this.#inner.newFaucet(
         storageMode,
         type === 1 || type === "NonFungibleFaucet",
+        opts.name ?? opts.symbol,
         opts.symbol,
         opts.decimals,
         BigInt(opts.maxSupply),
         authScheme
       );
-    } else if (
-      type === "ImmutableContract" ||
-      type === "MutableContract" ||
-      opts?.components // Contracts are distinguished from wallets by having components
+    }
+
+    if (type !== undefined && !CONTRACT_TYPES.has(type)) {
+      throw selectorError(`unrecognised type ${display(type)}.`);
+    }
+    // A stale AccountType.FungibleFaucet reads as undefined, so faucet fields
+    // are how a missed FaucetType migration shows up.
+    const faucetFields = FAUCET_FIELDS.filter(
+      (field) => opts?.[field] !== undefined
+    );
+    if (faucetFields.length > 0) {
+      throw selectorError(
+        `${faucetFields.join(", ")} only apply to faucets, and no faucet type was given.`
+      );
+    }
+
+    if (
+      CONTRACT_TYPES.has(type) ||
+      // Contracts are distinguished from wallets by having components; any
+      // value other than undefined asks for a contract, so null fails loudly.
+      opts?.components !== undefined
     ) {
       return await this.#createContract(opts, wasm);
     } else {
-      // Default: wallet (mutable or immutable based on type)
-      const mutable = resolveAccountMutability(opts?.type);
+      // Default: wallet
       const storageMode = resolveStorageMode(opts?.storage ?? "private", wasm);
       const authScheme = resolveAuthScheme(opts?.auth, wasm);
       const seed = opts?.seed ? await hashSeed(opts.seed) : undefined;
-      return await this.#inner.newWallet(
-        storageMode,
-        mutable,
-        authScheme,
-        seed
-      );
+      return await this.#inner.newWallet(storageMode, authScheme, seed);
     }
   }
 
@@ -66,11 +113,6 @@ export class AccountsResource {
     if (!opts.auth)
       throw new Error("Contract creation requires an 'auth' (AuthSecretKey)");
 
-    // Default to immutable when type is omitted (safer for contracts)
-    const mutable = opts.type === "MutableContract" || opts.type === 3;
-    const accountTypeEnum = mutable
-      ? wasm.AccountType.RegularAccountUpdatableCode
-      : wasm.AccountType.RegularAccountImmutableCode;
     const storageMode = resolveStorageMode(opts.storage ?? "public", wasm);
     const authComponent =
       wasm.AccountComponent.createAuthComponentFromSecretKey(opts.auth);
@@ -85,7 +127,6 @@ export class AccountsResource {
     }
 
     let builder = new wasm.AccountBuilder(opts.seed)
-      .accountType(accountTypeEnum)
       .storageMode(storageMode)
       .withAuthComponent(authComponent);
 
@@ -110,6 +151,13 @@ export class AccountsResource {
     return (await this.get(ref)) ?? (await this.import(ref));
   }
 
+  /**
+   * Read a coherent persisted account snapshot without syncing the network.
+   * Includes changes from other browser clients sharing this database.
+   *
+   * @param {AccountRef} ref - The account to retrieve.
+   * @returns {Promise<Account | null>} The account, or null if not tracked.
+   */
   async get(ref) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
@@ -185,10 +233,8 @@ export class AccountsResource {
     if (input.seed) {
       // Import public account from seed
       const authScheme = resolveAuthScheme(input.auth, wasm);
-      const mutable = resolveAccountMutability(input.type);
       return await this.#inner.importPublicAccountFromSeed(
         input.seed,
-        mutable,
         authScheme
       );
     }
@@ -220,5 +266,47 @@ export class AccountsResource {
     const id = resolveAccountRef(ref, wasm);
     const address = wasm.Address.fromBech32(addr);
     await this.#inner.removeAccountAddress(id, address);
+  }
+
+  /**
+   * Binds an invitation code to a tracked account on the network allowlist,
+   * so the account's first transaction can create it on chain.
+   *
+   * The account must be tracked, not yet deployed, and not a network account.
+   * A registration consumes the code, so the node is asked first: an account
+   * it already allows fails with `ACCOUNT_ALREADY_ALLOWED` and the code is
+   * kept. The node's own rejections carry `INVITATION_NOT_FOUND`,
+   * `ALREADY_REGISTERED` or `INVALID_REGISTRATION_REQUEST`. When the network
+   * funds registered accounts, the call returns once the funding note is
+   * committed, which can take a few blocks; the note arrives on the next sync.
+   *
+   * @param {RegisterAccountOptions} options
+   * @returns {Promise<void>}
+   */
+  async register({ account, invitationCode }) {
+    this.#client.assertNotTerminated();
+    if (typeof invitationCode !== "string" || invitationCode.length === 0) {
+      throw new Error(
+        "accounts.register requires a non-empty 'invitationCode' string"
+      );
+    }
+    const wasm = await this.#getWasm();
+    const id = resolveAccountRef(account, wasm);
+    await this.#inner.registerAccount(id, invitationCode);
+  }
+
+  /**
+   * Returns whether the network lets the account be created on chain: `true`
+   * when the node does not enforce an account allowlist, or when the account
+   * is registered.
+   *
+   * @param {AccountRef} ref
+   * @returns {Promise<boolean>}
+   */
+  async isAllowed(ref) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const id = resolveAccountRef(ref, wasm);
+    return await this.#inner.isAccountAllowed(id);
   }
 }

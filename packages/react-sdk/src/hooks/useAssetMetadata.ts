@@ -6,20 +6,18 @@ import {
 } from "@miden-sdk/miden-sdk";
 import { useAssetMetadataStore, useMidenStore } from "../store/MidenStore";
 import type { AssetMetadata } from "../types";
-import { isFaucetId, parseAccountId } from "../utils/accountParsing";
+import { parseAccountId } from "../utils/accountParsing";
 
 const inflight = new Map<string, Promise<void>>();
 const rpcClients = new Map<string, RpcClient>();
 
-const getRpcClient = (rpcUrl?: string): RpcClient | null => {
-  const key = rpcUrl ?? "__default__";
-  const existing = rpcClients.get(key);
+const getRpcClient = (rpcUrl: string): RpcClient | null => {
+  const existing = rpcClients.get(rpcUrl);
   if (existing) return existing;
 
   try {
-    const endpoint = rpcUrl ? new Endpoint(rpcUrl) : Endpoint.testnet();
-    const client = new RpcClient(endpoint);
-    rpcClients.set(key, client);
+    const client = new RpcClient(new Endpoint(rpcUrl));
+    rpcClients.set(rpcUrl, client);
     return client;
   } catch {
     return null;
@@ -32,7 +30,6 @@ const fetchAssetMetadata = async (
 ): Promise<AssetMetadata | null> => {
   try {
     const accountId = parseAccountId(assetId);
-    if (!isFaucetId(accountId)) return null;
     const fetched = await rpcClient.getAccountDetails(accountId);
     const account = fetched.account?.();
 
@@ -48,11 +45,30 @@ const fetchAssetMetadata = async (
   }
 };
 
+/**
+ * Fetches token metadata (`symbol`, `decimals`) for fungible faucets and caches
+ * it in the store.
+ *
+ * Reads go to the node the provider's client was created against, taken from
+ * `client.endpoint()`. Nothing is fetched until `MidenProvider` has a client,
+ * nor for a client that reports no endpoint (a mock client). An asset whose
+ * fetch fails is cached as `{ assetId }` without `symbol` or `decimals`.
+ *
+ * @param assetIds - Faucet account IDs, hex or bech32. Pass an array even for
+ *   one asset.
+ * @returns `{ assetMetadata }`, a `Map` keyed by asset ID.
+ */
 export function useAssetMetadata(assetIds: string[] = []) {
   const assetMetadata = useAssetMetadataStore();
   const setAssetMetadata = useMidenStore((state) => state.setAssetMetadata);
-  const rpcUrl = useMidenStore((state) => state.config.rpcUrl);
-  const rpcClient = useMemo(() => getRpcClient(rpcUrl), [rpcUrl]);
+  // The client is the source of the endpoint: it only appears once the provider
+  // has created it against the configured node, so there is no window in which
+  // an unset URL could fall back to a default network.
+  const client = useMidenStore((state) => state.client);
+  const rpcClient = useMemo(() => {
+    const endpoint = client?.endpoint();
+    return endpoint ? getRpcClient(endpoint) : null;
+  }, [client]);
 
   const uniqueAssetIds = useMemo(
     () => Array.from(new Set(assetIds.filter(Boolean))),

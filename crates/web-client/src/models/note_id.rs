@@ -9,26 +9,29 @@ use crate::platform::JsErr;
 ///
 /// Note ID is computed as:
 ///
-/// > `hash(recipient, asset_commitment)`
+/// > `hash(details_commitment, metadata_commitment)`
 ///
-/// where `recipient` is defined as:
-///
-/// > `hash(hash(hash(serial_num, ZERO), script_root), input_commitment)`
-///
-/// This achieves the following properties:
-/// - Every note can be reduced to a single unique ID.
-/// - To compute a note ID, we do not need to know the note's `serial_num`. Knowing the hash of the
-///   `serial_num` (as well as script root, input commitment, and note assets) is sufficient.
+/// On the 0.15 protocol surface the upstream `NoteId::new` signature
+/// changed from `(recipient_digest, asset_commitment)` to
+/// `(NoteDetailsCommitment, &NoteMetadata)`. The JS API exposes
+/// `NoteId.fromRaw(word)` for constructing an ID from a pre-computed
+/// 32-byte commitment word (the previous two-Word constructor has no
+/// 0.15 equivalent).
 #[derive(Clone, Copy)]
 #[js_export]
 pub struct NoteId(NativeNoteId);
 
 #[js_export]
 impl NoteId {
-    /// Builds a note ID from the recipient and asset commitments.
-    #[js_export(constructor)]
-    pub fn new(recipient_digest: &Word, asset_commitment_digest: &Word) -> NoteId {
-        NoteId(NativeNoteId::new(recipient_digest.into(), asset_commitment_digest.into()))
+    /// Builds a note ID from its raw commitment word.
+    ///
+    /// `word` must already encode the final note-ID commitment — the
+    /// metadata-mixing that the previous 2-Word constructor did is no
+    /// longer part of the protocol surface.
+    #[js_export(js_name = "fromRaw")]
+    pub fn from_raw(word: &Word) -> NoteId {
+        let native_word: miden_client::Word = word.into();
+        NoteId(NativeNoteId::from_raw(native_word))
     }
 
     /// Parses a note ID from its hex encoding.

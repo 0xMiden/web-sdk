@@ -6,12 +6,7 @@ test.describe("Store Isolation Tests", () => {
     page,
   }) => {
     const result = await page.evaluate(async () => {
-      const client = await window.WasmWebClient.createClient(
-        window.rpcUrl,
-        undefined,
-        undefined,
-        undefined
-      );
+      const client = await window.helpers.createClient(undefined);
       await client.syncState();
 
       const databases = await window.indexedDB.databases();
@@ -34,16 +29,10 @@ test.describe("Store Isolation Tests", () => {
 
       await client1.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512
       );
 
-      const client2 = await window.WasmWebClient.createClient(
-        window.rpcUrl,
-        undefined,
-        undefined,
-        "IsolatedStore1"
-      );
+      const client2 = await window.helpers.createClient("IsolatedStore1");
       await client2.syncState();
 
       const databases = await window.indexedDB.databases();
@@ -69,27 +58,16 @@ test.describe("Store Isolation Tests", () => {
 
   test("reconnecting to same store preserves data", async ({ page }) => {
     const result = await page.evaluate(async () => {
-      const client1 = await window.WasmWebClient.createClient(
-        window.rpcUrl,
-        undefined,
-        undefined,
-        "PersistentStore"
-      );
+      const client1 = await window.helpers.createClient("PersistentStore");
       await client1.syncState();
 
       const wallet = await client1.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512
       );
       const walletId = wallet.id().toString();
 
-      const client1b = await window.WasmWebClient.createClient(
-        window.rpcUrl,
-        undefined,
-        undefined,
-        "PersistentStore"
-      );
+      const client1b = await window.helpers.createClient("PersistentStore");
 
       const accounts = await client1b.getAccounts();
       const accountIds = accounts.map((a: any) => a.id().toString());
@@ -108,22 +86,15 @@ test.describe("Store Isolation Tests", () => {
   test("custom store name creates isolated database", async ({ page }) => {
     const result = await page.evaluate(async () => {
       const customStoreName = "MyCustomStore_v1";
-      const client = await window.WasmWebClient.createClient(
-        window.rpcUrl,
-        undefined,
-        undefined,
-        customStoreName
-      );
+      const client = await window.helpers.createClient(customStoreName);
       await client.syncState();
 
       await client.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512
       );
       await client.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512
       );
 
@@ -147,35 +118,22 @@ test.describe("Store Isolation Tests", () => {
     page,
   }) => {
     const result = await page.evaluate(async () => {
-      const client1 = await window.WasmWebClient.createClient(
-        window.rpcUrl,
-        undefined,
-        undefined,
-        "ConcurrentStore1"
-      );
-      const client2 = await window.WasmWebClient.createClient(
-        window.rpcUrl,
-        undefined,
-        undefined,
-        "ConcurrentStore2"
-      );
+      const client1 = await window.helpers.createClient("ConcurrentStore1");
+      const client2 = await window.helpers.createClient("ConcurrentStore2");
 
       await Promise.all([client1.syncState(), client2.syncState()]);
 
       await Promise.all([
         client1.newWallet(
           window.AccountStorageMode.private(),
-          true,
           window.AuthScheme.AuthRpoFalcon512
         ),
         client1.newWallet(
           window.AccountStorageMode.private(),
-          true,
           window.AuthScheme.AuthRpoFalcon512
         ),
         client2.newWallet(
           window.AccountStorageMode.private(),
-          true,
           window.AuthScheme.AuthRpoFalcon512
         ),
       ]);
@@ -197,40 +155,26 @@ test.describe("Store Isolation Tests", () => {
 
   test("multiple accounts per store remain isolated", async ({ page }) => {
     const result = await page.evaluate(async () => {
-      const client1 = await window.WasmWebClient.createClient(
-        window.rpcUrl,
-        undefined,
-        undefined,
-        "MultiAccount1"
-      );
-      const client2 = await window.WasmWebClient.createClient(
-        window.rpcUrl,
-        undefined,
-        undefined,
-        "MultiAccount2"
-      );
+      const client1 = await window.helpers.createClient("MultiAccount1");
+      const client2 = await window.helpers.createClient("MultiAccount2");
 
       await Promise.all([client1.syncState(), client2.syncState()]);
 
       const wallet1a = await client1.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512
       );
       const wallet1b = await client1.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512
       );
       const wallet1c = await client1.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512
       );
 
       const wallet2a = await client2.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512
       );
 
@@ -262,18 +206,8 @@ test.describe("Store Isolation Tests", () => {
 
   test("input notes are isolated between stores", async ({ page }) => {
     const result = await page.evaluate(async () => {
-      const client1 = await window.WasmWebClient.createClient(
-        window.rpcUrl,
-        undefined,
-        undefined,
-        "NoteStore1"
-      );
-      const client2 = await window.WasmWebClient.createClient(
-        window.rpcUrl,
-        undefined,
-        undefined,
-        "NoteStore2"
-      );
+      const client1 = await window.helpers.createClient("NoteStore1");
+      const client2 = await window.helpers.createClient("NoteStore2");
 
       await Promise.all([client1.syncState(), client2.syncState()]);
 

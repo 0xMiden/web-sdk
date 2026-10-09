@@ -34,6 +34,10 @@ const serializeError = (error) => {
       stack: error.stack,
       cause: error.cause ? serializeError(error.cause) : undefined,
       code: error.code,
+      // Remediation text the Rust layer attaches alongside `code`. Without it
+      // here, a worker-backed failure is less diagnosable than the identical
+      // failure on the main thread.
+      help: error.help,
     };
   }
 
@@ -164,6 +168,14 @@ const methodHandlers = {
     const serializedSyncSummary = syncSummary.serialize();
     return serializedSyncSummary.buffer;
   },
+  [MethodName.SYNC_NOTE_TRANSPORT]: async () => {
+    await wasmWebClient.syncNoteTransportImpl();
+  },
+  [MethodName.SYNC_CHAIN]: async () => {
+    const syncSummary = await wasmWebClient.syncChainImpl();
+    const serializedSyncSummary = syncSummary.serialize();
+    return serializedSyncSummary.buffer;
+  },
   [MethodName.APPLY_TRANSACTION]: async (args) => {
     const wasm = await getWasmOrThrow();
     const [serializedTransactionResult, submissionHeight] = args;
@@ -194,6 +206,32 @@ const methodHandlers = {
     );
     const serializedResult = result.serialize();
     return serializedResult.buffer;
+  },
+  [MethodName.EXECUTE_TRANSACTION_AT]: async (args) => {
+    const wasm = await getWasmOrThrow();
+    const [accountIdHex, serializedTransactionRequest, serializedAnchor] = args;
+    const accountId = wasm.AccountId.fromHex(accountIdHex);
+    const transactionRequest = wasm.TransactionRequest.deserialize(
+      new Uint8Array(serializedTransactionRequest)
+    );
+    const anchor = wasm.ChainAnchor.deserialize(
+      new Uint8Array(serializedAnchor)
+    );
+    try {
+      const result = await wasmWebClient.executeTransactionAt(
+        accountId,
+        transactionRequest,
+        anchor
+      );
+      const serializedResult = result.serialize();
+      return serializedResult.buffer;
+    } finally {
+      // Rebuilt from bytes on every anchored execution and the largest
+      // transient here, since it carries a partial blockchain. The binding
+      // borrows it, so it is dead once the call settles; waiting for the
+      // finalizer would let linear memory track GC pressure on a tiny wrapper.
+      anchor.free();
+    }
   },
   [MethodName.PROVE_TRANSACTION]: async (args) => {
     const wasm = await getWasmOrThrow();
@@ -248,6 +286,24 @@ const methodHandlers = {
       serializedTransactionResult: result.serialize().buffer,
       serializedTransactionUpdate: transactionUpdate.serialize().buffer,
     };
+  },
+  [MethodName.SUBMIT_NEW_TRANSACTION_BATCH]: async (args) => {
+    const wasm = await getWasmOrThrow();
+    const [serializedItems] = args;
+    // Rebuild each (account, request) pair in this instance, in order, so the
+    // batch runs exactly as the main-thread path runs it. This returns a plain
+    // block number, so unlike the single-submit handlers there is no result
+    // object to serialize back across the boundary.
+    const items = serializedItems.map(
+      ([accountIdHex, serializedTransactionRequest]) =>
+        new wasm.BatchItem(
+          wasm.AccountId.fromHex(accountIdHex),
+          wasm.TransactionRequest.deserialize(
+            new Uint8Array(serializedTransactionRequest)
+          )
+        )
+    );
+    return await wasmWebClient.submitNewTransactionBatch(items);
   },
   [MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER]: async (args) => {
     const wasm = await getWasmOrThrow();
@@ -305,6 +361,36 @@ methodHandlers[MethodName.SYNC_STATE_MOCK] = async (args) => {
   );
 
   return await methodHandlers[MethodName.SYNC_STATE]();
+};
+
+methodHandlers[MethodName.SYNC_CHAIN_MOCK] = async (args) => {
+  let [serializedMockChain, serializedMockNoteTransportNode] = args;
+  serializedMockChain = new Uint8Array(serializedMockChain);
+  serializedMockNoteTransportNode = serializedMockNoteTransportNode
+    ? new Uint8Array(serializedMockNoteTransportNode)
+    : null;
+  await wasmWebClient.createMockClient(
+    wasmSeed,
+    serializedMockChain,
+    serializedMockNoteTransportNode
+  );
+
+  return await methodHandlers[MethodName.SYNC_CHAIN]();
+};
+
+methodHandlers[MethodName.SYNC_NOTE_TRANSPORT_MOCK] = async (args) => {
+  let [serializedMockChain, serializedMockNoteTransportNode] = args;
+  serializedMockChain = new Uint8Array(serializedMockChain);
+  serializedMockNoteTransportNode = serializedMockNoteTransportNode
+    ? new Uint8Array(serializedMockNoteTransportNode)
+    : null;
+  await wasmWebClient.createMockClient(
+    wasmSeed,
+    serializedMockChain,
+    serializedMockNoteTransportNode
+  );
+
+  return await methodHandlers[MethodName.SYNC_NOTE_TRANSPORT]();
 };
 
 methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_MOCK] = async (args) => {
@@ -392,11 +478,27 @@ async function processMessage(event) {
         hasInsertKeyCb,
         hasSignCb,
         logLevel,
+        numThreads,
+        feeFaucetId,
       ] = args;
       const wasm = await getWasmOrThrow();
 
       if (logLevel) {
         wasm.setupLogging(logLevel);
+      }
+
+      // Initialize rayon's thread pool inside THIS worker's WASM instance.
+      // The SDK runs proving here rather than on the main thread wherever a
+      // worker is in use, so a pool initialized only in main-thread WASM does
+      // not parallelize the prove. Without this, par_iter()/par_chunks() in
+      // miden-crypto + p3-maybe-rayon return current_num_threads() == 1 and fall
+      // through to sequential code despite the parallel features being on.
+      if (
+        numThreads &&
+        numThreads > 1 &&
+        typeof wasm.initThreadPool === "function"
+      ) {
+        await wasm.initThreadPool(numThreads);
       }
 
       wasmWebClient = new wasm.WebClient();
@@ -411,6 +513,7 @@ async function processMessage(event) {
           noteTransportUrl,
           seed,
           storeName,
+          feeFaucetId,
           hasGetKeyCb ? callbackProxies.getKey : undefined,
           hasInsertKeyCb ? callbackProxies.insertKey : undefined,
           hasSignCb ? callbackProxies.sign : undefined
@@ -420,7 +523,8 @@ async function processMessage(event) {
           rpcUrl,
           noteTransportUrl,
           seed,
-          storeName
+          storeName,
+          feeFaucetId
         );
       }
 
@@ -429,11 +533,23 @@ async function processMessage(event) {
       self.postMessage({ ready: true });
       return;
     } else if (action === WorkerAction.INIT_MOCK) {
-      const [seed, logLevel] = args;
+      const [seed, logLevel, numThreads] = args;
       const wasm = await getWasmOrThrow();
 
       if (logLevel) {
         wasm.setupLogging(logLevel);
+      }
+
+      // Initialize rayon's pool inside THIS worker's WASM instance — same
+      // rationale as the INIT path above: any proving that happens here uses
+      // this instance, and a pool initialized in another one does not
+      // parallelize it.
+      if (
+        numThreads &&
+        numThreads > 1 &&
+        typeof wasm.initThreadPool === "function"
+      ) {
+        await wasm.initThreadPool(numThreads);
       }
 
       wasmWebClient = new wasm.WebClient();

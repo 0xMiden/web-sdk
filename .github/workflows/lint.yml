@@ -36,6 +36,23 @@ jobs:
           tool: taplo-cli@0.10.0
       - run: make toml-check
 
+  agent-docs:
+    name: Agent docs published
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # Asserts every published package's AGENTS.md and skills/ actually reach its
+    # npm tarball. npm packs README and LICENSE whatever `files` says but gives
+    # AGENTS.md no such privilege, so a guide can sit on disk for releases while
+    # no consumer ever receives it - which is exactly what packages/para/* did.
+    # Reads package.json and runs `npm pack --dry-run`, so it needs no build and
+    # no pnpm install.
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: make check-agent-docs
+
   eslint:
     name: Typescript eslint checks
     runs-on: ubuntu-24.04
@@ -86,6 +103,12 @@ jobs:
       # comment-poster; we only need the dep rewrite here.
       - name: Inject linked miden-client PR
         uses: ./.github/actions/inject-linked-client-pr
+      # And any "Protocol PR: #N" marker. The protocol crates reach this
+      # workspace transitively through miden-client, so they're pinned with a
+      # workspace-wide [patch.crates-io] block rather than a dep rewrite —
+      # which also redirects what the git-pinned miden-client compiles against.
+      - name: Inject linked protocol PR
+        uses: ./.github/actions/inject-linked-protocol-pr
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
       - name: Install Rust with nightly clippy
@@ -133,6 +156,8 @@ jobs:
           fi
       - name: make - clippy-wasm
         run: make clippy-wasm
+      - name: make - check-wasm-features
+        run: make check-wasm-features
       - name: Show sccache stats
         if: always()
         run: sccache --show-stats || true

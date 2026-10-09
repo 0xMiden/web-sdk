@@ -12,7 +12,7 @@
  *   test("creates a wallet", async ({ run }) => {
  *     const result = await run(async ({ client, sdk }) => {
  *       const wallet = await client.newWallet(
- *         sdk.AccountStorageMode.private(), true, sdk.AuthScheme.AuthRpoFalcon512
+ *         sdk.AccountStorageMode.private(), sdk.AuthScheme.AuthRpoFalcon512
  *       );
  *       return { id: wallet.id().toString() };
  *     });
@@ -26,7 +26,13 @@ import { createRequire } from "module";
 import path from "path";
 import fs from "fs";
 import os from "os";
-import { getRpcUrl, getProverUrl, RUN_ID } from "./playwright.global.setup";
+import {
+  getRpcUrl,
+  getProverUrl,
+  getFeeFaucetId,
+  RUN_ID,
+} from "./playwright.global.setup";
+import { normalizeArg, wrapClass } from "../js/node/napi-compat.js";
 
 const require = createRequire(import.meta.url);
 
@@ -126,7 +132,7 @@ export async function createNodeIntegrationClient(
     null,
     path.join(tmpDir, `${storeName}.db`),
     path.join(tmpDir, "keystore"),
-    false
+    process.env.TEST_MIDEN_FEE_FAUCET_ID ?? null
   );
 
   const client = wrapNodeClient(rawClient, rawSdk);
@@ -138,6 +144,8 @@ export async function createNodeIntegrationClient(
 /**
  * Wraps a napi WebClient to normalize differences with the browser SDK:
  * - syncState() → syncStateImpl()
+ * - syncChain() → syncChainImpl()
+ * - syncNoteTransport() → syncNoteTransportImpl()
  * - null → undefined for Option<T> returns
  */
 export function wrapNodeClient(rawClient: any, rawSdk: any): any {
@@ -172,6 +180,12 @@ export function wrapNodeClient(rawClient: any, rawSdk: any): any {
       if (prop === "syncState") {
         return (...args: any[]) => target.syncStateImpl(...args);
       }
+      if (prop === "syncChain") {
+        return (...args: any[]) => target.syncChainImpl(...args);
+      }
+      if (prop === "syncNoteTransport") {
+        return (...args: any[]) => target.syncNoteTransportImpl(...args);
+      }
       if (prop === "proveBlock") {
         return async () => {
           const guard = await target.proveBlock();
@@ -179,17 +193,12 @@ export function wrapNodeClient(rawClient: any, rawSdk: any): any {
         };
       }
       if (prop === "newWallet") {
-        return (mode: any, mutable: any, authScheme: any, seed?: any) => {
+        return (mode: any, authScheme: any, seed?: any) => {
           const normSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
-          const result = target.newWallet(
-            mode,
-            mutable,
-            authScheme,
-            normSeed ?? null
-          );
+          const result = target.newWallet(mode, authScheme, normSeed ?? null);
           if (result && typeof result.then === "function") {
             return result.then((v: any) => (v === null ? undefined : v));
           }
@@ -200,7 +209,7 @@ export function wrapNodeClient(rawClient: any, rawSdk: any): any {
       if (typeof val === "function") {
         const bound = val.bind(target);
         return (...args: any[]) => {
-          const normalizedArgs = args.map(normalizeNapiArg);
+          const normalizedArgs = args.map(normalizeArg);
           const result = bound(...normalizedArgs);
           if (result && typeof result.then === "function") {
             return result.then((v: any) => (v === null ? undefined : v));
@@ -211,20 +220,6 @@ export function wrapNodeClient(rawClient: any, rawSdk: any): any {
       return val;
     },
   });
-}
-
-/**
- * Normalizes a single argument for napi:
- * - BigUint64Array / BigInt64Array → bigint[], Uint8Array/Buffer → number[]
- *
- * `BigInt` values are passed through untouched — napi-rs accepts JS `BigInt`
- * for `u64` parameters via `napi::bindgen_prelude::BigInt`.
- */
-function normalizeNapiArg(val: any): any {
-  if (val instanceof BigUint64Array) return Array.from(val);
-  if (val instanceof BigInt64Array) return Array.from(val);
-  if (val instanceof Uint8Array || Buffer.isBuffer(val)) return Array.from(val);
-  return val;
 }
 
 /**
@@ -265,32 +260,6 @@ function makeArrayPolyfills(): Record<string, any> {
   return result;
 }
 
-/**
- * Wraps a napi class so that constructor and static method args are normalized
- * (Uint8Array → Array, BigInt → Number, etc.).
- */
-function wrapNapiClass(Cls: any): any {
-  const Wrapper: any = function (...args: any[]) {
-    return new Cls(...args.map(normalizeNapiArg));
-  };
-  Wrapper.prototype = Cls.prototype;
-  for (const key of Object.getOwnPropertyNames(Cls)) {
-    if (key === "prototype" || key === "length" || key === "name") continue;
-    const desc = Object.getOwnPropertyDescriptor(Cls, key);
-    if (desc && typeof desc.value === "function") {
-      Wrapper[key] = (...args: any[]) =>
-        desc.value.apply(Cls, args.map(normalizeNapiArg));
-    } else if (desc) {
-      try {
-        Object.defineProperty(Wrapper, key, desc);
-      } catch {
-        /* skip non-configurable */
-      }
-    }
-  }
-  return Wrapper;
-}
-
 function patchNapiPrototypes(rawSdk: any) {
   // snake_case aliases for camelCase methods (browser uses snake_case via wasm_bindgen)
   /* eslint-disable camelcase */
@@ -309,8 +278,13 @@ function patchNapiPrototypes(rawSdk: any) {
 
   // Patch null → undefined for Option<T> returns
   for (const [cls, methods] of [
+    [rawSdk.AccountPatch, ["finalNonce"]],
     [rawSdk.AccountStorage, ["getItem", "getMapEntries", "getMapItem"]],
-    [rawSdk.NoteConsumability, ["consumableAfterBlock"]],
+    [rawSdk.NoteConsumptionStatus, ["consumableAfterBlock"]],
+    [
+      rawSdk.BasicFungibleFaucetComponent,
+      ["description", "logoUri", "externalLink"],
+    ],
   ] as [any, string[]][]) {
     if (!cls?.prototype) continue;
     for (const method of methods) {
@@ -342,13 +316,13 @@ function createNodeSdkWrapper(rawSdk: any): any {
   return {
     ...rawSdk,
     // Wrap classes whose constructors/static methods accept Uint8Array or BigInt args
-    AccountBuilder: wrapNapiClass(rawSdk.AccountBuilder),
-    AccountComponent: wrapNapiClass(rawSdk.AccountComponent),
-    AuthSecretKey: wrapNapiClass(rawSdk.AuthSecretKey),
-    Felt: wrapNapiClass(rawSdk.Felt),
-    FungibleAsset: wrapNapiClass(rawSdk.FungibleAsset),
-    Word: wrapNapiClass(rawSdk.Word),
-    NoteTag: wrapNapiClass(rawSdk.NoteTag),
+    AccountBuilder: wrapClass(rawSdk.AccountBuilder),
+    AccountComponent: wrapClass(rawSdk.AccountComponent),
+    AuthSecretKey: wrapClass(rawSdk.AuthSecretKey),
+    Felt: wrapClass(rawSdk.Felt),
+    FungibleAsset: wrapClass(rawSdk.FungibleAsset),
+    Word: wrapClass(rawSdk.Word),
+    NoteTag: wrapClass(rawSdk.NoteTag),
     // StorageView JS wrapper — browser exposes these on window via index.js.
     StorageView: sv.StorageView,
     StorageResult: sv.StorageResult,
@@ -433,11 +407,14 @@ async function getRunBrowser(projectName: string): Promise<any> {
 async function setupBrowserPage(page: any, testInfo: TestInfo) {
   const rpcUrl = getRpcUrl();
   const storeName = generateStoreName(testInfo);
+  // Every non-mock client this page builds needs it, and the page cannot read
+  // the environment itself - it has to travel through the evaluate payload.
+  const feeFaucetId = getFeeFaucetId();
 
   await page.goto("http://localhost:8080");
 
   await page.evaluate(
-    async ({ rpcUrl, storeName }) => {
+    async ({ rpcUrl, storeName, feeFaucetId }) => {
       // Import all SDK exports and attach to window
       const sdkExports = await import("./index.js");
       for (const [key, value] of Object.entries(sdkExports)) {
@@ -461,6 +438,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
       }
       window.client = client;
       window.rpcUrl = rpcUrl;
+      window.feeFaucetId = feeFaucetId;
       window.storeName = storeName;
 
       // ── Register helpers on window ──────────────────────────────
@@ -470,12 +448,12 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const c = window.client;
           const wallet = await c.newWallet(
             window.AccountStorageMode.private(),
-            true,
             window.AuthScheme.AuthRpoFalcon512
           );
           const faucet = await c.newFaucet(
             window.AccountStorageMode.private(),
             false,
+            "DAG",
             "DAG",
             8,
             BigInt(10000000),
@@ -488,6 +466,100 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
             wallet,
             faucet,
           };
+        },
+        // Mirrors setupMultisigWithConsumableNote in test-helpers.ts. Kept
+        // inline because browser helpers run inside page.evaluate and cannot
+        // reach the module.
+        setupMultisigWithConsumableNote: async () => {
+          const c = window.client;
+          const walletSeed = new Uint8Array(32);
+          crypto.getRandomValues(walletSeed);
+
+          const approverKeys = [
+            window.AuthSecretKey.rpoFalconWithRNG(),
+            window.AuthSecretKey.rpoFalconWithRNG(),
+            window.AuthSecretKey.rpoFalconWithRNG(),
+          ];
+          const multisigComponent = window.createAuthFalcon512RpoMultisig(
+            new window.AuthFalcon512RpoMultisigConfig(
+              approverKeys.map((key) => key.publicKey().toCommitment()),
+              2
+            )
+          );
+
+          const built = new window.AccountBuilder(walletSeed)
+            .storageMode(window.AccountStorageMode.private())
+            .withAuthComponent(multisigComponent)
+            .withBasicWalletComponent()
+            .build();
+
+          const multisigAccountId = built.account.id();
+          await c.newAccount(built.account, false);
+          for (const key of approverKeys) {
+            await c.keystore.insert(multisigAccountId, key);
+          }
+
+          const { wallet, faucet } =
+            await window.helpers.setupWalletAndFaucet();
+          const mintRequest = await c.newMintTransactionRequest(
+            wallet.id(),
+            faucet.id(),
+            window.NoteType.Private,
+            BigInt(1000)
+          );
+          const mintTxId = await c.submitNewTransaction(
+            faucet.id(),
+            mintRequest
+          );
+          await c.proveBlock();
+          await c.syncState();
+          const [mintRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([mintTxId])
+          );
+          const mintedNotes = await Promise.all(
+            mintRecord
+              .outputNotes()
+              .notes()
+              .map(async (note) =>
+                (await c.getInputNote(note.id().toString())).toNote()
+              )
+          );
+          await c.submitNewTransaction(
+            wallet.id(),
+            await c.newConsumeTransactionRequest(mintedNotes, wallet.id())
+          );
+          await c.proveBlock();
+          await c.syncState();
+
+          const sendRequest = await c.newSendTransactionRequest(
+            wallet.id(),
+            multisigAccountId,
+            faucet.id(),
+            window.NoteType.Public,
+            BigInt(100),
+            null,
+            null
+          );
+          const sendTxId = await c.submitNewTransaction(
+            wallet.id(),
+            sendRequest
+          );
+          await c.proveBlock();
+          await c.syncState();
+
+          const [sendRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([sendTxId])
+          );
+          const notes = await Promise.all(
+            sendRecord
+              .outputNotes()
+              .notes()
+              .map(async (note) =>
+                (await c.getInputNote(note.id().toString())).toNote()
+              )
+          );
+
+          return { multisigAccountId, notes };
         },
 
         mockMint: async (targetId, faucetId, opts) => {
@@ -525,7 +597,10 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const inputNoteRecord = await c.getInputNote(noteId);
           if (!inputNoteRecord) throw new Error(`Note ${noteId} not found`);
           const note = inputNoteRecord.toNote();
-          const consumeRequest = c.newConsumeTransactionRequest([note]);
+          const consumeRequest = await c.newConsumeTransactionRequest(
+            [note],
+            accountId
+          );
           const txId = await c.submitNewTransaction(accountId, consumeRequest);
           await c.proveBlock();
           await c.syncState();
@@ -613,13 +688,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
             noteTypeB
           );
           const expectedOutputNotes = swapRequest.expectedOutputOwnNotes();
-          const expectedPaybackNoteDetails = swapRequest
-            .expectedFutureNotes()
-            .map((fn) => fn.noteDetails);
-          const swapTxId = await c.submitNewTransaction(
-            accountAId,
-            swapRequest
-          );
+          await c.submitNewTransaction(accountAId, swapRequest);
           await c.proveBlock();
           await c.syncState();
 
@@ -629,18 +698,36 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           if (!swapNoteRecord)
             throw new Error(`Swap note ${swapNoteId} not found`);
           const swapNote = swapNoteRecord.toNote();
-          const consumeReq1 = c.newConsumeTransactionRequest([swapNote]);
-          await c.submitNewTransaction(accountBId, consumeReq1);
+          const consumeReq1 = await c.newConsumeTransactionRequest(
+            [swapNote],
+            accountBId
+          );
+          const consumeTxId1 = await c.submitNewTransaction(
+            accountBId,
+            consumeReq1
+          );
           await c.proveBlock();
           await c.syncState();
 
-          // Consume payback note for account A
-          const paybackNoteId = expectedPaybackNoteDetails[0].id().toString();
+          // Account B's consume of the swap note emits the payback note that
+          // account A consumes. Derive its id from the consume transaction's
+          // output notes (NoteDetails no longer exposes id()).
+          const [consumeTxRecord1] = await c.getTransactions(
+            window.TransactionFilter.ids([consumeTxId1])
+          );
+          const paybackNoteId = consumeTxRecord1
+            .outputNotes()
+            .notes()[0]
+            .id()
+            .toString();
           const paybackNoteRecord = await c.getInputNote(paybackNoteId);
           if (!paybackNoteRecord)
             throw new Error(`Payback note ${paybackNoteId} not found`);
           const paybackNote = paybackNoteRecord.toNote();
-          const consumeReq2 = c.newConsumeTransactionRequest([paybackNote]);
+          const consumeReq2 = await c.newConsumeTransactionRequest(
+            [paybackNote],
+            accountAId
+          );
           await c.submitNewTransaction(accountAId, consumeReq2);
           await c.proveBlock();
           await c.syncState();
@@ -663,6 +750,296 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
               amount: asset.amount().toString(),
             }));
           return { accountAAssets, accountBAssets };
+        },
+
+        mockPswapFullFill: async (
+          creatorId,
+          fillerId,
+          offeredFaucetId,
+          offeredAmount,
+          requestedFaucetId,
+          requestedAmount,
+          pswapNoteType,
+          paybackNoteType
+        ) => {
+          const c = window.client;
+          const vaultAssets = (account) =>
+            account
+              ?.vault()
+              .fungibleAssets()
+              .map((asset) => ({
+                assetId: asset.faucetId().toString(),
+                amount: asset.amount().toString(),
+              }));
+          const noteType =
+            pswapNoteType === "public"
+              ? window.NoteType.Public
+              : window.NoteType.Private;
+          const pbNoteType =
+            paybackNoteType === "public"
+              ? window.NoteType.Public
+              : window.NoteType.Private;
+
+          const createRequest = await c.newPswapCreateTransactionRequest(
+            creatorId,
+            offeredFaucetId,
+            BigInt(offeredAmount),
+            requestedFaucetId,
+            BigInt(requestedAmount),
+            noteType,
+            pbNoteType
+          );
+          const createTxId = await c.submitNewTransaction(
+            creatorId,
+            createRequest
+          );
+          await c.proveBlock();
+          await c.syncState();
+
+          const [createTxRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([createTxId])
+          );
+          const pswapNoteId = createTxRecord
+            .outputNotes()
+            .notes()[0]
+            .id()
+            .toString();
+
+          const pswapNoteRecord = await c.getInputNote(pswapNoteId);
+          if (!pswapNoteRecord)
+            throw new Error(`PSWAP note ${pswapNoteId} not found`);
+          const consumeRequest = await c.newPswapConsumeTransactionRequest(
+            pswapNoteRecord.toNote(),
+            fillerId,
+            BigInt(requestedAmount), // full fill: filler supplies the entire requested amount
+            BigInt(0)
+          );
+          // Submit the fill but leave the block unproven: the creator consumes
+          // the payback note in the same block below. A private payback note
+          // carries a PSWAP attachment that the store cannot reconstruct from
+          // chain data once committed, so it must be consumed as a same-block
+          // unauthenticated note using the full note emitted here.
+          const consumeTxId = await c.submitNewTransaction(
+            fillerId,
+            consumeRequest
+          );
+
+          const [consumeTxRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([consumeTxId])
+          );
+          const consumeOutputNotes = consumeTxRecord.outputNotes().notes();
+
+          // A full fill produces exactly one payback note (no remainder PSWAP note).
+          if (consumeOutputNotes.length !== 1) {
+            throw new Error(
+              `Expected exactly one payback note from a full fill, got ${consumeOutputNotes.length}`
+            );
+          }
+          // Creator consumes the payback note carrying the requested asset, in
+          // the same block the filler created it, using the full note emitted by
+          // the filler's consume transaction (a private payback note's PSWAP
+          // attachment cannot be rebuilt from the store once committed).
+          const paybackNote = consumeOutputNotes[0].intoFull();
+          if (!paybackNote)
+            throw new Error("Payback note is not available in full form");
+          const paybackConsume = await c.newConsumeTransactionRequest(
+            [paybackNote],
+            creatorId
+          );
+          await c.submitNewTransaction(creatorId, paybackConsume);
+          await c.proveBlock();
+          await c.syncState();
+
+          return {
+            creatorAssets: vaultAssets(await c.getAccount(creatorId)),
+            fillerAssets: vaultAssets(await c.getAccount(fillerId)),
+            consumeOutputNoteCount: consumeOutputNotes.length,
+          };
+        },
+
+        mockPswapPartialFill: async (
+          creatorId,
+          fillerId,
+          offeredFaucetId,
+          offeredAmount,
+          requestedFaucetId,
+          requestedAmount,
+          fillAmount,
+          pswapNoteType,
+          paybackNoteType
+        ) => {
+          const c = window.client;
+          const vaultAssets = (account) =>
+            account
+              ?.vault()
+              .fungibleAssets()
+              .map((asset) => ({
+                assetId: asset.faucetId().toString(),
+                amount: asset.amount().toString(),
+              }));
+          const noteType =
+            pswapNoteType === "public"
+              ? window.NoteType.Public
+              : window.NoteType.Private;
+          const pbNoteType =
+            paybackNoteType === "public"
+              ? window.NoteType.Public
+              : window.NoteType.Private;
+
+          const createRequest = await c.newPswapCreateTransactionRequest(
+            creatorId,
+            offeredFaucetId,
+            BigInt(offeredAmount),
+            requestedFaucetId,
+            BigInt(requestedAmount),
+            noteType,
+            pbNoteType
+          );
+          const createTxId = await c.submitNewTransaction(
+            creatorId,
+            createRequest
+          );
+          await c.proveBlock();
+          await c.syncState();
+
+          const [createTxRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([createTxId])
+          );
+          const pswapNoteId = createTxRecord
+            .outputNotes()
+            .notes()[0]
+            .id()
+            .toString();
+
+          const pswapNoteRecord = await c.getInputNote(pswapNoteId);
+          if (!pswapNoteRecord)
+            throw new Error(`PSWAP note ${pswapNoteId} not found`);
+          const consumeRequest = await c.newPswapConsumeTransactionRequest(
+            pswapNoteRecord.toNote(),
+            fillerId,
+            BigInt(fillAmount),
+            BigInt(0)
+          );
+          // Submit the fill but leave the block unproven: the creator consumes
+          // the payback note in the same block below. A private payback note
+          // carries a PSWAP attachment that the store cannot reconstruct from
+          // chain data once committed, so it must be consumed as a same-block
+          // unauthenticated note using the full note emitted here.
+          const consumeTxId = await c.submitNewTransaction(
+            fillerId,
+            consumeRequest
+          );
+
+          const [consumeTxRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([consumeTxId])
+          );
+          const consumeOutputNotes = consumeTxRecord.outputNotes().notes();
+
+          // A partial fill emits a payback note plus a remainder PSWAP note.
+          if (consumeOutputNotes.length !== 2) {
+            throw new Error(
+              `Expected a payback note and a remainder PSWAP note from a partial fill, got ${consumeOutputNotes.length}`
+            );
+          }
+
+          // The remainder PSWAP note carries the offered asset; the payback
+          // note carries the requested asset destined for the creator.
+          const offeredFaucetStr = offeredFaucetId.toString();
+          let paybackOutputNote;
+          let remainderOfferedAmount;
+          for (const note of consumeOutputNotes) {
+            const asset = note.assets()?.fungibleAssets()[0];
+            if (asset && asset.faucetId().toString() === offeredFaucetStr) {
+              remainderOfferedAmount = asset.amount().toString();
+            } else {
+              paybackOutputNote = note;
+            }
+          }
+          if (!paybackOutputNote)
+            throw new Error("Payback note not found in consume output");
+
+          // Consume the full payback note emitted by the filler's consume
+          // transaction, in the same block it was created; a private payback
+          // note's PSWAP attachment cannot be rebuilt from the store once
+          // committed.
+          const paybackNote = paybackOutputNote.intoFull();
+          if (!paybackNote)
+            throw new Error("Payback note is not available in full form");
+          const paybackConsume = await c.newConsumeTransactionRequest(
+            [paybackNote],
+            creatorId
+          );
+          await c.submitNewTransaction(creatorId, paybackConsume);
+          await c.proveBlock();
+          await c.syncState();
+
+          return {
+            creatorAssets: vaultAssets(await c.getAccount(creatorId)),
+            fillerAssets: vaultAssets(await c.getAccount(fillerId)),
+            consumeOutputNoteCount: consumeOutputNotes.length,
+            remainderOfferedAmount,
+          };
+        },
+
+        mockPswapCancel: async (
+          creatorId,
+          offeredFaucetId,
+          offeredAmount,
+          requestedFaucetId,
+          requestedAmount,
+          pswapNoteType
+        ) => {
+          const c = window.client;
+          const noteType =
+            pswapNoteType === "public"
+              ? window.NoteType.Public
+              : window.NoteType.Private;
+
+          const createRequest = await c.newPswapCreateTransactionRequest(
+            creatorId,
+            offeredFaucetId,
+            BigInt(offeredAmount),
+            requestedFaucetId,
+            BigInt(requestedAmount),
+            noteType,
+            noteType
+          );
+          const createTxId = await c.submitNewTransaction(
+            creatorId,
+            createRequest
+          );
+          await c.proveBlock();
+          await c.syncState();
+
+          const [createTxRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([createTxId])
+          );
+          const pswapNoteId = createTxRecord
+            .outputNotes()
+            .notes()[0]
+            .id()
+            .toString();
+
+          const pswapNoteRecord = await c.getInputNote(pswapNoteId);
+          if (!pswapNoteRecord)
+            throw new Error(`PSWAP note ${pswapNoteId} not found`);
+          const cancelRequest = await c.newPswapCancelTransactionRequest(
+            pswapNoteRecord.toNote(),
+            creatorId
+          );
+          await c.submitNewTransaction(creatorId, cancelRequest);
+          await c.proveBlock();
+          await c.syncState();
+
+          const creator = await c.getAccount(creatorId);
+          const creatorAssets = creator
+            ?.vault()
+            .fungibleAssets()
+            .map((asset) => ({
+              assetId: asset.faucetId().toString(),
+              amount: asset.amount().toString(),
+            }));
+          return { creatorAssets };
         },
 
         executeAndApplyTransaction: async (
@@ -735,16 +1112,37 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
         },
 
         createIntegrationClient: async () => {
+          // `null` from here means "no node reachable", and callers turn that
+          // into test.skip. A misconfigured fixture must not be able to borrow
+          // that meaning: without a fee faucet the client cannot be built at
+          // all, and swallowing that once turned 12 integration tests into
+          // silent skips while their shards still reported success.
+          if (!window.feeFaucetId) {
+            throw new Error(
+              "integration fixture is missing window.feeFaucetId - set it in " +
+                "setupBrowserPage from getFeeFaucetId(); a client without one " +
+                "cannot execute or screen notes on any 0.17 network"
+            );
+          }
           try {
             const uniqueName = `int_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
             const client = await window.WasmWebClient.createClient(
               window.rpcUrl,
               undefined,
               undefined,
-              uniqueName
+              uniqueName,
+              undefined, // logLevel
+              undefined, // useWorker, defaulted
+              undefined, // observability
+              window.feeFaucetId
             );
             return { client };
-          } catch {
+          } catch (err) {
+            // Keep the skip, but leave a trace: a future cause other than an
+            // unreachable node is otherwise invisible in the run output.
+            console.debug(
+              `integration client unavailable: ${err?.message ?? err}`
+            );
             return null;
           }
         },
@@ -755,7 +1153,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
         getRpcUrl: () => window.rpcUrl,
       };
     },
-    { rpcUrl, storeName }
+    { rpcUrl, storeName, feeFaucetId }
   );
 }
 
@@ -767,6 +1165,8 @@ async function createNodeRunHelpers(client: any, sdk: any): Promise<any> {
   const h = await import("./test-helpers");
   return {
     setupWalletAndFaucet: () => h.setupWalletAndFaucet(client, sdk),
+    setupMultisigWithConsumableNote: () =>
+      h.setupMultisigWithConsumableNote(client, sdk),
     mockMint: (targetId: any, faucetId: any, opts?: any) =>
       h.mockMint(client, sdk, targetId, faucetId, opts),
     mockConsume: (accountId: any, noteId: string) =>
@@ -797,12 +1197,84 @@ async function createNodeRunHelpers(client: any, sdk: any): Promise<any> {
         swapNoteType,
         paybackNoteType
       ),
+    mockPswapFullFill: (
+      creatorId: any,
+      fillerId: any,
+      offeredFaucetId: any,
+      offeredAmount: number,
+      requestedFaucetId: any,
+      requestedAmount: number,
+      pswapNoteType?: string,
+      paybackNoteType?: string
+    ) =>
+      h.mockPswapFullFill(
+        client,
+        sdk,
+        creatorId,
+        fillerId,
+        offeredFaucetId,
+        offeredAmount,
+        requestedFaucetId,
+        requestedAmount,
+        pswapNoteType,
+        paybackNoteType
+      ),
+    mockPswapPartialFill: (
+      creatorId: any,
+      fillerId: any,
+      offeredFaucetId: any,
+      offeredAmount: number,
+      requestedFaucetId: any,
+      requestedAmount: number,
+      fillAmount: number,
+      pswapNoteType?: string,
+      paybackNoteType?: string
+    ) =>
+      h.mockPswapPartialFill(
+        client,
+        sdk,
+        creatorId,
+        fillerId,
+        offeredFaucetId,
+        offeredAmount,
+        requestedFaucetId,
+        requestedAmount,
+        fillAmount,
+        pswapNoteType,
+        paybackNoteType
+      ),
+    mockPswapCancel: (
+      creatorId: any,
+      offeredFaucetId: any,
+      offeredAmount: number,
+      requestedFaucetId: any,
+      requestedAmount: number,
+      pswapNoteType?: string
+    ) =>
+      h.mockPswapCancel(
+        client,
+        sdk,
+        creatorId,
+        offeredFaucetId,
+        offeredAmount,
+        requestedFaucetId,
+        requestedAmount,
+        pswapNoteType
+      ),
     executeAndApplyTransaction: (accountId: any, req: any, prover?: any) =>
       executeAndApplyTransaction(client, sdk, accountId, req, prover),
     waitForTransaction: (txId: string, maxWait?: number, interval?: number) =>
       waitForTransaction(client, sdk, txId, maxWait, interval),
     parseNetworkId: (networkId: string) => h.parseNetworkId(sdk, networkId),
-    createFreshMockClient: () => h.createFreshMockClient(sdk),
+    createFreshMockClient: (
+      serializedMockChain?: any,
+      serializedNoteTransport?: any
+    ) =>
+      h.createFreshMockClient(
+        sdk,
+        serializedMockChain,
+        serializedNoteTransport
+      ),
     createIntegrationClient: () => h.createIntegrationClient(),
     createMidenMockClient: async () => {
       const MidenClient = await h.createMidenClient(sdk);

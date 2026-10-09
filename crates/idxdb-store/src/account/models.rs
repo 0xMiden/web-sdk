@@ -48,6 +48,8 @@ pub struct AccountRecordIdxdbObject {
     #[serde(deserialize_with = "base64_to_vec_u8_optional", default)]
     pub account_seed: Option<Vec<u8>>,
     pub locked: bool,
+    #[serde(default)]
+    pub watched: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -63,4 +65,14 @@ pub struct ForeignAccountCodeIdxdbObject {
     pub account_id: String,
     #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
     pub code: Vec<u8>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountSnapshotIdxdbObject {
+    pub header: AccountRecordIdxdbObject,
+    pub code: Option<AccountCodeIdxdbObject>,
+    pub storage: Vec<AccountStorageIdxdbObject>,
+    pub maps: Vec<StorageMapEntryIdxdbObject>,
+    pub assets: Vec<AccountAssetIdxdbObject>,
 }

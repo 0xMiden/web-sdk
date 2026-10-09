@@ -5,6 +5,7 @@ use miden_client::note::{
     NoteScript as NativeNoteScript,
     NoteStorage as NativeNoteStorage,
 };
+use miden_client::rng::draw_word;
 
 use super::note_script::NoteScript;
 use super::note_storage::NoteStorage;
@@ -40,6 +41,16 @@ impl NoteRecipient {
             NativeNoteRecipient::new(native_serial_num, native_note_script, native_note_storage);
 
         NoteRecipient(native_note_recipient)
+    }
+
+    /// Creates a recipient from a script and storage, generating a fresh random
+    /// serial number (the secret that prevents double-spends).
+    #[js_export(js_name = "fromScript")]
+    pub fn from_script(note_script: &NoteScript, storage: &NoteStorage) -> NoteRecipient {
+        let serial_num: NativeWord = draw_word(&mut rand::rng());
+
+        let native = NativeNoteRecipient::new(serial_num, note_script.into(), storage.into());
+        NoteRecipient(native)
     }
 
     /// Returns the digest of the recipient data (used in the note commitment).
@@ -93,8 +104,7 @@ impl From<&NoteRecipient> for NativeNoteRecipient {
 
 impl From<&RecipientArray> for Vec<NativeNoteRecipient> {
     fn from(recipient_array: &RecipientArray) -> Self {
-        let items: Vec<NoteRecipient> = recipient_array.into();
-        items.into_iter().map(NativeNoteRecipient::from).collect()
+        recipient_array.iter().map(NativeNoteRecipient::from).collect()
     }
 }
 

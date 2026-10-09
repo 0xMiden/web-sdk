@@ -7,6 +7,8 @@
  * Key adaptations:
  * - BigInt → Number for JsU64 params (napi uses f64, browser uses BigInt)
  * - syncState() → syncStateImpl()
+ * - syncChain() → syncChainImpl()
+ * - syncNoteTransport() → syncNoteTransportImpl()
  * - createMockClient() with no args → createMockClient(dbPath, keystorePath, ...)
  * - Fake page.evaluate() that runs callbacks directly
  */
@@ -14,6 +16,8 @@ import { createRequire } from "module";
 import path from "path";
 import fs from "fs";
 import os from "os";
+import { FaucetType } from "../js/enums.js";
+import { normalizeArg, wrapClass } from "../js/node/napi-compat.js";
 
 const require = createRequire(import.meta.url);
 
@@ -98,12 +102,13 @@ function initSdk(): any {
   // eslint-disable-next-line camelcase
   patchPrototype(rawSdk.AccountHeader, { to_commitment: "toCommitment" });
 
+  patchNullToUndefined(rawSdk.AccountPatch, ["finalNonce"]);
   patchNullToUndefined(rawSdk.AccountStorage, [
     "getItem",
     "getMapEntries",
     "getMapItem",
   ]);
-  patchNullToUndefined(rawSdk.NoteConsumability, ["consumableAfterBlock"]);
+  patchNullToUndefined(rawSdk.NoteConsumptionStatus, ["consumableAfterBlock"]);
 
   // Patch static methods (snake_case aliases for camelCase)
   if (rawSdk.NoteScript) {
@@ -136,52 +141,6 @@ function toNum(val: any): any {
   return val;
 }
 
-/**
- * Normalizes arguments for napi:
- * - BigUint64Array / BigInt64Array → bigint[]
- * - Uint8Array/Buffer → Array<number> (for Vec<u8> params)
- *
- * `BigInt` values are passed through — napi-rs accepts JS `BigInt` for `u64`
- * parameters via `napi::bindgen_prelude::BigInt`.
- */
-function normalizeArg(val: any): any {
-  if (val instanceof BigUint64Array) return Array.from(val);
-  if (val instanceof BigInt64Array) return Array.from(val);
-  if (val instanceof Uint8Array || Buffer.isBuffer(val)) return Array.from(val);
-  return val;
-}
-
-/**
- * Wraps a class so that constructor args and static method args are normalized.
- * Returns a Proxy that intercepts `new` and static calls.
- */
-/**
- * Wraps a class so that constructor and static method args are normalized.
- * Copies all static methods/properties, wrapping functions to normalize args.
- */
-function wrapClass(Cls: any): any {
-  const Wrapper: any = function (...args: any[]) {
-    return new Cls(...args.map(normalizeArg));
-  };
-  Wrapper.prototype = Cls.prototype;
-  // Copy static methods with arg normalization
-  for (const key of Object.getOwnPropertyNames(Cls)) {
-    if (key === "prototype" || key === "length" || key === "name") continue;
-    const desc = Object.getOwnPropertyDescriptor(Cls, key);
-    if (desc && typeof desc.value === "function") {
-      Wrapper[key] = (...args: any[]) =>
-        desc.value.apply(Cls, args.map(normalizeArg));
-    } else if (desc) {
-      try {
-        Object.defineProperty(Wrapper, key, desc);
-      } catch {
-        /* skip non-configurable */
-      }
-    }
-  }
-  return Wrapper;
-}
-
 // ── Client wrapper ────────────────────────────────────────────────────
 
 /**
@@ -194,9 +153,13 @@ function wrapClient(client: any, storeName?: string): any {
       if (prop === "syncState") {
         return (...args: any[]) => target.syncStateImpl(...args);
       }
-      // syncStateWithTimeout — just calls syncState (no browser lock coordination needed)
-      if (prop === "syncStateWithTimeout") {
-        return (_timeoutMs?: number) => target.syncStateImpl();
+      // syncChain → syncChainImpl
+      if (prop === "syncChain") {
+        return (...args: any[]) => target.syncChainImpl(...args);
+      }
+      // syncNoteTransport → syncNoteTransportImpl
+      if (prop === "syncNoteTransport") {
+        return (...args: any[]) => target.syncNoteTransportImpl(...args);
       }
       // storeName — used by MidenClient for lock coordination
       if (prop === "storeName") {
@@ -208,17 +171,12 @@ function wrapClient(client: any, storeName?: string): any {
       }
       // newWallet: convert Uint8Array/Buffer seed to plain Array for napi's Vec<u8>
       if (prop === "newWallet") {
-        return (mode: any, mutable: any, authScheme: any, seed?: any) => {
+        return (mode: any, authScheme: any, seed?: any) => {
           const normalizedSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
-          return target.newWallet(
-            mode,
-            mutable,
-            authScheme,
-            normalizedSeed ?? null
-          );
+          return target.newWallet(mode, authScheme, normalizedSeed ?? null);
         };
       }
       // Methods that take JsU64 (BigInt in browser, Number in Node.js)
@@ -226,6 +184,7 @@ function wrapClient(client: any, storeName?: string): any {
         return (
           mode: any,
           nonFungible: any,
+          name: any,
           symbol: any,
           decimals: any,
           maxSupply: any,
@@ -235,6 +194,7 @@ function wrapClient(client: any, storeName?: string): any {
           target.newFaucet(
             mode,
             nonFungible,
+            name,
             symbol,
             decimals,
             toNum(maxSupply),
@@ -357,7 +317,8 @@ export const WasmWebClient = {
     rpcUrl?: string,
     noteTransportUrl?: any,
     seed?: any,
-    storeName?: string
+    storeName?: string,
+    feeFaucetId?: string
   ) => {
     const dir = tmpTestDir();
     const client = new sdk.WebClient();
@@ -371,7 +332,7 @@ export const WasmWebClient = {
       normSeed ?? null,
       path.join(dir, `${storeName || "store"}.db`),
       path.join(dir, "keystore"),
-      false
+      feeFaucetId ?? null
     );
     return wrapClient(client, storeName);
   },
@@ -535,18 +496,8 @@ export async function setupNodeGlobals(
     NoteFilter: sdk.NoteFilter,
     NoteFilterTypes: sdk.NoteFilterTypes,
     AccountId: sdk.AccountId,
-    // AccountType: the JS wrapper uses string-based types, not the napi enum
-    AccountType: {
-      MutableWallet: "MutableWallet",
-      ImmutableWallet: "ImmutableWallet",
-      FungibleFaucet: "FungibleFaucet",
-      NonFungibleFaucet: "NonFungibleFaucet",
-      ImmutableContract: "ImmutableContract",
-      MutableContract: "MutableContract",
-      // Also keep the napi enum values for tests that use the low-level API
-      RegularAccountUpdatableCode: sdk.AccountType?.RegularAccountUpdatableCode,
-      RegularAccountImmutableCode: sdk.AccountType?.RegularAccountImmutableCode,
-    },
+    AccountType: sdk.AccountType,
+    FaucetType,
     AccountInterface: sdk.AccountInterface,
     AccountBuilder: wrapClass(sdk.AccountBuilder),
     AccountComponent: wrapClass(sdk.AccountComponent),

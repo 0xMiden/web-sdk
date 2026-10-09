@@ -7,7 +7,7 @@ use super::word::Word;
 /// the block's validity.
 ///
 /// Key fields include the previous block commitment, block number, chain/nullifier/note roots,
-/// transaction commitments (including the kernel), proof commitment, and a timestamp. Two derived
+/// the transaction commitment, the protocol configuration commitment, and a timestamp. Two derived
 /// values are exposed:
 /// - `sub_commitment`: sequential hash of all fields except the `note_root`.
 /// - `commitment`: a 2-to-1 hash of the `sub_commitment` and the `note_root`.
@@ -18,7 +18,7 @@ pub struct BlockHeader(NativeBlockHeader);
 #[js_export]
 impl BlockHeader {
     /// Returns the header version.
-    pub fn version(&self) -> u32 {
+    pub fn version(&self) -> u8 {
         self.0.version()
     }
 
@@ -75,13 +75,22 @@ impl BlockHeader {
         self.0.tx_commitment().into()
     }
 
-    /// Returns the transaction kernel commitment.
-    #[js_export(js_name = "txKernelCommitment")]
-    pub fn tx_kernel_commitment(&self) -> Word {
-        self.0.tx_kernel_commitment().into()
+    /// Returns the commitment to the protocol configuration this block was built under.
+    ///
+    /// The configuration itself carries the transaction, batch and block kernels and the fee
+    /// asset, which the header committed to individually before 0.17. Execution resolves the
+    /// configuration by this commitment, so a client that has not registered a matching one
+    /// cannot execute against this block.
+    #[js_export(js_name = "protocolConfigCommitment")]
+    pub fn protocol_config_commitment(&self) -> Word {
+        self.0.protocol_config_commitment().into()
     }
 
-    /// Returns the proof commitment.
+    /// Returns the block commitment, not a distinct proof commitment.
+    ///
+    /// The protocol's `BlockHeader` has no `proof_commitment` field — this accessor outlived it
+    /// and is an alias for [`Self::commitment`]. Renaming or removing it would break the public
+    /// API, so it is documented rather than changed here. Prefer `commitment()`.
     #[js_export(js_name = "proofCommitment")]
     pub fn proof_commitment(&self) -> Word {
         self.0.commitment().into()
@@ -90,6 +99,21 @@ impl BlockHeader {
     /// Returns the block timestamp.
     pub fn timestamp(&self) -> u32 {
         self.0.timestamp()
+    }
+
+    /// Returns the chain's verification base fee, in the fee asset's smallest unit.
+    ///
+    /// This is a rate, not the amount a transaction pays: the fee charged is the base fee times
+    /// the transaction's log verification cycles, so two transactions on the same chain pay
+    /// different amounts.
+    ///
+    /// Zero means the chain charges nothing. `fee::pay_fee` discards the conversion info unread
+    /// once the computed fee is zero, so a transaction succeeds on such a chain whether or not it
+    /// commits any. Reading this is what lets a caller decide whether the fee wiring is required
+    /// at all, rather than hardcoding the answer per network.
+    #[js_export(js_name = "verificationBaseFee")]
+    pub fn verification_base_fee(&self) -> u32 {
+        self.0.fee_parameters().verification_base_fee()
     }
 }
 
