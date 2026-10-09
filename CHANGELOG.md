@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.17.3 (TBD)
+## 0.17.3 (2026-10-09)
 
 ### Enhancements
 
@@ -14,6 +14,10 @@
 * [FIX][web,react] `terminate()` now frees the client's main-realm wasm object and releases its IndexedDB connection, so creating and terminating clients no longer leaks open database handles, and `await using` (`MidenClient`'s `[Symbol.asyncDispose]`) resolves once that release is done. A store shared by several clients stays open until the last of them is terminated. A call already queued that runs in the main realm still finishes; a call that needs the worker (in flight, waiting for it to start or still queued) rejects with `WebClient terminated`, and so does every later wasm call on a terminated `WebClient`, except that `lastAuthError` and the accessors throw it. The release and these rejections are browser-only: on the Node.js binding `terminate()` releases nothing. `MidenProvider` now terminates a client whose initialization was cancelled or failed after creating it, and never a client it has handed out ([#377](https://github.com/0xMiden/web-sdk/issues/377)) ([#410](https://github.com/0xMiden/web-sdk/pull/410)).
 * [FIX][web] The Node.js SDK now runs on Alpine and other musl Linux distributions. Releases publish a new `@miden-sdk/node-linux-x64-musl` native package alongside `@miden-sdk/node-linux-x64-gnu`, and the loader picks between the two by the runtime C library, so a musl-based container (a common ECS or Docker base image) no longer fails at import with `Miden napi module not found`. Both Linux packages declare a `libc` field, so npm and pnpm install only the matching one. With npm, an install for Linux from another OS (`npm install --os=linux --cpu=x64`, as when bundling on macOS) must now also pass `--libc=glibc`, or `--libc=musl` for an Alpine target, or npm skips both Linux packages ([#234](https://github.com/0xMiden/web-sdk/pull/234)).
 * [FIX][web] When the Node.js native addon cannot be loaded, the error now names the platform, CPU and Node version, every package it tried, the real failure of each resolution step and the fixes for the common causes, instead of a generic "build it with cargo" message. A `MIDEN_MODULE_PATH` that fails to load now throws an error naming that path and the load failure ([#234](https://github.com/0xMiden/web-sdk/pull/234)).
+
+### Changes
+
+* [CHANGE][web] Pin Rust SDK client, proto and SQLite store to exactly 0.17.3 ([rust-sdk#2686](https://github.com/0xMiden/rust-sdk/pull/2686)).
 
 ## 0.17.2 (2026-10-08)
 
