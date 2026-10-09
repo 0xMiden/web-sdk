@@ -391,7 +391,11 @@ export interface ContractCreateOptions {
   seed: Uint8Array;
   /** Auth secret key. Required. */
   auth: AuthSecretKey;
-  /** Pre-compiled AccountComponent instances. Required for contracts. */
+  /**
+   * Pre-compiled AccountComponent instances. Required for contracts: at least
+   * one must export a non-auth (`@account_procedure`) procedure, or
+   * `accounts.create` rejects the request.
+   */
   components: AccountComponent[];
   /** Storage mode. Defaults to "public" for contracts. */
   storage?: StorageMode;
@@ -1801,6 +1805,12 @@ export declare class CompilerResource {
 
   /**
    * Compile MASM source into an AccountComponent.
+   *
+   * Only exports marked `@account_procedure` or `@auth_script` become component
+   * procedures. A component with none logs a `[miden-sdk]` console warning and
+   * is still returned, since a storage-only component is legitimate beside one
+   * that has procedures; nothing can call into it, and `accounts.create`
+   * rejects a contract none of whose components exports a non-auth procedure.
    *
    * @param options - Component source code, storage slots, and auth options.
    */

@@ -440,10 +440,17 @@ const contract = await client.accounts.create({
 });
 ```
 
+`compile.component` only turns exports marked `@account_procedure` or
+`@auth_script` into account procedures. A component with none logs a
+`[miden-sdk]` console warning but is still returned, because a storage-only
+component is legitimate beside one that has procedures; nothing can call into
+it on its own.
+
 A contract is whatever `accounts.create()` call carries `components` - the
 string forms `type: "MutableContract"` / `"ImmutableContract"` also route to a
-contract, but the canonical selector is `components`, and an empty
-`components` array is rejected. There is **no** `AccountType.MutableContract`;
+contract, but the canonical selector is `components`, and `components` none of
+which exports a non-auth (`@account_procedure`) procedure is rejected, an empty
+array included. There is **no** `AccountType.MutableContract`;
 `type: AccountType.MutableContract` is `undefined` and, without `components`,
 would silently create a wallet.
 
