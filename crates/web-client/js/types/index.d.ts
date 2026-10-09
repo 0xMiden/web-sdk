@@ -209,7 +209,6 @@ export declare class WasmWebClient extends WasmWebClientBase {
   syncState(): Promise<SyncSummary>;
   syncChain(): Promise<SyncSummary>;
   syncNoteTransport(): Promise<void>;
-  setSignCb(signCb: SignCallback | null | undefined): void;
   onStateChanged(callback: (event: any) => void): (() => void) | undefined;
   /**
    * Terminates this WebClient: stops its Web Worker if there is one, and

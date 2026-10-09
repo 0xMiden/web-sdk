@@ -12,6 +12,7 @@
 * [FIX][react] `MidenProvider` rendered without a `config` prop no longer rebuilds its `WebClient` on every store update ([#269](https://github.com/0xMiden/web-sdk/pull/269)).
 * [FIX][web] `getInputNotes()` and `getOutputNotes()` now reject with a catchable error instead of aborting the WASM module when a `NoteFilter` lacks the note ids or script roots its type needs, or a `Unique` filter holds other than one note id ([#268](https://github.com/0xMiden/web-sdk/pull/268)).
 * [FIX][react] `useNotes` and `useNoteStream` with a different `status`, or `useNotes` with a different `accountId`, no longer show each other's notes, and a mounted `useNotes` fetches again when the provider switches signer identity ([#280](https://github.com/0xMiden/web-sdk/issues/280), [#284](https://github.com/0xMiden/web-sdk/pull/284)).
+* [FIX][react] `MidenProvider` reconnecting an external signer on the same store identity no longer calls the non-existent `setSignCb` method on `WebClient`, avoiding a runtime `TypeError`; the client already delegates dynamically through `wrappedSignCb` to the latest `signCbRef`. Initializing a local keystore client now clears `currentStoreNameRef` and `signerAccountId`, preventing reconnecting signers from erroneously reusing a local client ([#455](https://github.com/0xMiden/web-sdk/issues/455), [#465](https://github.com/0xMiden/web-sdk/pull/465)).
 
 ### Changes
 

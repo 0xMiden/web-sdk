@@ -220,7 +220,7 @@ Omit both key callbacks for a sign-only service; `MidenProvider` forwards them v
 
 `signCb` is not handed to the client directly. `MidenProvider` keeps the latest callback in a ref
 and passes a wrapper that reads through it, so reconnecting the *same* identity hot-swaps the
-callback (`store.client.setSignCb(wrappedSignCb)`) instead of rebuilding the client. A wrapped call
+callback via the ref wrapper instead of rebuilding the client. A wrapped call
 made after disconnect throws `Signer is disconnected. Cannot sign.`
 (`packages/react-sdk/src/context/MidenProvider.tsx:166-212`).
 
