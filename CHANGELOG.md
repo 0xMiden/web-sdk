@@ -9,6 +9,7 @@
 * [FIX][web] `InputNotes.getNote()` and `OutputNotes.getNote()` now throw a catchable out-of-bounds error naming the index and the length instead of aborting the WASM module, and `InputNotes.numNotes()` and `getNote()` handle the 1024 input notes a transaction allows instead of aborting above 255 notes or reading a different note for an index of 256 or more ([#306](https://github.com/0xMiden/web-sdk/pull/306)).
 * [FIX][web] `accounts.create` now rejects a contract none of whose `components` exports a non-auth (`@account_procedure`) procedure, as its error already stated, instead of creating an account nothing can call into; every transaction calling into it failed in the kernel with `push_procedure_index`. `compile.component` also logs a `[miden-sdk]` console warning when the compiled component has no procedures, and still returns it, since a storage-only component is legitimate beside one that has procedures ([#402](https://github.com/0xMiden/web-sdk/pull/402)).
 * [FIX][react] `formatAssetAmount` puts a single leading minus on a negative amount (`-525n` at 2 decimals is `"-5.25"`, was `"-5.-25"`), and `parseAssetAmount` throws for a negative or malformed amount instead of returning a wrong value (`"--1"` gave `1n`, `"-5.25"` at 2 decimals gave `-475n`) ([#275](https://github.com/0xMiden/web-sdk/pull/275)).
+* [FIX][react] `MidenProvider` rendered without a `config` prop no longer rebuilds its `WebClient` on every store update ([#269](https://github.com/0xMiden/web-sdk/pull/269)).
 
 ### Changes
 

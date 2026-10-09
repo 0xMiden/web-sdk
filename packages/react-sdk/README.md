@@ -193,6 +193,8 @@ function App() {
 }
 ```
 
+Keep the `config` object's identity stable: define it outside the component, or memoize it with `useMemo` when the component that renders `MidenProvider` re-renders. Without a signer provider, each new `config` object makes `MidenProvider` re-create its client and leave the replaced one running.
+
 ## Subpaths: Eager / Lazy × ST / MT
 
 The React SDK ships **four** bundle variants built from a single source tree. The two axes are independent:
