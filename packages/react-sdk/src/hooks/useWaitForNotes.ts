@@ -31,9 +31,9 @@ export function useWaitForNotes(): UseWaitForNotesResult {
       const timeoutMs = Math.max(0, options.timeoutMs ?? 10_000);
       const intervalMs = Math.max(1, options.intervalMs ?? 1_000);
       const minCount = Math.max(1, options.minCount ?? 1);
-      let waited = 0;
+      const deadline = Date.now() + timeoutMs;
 
-      while (waited < timeoutMs) {
+      while (Date.now() < deadline) {
         await runExclusiveSafe(() =>
           (client as unknown as ClientWithNotes).syncState()
         );
@@ -52,9 +52,12 @@ export function useWaitForNotes(): UseWaitForNotesResult {
           return consumable;
         }
 
-        const step = Math.min(intervalMs, timeoutMs - waited);
-        await new Promise((resolve) => setTimeout(resolve, step));
-        waited += step;
+        await new Promise((resolve) =>
+          setTimeout(
+            resolve,
+            Math.max(0, Math.min(intervalMs, deadline - Date.now()))
+          )
+        );
       }
 
       throw new Error("Timeout waiting for consumable notes");

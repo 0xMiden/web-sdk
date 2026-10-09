@@ -61,7 +61,7 @@ describe("useWaitForNotes", () => {
     await expect(
       result.current.waitForConsumableNotes({
         accountId: "0xaccount",
-        timeoutMs: 5,
+        timeoutMs: 100,
         intervalMs: 1,
       })
     ).rejects.toThrow("Timeout waiting for consumable notes");
@@ -96,6 +96,34 @@ describe("useWaitForNotes", () => {
     expect(Date.now() - start).toBeLessThan(1000);
   }, 10000);
 
+  it("counts time spent syncing toward timeoutMs", async () => {
+    const mockClient = createMockWebClient({
+      syncState: vi
+        .fn()
+        .mockImplementation(
+          () => new Promise((resolve) => setTimeout(resolve, 40))
+        ),
+      getConsumableNotes: vi.fn().mockResolvedValue([]),
+    });
+
+    mockUseMiden.mockReturnValue({
+      client: mockClient,
+      isReady: true,
+    });
+
+    const { result } = renderHook(() => useWaitForNotes());
+
+    const start = Date.now();
+    await expect(
+      result.current.waitForConsumableNotes({
+        accountId: "0xaccount",
+        timeoutMs: 50,
+        intervalMs: 5,
+      })
+    ).rejects.toThrow("Timeout waiting for consumable notes");
+    expect(Date.now() - start).toBeLessThan(300);
+  }, 10000);
+
   it("should resolve when consumable notes are available", async () => {
     const note = createMockConsumableNoteRecord("0xnote1", "0xaccount");
     const mockClient = createMockWebClient({
@@ -115,7 +143,7 @@ describe("useWaitForNotes", () => {
 
     const notes = await result.current.waitForConsumableNotes({
       accountId: "0xaccount",
-      timeoutMs: 20,
+      timeoutMs: 200,
       intervalMs: 1,
     });
 

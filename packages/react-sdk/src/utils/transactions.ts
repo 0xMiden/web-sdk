@@ -72,9 +72,9 @@ export async function waitForTransactionCommit(
   maxWaitMs = 10_000,
   delayMs = 1_000
 ) {
-  let waited = 0;
+  const deadline = Date.now() + maxWaitMs;
 
-  while (waited < maxWaitMs) {
+  while (Date.now() < deadline) {
     await runExclusiveSafe(() => client.syncState());
     const [record] = await runExclusiveSafe(() =>
       client.getTransactions(TransactionFilter.ids([txId]))
@@ -88,9 +88,9 @@ export async function waitForTransactionCommit(
         throw new Error("Transaction was discarded before commit");
       }
     }
-    const step = Math.min(delayMs, maxWaitMs - waited);
-    await new Promise((resolve) => setTimeout(resolve, step));
-    waited += step;
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.max(0, Math.min(delayMs, deadline - Date.now())))
+    );
   }
 
   throw new Error("Timeout waiting for transaction commit");
