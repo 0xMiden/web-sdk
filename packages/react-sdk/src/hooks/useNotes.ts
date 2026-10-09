@@ -51,7 +51,13 @@ import { getNoteFilterType } from "../utils/noteFilters";
 export function useNotes(options?: NotesFilter): NotesResult {
   const { client, isReady } = useMiden();
   const filterKey = options?.status ?? "all";
-  const accountKey = options?.accountId ?? "default";
+  const accountId = options?.accountId;
+  // A string key, stable across renders that pass a new object for the same account.
+  const accountKey = useMemo(() => {
+    if (!accountId) return "default";
+    if (typeof accountId === "string") return accountId;
+    return parseAccountId(accountId).toString();
+  }, [accountId]);
 
   const notes = useNotesStore(filterKey);
   const consumableNotes = useConsumableNotesStore(accountKey);
@@ -92,8 +98,8 @@ export function useNotes(options?: NotesFilter): NotesResult {
       // yet, so they are not "consumable" here either - the same rule
       // notes.listAvailable and transactions.consumeAll apply.
       let fetchedConsumable;
-      if (options?.accountId) {
-        const accountIdObj = parseAccountId(options.accountId);
+      if (accountKey !== "default") {
+        const accountIdObj = parseAccountId(accountKey);
         const accountIdHex = accountIdObj.toString();
         fetchedConsumable = (
           await client.getConsumableNotes(accountIdObj)
@@ -120,7 +126,6 @@ export function useNotes(options?: NotesFilter): NotesResult {
     client,
     isReady,
     options?.status,
-    options?.accountId,
     filterKey,
     accountKey,
     setLoadingNotes,

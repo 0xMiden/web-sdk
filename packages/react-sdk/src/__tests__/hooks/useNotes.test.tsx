@@ -7,6 +7,7 @@ import {
   createMockWebClient,
   createMockInputNoteRecord,
   createMockConsumableNoteRecord,
+  createMockAccountHeader,
 } from "../mocks/miden-sdk";
 
 // Mock useMiden
@@ -379,6 +380,55 @@ describe("useNotes", () => {
 
       expect(result.current.error).toBeNull();
       expect(result.current.notes.length).toBe(1);
+    });
+  });
+
+  describe("account given as an object", () => {
+    it("keys the consumable bucket by the account id string", async () => {
+      const mockClient = createMockWebClient({
+        getInputNotes: vi.fn().mockResolvedValue([]),
+        getConsumableNotes: vi.fn().mockResolvedValue([]),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      const header = createMockAccountHeader("0xacct");
+
+      renderHook(() => useNotes({ accountId: header as any }));
+
+      await waitFor(() => {
+        expect(
+          useMidenStore.getState().consumableNotesByAccount.has("0xacct")
+        ).toBe(true);
+      });
+    });
+
+    it("does not refetch when each render passes a new object for the same account", async () => {
+      // A macrotask per fetch keeps a refetch loop from starving the test's timers.
+      const mockClient = createMockWebClient({
+        getInputNotes: vi.fn().mockResolvedValue([]),
+        getConsumableNotes: vi.fn(
+          () => new Promise((resolve) => setTimeout(() => resolve([]), 0))
+        ),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+
+      renderHook(() =>
+        useNotes({ accountId: createMockAccountHeader("0xacct") as any })
+      );
+      await waitFor(() => {
+        expect(mockClient.getConsumableNotes).toHaveBeenCalledTimes(1);
+      });
+
+      act(() => {
+        useMidenStore.getState().setSyncState({ lastSyncTime: Date.now() });
+      });
+      await waitFor(() => {
+        expect(mockClient.getConsumableNotes).toHaveBeenCalledTimes(2);
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+
+      expect(mockClient.getConsumableNotes).toHaveBeenCalledTimes(2);
     });
   });
 
