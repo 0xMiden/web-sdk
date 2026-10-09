@@ -1524,9 +1524,10 @@ Returns three async methods, one per output type:
 Each `libraries` entry takes `{ namespace, code, linking? }`. `linking` accepts
 the `Linking` enum (`Linking.Dynamic`, `Linking.Static`) or the raw strings
 `"dynamic"` / `"static"`. Dynamic is the default and matches the FPI pattern
-used in the tutorials. It is for procedures installed on an account the
-transaction reaches; a helper library installed on no account needs
-`Linking.Static`, or the script compiles and then fails at execution.
+used in the tutorials: it is for procedures installed on an account the
+transaction reaches. A helper library installed on no account, like the one
+below, needs `Linking.Static`, which copies it into the script; linked
+dynamically, the script compiles and then fails at execution.
 
 ```tsx
 import { useCompile } from '@miden-sdk/react';
@@ -1539,7 +1540,7 @@ function ScriptBuilder({ libSource, noteSource }: { libSource: string; noteSourc
     const script = await noteScript({
       code: noteSource,
       libraries: [
-        { namespace: 'my_lib::module', code: libSource, linking: Linking.Dynamic },
+        { namespace: 'my_lib::module', code: libSource, linking: Linking.Static },
       ],
     });
     // pass `script` to useTransaction, useExecuteProgram, or your own flow

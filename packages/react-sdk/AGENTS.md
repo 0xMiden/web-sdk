@@ -711,13 +711,13 @@ const { noteScript, isReady } = useCompile();
 
 const script = await noteScript({
   code: noteSource,
-  libraries: [{ namespace: "my_lib", code: libSource, linking: Linking.Dynamic }],
+  libraries: [{ namespace: "my_lib", code: libSource, linking: Linking.Static }],
 });
 ```
 
-`Linking.Dynamic` is for procedures installed on an account the transaction
-reaches; a helper library installed on no account needs `Linking.Static`, or the
-script compiles and then fails at execution.
+`Linking.Static` copies a helper library like `my_lib` into the script.
+`Linking.Dynamic` is only for procedures installed on an account the transaction
+reaches; a helper linked dynamically compiles and then fails at execution.
 
 ### Context (provider access)
 

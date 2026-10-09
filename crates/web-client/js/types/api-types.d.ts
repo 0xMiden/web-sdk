@@ -1734,8 +1734,11 @@ export interface CompileTxScriptLibrary {
   /** MASM source code for the library. */
   code: string;
   /**
-   * `Linking.Dynamic` (default) — procedures are linked via DYNCALL at runtime.
-   * `Linking.Static` — procedures are inlined at compile time.
+   * `Linking.Dynamic` (default) - the script references the procedures without
+   * copying them, so they must be installed on an account the transaction
+   * reaches (its own or a foreign one). `Linking.Static` - the procedures are
+   * copied into the script, which is what a helper library installed on no
+   * account needs.
    */
   linking?: Linking;
 }
@@ -1745,13 +1748,18 @@ export interface CompileAccountComponentLibrary {
   /** Account component whose installed code should be linked. */
   component: AccountComponent;
   /**
-   * `Linking.Dynamic` (default) — procedures are linked via DYNCALL at runtime.
-   * `Linking.Static` — procedures are inlined at compile time.
+   * `Linking.Dynamic` (default) - the script references the procedures without
+   * copying them, so they must be installed on an account the transaction
+   * reaches (its own or a foreign one). `Linking.Static` - the procedures are
+   * copied into the script.
    */
   linking?: Linking;
 }
 
-/** A script library supplied inline, pre-built, or from an installed account component. */
+/**
+ * A script library supplied inline, pre-built, or from an installed account
+ * component. A pre-built `Library` is always linked dynamically.
+ */
 export type CompileScriptLibrary =
   | CompileTxScriptLibrary
   | CompileAccountComponentLibrary
