@@ -27,6 +27,7 @@ import type {
   NoteExecutionHint,
   NoteRecipient,
   NoteScript,
+  NonFungibleAsset,
   StorageMode,
   PswapLineageRecord,
 } from "@miden-sdk/miden-sdk";
@@ -50,6 +51,7 @@ export type {
   NoteType,
   Note,
   AccountStorageMode,
+  NonFungibleAsset,
   PswapLineageRecord,
 };
 
@@ -206,7 +208,10 @@ export interface AccountsResult {
 
 export interface AccountResult {
   account: Account | null;
+  /** Fungible assets in the account vault. */
   assets: AssetBalance[];
+  /** Non-fungible assets in the account vault. */
+  nonFungibleAssets: NonFungibleAssetInfo[];
   isLoading: boolean;
   error: Error | null;
   refetch: () => Promise<void>;
@@ -218,6 +223,18 @@ export interface AssetBalance {
   amount: bigint;
   symbol?: string;
   decimals?: number;
+}
+
+/** A non-fungible asset in an account vault or a note. */
+export interface NonFungibleAssetInfo {
+  /** ID of the faucet that issued the asset (hex). */
+  faucetId: string;
+  /** Vault key of the asset (hex). Unique per asset. */
+  vaultKey: string;
+  /** Value word of the asset (hex). */
+  value: string;
+  /** The asset itself. Pass it as `asset` to `useSend`, `useSwap` or `useCreateNetworkNote`. */
+  asset: NonFungibleAsset;
 }
 
 // Notes types
@@ -279,7 +296,10 @@ export interface NoteAsset {
 
 export interface NoteSummary {
   id: string;
+  /** Fungible assets on the note. */
   assets: NoteAsset[];
+  /** Non-fungible assets on the note. Always set by `getNoteSummary`. */
+  nonFungibleAssets?: NonFungibleAssetInfo[];
   sender?: string;
 }
 
@@ -294,7 +314,9 @@ export interface CreateWalletOptions {
 }
 
 // Faucet creation options
-export interface CreateFaucetOptions {
+export interface CreateFungibleFaucetOptions {
+  /** Leave unset (or `false`) for a fungible faucet. */
+  nonFungible?: false;
   /** Token symbol (e.g., "TEST") */
   tokenSymbol: string;
   /** Human-readable token name. Defaults to `tokenSymbol` when omitted. */
@@ -308,6 +330,29 @@ export interface CreateFaucetOptions {
   /** Auth scheme. Default: AuthScheme.AuthRpoFalcon512 */
   authScheme?: AuthScheme;
 }
+
+/**
+ * Options for a non-fungible faucet. It mints `NonFungibleAsset`s with
+ * `useMint`, so it takes no `decimals` or `maxSupply`; passing either throws.
+ */
+export interface CreateNonFungibleFaucetOptions {
+  /** Set to `true` to create a non-fungible faucet. */
+  nonFungible: true;
+  /** Collection symbol (e.g., "ART") */
+  tokenSymbol: string;
+  /** Human-readable collection name. Defaults to `tokenSymbol` when omitted. */
+  tokenName?: string;
+  /** Storage mode. Default: private */
+  storageMode?: StorageMode;
+  /** Auth scheme. Default: AuthScheme.AuthRpoFalcon512 */
+  authScheme?: AuthScheme;
+  decimals?: never;
+  maxSupply?: never;
+}
+
+export type CreateFaucetOptions =
+  | CreateFungibleFaucetOptions
+  | CreateNonFungibleFaucetOptions;
 
 // Account import options
 export type ImportAccountOptions =
@@ -326,7 +371,7 @@ export type ImportAccountOptions =
     };
 
 // Send options
-export interface SendOptions {
+export interface SendFungibleOptions {
   /** Sender account ID */
   from: AccountRef;
   /** Recipient account ID */
@@ -349,7 +394,22 @@ export interface SendOptions {
   sendAll?: boolean;
   /** true = build note in JS and return the Note object (e.g. for out-of-band delivery). Default: false */
   returnNote?: boolean;
+  asset?: never;
 }
+
+/** Send one non-fungible asset. Replaces `assetId`, `amount` and `sendAll` with `asset`. */
+export type SendNonFungibleOptions = Omit<
+  SendFungibleOptions,
+  "assetId" | "amount" | "sendAll" | "asset"
+> & {
+  /** The non-fungible asset to send. */
+  asset: NonFungibleAsset;
+  assetId?: never;
+  amount?: never;
+  sendAll?: never;
+};
+
+export type SendOptions = SendFungibleOptions | SendNonFungibleOptions;
 
 // Send result — txId always set; note is non-null only when returnNote is true
 export interface SendResult {
@@ -423,7 +483,7 @@ export interface WaitForNotesOptions {
 }
 
 // Mint options
-export interface MintOptions {
+export interface MintFungibleOptions {
   /** Target account to receive minted tokens */
   targetAccountId: AccountRef;
   /** Faucet account to mint from */
@@ -432,7 +492,23 @@ export interface MintOptions {
   amount: bigint | number;
   /** Note type. Default: private */
   noteType?: NoteVisibility;
+  asset?: never;
 }
+
+/**
+ * Mint one non-fungible asset from a non-fungible faucet. `asset` must be
+ * issued by `faucetId`; build it with `new NonFungibleAsset(faucetId, value)`.
+ */
+export type MintNonFungibleOptions = Omit<
+  MintFungibleOptions,
+  "amount" | "asset"
+> & {
+  /** The non-fungible asset to mint. */
+  asset: NonFungibleAsset;
+  amount?: never;
+};
+
+export type MintOptions = MintFungibleOptions | MintNonFungibleOptions;
 
 // Create-network-note options
 export interface CreateNetworkNoteOptions {
@@ -452,6 +528,8 @@ export interface CreateNetworkNoteOptions {
   assetId?: AccountRef;
   /** Amount for `assetId`. */
   amount?: bigint | number;
+  /** Single non-fungible asset to lock into the note, in place of `assetId` and `amount`. */
+  asset?: NonFungibleAsset;
   /** Extra attachment payload appended after the NetworkAccountTarget. */
   attachment?: bigint[] | Uint8Array | number[];
 }
@@ -489,22 +567,47 @@ export interface ConsumeOptions {
 }
 
 // Swap options
-export interface SwapOptions {
+/** The offered side of a swap: a fungible amount or one non-fungible asset. */
+export type SwapOffered =
+  | {
+      /** Faucet ID of the offered asset */
+      offeredFaucetId: AccountRef;
+      /** Amount being offered */
+      offeredAmount: bigint | number;
+      offeredAsset?: never;
+    }
+  | {
+      /** Non-fungible asset being offered */
+      offeredAsset: NonFungibleAsset;
+      offeredFaucetId?: never;
+      offeredAmount?: never;
+    };
+
+/** The requested side of a swap: a fungible amount or one non-fungible asset. */
+export type SwapRequested =
+  | {
+      /** Faucet ID of the requested asset */
+      requestedFaucetId: AccountRef;
+      /** Amount being requested */
+      requestedAmount: bigint | number;
+      requestedAsset?: never;
+    }
+  | {
+      /** Non-fungible asset being requested */
+      requestedAsset: NonFungibleAsset;
+      requestedFaucetId?: never;
+      requestedAmount?: never;
+    };
+
+export type SwapOptions = {
   /** Account initiating the swap */
   accountId: AccountRef;
-  /** Faucet ID of the offered asset */
-  offeredFaucetId: AccountRef;
-  /** Amount being offered */
-  offeredAmount: bigint | number;
-  /** Faucet ID of the requested asset */
-  requestedFaucetId: AccountRef;
-  /** Amount being requested */
-  requestedAmount: bigint | number;
   /** Note type for swap note. Default: private */
   noteType?: NoteVisibility;
   /** Note type for payback note. Default: private */
   paybackNoteType?: NoteVisibility;
-}
+} & SwapOffered &
+  SwapRequested;
 
 // PSWAP options — partial-swap notes can be filled by multiple consumers.
 export interface PswapCreateOptions {
