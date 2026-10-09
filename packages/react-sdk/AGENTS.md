@@ -109,12 +109,19 @@ leaves `accounts` at its last value, so don't gate UI on it. Read
 
 ### Get Account Details
 ```tsx
-const { account, assets, getBalance, isLoading, error, refetch } = useAccount(accountId);
+const { account, assets, nonFungibleAssets, getBalance, isLoading, error, refetch } =
+  useAccount(accountId);
 
 // account   - Account object: .id(), .nonce(), .bech32id(), .isFaucet()
-// assets    - AssetBalance[] of { assetId, amount, symbol?, decimals? }
+// assets    - AssetBalance[] of { assetId, amount, symbol?, decimals? } (fungible only)
+// nonFungibleAssets - NonFungibleAssetInfo[] of { faucetId, vaultKey, value, asset }
 // getBalance(faucetId) - bigint balance for one token
 ```
+
+`nonFungibleAssets` lists the NFTs in the vault. `faucetId`, `vaultKey` and
+`value` are hex strings; `vaultKey` is unique per NFT, so use it as the React
+key. `asset` is the `NonFungibleAsset` itself, which you pass as
+`nonFungibleAsset` to `useSendNonFungible` or `useCreateNetworkNote`.
 
 Prefer the hook's `getBalance(faucetId)`, which takes the id as a string.
 `account.vault().getBalance(...)` exists but wants an `AccountId` instance, not
@@ -157,8 +164,8 @@ Metadata is read from the node the provider's client was created against
 
 Most mutation hooks return `{ <action>, result, isLoading, stage, error, reset }`:
 the action callback is named after the hook (`send`, `consume`, `mint`, ...) and
-the resolved value is on `result`. That holds for `useSend`, `useMultiSend`,
-`useBatch`, `useConsume`, `useMint`, `useBridge`, `useSwap`, `useCreateNetworkNote`,
+the resolved value is on `result`. That holds for `useSend`, `useSendNonFungible`,
+`useMultiSend`, `useBatch`, `useConsume`, `useMint`, `useMintNonFungible`, `useBridge`, `useSwap`, `useCreateNetworkNote`,
 `useTransaction` and the `usePswap*` family.
 
 **The busy flag is not `isLoading` everywhere.** Every write hook returns its
@@ -167,8 +174,8 @@ in-progress flag, and only the transaction family has a `stage`:
 
 | Family | Hooks | Busy flag | `stage`? |
 |---|---|---|---|
-| Transaction | `useSend`, `useMultiSend`, `useBatch`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `useTransaction`, all four `usePswap*` writes | `isLoading` | yes |
-| Account create / import | `useCreateWallet`, `useCreateFaucet`, `useImportAccount` | `isCreating` (`isImporting` for the last) | no |
+| Transaction | `useSend`, `useSendNonFungible`, `useMultiSend`, `useBatch`, `useMint`, `useMintNonFungible`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `useTransaction`, all four `usePswap*` writes | `isLoading` | yes |
+| Account create / import | `useCreateWallet`, `useCreateFaucet`, `useCreateNonFungibleFaucet`, `useImportAccount` | `isCreating` (`isImporting` for the last) | no |
 | Everything else names its own | `useChainAnchor().isCapturing`, `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting` | as named | no |
 
 Two more sit outside the pattern entirely: `useWaitForCommit()` returns
@@ -216,6 +223,21 @@ await send({
   assetId: tokenFaucetId,
   amount: 1000n,
   noteType: "private",  // "private" | "public"
+});
+```
+
+To send an NFT, use `useSendNonFungible`. It takes the same options as
+`useSend`, with `nonFungibleAsset` in place of `assetId` and `amount`
+(`sendAll` does not apply).
+
+```tsx
+const { sendNonFungible } = useSendNonFungible();
+const { nonFungibleAssets } = useAccount(senderAccountId);
+
+await sendNonFungible({
+  from: senderAccountId,
+  to: recipientAccountId,
+  nonFungibleAsset: nonFungibleAssets[0].asset,
 });
 ```
 
@@ -268,8 +290,25 @@ const { mint } = useMint();
 
 await mint({
   faucetId: myFaucetId,
-  to: recipientAccountId,
+  targetAccountId: recipientAccountId,
   amount: 10000n,
+});
+```
+
+From a non-fungible faucet, use `useMintNonFungible` with `nonFungibleAsset`
+in place of `amount`. The asset must be issued by `faucetId`, or the hook throws.
+
+```tsx
+import { AccountId, NonFungibleAsset, Word } from "@miden-sdk/miden-sdk";
+
+const { mintNonFungible } = useMintNonFungible();
+await mintNonFungible({
+  faucetId: nftFaucetId,
+  targetAccountId: recipientAccountId,
+  nonFungibleAsset: new NonFungibleAsset(
+    AccountId.fromHex(nftFaucetId),
+    new Word(new BigUint64Array([1n, 2n, 3n, 4n])) // the NFT's data
+  ),
 });
 ```
 
@@ -305,6 +344,11 @@ const { txId, note } = await createNetworkNote({
 note.isNetworkNote(); // true
 ```
 
+To lock one asset into the note, pass `assetId` and `amount` for a fungible
+asset, or `nonFungibleAsset` for a `NonFungibleAsset`. Passing both
+`nonFungibleAsset` and `assetId`
+throws.
+
 ### Create Faucet
 ```tsx
 const { createFaucet, faucet, isCreating, error, reset } = useCreateFaucet();
@@ -316,6 +360,15 @@ const account = await createFaucet({
   maxSupply: 1000000n,      // required. bigint | number
   storageMode: "public",    // "private" | "public". Default: "private"
   authScheme: 2,            // 2 = Falcon. Pass the number - see the trap above
+});
+
+// Non-fungible faucet: mints NonFungibleAssets with
+// useMintNonFungible. It takes no decimals or maxSupply.
+const { createNonFungibleFaucet } = useCreateNonFungibleFaucet();
+const nftFaucet = await createNonFungibleFaucet({
+  tokenSymbol: "ART",
+  storageMode: "public",
+  authScheme: 2,
 });
 ```
 
@@ -362,6 +415,8 @@ import { getNoteSummary, formatNoteSummary } from "@miden-sdk/react";
 
 const summary = getNoteSummary(note);
 const text = formatNoteSummary(summary);  // "1.5 TOKEN"
+// summary.nonFungibleAssets lists the note's NFTs; formatNoteSummary shows each
+// as "NFT <faucetId>", e.g. "1.5 TOKEN + NFT 0x1234... from mtst1..."
 ```
 
 ### Wait for Transaction Confirmation
@@ -639,7 +694,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | Hook | Data fields | Purpose |
 |------|-------------|---------|
 | `useAccounts()` | `accounts` (`wallets` mirrors it, `faucets` is always `[]`; both deprecated) | List local accounts. `error` is always `null` |
-| `useAccount(id)` | `account`, `assets`, `getBalance(faucetId)` | Account details + balances |
+| `useAccount(id)` | `account`, `assets`, `nonFungibleAssets`, `getBalance(faucetId)` | Account details, balances and NFTs |
 | `useNotes(filter?)` | `notes`, `consumableNotes`, `noteSummaries`, `consumableNoteSummaries` | Input notes + UI summaries |
 | `useNoteStream(filter?)` | streaming variant of `useNotes` | Auto-updates as notes arrive |
 | `useSyncState()` | `syncHeight`, `isSyncing`, `lastSyncTime`, `sync()` | Sync status + manual trigger |
@@ -656,15 +711,18 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | Hook | Action | Returns on success |
 |------|--------|--------------------|
 | `useCreateWallet()` | `createWallet({ storageMode })` | `Account` |
-| `useCreateFaucet()` | `createFaucet({ symbol, decimals, ... })` | `Account` |
+| `useCreateFaucet()` | `createFaucet({ tokenSymbol, decimals, maxSupply, ... })` | `Account` |
+| `useCreateNonFungibleFaucet()` | `createNonFungibleFaucet({ tokenSymbol, ... })` | `Account` |
 | `useImportAccount()` | `importAccount(...)` | `Account` |
 | `useImportNote()` | `importNote(...)` | imported `InputNoteRecord` |
 | `useExportNote()` | `exportNote(...)` | serialized note bytes |
 | `useImportStore()` / `useExportStore()` | store import/export | bytes / `void` |
 | `useSend()` | `send({ from, to, assetId, amount, noteType })` | `SendResult` (with `txId`, `note`) |
+| `useSendNonFungible()` | `sendNonFungible({ from, to, nonFungibleAsset, noteType })` | `SendResult` (with `txId`, `note`) |
 | `useMultiSend()` | `multiSend({ from, recipients })` | `TransactionResult` |
 | `useBatch()` | `batch({ items })` - items are `{ account, request }` pairs | `BatchResult` (with `blockNumber`) |
-| `useMint()` | `mint({ faucetId, to, amount })` | `TransactionResult` |
+| `useMint()` | `mint({ faucetId, targetAccountId, amount })` | `TransactionResult` |
+| `useMintNonFungible()` | `mintNonFungible({ faucetId, targetAccountId, nonFungibleAsset })` | `TransactionResult` |
 | `useBridge()` | `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress })` | `TransactionResult` (emits an AggLayer B2AGG bridge-out note) |
 | `useCreateNetworkNote()` | `createNetworkNote({ accountId, target, script \| recipient, ... })` | `NetworkNoteResult` (`{ txId, note }`; note satisfies `note.isNetworkNote()`) |
 | `useConsume()` | `consume({ accountId, notes })` | `TransactionResult` |
