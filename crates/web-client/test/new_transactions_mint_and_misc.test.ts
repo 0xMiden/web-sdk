@@ -3,7 +3,20 @@
 // Split from new_transactions.test.ts to balance shard-1 wall clock — the
 // send/custom describes live in new_transactions_send_and_custom.test.ts.
 // Platform-agnostic (browser + Node.js).
-import { test, expect } from "./test-setup";
+import { test, expect, loadNodeSdk } from "./test-setup";
+import { hashTypedData, parseSignature, verifyTypedData } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+
+const EIP712_TRANSACTION = {
+  domain: { name: "Miden Transaction", version: "1" },
+  types: {
+    MidenTransaction: [{ name: "txSummaryHash", type: "bytes32" }],
+  },
+  primaryType: "MidenTransaction",
+} as const;
+
+const EIP712_WITNESS_LENGTH = 32;
+const BYTES_PER_U32_LIMB = 4;
 
 // NEW_MINT_TRANSACTION TESTS
 // =======================================================================================================
@@ -556,7 +569,7 @@ test.describe("submitNewTransactionWithProver tests", () => {
   test.describe("executeForSummary tests", () => {
     test("executeForSummary returns TransactionSummary for unauthorized transaction", async ({
       run,
-    }) => {
+    }, testInfo) => {
       const result = await run(async ({ client, sdk }) => {
         const walletSeed = new Uint8Array(32);
         crypto.getRandomValues(walletSeed);
@@ -698,6 +711,39 @@ test.describe("submitNewTransactionWithProver tests", () => {
           consumeSentNoteRequest
         );
 
+        const ecdsaKey = sdk.AuthSecretKey.ecdsaWithRNG();
+        const publicKey = ecdsaKey.publicKey();
+        const signature = ecdsaKey.sign(summary.toCommitment());
+        summary.eip712SignatureKey(publicKey);
+        let rejectsFalconKey = false;
+        try {
+          summary.eip712SignatureKey(approverKeys[0].publicKey());
+        } catch (error) {
+          rejectsFalconKey = String(error).includes(
+            "requires an ECDSA public key"
+          );
+        }
+        let rejectsFalcon = false;
+        try {
+          summary.eip712SignatureAdvice(approverKeys[0].publicKey(), signature);
+        } catch (error) {
+          rejectsFalcon = String(error).includes(
+            "requires an ECDSA public key and signature"
+          );
+        }
+        let rejectsFalconSignature = false;
+        try {
+          summary.eip712SignatureAdvice(
+            publicKey,
+            approverKeys[0].sign(summary.toCommitment())
+          );
+        } catch (error) {
+          rejectsFalconSignature = String(error).includes(
+            "requires an ECDSA public key and signature"
+          );
+        }
+        const summaryHashBytes = Array.from(summary.toCommitment().serialize());
+
         const summaryInputNoteIds = summary
           .inputNotes()
           .notes()
@@ -708,12 +754,89 @@ test.describe("submitNewTransactionWithProver tests", () => {
           outputNotesCount: summary.outputNotes().numNotes(),
           summaryInputNoteIds,
           sentNoteIds,
+          summaryHashBytes,
+          summaryBytes: Array.from(summary.serialize()),
+          ecdsaKeyBytes: Array.from(ecdsaKey.serialize()),
+          eip712Hash: Array.from(summary.eip712Hash()),
+          rejectsFalconKey,
+          rejectsFalcon,
+          rejectsFalconSignature,
         };
       });
 
       expect(result.inputNotesCount).toBe(1);
       expect(result.outputNotesCount).toBe(0);
       expect(result.summaryInputNoteIds).toEqual(result.sentNoteIds);
+      const typedData = {
+        ...EIP712_TRANSACTION,
+        message: {
+          txSummaryHash: `0x${Buffer.from(result.summaryHashBytes).toString("hex")}`,
+        },
+      } as const;
+      expect(result.eip712Hash).toEqual(
+        Array.from(Buffer.from(hashTypedData(typedData).slice(2), "hex"))
+      );
+      expect(result.rejectsFalconKey).toBe(true);
+      expect(result.rejectsFalcon).toBe(true);
+      expect(result.rejectsFalconSignature).toBe(true);
+
+      if (testInfo.project.name === "nodejs") {
+        const nodeSdk = loadNodeSdk();
+        const summary = nodeSdk.TransactionSummary.deserialize(
+          Buffer.from(result.summaryBytes)
+        );
+        const ecdsaKey = nodeSdk.AuthSecretKey.deserialize(
+          Buffer.from(result.ecdsaKeyBytes)
+        );
+        const publicKey = ecdsaKey.publicKey();
+        const privateKey = Buffer.from(
+          ecdsaKey
+            .getEcdsaK256KeccakSecretKeyAsFelts()
+            .map((felt) => Number(felt.asInt()))
+        );
+        const account = privateKeyToAccount(`0x${privateKey.toString("hex")}`);
+        const walletSignature = await account.signTypedData(typedData);
+        expect(
+          await verifyTypedData({
+            ...typedData,
+            address: account.address,
+            signature: walletSignature,
+          })
+        ).toBe(true);
+
+        const signatureBytes = Buffer.from(walletSignature.slice(2), "hex");
+        signatureBytes[signatureBytes.length - 1] =
+          parseSignature(walletSignature).yParity;
+        // Reuse the SDK's ECDSA scheme tag for its serialized Signature format.
+        const rawSignatureBytes = ecdsaKey
+          .sign(summary.toCommitment())
+          .serialize();
+        const signature = nodeSdk.Signature.deserialize(
+          Buffer.from([
+            ...rawSignatureBytes.slice(0, -signatureBytes.length),
+            ...signatureBytes,
+          ])
+        );
+        const advice = summary.eip712SignatureAdvice(publicKey, signature);
+        const adviceKey = summary.eip712SignatureKey(publicKey);
+        const witness = advice.get(adviceKey);
+        expect(witness).toHaveLength(EIP712_WITNESS_LENGTH);
+
+        const scalarLength = (signatureBytes.length - 1) / 2;
+        const signatureLimbs = [
+          signatureBytes.subarray(0, scalarLength),
+          signatureBytes.subarray(scalarLength, 2 * scalarLength),
+        ].flatMap((scalar) =>
+          Array.from({ length: scalar.length / BYTES_PER_U32_LIMB }, (_, i) =>
+            scalar.readUInt32BE(scalar.length - (i + 1) * BYTES_PER_U32_LIMB)
+          )
+        );
+        expect(
+          witness
+            .slice(-signatureLimbs.length)
+            .map((felt) => Number(felt.asInt()))
+        ).toEqual(signatureLimbs);
+      }
     });
 
     test("executeForSummary rejects when the transaction is already authorized", async ({
