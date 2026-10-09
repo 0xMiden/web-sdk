@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk";
 import { MidenProvider, useMiden } from "../../context/MidenProvider";
@@ -52,6 +52,36 @@ describe("MidenProvider initialization", () => {
     });
 
     expect(WebClient.createClient).toHaveBeenCalled();
+  });
+
+  it("creates a single client when rendered without a config", async () => {
+    const createClient = vi.mocked(WebClient.createClient);
+    const resolveClient = createClient.getMockImplementation()!;
+    // A macrotask between attempts keeps a re-init loop from starving waitFor's timer.
+    createClient.mockImplementation(
+      (...args) =>
+        new Promise((resolve) =>
+          setTimeout(() => resolve(resolveClient(...args)), 0)
+        )
+    );
+    try {
+      render(
+        <MidenProvider>
+          <StatusDisplay />
+        </MidenProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ready").textContent).toBe("true");
+      });
+      await act(async () => {
+        useMidenStore.getState().setSyncState({ lastSyncTime: 1 });
+      });
+
+      expect(createClient).toHaveBeenCalledTimes(1);
+    } finally {
+      createClient.mockImplementation(resolveClient);
+    }
   });
 });
 
