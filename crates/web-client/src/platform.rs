@@ -142,6 +142,9 @@ pub type JsU64 = napi::bindgen_prelude::BigInt;
 /// Returns a [`JsErr`] if `val` is negative or otherwise outside the representable `u64`
 /// range (`0..2^64`), instead of panicking. On Node.js, `napi::bindgen_prelude::BigInt` has no
 /// such constraint at the type level, so an out-of-range `BigInt` is valid input to reach here.
+// Fallible under nodejs, where a BigInt can be out of range; the browser build already
+// receives a u64.
+#[cfg_attr(feature = "browser", allow(clippy::unnecessary_wraps))]
 #[inline]
 pub fn js_u64_to_u64(val: JsU64) -> Result<u64, JsErr> {
     #[cfg(feature = "browser")]
