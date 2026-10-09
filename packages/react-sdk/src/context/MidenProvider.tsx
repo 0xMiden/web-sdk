@@ -36,6 +36,13 @@ const MidenContext = createContext<MidenContextValue | null>(null);
 
 interface MidenProviderProps {
   children: ReactNode;
+  /**
+   * Client configuration. Keep its identity stable: define it outside the
+   * component, or memoize it with `useMemo` when the component that renders
+   * `MidenProvider` re-renders. Without a signer provider, each new `config`
+   * object makes `MidenProvider` re-create its client and leave the replaced
+   * one running.
+   */
   config?: MidenConfig;
   /** Custom loading component shown during WASM initialization */
   loadingComponent?: ReactNode;
