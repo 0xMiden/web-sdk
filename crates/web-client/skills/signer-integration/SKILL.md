@@ -219,8 +219,8 @@ Omit both key callbacks for a sign-only service; `MidenProvider` forwards them v
 | `accountType` | no | **`@deprecated` and ignored** - visibility comes solely from `storageMode`. Omit it |
 
 `signCb` is not handed to the client directly. `MidenProvider` keeps the latest callback in a ref
-and passes a wrapper that reads through it, so reconnecting the *same* identity hot-swaps the
-callback (`store.client.setSignCb(wrappedSignCb)`) instead of rebuilding the client. A wrapped call
+and passes a wrapper that reads through it, so reconnecting the *same* identity reuses the client,
+whose wrapper calls the new callback through that ref, instead of rebuilding the client. A wrapped call
 made after disconnect throws `Signer is disconnected. Cannot sign.`
 (`packages/react-sdk/src/context/MidenProvider.tsx:166-212`).
 
