@@ -8,6 +8,7 @@ import type {
   AccountFile,
   AccountCode,
   AssetVault,
+  NonFungibleAsset,
   Word,
   Felt,
   TransactionId,
@@ -158,6 +159,7 @@ export type FaucetType = (typeof FaucetType)[keyof typeof FaucetType];
  */
 export declare const FaucetType: {
   readonly FungibleFaucet: "FungibleFaucet";
+  readonly NonFungibleFaucet: "NonFungibleFaucet";
 };
 
 // ════════════════════════════════════════════════════════════════
@@ -301,6 +303,12 @@ export interface Asset {
 }
 
 /**
+ * An asset to transfer: a fungible amount (`{ token, amount }`) or one
+ * `NonFungibleAsset`.
+ */
+export type TransferAsset = Asset | NonFungibleAsset;
+
+/**
  * A note reference: hex note ID string, NoteId object, InputNoteRecord, or Note object.
  */
 export type NoteInput = string | NoteId | Note | InputNoteRecord;
@@ -311,12 +319,14 @@ export type NoteInput = string | NoteId | Note | InputNoteRecord;
 
 /**
  * Create a wallet, faucet, or contract. A faucet sets `type:
- * FaucetType.FungibleFaucet`, a contract passes `components`, and a wallet is
- * the default (neither). Visibility comes from `storage`.
+ * FaucetType.FungibleFaucet` or `type: FaucetType.NonFungibleFaucet`, a
+ * contract passes `components`, and a wallet is the default (neither).
+ * Visibility comes from `storage`.
  */
 export type CreateAccountOptions =
   | WalletCreateOptions
   | FaucetCreateOptions
+  | NonFungibleFaucetCreateOptions
   | ContractCreateOptions;
 
 export interface WalletCreateOptions {
@@ -327,12 +337,27 @@ export interface WalletCreateOptions {
 
 export interface FaucetCreateOptions {
   /** Use `FaucetType.FungibleFaucet`. */
-  type: FaucetType;
+  type: typeof FaucetType.FungibleFaucet;
   /** Human-readable token name. Defaults to `symbol` when omitted. */
   name?: string;
   symbol: string;
   decimals: number;
   maxSupply: number | bigint;
+  storage?: StorageMode;
+  auth?: AuthSchemeType;
+}
+
+/**
+ * Options for a non-fungible faucet. It mints `NonFungibleAsset`s with
+ * `transactions.mint({ account, to, asset })`, so it takes no `decimals` or
+ * `maxSupply`; passing either throws.
+ */
+export interface NonFungibleFaucetCreateOptions {
+  /** Use `FaucetType.NonFungibleFaucet`. */
+  type: typeof FaucetType.NonFungibleFaucet;
+  /** Human-readable collection name. Defaults to `symbol` when omitted. */
+  name?: string;
+  symbol: string;
   storage?: StorageMode;
   auth?: AuthSchemeType;
 }
@@ -495,8 +520,34 @@ export interface SendOptionsReturnNote extends TransactionOptions {
   returnNote: true;
 }
 
+/** Replaces the fungible `token` and `amount` of a send or mint with one non-fungible asset. */
+export interface NonFungibleAssetField {
+  /** The non-fungible asset to transfer. */
+  asset: NonFungibleAsset;
+  token?: never;
+  amount?: never;
+}
+
+/** Send one non-fungible asset in a P2ID note (P2IDE with `reclaimAfter` / `timelockUntil`). */
+export type SendNonFungibleOptions = Omit<
+  SendOptionsDefault,
+  "token" | "amount"
+> &
+  NonFungibleAssetField;
+
+/** Send one non-fungible asset and return the created P2ID note. */
+export type SendNonFungibleReturnNoteOptions = Omit<
+  SendOptionsReturnNote,
+  "token" | "amount"
+> &
+  NonFungibleAssetField;
+
 /** @deprecated Use SendOptionsDefault or SendOptionsReturnNote instead */
-export type SendOptions = SendOptionsDefault | SendOptionsReturnNote;
+export type SendOptions =
+  | SendOptionsDefault
+  | SendOptionsReturnNote
+  | SendNonFungibleOptions
+  | SendNonFungibleReturnNoteOptions;
 
 export interface SendResult {
   txId: TransactionId;
@@ -533,7 +584,7 @@ export interface NetworkNoteOptions extends TransactionOptions {
   /** Note storage / inputs the script reads (used with `script`). */
   inputs?: bigint[];
   /** Assets locked into the note. Optional — a note may carry no assets. */
-  assets?: Asset | Asset[];
+  assets?: TransferAsset | TransferAsset[];
   /** Extra attachment payload appended AFTER the required `NetworkAccountTarget`. */
   attachment?: bigint[];
 }
@@ -562,6 +613,13 @@ export interface MintOptions extends TransactionOptions {
   /** Note visibility. Defaults to "public". */
   type?: NoteVisibility;
 }
+
+/**
+ * Mint one non-fungible asset from a non-fungible faucet. `asset` must be
+ * issued by `account`; build it with `new NonFungibleAsset(faucetId, value)`.
+ */
+export type MintNonFungibleOptions = Omit<MintOptions, "amount"> &
+  NonFungibleAssetField;
 
 export interface BridgeOptions extends TransactionOptions {
   /** Account that creates and funds the bridge note (the sender / executing account). */
@@ -608,6 +666,14 @@ export type BatchOperation =
       reclaimAfter?: number;
       timelockUntil?: number;
     }
+  | ({
+      kind: "send";
+      account: AccountRef;
+      to: AccountRef;
+      type?: NoteVisibility;
+      reclaimAfter?: number;
+      timelockUntil?: number;
+    } & NonFungibleAssetField)
   | {
       kind: "mint";
       account: AccountRef;
@@ -615,6 +681,12 @@ export type BatchOperation =
       amount: number | bigint;
       type?: NoteVisibility;
     }
+  | ({
+      kind: "mint";
+      account: AccountRef;
+      to: AccountRef;
+      type?: NoteVisibility;
+    } & NonFungibleAssetField)
   | {
       kind: "consume";
       account: AccountRef;
@@ -623,8 +695,8 @@ export type BatchOperation =
   | {
       kind: "swap";
       account: AccountRef;
-      offer: Asset;
-      request: Asset;
+      offer: TransferAsset;
+      request: TransferAsset;
       type?: NoteVisibility;
       paybackType?: NoteVisibility;
     }
@@ -755,8 +827,10 @@ export interface TransactionSubmission {
 
 export interface SwapOptions extends TransactionOptions {
   account: AccountRef;
-  offer: Asset;
-  request: Asset;
+  /** Asset the SWAP note carries. Fungible or non-fungible. */
+  offer: TransferAsset;
+  /** Asset the payback note must carry. Fungible or non-fungible. */
+  request: TransferAsset;
   type?: NoteVisibility;
   paybackType?: NoteVisibility;
 }
@@ -859,6 +933,18 @@ export interface PreviewMintOptions {
   type?: NoteVisibility;
 }
 
+export type PreviewSendNonFungibleOptions = Omit<
+  PreviewSendOptions,
+  "token" | "amount"
+> &
+  NonFungibleAssetField;
+
+export type PreviewMintNonFungibleOptions = Omit<
+  PreviewMintOptions,
+  "amount"
+> &
+  NonFungibleAssetField;
+
 export interface PreviewBridgeOptions {
   operation: "bridge";
   account: AccountRef;
@@ -915,7 +1001,9 @@ export interface PreviewCustomOptions extends AnchoredOptions {
 
 export type PreviewOptions =
   | PreviewSendOptions
+  | PreviewSendNonFungibleOptions
   | PreviewMintOptions
+  | PreviewMintNonFungibleOptions
   | PreviewBridgeOptions
   | PreviewConsumeOptions
   | PreviewSwapOptions
@@ -1174,23 +1262,27 @@ export interface AccountsResource {
 export interface TransactionsResource {
   /**
    * Send tokens to another account by creating a pay-to-ID note. Set
-   * `returnNote: true` to get the created note back.
+   * `returnNote: true` to get the created note back. Pass `asset` instead of
+   * `token` and `amount` to send one non-fungible asset.
    *
-   * @param options - Send options including sender, recipient, token, and amount.
+   * @param options - Send options including sender, recipient, and the token and amount or the non-fungible asset.
    */
   send(
-    options: SendOptionsDefault
+    options: SendOptionsDefault | SendNonFungibleOptions
   ): Promise<{ txId: TransactionId; note: null; result: TransactionResult }>;
   send(
-    options: SendOptionsReturnNote
+    options: SendOptionsReturnNote | SendNonFungibleReturnNoteOptions
   ): Promise<{ txId: TransactionId; note: Note; result: TransactionResult }>;
   send(options: SendOptions): Promise<SendResult>;
   /**
-   * Mint new tokens from a faucet account.
+   * Mint new tokens from a faucet account. For a non-fungible faucet, pass
+   * `asset` (issued by `account`) instead of `amount`.
    *
-   * @param options - Mint options including the faucet, recipient, and amount.
+   * @param options - Mint options including the faucet, recipient, and the amount or the non-fungible asset.
    */
-  mint(options: MintOptions): Promise<TransactionSubmitResult>;
+  mint(
+    options: MintOptions | MintNonFungibleOptions
+  ): Promise<TransactionSubmitResult>;
   /**
    * Builds a Public custom-script note carrying a `NetworkAccountTarget`
    * attachment, submits it as an own output note, and (optionally) waits for

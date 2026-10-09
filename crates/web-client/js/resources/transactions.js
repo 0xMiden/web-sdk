@@ -18,6 +18,37 @@ export const PREVIEW_BUILT_IN_OPERATIONS = new Set([
 ]);
 
 /**
+ * True for a WASM asset object (`NonFungibleAsset`, `FungibleAsset` or
+ * `VaultAsset`), false for a fungible `{ token, amount }`.
+ */
+function isAssetObject(asset) {
+  return typeof asset?.intoWord === "function";
+}
+
+/** Converts `{ token, amount }` or a WASM asset object into a WASM asset. */
+function toWasmAsset(asset, wasm) {
+  if (isAssetObject(asset)) return asset;
+  return new wasm.FungibleAsset(
+    resolveAccountRef(asset.token, wasm),
+    BigInt(asset.amount)
+  );
+}
+
+/**
+ * Returns the asset a send or mint transfers: `opts.asset` when set, else the
+ * fungible `opts.token` / `opts.amount`. Throws if both forms are given.
+ */
+function resolveTransferAsset(opts, wasm) {
+  if (opts.asset == null) {
+    return toWasmAsset({ token: opts.token, amount: opts.amount }, wasm);
+  }
+  if (opts.token != null || opts.amount != null) {
+    throw new Error("Pass either `asset` or `token` and `amount`, not both.");
+  }
+  return opts.asset;
+}
+
+/**
  * Reject an `anchor` that is present but falsy — except `undefined`, which is
  * how an optional property spells "absent".
  *
@@ -121,15 +152,12 @@ export class TransactionsResource {
 
       const senderId = resolveAccountRef(opts.account, wasm);
       const receiverId = resolveAccountRef(opts.to, wasm);
-      const faucetId = resolveAccountRef(opts.token, wasm);
       const noteType = resolveNoteType(opts.type, wasm);
 
       const note = wasm.Note.createP2IDNote(
         senderId,
         receiverId,
-        new wasm.NoteAssets([
-          new wasm.FungibleAsset(faucetId, BigInt(opts.amount)),
-        ]),
+        new wasm.NoteAssets([resolveTransferAsset(opts, wasm)]),
         noteType,
         new wasm.NoteAttachment()
       );
@@ -198,12 +226,8 @@ export class TransactionsResource {
 
     const noteAssets = opts.assets
       ? new wasm.NoteAssets(
-          (Array.isArray(opts.assets) ? opts.assets : [opts.assets]).map(
-            (a) =>
-              new wasm.FungibleAsset(
-                resolveAccountRef(a.token, wasm),
-                BigInt(a.amount)
-              )
+          (Array.isArray(opts.assets) ? opts.assets : [opts.assets]).map((a) =>
+            toWasmAsset(a, wasm)
           )
         )
       : new wasm.NoteAssets();
@@ -1070,8 +1094,21 @@ export class TransactionsResource {
   async #buildSendRequest(opts, wasm) {
     const accountId = resolveAccountRef(opts.account, wasm);
     const targetId = resolveAccountRef(opts.to, wasm);
-    const faucetId = resolveAccountRef(opts.token, wasm);
     const noteType = resolveNoteType(opts.type, wasm);
+
+    if (opts.asset != null) {
+      const request = await this.#inner.newSendAssetTransactionRequest(
+        accountId,
+        targetId,
+        resolveTransferAsset(opts, wasm),
+        noteType,
+        opts.reclaimAfter,
+        opts.timelockUntil
+      );
+      return { accountId, request };
+    }
+
+    const faucetId = resolveAccountRef(opts.token, wasm);
     const amount = BigInt(opts.amount);
 
     const request = await this.#inner.newSendTransactionRequest(
@@ -1090,6 +1127,24 @@ export class TransactionsResource {
     const accountId = resolveAccountRef(opts.account, wasm);
     const targetId = resolveAccountRef(opts.to, wasm);
     const noteType = resolveNoteType(opts.type, wasm);
+
+    if (opts.asset != null) {
+      if (opts.amount != null) {
+        throw new Error("Pass either `asset` or `amount`, not both.");
+      }
+      if (opts.asset.faucetId().toString() !== accountId.toString()) {
+        throw new Error(
+          "mint: `asset` must be issued by the minting faucet `account`."
+        );
+      }
+      const request = await this.#inner.newMintNonFungibleTransactionRequest(
+        targetId,
+        opts.asset,
+        noteType
+      );
+      return { accountId, request };
+    }
+
     const amount = BigInt(opts.amount);
 
     // WASM signature: newMintTransactionRequest(target, faucet, noteType, amount)
@@ -1168,13 +1223,25 @@ export class TransactionsResource {
 
   async #buildSwapRequest(opts, wasm) {
     const accountId = resolveAccountRef(opts.account, wasm);
-    const offeredFaucetId = resolveAccountRef(opts.offer.token, wasm);
-    const requestedFaucetId = resolveAccountRef(opts.request.token, wasm);
     const noteType = resolveNoteType(opts.type, wasm);
     const paybackNoteType = resolveNoteType(
       opts.paybackType ?? opts.type,
       wasm
     );
+
+    if (isAssetObject(opts.offer) || isAssetObject(opts.request)) {
+      const request = await this.#inner.newSwapAssetsTransactionRequest(
+        accountId,
+        toWasmAsset(opts.offer, wasm),
+        toWasmAsset(opts.request, wasm),
+        noteType,
+        paybackNoteType
+      );
+      return { accountId, request };
+    }
+
+    const offeredFaucetId = resolveAccountRef(opts.offer.token, wasm);
+    const requestedFaucetId = resolveAccountRef(opts.request.token, wasm);
 
     const request = await this.#inner.newSwapTransactionRequest(
       accountId,
