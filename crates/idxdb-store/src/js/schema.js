@@ -211,6 +211,9 @@ export const V1_STORES = {
 };
 export class MidenDatabase {
     dexie;
+    // The version of the client running in this realm, as passed to `open`; empty when it was
+    // opened without one. A store's stamp records the last opener, so an import compares with this.
+    clientVersion = "";
     accountCodes;
     latestAccountStorages;
     historicalAccountStorages;
@@ -375,6 +378,7 @@ export class MidenDatabase {
     }
     async open(clientVersion) {
         console.log(`Opening database ${this.dexie.name} for client version ${clientVersion}...`);
+        this.clientVersion = clientVersion;
         try {
             await this.refuseInstalledNewerStore();
             await this.dexie.open();

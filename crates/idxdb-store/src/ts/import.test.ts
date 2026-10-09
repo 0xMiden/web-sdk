@@ -30,9 +30,9 @@ afterEach(async () => {
 // above the migration baseline and not newer than this.
 const CLIENT_VERSION = "0.17.4";
 
-async function openTestDb(): Promise<string> {
+async function openTestDb(version: string = CLIENT_VERSION): Promise<string> {
   const name = uniqueDbName();
-  await openDatabase(name, CLIENT_VERSION);
+  await openDatabase(name, version);
   openDbIds.push(name);
   return name;
 }
@@ -433,6 +433,39 @@ describe("forceImportStore refuses a dump the store could not have kept", () => 
       forceImportStore(target, await dumpStamped(null))
     ).rejects.toThrow(/no client version stamp/);
     await expectUntouched(target);
+  });
+
+  async function stampOf(dbId: string): Promise<string | undefined> {
+    const row = await getDatabase(dbId).settings.get([
+      SETTING_SCOPE_CLIENT,
+      CLIENT_VERSION_SETTING_KEY,
+    ]);
+    return row ? new TextDecoder().decode(row.value) : undefined;
+  }
+
+  it("keeps the running client's stamp across imports into one open store", async () => {
+    const target = await targetWithRow();
+    await forceImportStore(target, await dumpStamped("0.17.0"));
+    expect(await stampOf(target)).toBe(CLIENT_VERSION);
+    await forceImportStore(target, await dumpStamped(CLIENT_VERSION));
+    expect(await stampOf(target)).toBe(CLIENT_VERSION);
+  });
+
+  it("compares with the running client when another client left its stamp", async () => {
+    const target = await targetWithRow();
+    await getDatabase(target).settings.put({
+      scope: SETTING_SCOPE_CLIENT,
+      key: CLIENT_VERSION_SETTING_KEY,
+      value: new TextEncoder().encode("0.17.1"),
+    });
+    await forceImportStore(target, await dumpStamped(CLIENT_VERSION));
+    expect(await getDatabase(target).inputNotes.get("dumped")).toBeDefined();
+  });
+
+  it("leaves the dump's stamp when the store was opened without a version", async () => {
+    const target = await openTestDb("");
+    await forceImportStore(target, await dumpStamped("0.17.5"));
+    expect(await stampOf(target)).toBe("0.17.5");
   });
 
   it("imports a dump stamped with the running client's version or an older 0.17 one", async () => {

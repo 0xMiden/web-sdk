@@ -559,6 +559,9 @@ export type MidenDexie = Dexie & {
 
 export class MidenDatabase {
   dexie: MidenDexie;
+  // The version of the client running in this realm, as passed to `open`; empty when it was
+  // opened without one. A store's stamp records the last opener, so an import compares with this.
+  clientVersion = "";
   accountCodes: Dexie.Table<IAccountCode, string>;
   latestAccountStorages: Dexie.Table<ILatestAccountStorage, string>;
   historicalAccountStorages: Dexie.Table<IHistoricalAccountStorage, string>;
@@ -806,6 +809,7 @@ export class MidenDatabase {
     console.log(
       `Opening database ${this.dexie.name} for client version ${clientVersion}...`
     );
+    this.clientVersion = clientVersion;
     try {
       await this.refuseInstalledNewerStore();
       await this.dexie.open();
@@ -866,7 +870,7 @@ export class MidenDatabase {
     }
   }
 
-  private async persistClientVersion(clientVersion: string): Promise<void> {
+  async persistClientVersion(clientVersion: string): Promise<void> {
     await this.settings.put({
       scope: SETTING_SCOPE_CLIENT,
       key: CLIENT_VERSION_SETTING_KEY,

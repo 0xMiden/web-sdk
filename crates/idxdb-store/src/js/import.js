@@ -3,7 +3,7 @@
 // should be enough + the TS compiler.
 /* eslint-disable */
 import * as semver from "semver";
-import { CLIENT_VERSION_SETTING_KEY, getDatabase, MIGRATION_BASELINE, NOTE_TRANSPORT_OUTBOX_SETTING_KEY, readClientVersion, SETTING_SCOPE_CLIENT, } from "./schema.js";
+import { CLIENT_VERSION_SETTING_KEY, getDatabase, MIGRATION_BASELINE, NOTE_TRANSPORT_OUTBOX_SETTING_KEY, SETTING_SCOPE_CLIENT, } from "./schema.js";
 import { logWebStoreError } from "./utils.js";
 async function recursivelyTransformForImport(obj) {
     switch (obj.type) {
@@ -46,8 +46,8 @@ export async function transformForImport(obj) {
 }
 // An import writes rows without the upgrade() callbacks an open runs, so it takes only a dump this
 // store could have kept: one stamped by a client at or after MIGRATION_BASELINE and not newer than
-// the running one, whose stamp `open` wrote into the target. Anything else is refused before the
-// target is cleared.
+// the client running in this realm (the version the store was opened with; with none recorded the
+// newer check is skipped). Anything else is refused before the target is cleared.
 async function refuseUnkeptDump(dbJson, runningVersion) {
     const rows = Array.isArray(dbJson.settings) ? dbJson.settings : [];
     const stampRow = rows.find((row) => row?.scope === SETTING_SCOPE_CLIENT &&
@@ -83,7 +83,7 @@ export async function forceImportStore(dbId, jsonStr) {
         if (jsonTableNames.length === 0) {
             throw new Error("No tables found in the provided JSON.");
         }
-        await refuseUnkeptDump(dbJson, await readClientVersion(db.settings));
+        await refuseUnkeptDump(dbJson, db.clientVersion || null);
         await db.dexie.transaction("rw", dbTableNames, async () => {
             await Promise.all(db.dexie.tables.map((t) => t.clear()));
             for (const tableName of jsonTableNames) {
@@ -101,6 +101,11 @@ export async function forceImportStore(dbId, jsonStr) {
                 SETTING_SCOPE_CLIENT,
                 NOTE_TRANSPORT_OUTBOX_SETTING_KEY,
             ]);
+            // The dump brought its own stamp; the store now belongs to the running client, as after an
+            // open. With no recorded version the dump's stamp stays.
+            if (db.clientVersion) {
+                await db.persistClientVersion(db.clientVersion);
+            }
         });
         console.log("Store imported successfully.");
     }
