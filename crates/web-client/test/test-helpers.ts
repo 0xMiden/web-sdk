@@ -47,7 +47,6 @@ export async function setupWalletAndFaucet(
   );
   const faucet = await client.newFaucet(
     sdk.AccountStorageMode.private(),
-    false,
     "DAG",
     "DAG",
     8,
@@ -809,7 +808,6 @@ function wrapClientForMidenClient(
       if (prop === "newFaucet") {
         return (
           mode: any,
-          nonFungible: any,
           name: any,
           symbol: any,
           decimals: any,
@@ -819,7 +817,6 @@ function wrapClientForMidenClient(
         ) =>
           target.newFaucet(
             mode,
-            nonFungible,
             name,
             symbol,
             decimals,

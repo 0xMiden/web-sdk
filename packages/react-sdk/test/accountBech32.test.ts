@@ -147,7 +147,6 @@ test.describe("accountBech32 utilities (Playwright)", () => {
       await client.syncState();
       const faucet = await client.newFaucet(
         (window as any).AccountStorageMode.private(),
-        false,
         "TEST",
         "TEST",
         8,

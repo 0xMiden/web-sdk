@@ -148,7 +148,6 @@ test.describe("remote keystore", () => {
       // Create faucet first so insertKeyCb captures its public key
       const faucet = await client.newFaucet(
         window.AccountStorageMode.private(),
-        false,
         "DAG",
         "DAG",
         8,

@@ -1,7 +1,9 @@
 use js_export_macro::js_export;
 use miden_client::account::AccountVaultPatch as NativeAccountVaultPatch;
 
+use crate::models::asset::native_non_fungible_asset;
 use crate::models::fungible_asset::FungibleAsset;
+use crate::models::non_fungible_asset::NonFungibleAsset;
 use crate::models::word::Word;
 use crate::platform::{JsBytes, JsErr};
 use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
@@ -42,6 +44,15 @@ impl AccountVaultPatch {
             .updated_assets()
             .filter(miden_client::asset::Asset::is_fungible)
             .map(|asset| asset.unwrap_fungible().into())
+            .collect()
+    }
+
+    /// Returns non-fungible assets that were added.
+    #[js_export(js_name = "updatedNonFungibleAssets")]
+    pub fn updated_non_fungible_assets(&self) -> Vec<NonFungibleAsset> {
+        self.0
+            .updated_assets()
+            .filter_map(|asset| native_non_fungible_asset(&asset).map(Into::into))
             .collect()
     }
 

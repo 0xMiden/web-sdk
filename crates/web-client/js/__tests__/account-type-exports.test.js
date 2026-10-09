@@ -49,13 +49,9 @@ describe.each([
   });
 
   it.each([
-    [
-      "FaucetType.FungibleFaucet",
-      (entry) => entry.FaucetType.FungibleFaucet,
-      false,
-    ],
-    ["legacy numeric 1", () => 1, true],
-  ])("routes %s to faucet creation", async (_label, selector, nonFungible) => {
+    ["FaucetType.FungibleFaucet", (entry) => entry.FaucetType.FungibleFaucet],
+    ["legacy numeric 0", () => 0],
+  ])("routes %s to faucet creation", async (_label, selector) => {
     const inner = { newFaucet: vi.fn().mockResolvedValue("faucet") };
     const resource = new AccountsResource(
       inner,
@@ -75,7 +71,6 @@ describe.each([
     ).resolves.toBe("faucet");
     expect(inner.newFaucet).toHaveBeenCalledWith(
       "public",
-      nonFungible,
       "TOK",
       "TOK",
       8,

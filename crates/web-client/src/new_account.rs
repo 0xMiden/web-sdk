@@ -7,7 +7,7 @@ use super::models::account::Account;
 use super::models::account_storage_mode::AccountStorageMode;
 use super::models::auth::AuthScheme;
 use super::models::auth_secret_key::AuthSecretKey as WebAuthSecretKey;
-use crate::helpers::{generate_faucet, generate_wallet};
+use crate::helpers::{generate_faucet, generate_non_fungible_faucet, generate_wallet};
 use crate::models::account_id::AccountId;
 use crate::platform::{JsErr, from_str_err, js_u64_to_u64, maybe_wrap_send};
 use crate::{WebClient, js_error_with_context};
@@ -35,33 +35,50 @@ impl WebClient {
             }
         }
     }
+
+    /// Stores a newly built faucet account and adds its secret key to the keystore.
+    async fn persist_new_faucet(
+        &self,
+        new_account: miden_client::account::Account,
+        key_pair: &AuthSecretKey,
+    ) -> Result<Account, JsErr> {
+        let keystore = self.get_keystore().await?;
+
+        {
+            let mut guard = self.get_mut_inner().await;
+            let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+            client
+                .add_account(&new_account, false)
+                .await
+                .map_err(|err| js_error_with_context(err, "failed to insert new faucet"))?;
+        }
+
+        keystore
+            .add_key(key_pair, new_account.id())
+            .await
+            .map_err(|err| from_str_err(&err.to_string()))?;
+
+        Ok(new_account.into())
+    }
 }
 
 #[js_export]
 impl WebClient {
     /// Creates, persists, and returns a new fungible faucet account.
     ///
-    /// Only fungible faucets are supported, so passing `non_fungible = true` fails fast with a
-    /// clear message. The faucet is registered with mint and burn policies (both `AllowAll`); its
-    /// secret key is added to the keystore.
+    /// The faucet is registered with mint and burn policies (both `AllowAll`); its secret key is
+    /// added to the keystore.
     #[js_export(js_name = "newFaucet")]
-    #[allow(clippy::too_many_arguments)]
     pub async fn new_faucet(
         &self,
         storage_mode: &AccountStorageMode,
-        non_fungible: bool,
         token_name: String,
         token_symbol: String,
         decimals: u8,
         max_supply: JsU64,
         auth_scheme: AuthScheme,
     ) -> Result<Account, JsErr> {
-        if non_fungible {
-            return Err(from_str_err("Non-fungible faucets are not supported yet"));
-        }
-
         self.maybe_sync_before_account_creation().await;
-        let keystore = self.get_keystore().await?;
 
         let max_supply = js_u64_to_u64(max_supply);
         let (new_account, key_pair) = generate_faucet(
@@ -74,21 +91,28 @@ impl WebClient {
         )
         .await?;
 
-        {
-            let mut guard = self.get_mut_inner().await;
-            let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-            client
-                .add_account(&new_account, false)
-                .await
-                .map_err(|err| js_error_with_context(err, "failed to insert new faucet"))?;
-        }
+        self.persist_new_faucet(new_account, &key_pair).await
+    }
 
-        keystore
-            .add_key(&key_pair, new_account.id())
-            .await
-            .map_err(|err| from_str_err(&err.to_string()))?;
+    /// Creates, persists, and returns a new non-fungible faucet account.
+    ///
+    /// The faucet is registered with mint and burn policies (both `AllowAll`); its secret key is
+    /// added to the keystore.
+    #[js_export(js_name = "newNonFungibleFaucet")]
+    pub async fn new_non_fungible_faucet(
+        &self,
+        storage_mode: &AccountStorageMode,
+        token_name: String,
+        token_symbol: String,
+        auth_scheme: AuthScheme,
+    ) -> Result<Account, JsErr> {
+        self.maybe_sync_before_account_creation().await;
 
-        Ok(new_account.into())
+        let (new_account, key_pair) =
+            generate_non_fungible_faucet(storage_mode, token_name, token_symbol, auth_scheme)
+                .await?;
+
+        self.persist_new_faucet(new_account, &key_pair).await
     }
 
     #[js_export(js_name = "newWallet")]

@@ -16,7 +16,6 @@ test.describe("mock chain tests", () => {
       );
       const faucetAccount = await client.newFaucet(
         sdk.AccountStorageMode.private(),
-        false,
         "DAG",
         "DAG",
         8,

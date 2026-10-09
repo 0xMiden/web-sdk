@@ -358,7 +358,6 @@ test.describe("unified note assets", () => {
       await client.newAccount(registry, false);
       const faucet = await client.newFaucet(
         sdk.AccountStorageMode.public(),
-        false,
         "FEE",
         "FEE",
         8,
@@ -487,5 +486,111 @@ test.describe("unified note assets", () => {
     expect(result.vaultKind).toBe("nonFungible");
     expect(result.vaultKey).toBe(result.expectedKey);
     expect(result.vaultValue).toBe(result.expectedValue);
+  });
+
+  test("mints and sends an NFT issued by a non-fungible faucet", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk }) => {
+      const submit = async (accountId: any, request: any) => {
+        const txId = await client.submitNewTransaction(accountId, request);
+        await client.proveBlock();
+        await client.syncState();
+        const [record] = await client.getTransactions(
+          sdk.TransactionFilter.ids([txId])
+        );
+        return record;
+      };
+      const consume = async (accountId: any, noteId: string) => {
+        const record = await client.getInputNote(noteId);
+        const request = await client.newConsumeTransactionRequest(
+          [record.toNote()],
+          accountId
+        );
+        return submit(accountId, request);
+      };
+      const nfts = async (accountId: any) =>
+        (await client.getAccount(accountId))
+          .vault()
+          .nonFungibleAssets()
+          .map((asset: any) => asset.intoWord().toHex());
+
+      const faucet = await client.newNonFungibleFaucet(
+        sdk.AccountStorageMode.public(),
+        "Collectible",
+        "NFT",
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const alice = await client.newWallet(
+        sdk.AccountStorageMode.private(),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const bob = await client.newWallet(
+        sdk.AccountStorageMode.private(),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const value = new sdk.Word(sdk.u64Array([11n, 22n, 33n, 44n]));
+      const nft = new sdk.NonFungibleAsset(faucet.id(), value);
+
+      // Mint to Alice and consume the P2ID note.
+      const mintRequest = await client.newMintNonFungibleTransactionRequest(
+        alice.id(),
+        nft,
+        sdk.NoteType.Public
+      );
+      const mint = await submit(faucet.id(), mintRequest);
+      const mintedNoteId = mint.outputNotes().notes()[0].id().toString();
+      const mintedNote = (await client.getInputNote(mintedNoteId)).toNote();
+      const mintedNoteNfts = mintedNote
+        .assets()
+        .nonFungibleAssets()
+        .map((asset: any) => asset.intoWord().toHex());
+      // Execute the consume once without submitting, to read its vault patch.
+      const preview = await client.executeTransaction(
+        alice.id(),
+        await client.newConsumeTransactionRequest([mintedNote], alice.id())
+      );
+      const patchNfts = preview
+        .executedTransaction()
+        .accountPatch()
+        .vault()
+        .updatedNonFungibleAssets()
+        .map((asset: any) => asset.intoWord().toHex());
+      await consume(alice.id(), mintedNoteId);
+      const aliceAfterMint = await nfts(alice.id());
+
+      // Send it to Bob.
+      const sendRequest =
+        await client.newSendNonFungibleAssetTransactionRequest(
+          alice.id(),
+          bob.id(),
+          nft,
+          sdk.NoteType.Public,
+          null,
+          null
+        );
+      const send = await submit(alice.id(), sendRequest);
+      const aliceAfterSend = await nfts(alice.id());
+      await consume(bob.id(), send.outputNotes().notes()[0].id().toString());
+      const bobAfterSend = await nfts(bob.id());
+
+      return {
+        isFaucet: faucet.isFaucet(),
+        isNonFungibleFaucet: faucet.isNonFungibleFaucet(),
+        expected: value.toHex(),
+        mintedNoteNfts,
+        patchNfts,
+        aliceAfterMint,
+        aliceAfterSend,
+        bobAfterSend,
+      };
+    });
+    expect(result.isFaucet).toBe(false);
+    expect(result.isNonFungibleFaucet).toBe(true);
+    expect(result.mintedNoteNfts).toEqual([result.expected]);
+    expect(result.patchNfts).toEqual([result.expected]);
+    expect(result.aliceAfterMint).toEqual([result.expected]);
+    expect(result.aliceAfterSend).toEqual([]);
+    expect(result.bobAfterSend).toEqual([result.expected]);
   });
 });

@@ -15,6 +15,15 @@ pub struct NonFungibleAsset(NativeNonFungibleAsset);
 
 #[js_export]
 impl NonFungibleAsset {
+    /// Creates a non-fungible asset issued by `faucet_id` with the given value word.
+    ///
+    /// The first two elements of `value` form the asset's token ID, which the faucet records as
+    /// issued when it mints the asset. Use this to build the asset passed to a non-fungible mint.
+    #[js_export(constructor)]
+    pub fn new(faucet_id: &AccountId, value: &Word) -> NonFungibleAsset {
+        NonFungibleAsset(NativeNonFungibleAsset::from_parts(faucet_id.into(), value.into()))
+    }
+
     /// Reconstructs an asset from its vault key and value words.
     ///
     /// Returns an error if the key is invalid, the asset composition is not non-fungible, or the
@@ -52,6 +61,12 @@ impl NonFungibleAsset {
 impl From<NativeNonFungibleAsset> for NonFungibleAsset {
     fn from(asset: NativeNonFungibleAsset) -> Self {
         Self(asset)
+    }
+}
+
+impl From<&NonFungibleAsset> for NativeNonFungibleAsset {
+    fn from(asset: &NonFungibleAsset) -> Self {
+        asset.0
     }
 }
 

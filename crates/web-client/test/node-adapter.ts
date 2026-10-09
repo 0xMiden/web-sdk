@@ -183,7 +183,6 @@ function wrapClient(client: any, storeName?: string): any {
       if (prop === "newFaucet") {
         return (
           mode: any,
-          nonFungible: any,
           name: any,
           symbol: any,
           decimals: any,
@@ -193,7 +192,6 @@ function wrapClient(client: any, storeName?: string): any {
         ) =>
           target.newFaucet(
             mode,
-            nonFungible,
             name,
             symbol,
             decimals,

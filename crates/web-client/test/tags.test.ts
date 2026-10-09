@@ -39,7 +39,6 @@ test.describe("remove_tag tests", () => {
       );
       const faucet = await client.newFaucet(
         sdk.AccountStorageMode.private(),
-        false,
         "DAG",
         "DAG",
         8,

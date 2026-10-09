@@ -1,7 +1,9 @@
 use js_export_macro::js_export;
 use miden_client::asset::{AccountVaultDelta as NativeAccountVaultDelta, Asset};
 
+use crate::models::asset::native_non_fungible_asset;
 use crate::models::fungible_asset::FungibleAsset;
+use crate::models::non_fungible_asset::NonFungibleAsset;
 use crate::platform::{JsBytes, JsErr};
 use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
 
@@ -55,6 +57,24 @@ impl AccountVaultDelta {
             .removed_assets()
             .filter(Asset::is_fungible)
             .map(|asset| asset.unwrap_fungible().into())
+            .collect()
+    }
+
+    /// Returns the non-fungible assets this delta adds to the vault.
+    #[js_export(js_name = "addedNonFungibleAssets")]
+    pub fn added_non_fungible_assets(&self) -> Vec<NonFungibleAsset> {
+        self.0
+            .added_assets()
+            .filter_map(|asset| native_non_fungible_asset(&asset).map(Into::into))
+            .collect()
+    }
+
+    /// Returns the non-fungible assets this delta removes from the vault.
+    #[js_export(js_name = "removedNonFungibleAssets")]
+    pub fn removed_non_fungible_assets(&self) -> Vec<NonFungibleAsset> {
+        self.0
+            .removed_assets()
+            .filter_map(|asset| native_non_fungible_asset(&asset).map(Into::into))
             .collect()
     }
 }

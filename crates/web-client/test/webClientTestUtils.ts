@@ -570,7 +570,6 @@ export const createNewWallet = async (
 export const createNewFaucet = async (
   testingPage: Page,
   storageMode: StorageMode = StorageMode.PUBLIC,
-  nonFungible: boolean = false,
   tokenSymbol: string = "DAG",
   decimals: number = 8,
   maxSupply: bigint = BigInt(10000000),
@@ -579,7 +578,6 @@ export const createNewFaucet = async (
   return await testingPage.evaluate(
     async ({
       storageMode,
-      nonFungible,
       tokenSymbol,
       decimals,
       maxSupply,
@@ -590,7 +588,6 @@ export const createNewFaucet = async (
         window.AccountStorageMode.tryFromStr(storageMode);
       const newFaucet = await client.newFaucet(
         accountStorageMode,
-        nonFungible,
         tokenSymbol,
         tokenSymbol,
         decimals,
@@ -614,7 +611,6 @@ export const createNewFaucet = async (
     },
     {
       storageMode,
-      nonFungible,
       tokenSymbol,
       decimals,
       maxSupply,
@@ -885,7 +881,6 @@ export const setupWalletAndFaucet = async (
     );
     const faucetAccount = await client.newFaucet(
       window.AccountStorageMode.private(),
-      false,
       "DAG",
       "DAG",
       8,
