@@ -28,6 +28,10 @@ export interface UseMintResult {
 /**
  * Hook to mint tokens from a faucet.
  *
+ * To mint from a non-fungible faucet, pass `asset` in place of `amount`. The
+ * asset must be issued by `faucetId`; build it with
+ * `new NonFungibleAsset(faucetId, value)`.
+ *
  * @example
  * ```tsx
  * function MintButton({ faucetId, targetAccountId }: Props) {
@@ -45,6 +49,13 @@ export interface UseMintResult {
  *       console.error('Mint failed:', err);
  *     }
  *   };
+ *
+ *   const handleMintNft = (value: Word) =>
+ *     mint({
+ *       faucetId,
+ *       targetAccountId,
+ *       asset: new NonFungibleAsset(AccountId.fromHex(faucetId), value),
+ *     });
  *
  *   return (
  *     <button onClick={handleMint} disabled={isLoading}>
@@ -79,15 +90,33 @@ export function useMint(): UseMintResult {
         // Convert string IDs to AccountId objects
         const targetAccountIdObj = parseAccountId(options.targetAccountId);
         const faucetIdObj = parseAccountId(options.faucetId);
+        const nonFungibleAsset = options.asset;
+
+        if (nonFungibleAsset) {
+          if (options.amount != null) {
+            throw new Error("Pass either `asset` or `amount`, not both");
+          }
+          if (
+            nonFungibleAsset.faucetId().toString() !== faucetIdObj.toString()
+          ) {
+            throw new Error("`asset` must be issued by the faucet `faucetId`");
+          }
+        }
 
         setStage("proving");
         const txResult = await runExclusiveSafe(async () => {
-          const txRequest = await client.newMintTransactionRequest(
-            targetAccountIdObj,
-            faucetIdObj,
-            noteType,
-            BigInt(options.amount)
-          );
+          const txRequest = nonFungibleAsset
+            ? await client.newMintNonFungibleTransactionRequest(
+                targetAccountIdObj,
+                nonFungibleAsset,
+                noteType
+              )
+            : await client.newMintTransactionRequest(
+                targetAccountIdObj,
+                faucetIdObj,
+                noteType,
+                BigInt(options.amount!)
+              );
 
           const txId = prover
             ? await client.submitNewTransactionWithProver(

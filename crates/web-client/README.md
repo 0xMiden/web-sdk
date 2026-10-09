@@ -478,17 +478,19 @@ const builder = new AccountBuilder(new Uint8Array(32))
 ```
 
 For `client.accounts.create()`, select visibility with `storage: "public"` or
-`"private"`, and create a fungible faucet with `type: FaucetType.FungibleFaucet`.
+`"private"`, create a fungible faucet with `type: FaucetType.FungibleFaucet`,
+and a non-fungible faucet with `type: FaucetType.NonFungibleFaucet` (`symbol`
+and an optional `name`; no `decimals` or `maxSupply`).
 Migrate previous `AccountType.FungibleFaucet` uses to `FaucetType.FungibleFaucet`.
 Omit `type` to create a wallet, or pass `components` to create a contract.
-The legacy selectors `0`, `1` and `"NonFungibleFaucet"` are still read as
-faucet types (non-fungible faucets are not supported yet and are rejected);
-`0` and `1` are also `AccountType.Private` / `AccountType.Public`, so never pass
-a visibility value as `type`. `create()` throws a `TypeError` for any other
-`type`, for faucet fields (`name`, `symbol`, `decimals`, `maxSupply`) without a
-faucet type, for `components` on a faucet, and for a faucet missing `symbol`,
-`decimals` or `maxSupply`, so a missed migration fails instead of creating a
-wallet.
+The legacy selectors `0` (fungible) and `1` (non-fungible) are still read as
+faucet types; they are also `AccountType.Private` / `AccountType.Public`, so
+never pass a visibility value as `type`. `create()` throws a `TypeError` for any
+other `type`, for faucet fields (`name`, `symbol`, `decimals`, `maxSupply`)
+without a faucet type, for `components` on a faucet, for a fungible faucet
+missing `symbol`, `decimals` or `maxSupply`, and for a non-fungible faucet
+missing `symbol` or given `decimals` or `maxSupply`, so a missed migration
+fails instead of creating a wallet.
 
 ### Create a New Wallet
 
@@ -609,6 +611,41 @@ for (const record of all) {
 const balance = await client.accounts.getBalance(wallet, dagToken);
 console.log(`Balance: ${balance}`);
 ```
+
+### Mint, Send and Swap Non-Fungible Assets
+
+```typescript
+import { FaucetType, NonFungibleAsset, Word } from "@miden-sdk/miden-sdk";
+
+const collection = await client.accounts.create({
+  type: FaucetType.NonFungibleFaucet,
+  name: "Collectible",
+  symbol: "NFT",
+});
+
+// The first two value elements are the token ID the faucet records as issued.
+const value = new Word(new BigUint64Array([1n, 2n, 3n, 4n]));
+const nft = new NonFungibleAsset(collection.id(), value);
+
+await client.transactions.mint({ account: collection, to: alice, asset: nft });
+// After Alice consumes the P2ID note:
+await client.transactions.send({ account: alice, to: bob, asset: nft });
+await client.transactions.swap({
+  account: bob,
+  offer: nft,
+  request: { token: tokenFaucet, amount: 100n },
+});
+```
+
+A non-fungible faucet takes `symbol` and an optional `name`; it has no
+`decimals` or `maxSupply`, and passing either throws. `Account.isFaucet()` is
+true for it. `mint` with `asset` requires that `account` is the faucet that
+issued the asset. A faucet issues each token ID once; minting the same token ID
+again fails. `send` with `asset` takes the same `type`, `reclaimAfter`,
+`timelockUntil` and `returnNote` options as a fungible send. `swap` accepts a
+`NonFungibleAsset` for `offer`, `request`, or both, and `createNetworkNote`
+accepts one in `assets`. Batch `send` and `mint` operations and `preview()`
+take the same `asset` form. Bridge and PSWAP remain fungible-only.
 
 ### Read Non-Fungible Assets
 

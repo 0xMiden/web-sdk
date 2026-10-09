@@ -2419,9 +2419,8 @@ dependencies = [
 
 [[package]]
 name = "miden-client"
-version = "0.17.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2c750011375ee29cc9f98d784395a5883eb2daaa615c49b869ed74ded407397"
+version = "0.17.2"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=ricomateo-nfa-readiness#bddacf845c380d981a6ab47a7026f10bde421397"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2460,9 +2459,8 @@ dependencies = [
 
 [[package]]
 name = "miden-client-proto"
-version = "0.17.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66b5e863bb6be3600a33a5ca02d1d6bd8ae63b8dbade53e9b166fbe5db478da2"
+version = "0.17.2"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=ricomateo-nfa-readiness#bddacf845c380d981a6ab47a7026f10bde421397"
 dependencies = [
  "miden-client",
  "miden-objects",
@@ -2475,9 +2473,8 @@ dependencies = [
 
 [[package]]
 name = "miden-client-sqlite-store"
-version = "0.17.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "707b7b9d82469518570c07b25aefb90233c710015a62f9097daf52d8c6c9656d"
+version = "0.17.2"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=ricomateo-nfa-readiness#bddacf845c380d981a6ab47a7026f10bde421397"
 dependencies = [
  "anyhow",
  "async-trait",

@@ -6,6 +6,7 @@ import type {
   TransactionResult,
 } from "../types";
 import { DEFAULTS } from "../types";
+import { FungibleAsset } from "@miden-sdk/miden-sdk";
 import { parseAccountId } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
 import { getNoteType } from "../utils/noteFilters";
@@ -27,6 +28,10 @@ export interface UseSwapResult {
 
 /**
  * Hook to create atomic swap transactions.
+ *
+ * Either side may be one non-fungible asset: pass `offeredAsset` in place of
+ * `offeredFaucetId` and `offeredAmount`, or `requestedAsset` in place of
+ * `requestedFaucetId` and `requestedAmount`.
  *
  * @example
  * ```tsx
@@ -83,20 +88,35 @@ export function useSwap(): UseSwapResult {
 
         // Convert string IDs to AccountId objects
         const accountIdObj = parseAccountId(options.accountId);
-        const offeredFaucetIdObj = parseAccountId(options.offeredFaucetId);
-        const requestedFaucetIdObj = parseAccountId(options.requestedFaucetId);
 
         setStage("proving");
         const txResult = await runExclusiveSafe(async () => {
-          const txRequest = await client.newSwapTransactionRequest(
-            accountIdObj,
-            offeredFaucetIdObj,
-            BigInt(options.offeredAmount),
-            requestedFaucetIdObj,
-            BigInt(options.requestedAmount),
-            noteType,
-            paybackNoteType
-          );
+          const txRequest =
+            options.offeredAsset || options.requestedAsset
+              ? await client.newSwapAssetsTransactionRequest(
+                  accountIdObj,
+                  options.offeredAsset ??
+                    new FungibleAsset(
+                      parseAccountId(options.offeredFaucetId!),
+                      BigInt(options.offeredAmount!)
+                    ),
+                  options.requestedAsset ??
+                    new FungibleAsset(
+                      parseAccountId(options.requestedFaucetId!),
+                      BigInt(options.requestedAmount!)
+                    ),
+                  noteType,
+                  paybackNoteType
+                )
+              : await client.newSwapTransactionRequest(
+                  accountIdObj,
+                  parseAccountId(options.offeredFaucetId!),
+                  BigInt(options.offeredAmount!),
+                  parseAccountId(options.requestedFaucetId!),
+                  BigInt(options.requestedAmount!),
+                  noteType,
+                  paybackNoteType
+                );
 
           const txId = prover
             ? await client.submitNewTransactionWithProver(

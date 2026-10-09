@@ -42,6 +42,9 @@ export interface UseCreateNetworkNoteResult {
  * Hook that builds a Public custom-script note carrying a `NetworkAccountTarget`
  * attachment and submits it as an own output note, so a public network account
  * auto-consumes it. Provide exactly one of `recipient` or `script`.
+ *
+ * To lock one asset into the note, pass `assetId` and `amount` for a fungible
+ * asset, or `asset` for a `NonFungibleAsset`.
  */
 export function useCreateNetworkNote(): UseCreateNetworkNoteResult {
   const { client, isReady, sync, runExclusive, prover } = useMiden();
@@ -67,6 +70,11 @@ export function useCreateNetworkNote(): UseCreateNetworkNoteResult {
           "createNetworkNote requires either `recipient` or `script`."
         );
       }
+      if (options.asset && options.assetId != null) {
+        throw new Error(
+          "createNetworkNote takes either `asset` or `assetId`, not both."
+        );
+      }
 
       setIsLoading(true);
       setStage("executing");
@@ -81,8 +89,9 @@ export function useCreateNetworkNote(): UseCreateNetworkNoteResult {
             options.executionHint
           );
 
-          const noteAssets =
-            options.assetId != null
+          const noteAssets = options.asset
+            ? new NoteAssets([options.asset])
+            : options.assetId != null
               ? new NoteAssets([
                   new FungibleAsset(
                     parseAccountId(options.assetId),

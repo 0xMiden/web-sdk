@@ -60,9 +60,22 @@ export const createMockAccountFile = (account = createMockAccount()) => ({
   free: vi.fn(),
 });
 
+// Mock NonFungibleAsset
+export const createMockNonFungibleAsset = (
+  faucetId: string = "0xnftfaucet",
+  vaultKey: string = "0xnftkey",
+  value: string = "0xnftvalue"
+) => ({
+  faucetId: vi.fn(() => createMockAccountId(faucetId)),
+  vaultKey: vi.fn(() => createMockWord(vaultKey)),
+  intoWord: vi.fn(() => createMockWord(value)),
+  free: vi.fn(),
+});
+
 // Mock AssetVault
 export const createMockVault = (
-  assets: Array<{ faucetId: string; amount: bigint }> = []
+  assets: Array<{ faucetId: string; amount: bigint }> = [],
+  nonFungibleAssets: Array<ReturnType<typeof createMockNonFungibleAsset>> = []
 ) => ({
   fungibleAssets: vi.fn(() =>
     assets.map((a) => ({
@@ -71,6 +84,7 @@ export const createMockVault = (
       free: vi.fn(),
     }))
   ),
+  nonFungibleAssets: vi.fn(() => nonFungibleAssets),
   root: vi.fn(() => ({ toString: () => "0xroot" })),
   free: vi.fn(),
 });
@@ -308,6 +322,9 @@ const ASYNC_IN_RUST = [
   "newB2AggTransactionRequest",
   "newConsumeTransactionRequest",
   "newSwapTransactionRequest",
+  "newSendAssetTransactionRequest",
+  "newMintNonFungibleTransactionRequest",
+  "newSwapAssetsTransactionRequest",
   "newPswapCreateTransactionRequest",
   "newPswapConsumeTransactionRequest",
   "newPswapCancelTransactionRequest",
@@ -402,6 +419,15 @@ export const createMockWebClient = (
       .fn()
       .mockResolvedValue(createMockTransactionRequest()),
     newSwapTransactionRequest: vi
+      .fn()
+      .mockResolvedValue(createMockTransactionRequest()),
+    newSendAssetTransactionRequest: vi
+      .fn()
+      .mockResolvedValue(createMockTransactionRequest()),
+    newMintNonFungibleTransactionRequest: vi
+      .fn()
+      .mockResolvedValue(createMockTransactionRequest()),
+    newSwapAssetsTransactionRequest: vi
       .fn()
       .mockResolvedValue(createMockTransactionRequest()),
     newPswapCreateTransactionRequest: vi
@@ -524,6 +550,9 @@ type MockWebClientType = {
   newB2AggTransactionRequest: ReturnType<typeof vi.fn>;
   newConsumeTransactionRequest: ReturnType<typeof vi.fn>;
   newSwapTransactionRequest: ReturnType<typeof vi.fn>;
+  newSendAssetTransactionRequest: ReturnType<typeof vi.fn>;
+  newMintNonFungibleTransactionRequest: ReturnType<typeof vi.fn>;
+  newSwapAssetsTransactionRequest: ReturnType<typeof vi.fn>;
   newPswapCreateTransactionRequest: ReturnType<typeof vi.fn>;
   newPswapConsumeTransactionRequest: ReturnType<typeof vi.fn>;
   newPswapCancelTransactionRequest: ReturnType<typeof vi.fn>;

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { getNoteSummary, formatNoteSummary } from "../../utils/notes";
 import type { NoteSummary } from "../../types";
+import { createMockNonFungibleAsset } from "../mocks/miden-sdk";
 
 const makeAsset = (faucetHex: string, amount: bigint) => ({
   faucetId: vi.fn(() => ({ toString: () => faucetHex })),
@@ -10,10 +11,17 @@ const makeAsset = (faucetHex: string, amount: bigint) => ({
 const makeInputNoteRecord = (opts: {
   id?: string;
   assets?: Array<{ faucetHex: string; amount: bigint }>;
+  nonFungibleAssets?: Array<ReturnType<typeof createMockNonFungibleAsset>>;
   senderHex?: string;
   detailsThrows?: boolean;
 }) => {
-  const { id = "0xnote1", assets = [], senderHex, detailsThrows } = opts;
+  const {
+    id = "0xnote1",
+    assets = [],
+    nonFungibleAssets,
+    senderHex,
+    detailsThrows,
+  } = opts;
   return {
     id: vi.fn(() => ({ toString: () => id })),
     details: vi.fn(() => {
@@ -22,6 +30,9 @@ const makeInputNoteRecord = (opts: {
         assets: () => ({
           fungibleAssets: () =>
             assets.map((a) => makeAsset(a.faucetHex, a.amount)),
+          ...(nonFungibleAssets && {
+            nonFungibleAssets: () => nonFungibleAssets,
+          }),
         }),
       };
     }),
@@ -56,8 +67,28 @@ describe("getNoteSummary", () => {
     expect(summary).toEqual({
       id: "0xnote_empty",
       assets: [],
+      nonFungibleAssets: [],
       sender: undefined,
     });
+  });
+
+  it("populates nonFungibleAssets from details().assets().nonFungibleAssets()", () => {
+    const nft = createMockNonFungibleAsset("0xnftfaucet", "0xkey", "0xvalue");
+    const note = makeInputNoteRecord({
+      id: "0xnote_nft",
+      assets: [{ faucetHex: "0xfaucet1", amount: 5n }],
+      nonFungibleAssets: [nft],
+    });
+    const summary = getNoteSummary(note as never);
+    expect(summary?.assets).toHaveLength(1);
+    expect(summary?.nonFungibleAssets).toEqual([
+      {
+        faucetId: "0xnftfaucet",
+        vaultKey: "0xkey",
+        value: "0xvalue",
+        asset: nft,
+      },
+    ]);
   });
 
   it("populates assets from details().assets().fungibleAssets()", () => {
@@ -158,6 +189,41 @@ describe("formatNoteSummary", () => {
       sender: undefined,
     };
     expect(formatNoteSummary(summary)).toBe("1 A + 2 B");
+  });
+
+  it("lists non-fungible assets after fungible ones", () => {
+    const summary: NoteSummary = {
+      id: "0xnote",
+      assets: [{ assetId: "0xfaucet", amount: 1n, symbol: "A", decimals: 0 }],
+      nonFungibleAssets: [
+        {
+          faucetId: "0xnftfaucet",
+          vaultKey: "0xkey",
+          value: "0xvalue",
+          asset: createMockNonFungibleAsset() as never,
+        },
+      ],
+      sender: "mid:abc",
+    };
+    expect(formatNoteSummary(summary)).toBe(
+      "1 A + NFT 0xnftfaucet from mid:abc"
+    );
+  });
+
+  it("formats a note that holds only non-fungible assets", () => {
+    const summary: NoteSummary = {
+      id: "0xnote",
+      assets: [],
+      nonFungibleAssets: [
+        {
+          faucetId: "0xnftfaucet",
+          vaultKey: "0xkey",
+          value: "0xvalue",
+          asset: createMockNonFungibleAsset() as never,
+        },
+      ],
+    };
+    expect(formatNoteSummary(summary)).toBe("NFT 0xnftfaucet");
   });
 
   it("appends sender when present", () => {

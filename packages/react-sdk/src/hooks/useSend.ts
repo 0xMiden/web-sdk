@@ -37,6 +37,10 @@ export interface UseSendResult {
 /**
  * Hook to send tokens between accounts.
  *
+ * To send a non-fungible asset, pass `asset` (a `NonFungibleAsset`, e.g. from
+ * `useAccount().nonFungibleAssets`) in place of `assetId` and `amount`.
+ * `sendAll` does not apply to non-fungible assets.
+ *
  * @example
  * ```tsx
  * function SendButton({ from, to, assetId }: Props) {
@@ -55,6 +59,9 @@ export interface UseSendResult {
  *       console.error('Send failed:', err);
  *     }
  *   };
+ *
+ *   const handleSendNft = (asset: NonFungibleAsset) =>
+ *     send({ from, to, asset });
  *
  *   return (
  *     <button onClick={handleSend} disabled={isLoading}>
@@ -99,6 +106,16 @@ export function useSend(): UseSendResult {
         }
 
         const noteType = getNoteType(options.noteType ?? DEFAULTS.NOTE_TYPE);
+        const nonFungibleAsset = options.asset;
+
+        if (
+          nonFungibleAsset &&
+          (options.assetId != null || options.amount != null || options.sendAll)
+        ) {
+          throw new Error(
+            "Pass either `asset` or `assetId` and `amount`, not both"
+          );
+        }
 
         // Resolve amount — if sendAll, query the account balance
         let amount = options.amount;
@@ -121,18 +138,26 @@ export function useSend(): UseSendResult {
           amount = resolvedAmount;
         }
 
-        if (amount === undefined || amount === null) {
-          throw new Error("Amount is required (provide amount or sendAll)");
+        if (!nonFungibleAsset) {
+          if (amount === undefined || amount === null) {
+            throw new Error("Amount is required (provide amount or sendAll)");
+          }
+          amount = BigInt(amount);
         }
-        amount = BigInt(amount);
 
         const assetId =
           options.assetId ??
           (options as { faucetId?: string }).faucetId ??
           null;
-        if (!assetId) {
+        if (!nonFungibleAsset && !assetId) {
           throw new Error("Asset ID is required");
         }
+
+        // Builds the transferred asset. Call it inside runExclusiveSafe so the
+        // WASM AccountId is not stale when it is consumed.
+        const buildAsset = () =>
+          nonFungibleAsset ??
+          new FungibleAsset(parseAccountId(assetId!), amount as bigint);
 
         // Build transaction — use attachment path if attachment provided
         const hasAttachment =
@@ -152,11 +177,8 @@ export function useSend(): UseSendResult {
           const returnResult = await runExclusiveSafe(async () => {
             const fromId = parseAccountId(options.from);
             const toId = parseAccountId(options.to);
-            const assetObj = parseAccountId(assetId);
 
-            const assets = new NoteAssets([
-              new FungibleAsset(assetObj, BigInt(amount!)),
-            ]);
+            const assets = new NoteAssets([buildAsset()]);
             const p2idNote = Note.createP2IDNote(
               fromId,
               toId,
@@ -201,16 +223,13 @@ export function useSend(): UseSendResult {
           // creation and consumption.
           const fromAccountId = parseAccountId(options.from);
           const toAccountId = parseAccountId(options.to);
-          const assetIdObj = parseAccountId(assetId);
 
           let txRequest;
 
           if (hasAttachment) {
             // Manual P2ID note construction with attachment
             const attachment = createNoteAttachment(options.attachment!);
-            const assets = new NoteAssets([
-              new FungibleAsset(assetIdObj, amount!),
-            ]);
+            const assets = new NoteAssets([buildAsset()]);
             const note = Note.createP2IDNote(
               fromAccountId,
               toAccountId,
@@ -223,13 +242,22 @@ export function useSend(): UseSendResult {
             txRequest = builder
               .withOwnOutputNotes(new NoteArray([note]))
               .build();
+          } else if (nonFungibleAsset) {
+            txRequest = await client.newSendAssetTransactionRequest(
+              fromAccountId,
+              toAccountId,
+              nonFungibleAsset,
+              noteType,
+              options.recallHeight ?? null,
+              options.timelockHeight ?? null
+            );
           } else {
             txRequest = await client.newSendTransactionRequest(
               fromAccountId,
               toAccountId,
-              assetIdObj,
+              parseAccountId(assetId!),
               noteType,
-              amount!,
+              amount as bigint,
               options.recallHeight ?? null,
               options.timelockHeight ?? null
             );

@@ -74,6 +74,73 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
   );
 
   mockTest(
+    "non-fungible flow: create NFT faucet, mint and send with `asset`",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const alice = await client.accounts.create();
+        const bob = await client.accounts.create();
+        const faucet = await client.accounts.create({
+          type: window.FaucetType.NonFungibleFaucet,
+          name: "Collectible",
+          symbol: "NFT",
+        });
+        const value = new window.Word(new BigUint64Array([1n, 2n, 3n, 4n]));
+        const asset = new window.NonFungibleAsset(faucet.id(), value);
+
+        const consumeOutput = async (account, txId) => {
+          client.proveBlock();
+          await client.sync();
+          const [record] = await client.transactions.list({
+            ids: [txId.toHex()],
+          });
+          const noteId = record.outputNotes().notes()[0].id().toString();
+          const { txId: consumeTxId } = await client.transactions.consume({
+            account,
+            notes: noteId,
+          });
+          client.proveBlock();
+          await client.sync();
+          return consumeTxId;
+        };
+        const nfts = async (account) =>
+          (await client.accounts.get(account))
+            .vault()
+            .nonFungibleAssets()
+            .map((nft) => nft.intoWord().toHex());
+
+        const { txId: mintTxId } = await client.transactions.mint({
+          account: faucet,
+          to: alice,
+          asset,
+        });
+        await consumeOutput(alice, mintTxId);
+        const aliceAfterMint = await nfts(alice);
+
+        const { txId: sendTxId } = await client.transactions.send({
+          account: alice,
+          to: bob,
+          asset,
+        });
+        await consumeOutput(bob, sendTxId);
+
+        return {
+          isFaucet: faucet.isFaucet(),
+          expected: value.toHex(),
+          aliceAfterMint,
+          aliceAfterSend: await nfts(alice),
+          bobAfterSend: await nfts(bob),
+        };
+      });
+
+      expect(result.isFaucet).toBe(true);
+      expect(result.aliceAfterMint).toEqual([result.expected]);
+      expect(result.aliceAfterSend).toEqual([]);
+      expect(result.bobAfterSend).toEqual([result.expected]);
+    }
+  );
+
+  mockTest(
     "endpoint: a mock client reports none, an RpcClient its own",
     async ({ page }) => {
       const result = await page.evaluate(async () => {

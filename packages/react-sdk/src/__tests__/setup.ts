@@ -49,6 +49,9 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     newB2AggTransactionRequest: vi.fn().mockResolvedValue({}),
     newConsumeTransactionRequest: vi.fn().mockResolvedValue({}),
     newSwapTransactionRequest: vi.fn().mockResolvedValue({}),
+    newSendAssetTransactionRequest: vi.fn().mockResolvedValue({}),
+    newMintNonFungibleTransactionRequest: vi.fn().mockResolvedValue({}),
+    newSwapAssetsTransactionRequest: vi.fn().mockResolvedValue({}),
     feeAwareTransactionRequestBuilder: vi.fn().mockImplementation(async () => {
       const builder = {
         withOwnOutputNotes: vi.fn(() => builder),

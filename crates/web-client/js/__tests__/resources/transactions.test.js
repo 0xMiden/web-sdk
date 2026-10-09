@@ -221,6 +221,15 @@ function makeInner(overrides = {}) {
     applyTransaction: vi.fn().mockResolvedValue(undefined),
     newSendTransactionRequest: vi.fn().mockResolvedValue("sendRequest"),
     newMintTransactionRequest: vi.fn().mockResolvedValue("mintRequest"),
+    newMintNonFungibleTransactionRequest: vi
+      .fn()
+      .mockResolvedValue("mintNftRequest"),
+    newSendAssetTransactionRequest: vi
+      .fn()
+      .mockResolvedValue("sendAssetRequest"),
+    newSwapAssetsTransactionRequest: vi
+      .fn()
+      .mockResolvedValue("swapAssetsRequest"),
     newB2AggTransactionRequest: vi.fn().mockResolvedValue("b2aggRequest"),
     newConsumeTransactionRequest: vi.fn().mockResolvedValue("consumeRequest"),
     // Keep the builder the resource actually used, so a test can assert what was
@@ -265,6 +274,14 @@ function makeClient(overrides = {}) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+// Stands in for a WASM NonFungibleAsset: an object with `intoWord()`.
+function makeNft(faucetHex = "0xnftfaucet") {
+  return {
+    intoWord: vi.fn(() => "valueWord"),
+    faucetId: vi.fn(() => ({ toString: () => faucetHex })),
+  };
+}
 
 function makeResource(
   innerOverrides = {},
@@ -354,6 +371,59 @@ describe("TransactionsResource", () => {
         expect.anything(),
         callProver
       );
+    });
+  });
+
+  describe("send — non-fungible asset", () => {
+    it("builds a send-asset request with the asset", async () => {
+      const { resource, inner } = makeResource();
+      const nft = makeNft();
+      await resource.send({
+        account: "0xsender",
+        to: "0xrecipient",
+        asset: nft,
+        reclaimAfter: 10,
+      });
+      expect(inner.newSendTransactionRequest).not.toHaveBeenCalled();
+      expect(inner.newSendAssetTransactionRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xsender" }),
+        expect.objectContaining({ hex: "0xrecipient" }),
+        nft,
+        "Public",
+        10,
+        undefined
+      );
+      expect(inner.executeTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        "sendAssetRequest"
+      );
+    });
+
+    it("rejects asset together with token or amount", async () => {
+      const { resource, inner } = makeResource();
+      await expect(
+        resource.send({
+          account: "0xsender",
+          to: "0xrecipient",
+          asset: makeNft(),
+          amount: 1,
+        })
+      ).rejects.toThrow("Pass either `asset` or `token` and `amount`");
+      expect(inner.newSendAssetTransactionRequest).not.toHaveBeenCalled();
+    });
+
+    it("puts the asset in the returned P2ID note", async () => {
+      const { resource, wasm } = makeResource();
+      const nft = makeNft();
+      const result = await resource.send({
+        account: "0xsender",
+        to: "0xrecipient",
+        asset: nft,
+        returnNote: true,
+      });
+      expect(wasm.FungibleAsset).not.toHaveBeenCalled();
+      expect(wasm.NoteAssets).toHaveBeenCalledWith([nft]);
+      expect(result.note).toBe("p2idNote");
     });
   });
 
@@ -541,6 +611,19 @@ describe("TransactionsResource", () => {
       expect(wasm.NoteAssets).toHaveBeenCalledWith([expect.anything()]);
     });
 
+    it("passes a non-fungible asset through to NoteAssets", async () => {
+      const { resource, wasm } = makeResource();
+      const nft = makeNft();
+      await resource.createNetworkNote({
+        account: "0xsender",
+        target: "0xtarget",
+        script: "s",
+        assets: [nft, { token: "0xtoken", amount: 5 }],
+      });
+      expect(wasm.NoteAssets).toHaveBeenCalledWith([nft, expect.anything()]);
+      expect(wasm.FungibleAsset).toHaveBeenCalledTimes(1);
+    });
+
     it("uses a pre-built NetworkAccountTarget directly without reconstructing it", async () => {
       const { resource, wasm } = makeResource();
       const preBuilt = Object.create(wasm.NetworkAccountTarget.prototype);
@@ -600,6 +683,50 @@ describe("TransactionsResource", () => {
       expect(inner.newMintTransactionRequest).toHaveBeenCalled();
       expect(inner.executeTransaction).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
+    });
+
+    it("builds a non-fungible mint request from `asset`", async () => {
+      const { resource, inner } = makeResource();
+      const nft = makeNft("0xfaucet");
+      await resource.mint({
+        account: "0xfaucet",
+        to: "0xrecipient",
+        asset: nft,
+      });
+      expect(inner.newMintTransactionRequest).not.toHaveBeenCalled();
+      expect(inner.newMintNonFungibleTransactionRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xrecipient" }),
+        nft,
+        "Public"
+      );
+      expect(inner.executeTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xfaucet" }),
+        "mintNftRequest"
+      );
+    });
+
+    it("rejects an asset issued by another faucet", async () => {
+      const { resource, inner } = makeResource();
+      await expect(
+        resource.mint({
+          account: "0xfaucet",
+          to: "0xrecipient",
+          asset: makeNft("0xother"),
+        })
+      ).rejects.toThrow("must be issued by the minting faucet");
+      expect(inner.newMintNonFungibleTransactionRequest).not.toHaveBeenCalled();
+    });
+
+    it("rejects asset together with amount", async () => {
+      const { resource } = makeResource();
+      await expect(
+        resource.mint({
+          account: "0xfaucet",
+          to: "0xrecipient",
+          asset: makeNft("0xfaucet"),
+          amount: 1,
+        })
+      ).rejects.toThrow("Pass either `asset` or `amount`");
     });
   });
 
@@ -1001,6 +1128,27 @@ describe("TransactionsResource", () => {
         BigInt(10),
         expect.anything(),
         BigInt(5),
+        "Public",
+        "Private"
+      );
+    });
+  });
+
+  describe("swap — non-fungible assets", () => {
+    it("builds a swap-assets request when either side is non-fungible", async () => {
+      const { resource, inner, wasm } = makeResource();
+      const nft = makeNft();
+      await resource.swap({
+        account: "0xaccHex",
+        offer: nft,
+        request: { token: "0xwantedToken", amount: 5 },
+        paybackType: "private",
+      });
+      expect(inner.newSwapTransactionRequest).not.toHaveBeenCalled();
+      expect(inner.newSwapAssetsTransactionRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xaccHex" }),
+        nft,
+        expect.any(wasm.FungibleAsset),
         "Public",
         "Private"
       );

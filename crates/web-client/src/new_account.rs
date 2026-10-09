@@ -39,11 +39,11 @@ impl WebClient {
 
 #[js_export]
 impl WebClient {
-    /// Creates, persists, and returns a new fungible faucet account.
+    /// Creates, persists, and returns a new faucet account.
     ///
-    /// Only fungible faucets are supported, so passing `non_fungible = true` fails fast with a
-    /// clear message. The faucet is registered with mint and burn policies (both `AllowAll`); its
-    /// secret key is added to the keystore.
+    /// Pass `non_fungible = true` for a non-fungible faucet; `decimals` and `max_supply` are then
+    /// ignored. The faucet is registered with mint and burn policies (both `AllowAll`); its secret
+    /// key is added to the keystore.
     #[js_export(js_name = "newFaucet")]
     #[allow(clippy::too_many_arguments)]
     pub async fn new_faucet(
@@ -56,16 +56,13 @@ impl WebClient {
         max_supply: JsU64,
         auth_scheme: AuthScheme,
     ) -> Result<Account, JsErr> {
-        if non_fungible {
-            return Err(from_str_err("Non-fungible faucets are not supported yet"));
-        }
-
         self.maybe_sync_before_account_creation().await;
         let keystore = self.get_keystore().await?;
 
         let max_supply = js_u64_to_u64(max_supply);
         let (new_account, key_pair) = generate_faucet(
             storage_mode,
+            non_fungible,
             token_name,
             token_symbol,
             decimals,

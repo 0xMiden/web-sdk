@@ -488,4 +488,161 @@ test.describe("unified note assets", () => {
     expect(result.vaultKey).toBe(result.expectedKey);
     expect(result.vaultValue).toBe(result.expectedValue);
   });
+
+  test("mints, sends, and swaps an NFT issued by a non-fungible faucet", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const submit = async (accountId: any, request: any) => {
+        const txId = await client.submitNewTransaction(accountId, request);
+        await client.proveBlock();
+        await client.syncState();
+        const [record] = await client.getTransactions(
+          sdk.TransactionFilter.ids([txId])
+        );
+        return record;
+      };
+      const consume = async (accountId: any, noteId: string) => {
+        const record = await client.getInputNote(noteId);
+        const request = await client.newConsumeTransactionRequest(
+          [record.toNote()],
+          accountId
+        );
+        return submit(accountId, request);
+      };
+      const nfts = async (accountId: any) =>
+        (await client.getAccount(accountId))
+          .vault()
+          .nonFungibleAssets()
+          .map((asset: any) => asset.intoWord().toHex());
+
+      const faucet = await client.newFaucet(
+        sdk.AccountStorageMode.public(),
+        true,
+        "Collectible",
+        "NFT",
+        0,
+        sdk.u64(0),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const alice = await client.newWallet(
+        sdk.AccountStorageMode.private(),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const bob = await client.newWallet(
+        sdk.AccountStorageMode.private(),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const value = new sdk.Word(sdk.u64Array([11n, 22n, 33n, 44n]));
+      const nft = new sdk.NonFungibleAsset(faucet.id(), value);
+
+      // Mint to Alice and consume the P2ID note.
+      const mintRequest = await client.newMintNonFungibleTransactionRequest(
+        alice.id(),
+        nft,
+        sdk.NoteType.Public
+      );
+      const mint = await submit(faucet.id(), mintRequest);
+      const mintedNoteId = mint.outputNotes().notes()[0].id().toString();
+      const mintedNote = (await client.getInputNote(mintedNoteId)).toNote();
+      const mintedNoteNfts = mintedNote
+        .assets()
+        .nonFungibleAssets()
+        .map((asset: any) => asset.intoWord().toHex());
+      // Execute the consume once without submitting, to read its vault patch.
+      const preview = await client.executeTransaction(
+        alice.id(),
+        await client.newConsumeTransactionRequest([mintedNote], alice.id())
+      );
+      const patchNfts = preview
+        .executedTransaction()
+        .accountPatch()
+        .vault()
+        .updatedNonFungibleAssets()
+        .map((asset: any) => asset.intoWord().toHex());
+      await consume(alice.id(), mintedNoteId);
+      const aliceAfterMint = await nfts(alice.id());
+
+      // Send it to Bob.
+      const sendRequest = await client.newSendAssetTransactionRequest(
+        alice.id(),
+        bob.id(),
+        nft,
+        sdk.NoteType.Public,
+        null,
+        null
+      );
+      const send = await submit(alice.id(), sendRequest);
+      const aliceAfterSend = await nfts(alice.id());
+      await consume(bob.id(), send.outputNotes().notes()[0].id().toString());
+      const bobAfterSend = await nfts(bob.id());
+
+      // Bob swaps the NFT for 100 units of a fungible token Alice holds.
+      const token = await client.newFaucet(
+        sdk.AccountStorageMode.public(),
+        false,
+        "Token",
+        "TOK",
+        8,
+        sdk.u64(1000000),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      await helpers.mockMintAndConsume(alice.id(), token.id(), {
+        amount: 1000,
+        publicNote: true,
+      });
+      const swapRequest = await client.newSwapAssetsTransactionRequest(
+        bob.id(),
+        nft,
+        new sdk.FungibleAsset(token.id(), sdk.u64(100)),
+        sdk.NoteType.Public,
+        sdk.NoteType.Public
+      );
+      const swapNoteId = swapRequest
+        .expectedOutputOwnNotes()[0]
+        .id()
+        .toString();
+      await submit(bob.id(), swapRequest);
+      const swapConsume = await consume(alice.id(), swapNoteId);
+      await consume(
+        bob.id(),
+        swapConsume.outputNotes().notes()[0].id().toString()
+      );
+      const aliceAfterSwap = await client.getAccount(alice.id());
+      const bobAfterSwap = await client.getAccount(bob.id());
+
+      return {
+        isFaucet: faucet.isFaucet(),
+        expected: value.toHex(),
+        mintedNoteNfts,
+        patchNfts,
+        aliceAfterMint,
+        aliceAfterSend,
+        bobAfterSend,
+        aliceNftsAfterSwap: aliceAfterSwap
+          .vault()
+          .nonFungibleAssets()
+          .map((asset: any) => asset.intoWord().toHex()),
+        aliceTokensAfterSwap: aliceAfterSwap
+          .vault()
+          .getBalance(token.id())
+          .toString(),
+        bobNftsAfterSwap: bobAfterSwap.vault().nonFungibleAssets().length,
+        bobTokensAfterSwap: bobAfterSwap
+          .vault()
+          .getBalance(token.id())
+          .toString(),
+      };
+    });
+    expect(result.isFaucet).toBe(true);
+    expect(result.mintedNoteNfts).toEqual([result.expected]);
+    expect(result.patchNfts).toEqual([result.expected]);
+    expect(result.aliceAfterMint).toEqual([result.expected]);
+    expect(result.aliceAfterSend).toEqual([]);
+    expect(result.bobAfterSend).toEqual([result.expected]);
+    expect(result.aliceNftsAfterSwap).toEqual([result.expected]);
+    expect(result.aliceTokensAfterSwap).toBe("900");
+    expect(result.bobNftsAfterSwap).toBe(0);
+    expect(result.bobTokensAfterSwap).toBe("100");
+  });
 });

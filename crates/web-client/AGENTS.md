@@ -88,12 +88,47 @@ with it, and free the object wrappers the skills call out individually.
 
 **Account visibility and faucet kind are separate.** Use native
 `AccountType.Private` / `AccountType.Public` with `AccountBuilder.accountType()`.
-Use `FaucetType.FungibleFaucet` for `accounts.create({ type })`, and `storage`
-for visibility. Older `AccountType.FungibleFaucet` references must migrate to
+Use `FaucetType.FungibleFaucet` or `FaucetType.NonFungibleFaucet` for
+`accounts.create({ type })`, and `storage` for visibility. Older `AccountType.FungibleFaucet` references must migrate to
 `FaucetType.FungibleFaucet`; `create()` throws a `TypeError` for an unrecognised
 `type` rather than creating a wallet. The legacy `0` / `1` are still faucet
-selectors and equal `AccountType.Private` / `Public`, so never pass a visibility
-value as `type`.
+selectors (fungible / non-fungible) and equal `AccountType.Private` / `Public`,
+so never pass a visibility value as `type`.
+
+## Mint, send and swap non-fungible assets
+
+```typescript
+import { FaucetType, NonFungibleAsset, Word } from "@miden-sdk/miden-sdk";
+
+const collection = await client.accounts.create({
+  type: FaucetType.NonFungibleFaucet,
+  name: "Collectible",
+  symbol: "NFT",
+});
+
+// The first two value elements are the token ID the faucet records as issued.
+const value = new Word(new BigUint64Array([1n, 2n, 3n, 4n]));
+const nft = new NonFungibleAsset(collection.id(), value);
+
+await client.transactions.mint({ account: collection, to: alice, asset: nft });
+// After Alice consumes the P2ID note:
+await client.transactions.send({ account: alice, to: bob, asset: nft });
+await client.transactions.swap({
+  account: bob,
+  offer: nft,
+  request: { token: tokenFaucet, amount: 100n },
+});
+```
+
+A non-fungible faucet takes `symbol` and an optional `name`; it has no
+`decimals` or `maxSupply`, and passing either throws. `Account.isFaucet()` is
+true for it. `mint` with `asset` requires that `account` is the faucet that
+issued the asset. A faucet issues each token ID once; minting the same token ID
+again fails. `send` with `asset` takes the same `type`, `reclaimAfter`,
+`timelockUntil` and `returnNote` options as a fungible send. `swap` accepts a
+`NonFungibleAsset` for `offer`, `request`, or both, and `createNetworkNote`
+accepts one in `assets`. Batch `send` and `mint` operations and `preview()`
+take the same `asset` form. Bridge and PSWAP remain fungible-only.
 
 ## Read non-fungible assets
 
@@ -136,7 +171,7 @@ For registry publishing, use `Note.withAttachments()` with a single name asset,
 public metadata, the registry's approved script and inputs, and
 `[new NetworkAccountTarget(registryId).toAttachment()]`. The registry account
 must be public. A tag alone does not make a network note. Consume the returned P2ID note to put
-the asset back in the vault. The amount-based `send` helper remains fungible-only.
+the asset back in the vault.
 
 ## Going deeper
 

@@ -86,13 +86,74 @@ describe("useCreateFaucet", () => {
       // Verify default options were used; token name falls back to symbol.
       expect(mockClient.newFaucet).toHaveBeenCalledWith(
         expect.anything(), // storageMode.private() (default)
-        false, // nonFungible (always false for now)
+        false, // nonFungible (default)
         "TEST", // tokenName falls back to tokenSymbol
         "TEST",
         8, // decimals (default)
         1000000n,
         2 // authScheme (default: AuthRpoFalcon512)
       );
+    });
+
+    it("should create a non-fungible faucet without decimals or maxSupply", async () => {
+      const mockFaucet = createMockAccount({ isFaucet: vi.fn(() => true) });
+      const mockClient = createMockWebClient({
+        newFaucet: vi.fn().mockResolvedValue(mockFaucet),
+        getAccounts: vi.fn().mockResolvedValue([]),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+      });
+
+      const { result } = renderHook(() => useCreateFaucet());
+
+      await act(async () => {
+        await result.current.createFaucet({
+          nonFungible: true,
+          tokenSymbol: "ART",
+        });
+      });
+
+      expect(result.current.faucet).toBe(mockFaucet);
+      expect(mockClient.newFaucet).toHaveBeenCalledWith(
+        expect.anything(),
+        true, // nonFungible
+        "ART",
+        "ART",
+        0,
+        0n,
+        2
+      );
+    });
+
+    it("should reject decimals or maxSupply for a non-fungible faucet", async () => {
+      const mockClient = createMockWebClient();
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+      });
+
+      const { result } = renderHook(() => useCreateFaucet());
+
+      await act(async () => {
+        await expect(
+          result.current.createFaucet({
+            nonFungible: true,
+            tokenSymbol: "ART",
+            maxSupply: 10n,
+          } as never)
+        ).rejects.toThrow(
+          "decimals and maxSupply only apply to fungible faucets"
+        );
+      });
+
+      expect(result.current.error?.message).toBe(
+        "decimals and maxSupply only apply to fungible faucets"
+      );
+      expect(mockClient.newFaucet).not.toHaveBeenCalled();
     });
 
     it("should create faucet with custom options including an explicit token name", async () => {

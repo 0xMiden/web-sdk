@@ -1,6 +1,16 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
-use miden_client::account::component::{AuthNetworkAccount, AuthTxFeeCollector, NetworkAccount};
+use miden_client::account::standards::auth::{
+    AuthGuardedMultisig,
+    AuthMultisig,
+    AuthMultisigSmart,
+    AuthNetworkAccount,
+    AuthSingleSig,
+    AuthTxFeeCollector,
+    NetworkAccount,
+    NoAuth,
+};
+use miden_client::account::standards::faucets::NonFungibleFaucet;
 use miden_client::account::{
     Account as NativeAccount,
     AccountComponentInterface,
@@ -8,13 +18,6 @@ use miden_client::account::{
     AccountProcedureRoot,
     StorageSlot,
     StorageSlotContent,
-};
-use miden_client::auth::{
-    AuthGuardedMultisig,
-    AuthMultisig,
-    AuthMultisigSmart,
-    AuthSingleSig,
-    NoAuth,
 };
 use miden_client::testing::standards::account_interface::get_public_keys_from_account;
 use miden_protocol::account::component::AUTH_SCRIPT_ATTRIBUTE;
@@ -87,11 +90,15 @@ impl Account {
     // `from_procedures`, not `AccountInterface`, whose constructor asserts on exactly
     // one auth component and traps under `panic = "abort"`.
 
-    /// Returns true if the account exposes a fungible-faucet interface.
+    /// Returns true if the account exposes a fungible or non-fungible faucet interface.
     #[js_export(js_name = "isFaucet")]
     pub fn is_faucet(&self) -> bool {
         AccountComponentInterface::from_procedures(self.0.code().procedures())
             .contains(&AccountComponentInterface::FungibleFaucet)
+            || self
+                .0
+                .code()
+                .has_procedure(*NonFungibleFaucet::mint_and_send_root().mast_root())
     }
 
     /// Returns true if the account is a regular (non-faucet) account.

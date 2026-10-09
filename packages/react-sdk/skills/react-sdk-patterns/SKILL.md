@@ -104,11 +104,15 @@ An account's faucet-vs-wallet kind is not encoded in the account id, so `wallets
 
 ### useAccount(accountId: AccountRef | undefined)
 ```tsx
-const { account, assets, getBalance, isLoading, error, refetch } = useAccount(accountId);
+const { account, assets, nonFungibleAssets, getBalance, isLoading, error, refetch } =
+  useAccount(accountId);
 // account - Account object (.id(), .nonce(), .bech32id(), .isFaucet())
-// assets - AssetBalance[] (assetId, amount, symbol?, decimals?)
+// assets - AssetBalance[] (assetId, amount, symbol?, decimals?) - fungible only
+// nonFungibleAssets - NonFungibleAssetInfo[] (faucetId, vaultKey, value, asset)
 // getBalance(faucetId) - bigint balance for specific token
 ```
+
+`nonFungibleAssets` lists the NFTs in the vault. `faucetId`, `vaultKey` and `value` are hex strings, and `vaultKey` is unique per NFT. `asset` is the `NonFungibleAsset` to pass to `useSend`, `useSwap` or `useCreateNetworkNote`. `getBalance` only counts fungible assets.
 
 `account.id()` and `account.nonce()` are methods (call them, then `.toString()` to render). `bech32id()` is installed on the `Account` prototype by the React SDK.
 
@@ -119,7 +123,7 @@ const { account, assets, getBalance, isLoading, error, refetch } = useAccount(ac
 const { notes, consumableNotes, noteSummaries, consumableNoteSummaries, isLoading, error, refetch } = useNotes();
 // notes - InputNoteRecord[] (filtered ONLY by `status`)
 // consumableNotes - ConsumableNoteRecord[] (filtered ONLY by `accountId`)
-// noteSummaries - NoteSummary[] (id, assets, sender) - also filtered by `sender` and `excludeIds`
+// noteSummaries - NoteSummary[] (id, assets, nonFungibleAssets, sender) - also filtered by `sender` and `excludeIds`
 // consumableNoteSummaries - NoteSummary[] - also filtered by `sender` and `excludeIds`
 
 // Each filter option only narrows specific fields - destructure the one it affects:
@@ -224,6 +228,15 @@ const account = await createFaucet({
   storageMode: "private",                   // "private" | "public". Default: "private"
   authScheme: 2,                            // 2 = Falcon; friendly AuthScheme.* not accepted here yet (web-sdk#223)
 });
+
+// Non-fungible faucet: no decimals or maxSupply (passing either throws).
+const nftFaucet = await createFaucet({
+  nonFungible: true,
+  tokenSymbol: "ART",
+  tokenName: "Art Collection",              // optional: defaults to tokenSymbol
+  storageMode: "public",
+  authScheme: 2,
+});
 ```
 
 ### useImportAccount()
@@ -266,6 +279,13 @@ await send({
 ```
 
 `amount` is optional in the type (it is ignored when `sendAll: true`) and accepts `bigint | number`, but pass `bigint` - a `number` silently loses precision above `Number.MAX_SAFE_INTEGER`.
+
+**Sending an NFT.** Pass the `NonFungibleAsset` as `asset` in place of `assetId` and `amount`. Every other option works the same, except `sendAll`, which does not apply. Passing `asset` together with `assetId`, `amount` or `sendAll` throws.
+
+```tsx
+const { nonFungibleAssets } = useAccount(senderAccountId);
+await send({ from: senderAccountId, to: recipientAccountId, asset: nonFungibleAssets[0].asset });
+```
 
 **Combining `attachment` with `recallHeight` or `timelockHeight` throws**, before anything is built: `"recallHeight and timelockHeight are not supported when attachment is provided"`. The attachment path constructs the P2ID note by hand and has nowhere to put either height. Pick one or the other.
 
@@ -312,6 +332,14 @@ await mint({
   amount: 10000n,         // bigint!
   noteType: "public",
 });
+
+// From a non-fungible faucet: pass `asset` in place of `amount`.
+// The asset must be issued by `faucetId`, or the hook throws.
+await mint({
+  targetAccountId: recipientId,
+  faucetId: nftFaucetId,
+  asset: new NonFungibleAsset(AccountId.fromHex(nftFaucetId), nftDataWord),
+});
 ```
 
 ### useConsume()
@@ -334,6 +362,15 @@ await swap({
   requestedAmount: 50n,
   noteType: "private",
   paybackNoteType: "private",
+});
+
+// Either side can be one NFT: `offeredAsset` replaces offeredFaucetId + offeredAmount,
+// `requestedAsset` replaces requestedFaucetId + requestedAmount.
+await swap({
+  accountId: myAccountId,
+  offeredAsset: myNft,           // NonFungibleAsset
+  requestedFaucetId: tokenB,
+  requestedAmount: 50n,
 });
 ```
 
@@ -465,6 +502,7 @@ const { txId, note } = await createNetworkNote({
   executionHint: hint,        // optional: defaults to `always`
   assetId: faucetId,          // optional: omit for a zero-asset note
   amount: 1000n,
+  // asset: myNft,            // ...or one NonFungibleAsset instead of assetId + amount
   attachment: [7n],           // optional: extra payload appended after the target
 });
 ```
@@ -616,8 +654,8 @@ import {
 
 formatAssetAmount(1000000n, 8)       // "0.01"
 parseAssetAmount("0.01", 8)           // 1000000n
-const summary = getNoteSummary(note); // { id, assets, sender } | null
-formatNoteSummary(summary);           // "1.5 TEST from mtst1..."
+const summary = getNoteSummary(note); // { id, assets, nonFungibleAssets, sender } | null
+formatNoteSummary(summary);           // "1.5 TEST from mtst1..."; NFTs show as "NFT <faucetId>"
 toBech32AccountId("0x1234...");       // "mtst1..." on testnet; the hex ID when the network is unknown
 ```
 

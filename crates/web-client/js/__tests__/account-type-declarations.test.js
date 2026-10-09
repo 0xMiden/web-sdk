@@ -26,17 +26,22 @@ it("type-checks visibility and faucet selectors through the public declarations"
       consumer,
       `
       import { AccountBuilder, AccountType, FaucetType,
-        type FaucetCreateOptions } from "./index";
+        type CreateAccountOptions, type FaucetCreateOptions,
+        type NonFungibleFaucetCreateOptions } from "./index";
       new AccountBuilder(new Uint8Array(32)).accountType(AccountType.Public);
       new AccountBuilder(new Uint8Array(32)).accountType(AccountType.Private);
       const visibility: AccountType = AccountType.Public;
       const kind: FaucetType = FaucetType.FungibleFaucet;
-      const literal: "FungibleFaucet" = kind;
+      const literal: "FungibleFaucet" = FaucetType.FungibleFaucet;
       const faucet: FaucetCreateOptions = {
-        type: kind, symbol: "TOK", decimals: 8, maxSupply: 1000n
+        type: FaucetType.FungibleFaucet, symbol: "TOK", decimals: 8, maxSupply: 1000n
       };
-      // @ts-expect-error Non-fungible faucets have no public selector.
-      FaucetType.NonFungibleFaucet;
+      const nftKind: "NonFungibleFaucet" = FaucetType.NonFungibleFaucet;
+      const nftFaucet: NonFungibleFaucetCreateOptions = {
+        type: FaucetType.NonFungibleFaucet, symbol: "NFT"
+      };
+      // @ts-expect-error A non-fungible faucet takes no decimals or maxSupply.
+      const badNftFaucet: CreateAccountOptions = { type: FaucetType.NonFungibleFaucet, symbol: "NFT", decimals: 8 };
       // @ts-expect-error AccountTypeValue was removed with the rename.
       import type { AccountTypeValue } from "./index";
       // @ts-expect-error Faucet kinds are no longer members of AccountType.

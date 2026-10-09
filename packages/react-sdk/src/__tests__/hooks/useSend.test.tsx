@@ -3,10 +3,12 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { useSend } from "../../hooks/useSend";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
+import { Note } from "@miden-sdk/miden-sdk";
 import {
   createMockWebClient,
   createMockTransactionRequest,
   createMockTransactionResult,
+  createMockNonFungibleAsset,
 } from "../mocks/miden-sdk";
 
 // Mock useMiden
@@ -142,6 +144,124 @@ describe("useSend", () => {
         1000,
         500
       );
+    });
+
+    it("should send a non-fungible asset via newSendAssetTransactionRequest", async () => {
+      const mockClient = createMockWebClient({
+        executeTransaction: vi
+          .fn()
+          .mockResolvedValue(createMockTransactionResult("0xnfttx")),
+        submitProvenTransaction: vi.fn().mockResolvedValue(100),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+      const asset = createMockNonFungibleAsset();
+
+      const { result } = renderHook(() => useSend());
+
+      let txResult: any;
+      await act(async () => {
+        txResult = await result.current.send({
+          from: "0xsender",
+          to: "0xrecipient",
+          asset: asset as never,
+          noteType: "public",
+          recallHeight: 1000,
+        });
+      });
+
+      expect(txResult.txId).toBe("0xnfttx");
+      expect(mockClient.newSendTransactionRequest).not.toHaveBeenCalled();
+      expect(mockClient.newSendAssetTransactionRequest).toHaveBeenCalledWith(
+        expect.anything(), // fromAccountId
+        expect.anything(), // toAccountId
+        asset,
+        expect.anything(), // noteType (public)
+        1000,
+        null
+      );
+    });
+
+    it("should put a non-fungible asset in the returned note", async () => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+      const asset = createMockNonFungibleAsset();
+
+      const { result } = renderHook(() => useSend());
+
+      let txResult: any;
+      await act(async () => {
+        txResult = await result.current.send({
+          from: "0xsender",
+          to: "0xrecipient",
+          asset: asset as never,
+          returnNote: true,
+        });
+      });
+
+      expect(txResult.note.assets.assets).toEqual([asset]);
+    });
+
+    it("should put a non-fungible asset in a note with an attachment", async () => {
+      const mockClient = createMockWebClient({
+        submitProvenTransaction: vi.fn().mockResolvedValue(100),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+      const asset = createMockNonFungibleAsset();
+
+      const { result } = renderHook(() => useSend());
+
+      await act(async () => {
+        await result.current.send({
+          from: "0xsender",
+          to: "0xrecipient",
+          asset: asset as never,
+          noteType: "public",
+          attachment: [1n],
+        });
+      });
+
+      const [, , noteAssets] = vi.mocked(Note.createP2IDNote).mock.calls[0];
+      expect((noteAssets as unknown as { assets: unknown[] }).assets).toEqual([
+        asset,
+      ]);
+      expect(mockClient.newSendAssetTransactionRequest).not.toHaveBeenCalled();
+    });
+
+    it("should reject a non-fungible asset combined with amount", async () => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useSend());
+
+      await act(async () => {
+        await expect(
+          result.current.send({
+            from: "0xsender",
+            to: "0xrecipient",
+            asset: createMockNonFungibleAsset(),
+            amount: 1n,
+          } as never)
+        ).rejects.toThrow(
+          "Pass either `asset` or `assetId` and `amount`, not both"
+        );
+      });
+      expect(mockClient.executeTransaction).not.toHaveBeenCalled();
     });
 
     it("should execute send with returnNote=true via submitNewTransaction", async () => {

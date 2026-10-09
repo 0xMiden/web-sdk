@@ -135,6 +135,11 @@ impl IdxdbStore {
                     ids.iter().map(ToString::to_string).collect::<Vec<String>>().join(",");
                 format!("Ids:{ids_str}")
             },
+            _ => {
+                return Err(StoreError::DatabaseError(format!(
+                    "unsupported transaction filter: {filter:?}"
+                )));
+            },
         };
 
         let promise = idxdb_get_transactions(self.db_id(), filter_as_str.to_string());

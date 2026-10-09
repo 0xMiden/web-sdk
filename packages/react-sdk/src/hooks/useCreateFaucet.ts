@@ -23,6 +23,9 @@ export interface UseCreateFaucetResult {
 /**
  * Hook to create a new faucet account.
  *
+ * Pass `nonFungible: true` for a faucet that mints `NonFungibleAsset`s. A
+ * non-fungible faucet takes no `decimals` or `maxSupply`; passing either throws.
+ *
  * @example
  * ```tsx
  * function CreateFaucetButton() {
@@ -36,6 +39,9 @@ export interface UseCreateFaucetResult {
  *     });
  *     console.log('Created faucet:', newFaucet.id().toString());
  *   };
+ *
+ *   const handleCreateNft = () =>
+ *     createFaucet({ nonFungible: true, tokenSymbol: 'ART' });
  *
  *   return (
  *     <div>
@@ -68,20 +74,34 @@ export function useCreateFaucet(): UseCreateFaucetResult {
       setError(null);
 
       try {
+        const nonFungible = options.nonFungible === true;
+        if (
+          nonFungible &&
+          (options.decimals !== undefined || options.maxSupply !== undefined)
+        ) {
+          throw new Error(
+            "decimals and maxSupply only apply to fungible faucets"
+          );
+        }
+
         const storageMode = getStorageMode(
           options.storageMode ?? DEFAULTS.STORAGE_MODE
         );
-        const decimals = options.decimals ?? DEFAULTS.FAUCET_DECIMALS;
+        // The client ignores decimals and maxSupply for a non-fungible faucet.
+        const decimals = nonFungible
+          ? 0
+          : (options.decimals ?? DEFAULTS.FAUCET_DECIMALS);
+        const maxSupply = nonFungible ? 0n : BigInt(options.maxSupply);
         const authScheme = options.authScheme ?? DEFAULTS.AUTH_SCHEME;
 
         const newFaucet = await runExclusiveSafe(async () => {
           const createdFaucet = await client.newFaucet(
             storageMode,
-            false, // nonFungible - currently only fungible faucets supported
+            nonFungible,
             options.tokenName ?? options.tokenSymbol,
             options.tokenSymbol,
             decimals,
-            BigInt(options.maxSupply),
+            maxSupply,
             authScheme
           );
           const accounts = await client.getAccounts();

@@ -43,8 +43,10 @@ describe.each([
   });
 
   it("exports an immutable string faucet selector distinct from AccountType", () => {
-    expect(sdk.FaucetType).toEqual({ FungibleFaucet: "FungibleFaucet" });
-    expect(sdk.FaucetType.NonFungibleFaucet).toBeUndefined();
+    expect(sdk.FaucetType).toEqual({
+      FungibleFaucet: "FungibleFaucet",
+      NonFungibleFaucet: "NonFungibleFaucet",
+    });
     expect(Object.isFrozen(sdk.FaucetType)).toBe(true);
   });
 
@@ -54,7 +56,7 @@ describe.each([
       (entry) => entry.FaucetType.FungibleFaucet,
       false,
     ],
-    ["legacy numeric 1", () => 1, true],
+    ["legacy numeric 0", () => 0, false],
   ])("routes %s to faucet creation", async (_label, selector, nonFungible) => {
     const inner = { newFaucet: vi.fn().mockResolvedValue("faucet") };
     const resource = new AccountsResource(

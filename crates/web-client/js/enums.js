@@ -8,6 +8,7 @@
 // Public = 1). create() still accepts the legacy numeric 0 and 1.
 export const FaucetType = Object.freeze({
   FungibleFaucet: "FungibleFaucet",
+  NonFungibleFaucet: "NonFungibleFaucet",
 });
 
 export const AuthScheme = Object.freeze({
