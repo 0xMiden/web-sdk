@@ -33,9 +33,9 @@ it("type-checks visibility and faucet selectors through the public declarations"
       new AccountBuilder(new Uint8Array(32)).accountType(AccountType.Private);
       const visibility: AccountType = AccountType.Public;
       const kind: FaucetType = FaucetType.FungibleFaucet;
-      const literal: "FungibleFaucet" = kind;
+      const literal: "FungibleFaucet" = FaucetType.FungibleFaucet;
       const faucet: FaucetCreateOptions = {
-        type: kind, symbol: "TOK", decimals: 8, maxSupply: 1000n
+        type: FaucetType.FungibleFaucet, symbol: "TOK", decimals: 8, maxSupply: 1000n
       };
       const fungible: FungibleFaucetCreateOptions = faucet;
       const nonFungibleKind: FaucetType = FaucetType.NonFungibleFaucet;
@@ -60,6 +60,12 @@ it("type-checks visibility and faucet selectors through the public declarations"
       const nonFungibleDecimals: FaucetCreateOptions = { type: nonFungibleKind, symbol: "NFT", decimals: 0 };
       // @ts-expect-error Max supply applies only to fungible faucets.
       const nonFungibleSupply: FaucetCreateOptions = { type: nonFungibleKind, symbol: "NFT", maxSupply: 1n };
+      const nftKind: "NonFungibleFaucet" = FaucetType.NonFungibleFaucet;
+      const nftFaucet: NonFungibleFaucetCreateOptions = {
+        type: FaucetType.NonFungibleFaucet, symbol: "NFT"
+      };
+      // @ts-expect-error A non-fungible faucet takes no decimals or maxSupply.
+      const badNftFaucet: CreateAccountOptions = { type: FaucetType.NonFungibleFaucet, symbol: "NFT", decimals: 8 };
       // @ts-expect-error AccountTypeValue was removed with the rename.
       import type { AccountTypeValue } from "./index";
       // @ts-expect-error Faucet kinds are no longer members of AccountType.
