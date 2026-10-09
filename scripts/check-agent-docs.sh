@@ -52,7 +52,7 @@ set -uo pipefail
 # is built but never published opts out, and a published package cannot opt out
 # at all. That is deliberate.
 #
-# The three `packages/node-sdk-*` native shells are IN scope. They contain one
+# The four `packages/node-sdk-*` native shells are IN scope. They contain one
 # .node binary and no JavaScript API, and their guide says exactly that - which
 # is the useful thing to tell an agent that has landed in one of them.
 #

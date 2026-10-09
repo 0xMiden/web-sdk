@@ -182,14 +182,87 @@ jobs:
           name: ${{ matrix.platform-package }}
           path: packages/${{ matrix.platform-package }}/miden_client_web.node
 
+  # The musl (Alpine) binary is built by its own job, outside the matrix above,
+  # because it cross-compiles in a container. It is required like the other
+  # three: `publish` runs the web-client path only when this job succeeded, so
+  # a release ships all four native packages or none.
+  build-native-nodejs-musl:
+    needs: check-version
+    if: needs.check-version.outputs.should_publish_web == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.check-version.outputs.checkout_ref }}
+
+      - name: Build napi binary (musl cross via rust-musl-cross)
+        # A dynamically linked musl cdylib so a musl-linked Node (Alpine) can
+        # dlopen it against its own libc instead of a second, statically
+        # embedded copy (-crt-static is disabled; a static CRT inside a shared
+        # object breaks dlopen).
+        #
+        # Build inside messense/rust-musl-cross, which ships a real
+        # musl-targeting GNU toolchain (with a musl libgcc). A plain cross-build
+        # with musl-tools' musl-gcc does not work here. musl-gcc only wraps the
+        # host glibc gcc and does not set rustc's linker, so rustc falls back to
+        # the host linker driver and silently produces a glibc-linked .so
+        # (NEEDED libc.so.6 / ld-linux-x86-64.so.2) that cannot load on Alpine.
+        # The rust-musl-cross toolchain links a genuine musl binary; the Alpine
+        # smoke test below is the backstop.
+        #
+        # The image is pinned by digest (not the mutable :x86_64-musl tag): this
+        # step runs in the provenance-signed publish pipeline, so the third-party
+        # toolchain that produces the shipped binary must be immutable. Bump the
+        # digest deliberately after re-verifying a new image. The pinned nightly is
+        # installed by name from rust-toolchain.toml, which works whatever rustup
+        # version the image ships.
+        run: |
+          docker run --rm \
+            -v "$PWD:/home/rust/src" -w /home/rust/src \
+            -e RUSTFLAGS="-C target-feature=-crt-static" \
+            messense/rust-musl-cross:x86_64-musl@sha256:ce75e9174325d4fbb3de85c309e2d7ca29f7500169bc4b5d2c611ff7e86d549a \
+            bash -c "rustup toolchain install \"\$(sed -n 's/^channel *= *\"\(.*\)\"/\1/p' rust-toolchain.toml)\" --profile minimal && rustup target add x86_64-unknown-linux-musl && cargo build -p miden-client-web --no-default-features --features nodejs,testing --release --locked --target x86_64-unknown-linux-musl"
+          git diff --exit-code -- Cargo.lock
+
+      - name: Prepare .node binary
+        run: |
+          BINARY=target/x86_64-unknown-linux-musl/release/libmiden_client_web.so
+          if [ ! -f "$BINARY" ]; then
+            echo "::error::musl napi binary not found at $BINARY"
+            exit 1
+          fi
+          cp "$BINARY" packages/node-sdk-linux-x64-musl/miden_client_web.node
+
+      - name: Verify musl binary loads on Alpine
+        # A cross-compiled musl cdylib can link "successfully" yet fail to
+        # dlopen on a real musl runtime. Load the built addon inside
+        # node:alpine before publishing: if it can't load, this job fails and
+        # so does the release, instead of shipping a broken binary that
+        # reintroduces "module not found" on Alpine.
+        run: |
+          docker run --rm \
+            -v "$PWD/packages/node-sdk-linux-x64-musl:/pkg:ro" \
+            node:20-alpine \
+            node -e "require('/pkg/miden_client_web.node'); console.log('musl .node loaded on Alpine OK')"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-sdk-linux-x64-musl
+          path: packages/node-sdk-linux-x64-musl/miden_client_web.node
+
   publish:
-    needs: [check-version, build-native-nodejs]
+    needs: [check-version, build-native-nodejs, build-native-nodejs-musl]
     if: >
       !cancelled() &&
       needs.check-version.result == 'success' &&
       (
         needs.check-version.outputs.should_publish_web != 'true' ||
-        needs.build-native-nodejs.result == 'success'
+        (
+          needs.build-native-nodejs.result == 'success' &&
+          needs.build-native-nodejs-musl.result == 'success'
+        )
       ) &&
       (
         needs.check-version.outputs.should_publish_web == 'true' ||
@@ -304,14 +377,24 @@ jobs:
 
       - name: Sync platform package versions and publish
         if: needs.check-version.outputs.should_publish_web == 'true' && needs.build-native-nodejs.result == 'success'
+        # musl goes first: until @miden-sdk/node-linux-x64-musl has its one-time
+        # npm setup (AGENTS.md, Releases section) its publish fails, and going
+        # first means it fails before any other package is published. A version
+        # already on npm is skipped, so a re-run of a partially published
+        # release finishes the rest.
         run: |
           WEB_VERSION=$(jq -r '.version' crates/web-client/package.json)
           DIST_TAG="${{ needs.check-version.outputs.dist_tag }}"
-          for pkg in node-sdk-darwin-arm64 node-sdk-darwin-x64 node-sdk-linux-x64-gnu; do
+          for pkg in node-sdk-linux-x64-musl node-sdk-darwin-arm64 node-sdk-darwin-x64 node-sdk-linux-x64-gnu; do
+            name=$(jq -r .name "packages/${pkg}/package.json")
+            if [ "$(npm view "${name}@${WEB_VERSION}" version 2>/dev/null)" = "$WEB_VERSION" ]; then
+              echo "${name}@${WEB_VERSION} is already on npm; skipping."
+              continue
+            fi
             cp "artifacts/${pkg}/miden_client_web.node" "packages/${pkg}/miden_client_web.node"
             jq --arg v "$WEB_VERSION" '.version = $v' "packages/${pkg}/package.json" > /tmp/pkg.json
             mv /tmp/pkg.json "packages/${pkg}/package.json"
-            echo "Publishing @miden-sdk/${pkg##node-sdk-}@${WEB_VERSION} (--tag ${DIST_TAG}) ..."
+            echo "Publishing ${name}@${WEB_VERSION} (--tag ${DIST_TAG}) ..."
             cd "packages/${pkg}"
             npm publish --tag "$DIST_TAG" --access public --provenance
             cd ../..
@@ -328,6 +411,7 @@ jobs:
               '@miden-sdk/node-darwin-arm64': v,
               '@miden-sdk/node-darwin-x64': v,
               '@miden-sdk/node-linux-x64-gnu': v,
+              '@miden-sdk/node-linux-x64-musl': v,
             };
             require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
             console.log('Injected optionalDependencies with version ' + v);

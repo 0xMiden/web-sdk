@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.17.4 (TBD)
+
+### Fixes
+
+* [FIX][web] The Node.js SDK now runs on Alpine and other musl Linux distributions. Releases publish a new `@miden-sdk/node-linux-x64-musl` native package alongside `@miden-sdk/node-linux-x64-gnu`, and the loader picks between the two by the runtime C library, so a musl-based container (a common ECS or Docker base image) no longer fails at import with `Miden napi module not found`. Both Linux packages declare a `libc` field, so npm and pnpm install only the matching one. With npm, an install for Linux from another OS (`npm install --os=linux --cpu=x64`, as when bundling on macOS) must now also pass `--libc=glibc`, or `--libc=musl` for an Alpine target, or npm skips both Linux packages ([#234](https://github.com/0xMiden/web-sdk/pull/234)).
+* [FIX][web] When the Node.js native addon cannot be loaded, the error now names the platform, CPU and Node version, every package it tried, the real failure of each resolution step and the fixes for the common causes, instead of a generic "build it with cargo" message. A `MIDEN_MODULE_PATH` that fails to load now throws an error naming that path and the load failure ([#234](https://github.com/0xMiden/web-sdk/pull/234)).
+
 ## 0.17.3 (2026-10-09)
 
 ### Enhancements
