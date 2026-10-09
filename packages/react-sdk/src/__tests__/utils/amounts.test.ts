@@ -128,32 +128,33 @@ describe("parseAssetAmount", () => {
     expect(parseAssetAmount("  42  ", 0)).toBe(42n);
   });
 
-  it("parses negative whole numbers", () => {
-    expect(parseAssetAmount("-42", 0)).toBe(-42n);
+  it("rejects a negative amount", () => {
+    expect(() => parseAssetAmount("-5", 0)).toThrow("must not be negative");
+    expect(() => parseAssetAmount("-42", 0)).toThrow("must not be negative");
+    expect(() => parseAssetAmount("-0.5", 2)).toThrow("must not be negative");
   });
 
-  it("applies the sign to the full magnitude, not just the integer part", () => {
-    // -5.25 with 2 decimals must be -525, not -475 (which is what you'd
-    // get from naively combining `whole * factor + fraction`).
-    expect(parseAssetAmount("-5.25", 2)).toBe(-525n);
-  });
-
-  it("preserves the sign when the whole part is zero", () => {
-    // "-0.5" must stay negative: BigInt("-0") === 0n, so a sign carried
-    // only on the whole part is silently lost here.
-    expect(parseAssetAmount("-0.5", 2)).toBe(-50n);
-  });
-
-  it("round-trips negative amounts with formatAssetAmount", () => {
-    const cases: Array<[string, number]> = [
-      ["-5.25", 2],
-      ["-0.5", 2],
-      ["-1000000", 6],
-    ];
-    for (const [input, decimals] of cases) {
-      const parsed = parseAssetAmount(input, decimals);
-      expect(formatAssetAmount(parsed, decimals)).toBe(input);
+  it("rejects stray or repeated signs", () => {
+    for (const decimals of [0, 2]) {
+      for (const input of ["--1", "-", "- 5"]) {
+        expect(() => parseAssetAmount(input, decimals)).toThrow(
+          "must not be negative"
+        );
+      }
     }
+  });
+
+  it("rejects anything that is not plain digits with at most one point", () => {
+    for (const decimals of [0, 2]) {
+      for (const input of ["+5", "1e3", "1 000", "0x10"]) {
+        expect(() => parseAssetAmount(input, decimals)).toThrow(
+          "not a valid number"
+        );
+      }
+    }
+    expect(() => parseAssetAmount(".", 2)).toThrow("not a valid number");
+    expect(() => parseAssetAmount("5.-25", 3)).toThrow("not a valid number");
+    expect(() => parseAssetAmount(".", 0)).toThrow("must be a whole number");
   });
 
   it("round-trips with formatAssetAmount", () => {
