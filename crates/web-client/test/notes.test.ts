@@ -1494,6 +1494,38 @@ test.describe("note filters", () => {
         }
       }
 
+      const completeFilters = {
+        list: () =>
+          new sdk.NoteFilter(sdk.NoteFilterTypes.List, [
+            sdk.NoteId.fromHex(noteIdHex),
+          ]),
+        unique: () =>
+          new sdk.NoteFilter(sdk.NoteFilterTypes.Unique, [
+            sdk.NoteId.fromHex(noteIdHex),
+          ]),
+        scriptRoots: () =>
+          new sdk.NoteFilter(sdk.NoteFilterTypes.ScriptRoots, undefined, [
+            sdk.Word.fromHex(noteIdHex),
+          ]),
+      };
+      const resolvesToArray = async (call) => {
+        try {
+          return Array.isArray(await call());
+        } catch {
+          return false;
+        }
+      };
+
+      const complete = {};
+      for (const method of ["getInputNotes", "getOutputNotes"]) {
+        complete[method] = {};
+        for (const [name, filter] of Object.entries(completeFilters)) {
+          complete[method][name] = await resolvesToArray(() =>
+            client[method](filter())
+          );
+        }
+      }
+
       const inputNotes = await client.getInputNotes(
         new sdk.NoteFilter(sdk.NoteFilterTypes.All)
       );
@@ -1503,6 +1535,7 @@ test.describe("note filters", () => {
 
       return {
         errors,
+        complete,
         inputNotesIsArray: Array.isArray(inputNotes),
         outputNotesIsArray: Array.isArray(outputNotes),
       };
@@ -1516,6 +1549,11 @@ test.describe("note filters", () => {
       expect(errors.scriptRoots).toContain(
         "Script roots required for ScriptRoots filter"
       );
+      expect(result.complete[method]).toEqual({
+        list: true,
+        unique: true,
+        scriptRoots: true,
+      });
     }
     expect(result.inputNotesIsArray).toBe(true);
     expect(result.outputNotesIsArray).toBe(true);
