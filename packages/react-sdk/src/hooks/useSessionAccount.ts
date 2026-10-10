@@ -88,6 +88,15 @@ export function useSessionAccount(
     }
   }, [storagePrefix]);
 
+  // Cancel in-flight initialization only when the hook unmounts. Keeping this
+  // separate from the storage restoration effect avoids treating a changing
+  // storagePrefix value as an unmount.
+  useEffect(() => {
+    return () => {
+      cancelledRef.current = true;
+    };
+  }, []);
+
   const initialize = useCallback(async () => {
     if (!client || !isReady) {
       throw new Error("Miden client is not ready");
@@ -261,5 +270,6 @@ async function waitAndConsume(
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
 
+  if (cancelledRef.current) return;
   throw new Error("Timeout waiting for session wallet funding");
 }
