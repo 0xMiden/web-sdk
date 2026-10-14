@@ -32,6 +32,13 @@ function isAssetObject(asset, wasm) {
   );
 }
 
+/** Throws a clear error when a non-fungible operation is missing its asset. */
+function requireNonFungibleAsset(opts, operation) {
+  if (opts?.nonFungibleAsset == null) {
+    throw new Error(`${operation} requires \`nonFungibleAsset\`.`);
+  }
+}
+
 /** Converts `{ token, amount }` or a WASM asset object into a WASM asset. */
 function toWasmAsset(asset, wasm) {
   if (isAssetObject(asset, wasm)) return asset;
@@ -141,6 +148,7 @@ export class TransactionsResource {
    */
   async sendNonFungible(opts) {
     rejectUnexpectedAnchor(opts, "sendNonFungible", "submit()");
+    requireNonFungibleAsset(opts, "sendNonFungible");
     return this.#sendP2ID(opts, true);
   }
 
@@ -1198,6 +1206,7 @@ export class TransactionsResource {
   }
 
   async #buildSendNonFungibleRequest(opts, wasm) {
+    requireNonFungibleAsset(opts, "sendNonFungible");
     const accountId = resolveAccountRef(opts.account, wasm);
     const request = await this.#inner.newSendNonFungibleAssetTransactionRequest(
       accountId,
@@ -1211,6 +1220,7 @@ export class TransactionsResource {
   }
 
   async #buildMintNonFungibleRequest(opts, wasm) {
+    requireNonFungibleAsset(opts, "mintNonFungible");
     const accountId = resolveAccountRef(opts.account, wasm);
     if (opts.nonFungibleAsset.faucetId().toString() !== accountId.toString()) {
       throw new Error(
@@ -1226,6 +1236,7 @@ export class TransactionsResource {
   }
 
   async #buildBurnNonFungibleRequest(opts, wasm) {
+    requireNonFungibleAsset(opts, "burnNonFungible");
     const accountId = resolveAccountRef(opts.account, wasm);
     const request = await this.#inner.newBurnNonFungibleAssetTransactionRequest(
       accountId,

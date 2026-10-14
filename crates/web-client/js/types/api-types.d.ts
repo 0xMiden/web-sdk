@@ -349,7 +349,7 @@ export interface FaucetCreateOptions {
 
 /**
  * Options for a non-fungible faucet. It mints `NonFungibleAsset`s with
- * `transactions.mint({ account, to, nonFungibleAsset })`, so it takes no `decimals` or
+ * `transactions.mintNonFungible({ account, to, nonFungibleAsset })`, so it takes no `decimals` or
  * `maxSupply`; passing either throws.
  */
 export interface NonFungibleFaucetCreateOptions {
@@ -620,7 +620,7 @@ export interface MintNonFungibleOptions extends TransactionOptions {
   to: AccountRef;
   /**
    * The asset to mint. It must be issued by `account`; build it with
-   * `new NonFungibleAsset(faucetId, value)`.
+   * `NonFungibleAsset.fromData(faucetId, data, salt)`.
    */
   nonFungibleAsset: NonFungibleAsset;
   /** Note visibility. Defaults to "public". */
@@ -1282,9 +1282,10 @@ export interface AccountsResource {
    */
   addAddress(accountId: AccountRef, address: string): Promise<void>;
   /**
-   * Remove a Bech32 address from an account.
+   * Remove a Bech32 address from the account it belongs to.
    *
-   * @param accountId - The account to remove the address from.
+   * @param accountId - Not used: the address identifies its account. Kept so
+   * existing calls keep working.
    * @param address - The Bech32 address string to remove.
    */
   removeAddress(accountId: AccountRef, address: string): Promise<void>;

@@ -745,6 +745,23 @@ describe("TransactionsResource", () => {
     });
   });
 
+  describe("missing nonFungibleAsset", () => {
+    it.each([
+      ["sendNonFungible", { account: "0xsender", to: "0xrecipient" }],
+      ["mintNonFungible", { account: "0xfaucet", to: "0xrecipient" }],
+      ["burnNonFungible", { account: "0xholder" }],
+    ])("%s names the missing option", async (method, opts) => {
+      const { resource, inner } = makeResource();
+      await expect(resource[method](opts)).rejects.toThrow(
+        `${method} requires \`nonFungibleAsset\`.`
+      );
+      await expect(
+        resource.preview({ operation: method, ...opts })
+      ).rejects.toThrow(`${method} requires \`nonFungibleAsset\`.`);
+      expect(inner.executeTransaction).not.toHaveBeenCalled();
+    });
+  });
+
   describe("burnNonFungible", () => {
     it("builds a burn request from the holding account and submits it", async () => {
       const { resource, inner } = makeResource();

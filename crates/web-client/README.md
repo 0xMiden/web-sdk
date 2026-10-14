@@ -623,9 +623,13 @@ const collection = await client.accounts.create({
   symbol: "NFT",
 });
 
-// The first two value elements are the token ID the faucet records as issued.
-const value = new Word(new BigUint64Array([1n, 2n, 3n, 4n]));
-const nft = new NonFungibleAsset(collection.id(), value);
+// The value word commits to the NFT's data and a random salt. Keep both to show
+// later which data the NFT refers to; the faucet only sees the commitment.
+const data = new TextEncoder().encode("ipfs://bafy.../1.json");
+const salt = new Word(
+  BigUint64Array.from(crypto.getRandomValues(new Uint32Array(4)), BigInt)
+);
+const nft = NonFungibleAsset.fromData(collection.id(), data, salt);
 
 await client.transactions.mintNonFungible({ account: collection, to: alice, nonFungibleAsset: nft });
 // After Alice consumes the P2ID note:
@@ -637,6 +641,13 @@ const { txId } = await client.transactions.burnNonFungible({ account: bob, nonFu
 
 A non-fungible faucet takes `symbol` and an optional `name`; it has no
 `decimals` or `maxSupply`, and passing either throws.
+`NonFungibleFaucetComponent.fromAccount(account)` reads the collection's
+`symbol()`, `tokenName()` and optional `description()`, `logoUri()` and
+`contractUri()` back. `NonFungibleAsset.fromData(faucetId, data, salt)` builds
+the asset from its data; `new NonFungibleAsset(faucetId, value)` takes a value
+word you already have. The first two elements of the value word are the token
+ID the faucet records as issued, so two different NFTs from one faucet must not
+share them.
 `Account.isNonFungibleFaucet()` is true for it and `Account.isFaucet()` is
 false. `mintNonFungible` requires that `account` is the faucet that
 issued the asset. A faucet issues each token ID once; minting the same token ID
