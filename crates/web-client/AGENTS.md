@@ -113,6 +113,9 @@ const nft = new NonFungibleAsset(collection.id(), value);
 await client.transactions.mintNonFungible({ account: collection, to: alice, nonFungibleAsset: nft });
 // After Alice consumes the P2ID note:
 await client.transactions.sendNonFungible({ account: alice, to: bob, nonFungibleAsset: nft });
+// Bob sends it back to the faucet in a BURN note; the faucet burns it when it
+// consumes the note.
+const { txId } = await client.transactions.burnNonFungible({ account: bob, nonFungibleAsset: nft });
 ```
 
 A non-fungible faucet takes `symbol` and an optional `name`; it has no
@@ -121,9 +124,12 @@ A non-fungible faucet takes `symbol` and an optional `name`; it has no
 false. `mintNonFungible` requires that `account` is the faucet that
 issued the asset. A faucet issues each token ID once; minting the same token ID
 again fails. `sendNonFungible` takes the same `type`, `reclaimAfter`,
-`timelockUntil` and `returnNote` options as a fungible send. `createNetworkNote`
+`timelockUntil` and `returnNote` options as a fungible send. `burnNonFungible`
+creates a public BURN note; the asset is burned only when the faucet that issued
+it consumes the note, for example with
+`client.transactions.consume({ account: collection, notes })`. `createNetworkNote`
 accepts a `NonFungibleAsset` in `assets`. `batch()` and `preview()` take the
-`sendNonFungible` and `mintNonFungible` operations. Swap, PSWAP and bridge remain
+`sendNonFungible`, `mintNonFungible` and `burnNonFungible` operations. Swap, PSWAP and bridge remain
 fungible-only.
 
 ## Read non-fungible assets
