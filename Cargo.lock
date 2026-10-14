@@ -2420,7 +2420,7 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.17.2"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=ricomateo-nfa-readiness#bddacf845c380d981a6ab47a7026f10bde421397"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=ricomateo-nfa-readiness#b1f88fe33ac2198aeed4d8eb72324403b0fa4b10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2460,7 +2460,7 @@ dependencies = [
 [[package]]
 name = "miden-client-proto"
 version = "0.17.2"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=ricomateo-nfa-readiness#bddacf845c380d981a6ab47a7026f10bde421397"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=ricomateo-nfa-readiness#b1f88fe33ac2198aeed4d8eb72324403b0fa4b10"
 dependencies = [
  "miden-client",
  "miden-objects",
@@ -2474,7 +2474,7 @@ dependencies = [
 [[package]]
 name = "miden-client-sqlite-store"
 version = "0.17.2"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=ricomateo-nfa-readiness#bddacf845c380d981a6ab47a7026f10bde421397"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=ricomateo-nfa-readiness#b1f88fe33ac2198aeed4d8eb72324403b0fa4b10"
 dependencies = [
  "anyhow",
  "async-trait",
