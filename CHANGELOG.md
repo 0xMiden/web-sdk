@@ -4,7 +4,7 @@
 
 ### Enhancements
 
-* [FEATURE][web] Add the auth inputs a multisig needs to a request that another party built with `client.withFeeAwareAuth(request, account, options?)`. It returns a copy of the request with the same auth argument, advice-map preimage and bound block that `feeAwareTransactionRequestBuilder` declares, and keeps every other field; for any other account it returns the request unchanged. It takes the same `options`, and refuses a request that already has an auth argument (`AUTH_ALREADY_SET`) or a conflicting advice-map entry (`CONFLICTING_ADVICE_MAP_ENTRY`). A wallet can now execute a dApp's request from a multisig account without rebuilding it ([rust-sdk#2698](https://github.com/0xMiden/rust-sdk/pull/2698)).
+* [FEATURE][web] Add the auth inputs a multisig needs to a request that another party built with `client.withFeeAwareAuth(request, account, options?)`. It returns a copy of the request with the same auth argument, advice-map preimage and bound block that `feeAwareTransactionRequestBuilder` declares, and keeps every other field; for any other account it returns the request unchanged. It takes the same `options`, and refuses a request that already has an auth argument (`AUTH_ALREADY_SET`) or a conflicting advice-map entry (`CONFLICTING_ADVICE_MAP_ENTRY`). A wallet can now execute a dApp's request from a multisig account without rebuilding it ([#477](https://github.com/0xMiden/web-sdk/pull/477), [rust-sdk#2698](https://github.com/0xMiden/rust-sdk/pull/2698)).
 
 ### Fixes
 
