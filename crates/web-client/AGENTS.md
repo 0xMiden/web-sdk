@@ -128,6 +128,38 @@ const networkCollectibles = await client.accounts.create({
 });
 ```
 
+## Mint and send non-fungible assets
+
+```typescript
+import { FaucetType, NonFungibleAsset, Word } from "@miden-sdk/miden-sdk";
+
+const collection = await client.accounts.create({
+  type: FaucetType.NonFungibleFaucet,
+  storage: "private",
+  name: "Collectible",
+  symbol: "NFT",
+});
+
+// The first two value elements are the token ID the faucet records as issued.
+const value = new Word(new BigUint64Array([1n, 2n, 3n, 4n]));
+const nft = new NonFungibleAsset(collection.id(), value);
+
+await client.transactions.mintNonFungible({ account: collection, to: alice, nonFungibleAsset: nft });
+// After Alice consumes the P2ID note:
+await client.transactions.sendNonFungible({ account: alice, to: bob, nonFungibleAsset: nft });
+```
+
+A non-fungible faucet takes `symbol` and an optional `name`; it has no
+`decimals` or `maxSupply`, and passing either throws.
+`Account.isNonFungibleFaucet()` is true for it and `Account.isFaucet()` is
+false. `mintNonFungible` requires that `account` is the faucet that
+issued the asset. A faucet issues each token ID once; minting the same token ID
+again fails. `sendNonFungible` takes the same `type`, `reclaimAfter`,
+`timelockUntil` and `returnNote` options as a fungible send. `createNetworkNote`
+accepts a `NonFungibleAsset` in `assets`. `batch()` and `preview()` take the
+`sendNonFungible` and `mintNonFungible` operations. Swap, PSWAP and bridge remain
+fungible-only.
+
 ## Read non-fungible assets
 
 ```typescript
@@ -169,7 +201,7 @@ For registry publishing, use `Note.withAttachments()` with a single name asset,
 public metadata, the registry's approved script and inputs, and
 `[new NetworkAccountTarget(registryId).toAttachment()]`. The registry account
 must be public. A tag alone does not make a network note. Consume the returned P2ID note to put
-the asset back in the vault. The amount-based `send` helper remains fungible-only.
+the asset back in the vault.
 
 ## Going deeper
 
