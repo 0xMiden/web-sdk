@@ -324,6 +324,7 @@ const ASYNC_IN_RUST = [
   "newSwapTransactionRequest",
   "newSendNonFungibleAssetTransactionRequest",
   "newMintNonFungibleTransactionRequest",
+  "newBurnNonFungibleAssetTransactionRequest",
   "newPswapCreateTransactionRequest",
   "newPswapConsumeTransactionRequest",
   "newPswapCancelTransactionRequest",
@@ -425,6 +426,9 @@ export const createMockWebClient = (
       .fn()
       .mockResolvedValue(createMockTransactionRequest()),
     newMintNonFungibleTransactionRequest: vi
+      .fn()
+      .mockResolvedValue(createMockTransactionRequest()),
+    newBurnNonFungibleAssetTransactionRequest: vi
       .fn()
       .mockResolvedValue(createMockTransactionRequest()),
     newPswapCreateTransactionRequest: vi
@@ -550,6 +554,7 @@ type MockWebClientType = {
   newSwapTransactionRequest: ReturnType<typeof vi.fn>;
   newSendNonFungibleAssetTransactionRequest: ReturnType<typeof vi.fn>;
   newMintNonFungibleTransactionRequest: ReturnType<typeof vi.fn>;
+  newBurnNonFungibleAssetTransactionRequest: ReturnType<typeof vi.fn>;
   newPswapCreateTransactionRequest: ReturnType<typeof vi.fn>;
   newPswapConsumeTransactionRequest: ReturnType<typeof vi.fn>;
   newPswapCancelTransactionRequest: ReturnType<typeof vi.fn>;

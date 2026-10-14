@@ -1125,6 +1125,23 @@ await mintNonFungible({
 });
 ```
 
+#### `useBurnNonFungible()`
+
+Burn an NFT. The hook sends it from `accountId` back to its faucet in a public
+BURN note; the asset is burned when the faucet consumes that note, for example
+with `useConsume`.
+
+```tsx
+const { burnNonFungible, result, isLoading, stage, error, reset } =
+  useBurnNonFungible();
+const { nonFungibleAssets } = useAccount('0xholder...');
+
+await burnNonFungible({
+  accountId: '0xholder...',
+  nonFungibleAsset: nonFungibleAssets[0].asset,
+});
+```
+
 #### `useConsume()`
 
 Consume notes to claim tokens sent to your account. Supports multiple note IDs

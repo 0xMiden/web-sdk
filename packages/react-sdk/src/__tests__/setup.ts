@@ -52,6 +52,7 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     newSwapTransactionRequest: vi.fn().mockResolvedValue({}),
     newSendNonFungibleAssetTransactionRequest: vi.fn().mockResolvedValue({}),
     newMintNonFungibleTransactionRequest: vi.fn().mockResolvedValue({}),
+    newBurnNonFungibleAssetTransactionRequest: vi.fn().mockResolvedValue({}),
     feeAwareTransactionRequestBuilder: vi.fn().mockImplementation(async () => {
       const builder = {
         withOwnOutputNotes: vi.fn(() => builder),

@@ -165,7 +165,7 @@ Metadata is read from the node the provider's client was created against
 Most mutation hooks return `{ <action>, result, isLoading, stage, error, reset }`:
 the action callback is named after the hook (`send`, `consume`, `mint`, ...) and
 the resolved value is on `result`. That holds for `useSend`, `useSendNonFungible`,
-`useMultiSend`, `useBatch`, `useConsume`, `useMint`, `useMintNonFungible`, `useBridge`, `useSwap`, `useCreateNetworkNote`,
+`useMultiSend`, `useBatch`, `useConsume`, `useMint`, `useMintNonFungible`, `useBurnNonFungible`, `useBridge`, `useSwap`, `useCreateNetworkNote`,
 `useTransaction` and the `usePswap*` family.
 
 **The busy flag is not `isLoading` everywhere.** Every write hook returns its
@@ -174,7 +174,7 @@ in-progress flag, and only the transaction family has a `stage`:
 
 | Family | Hooks | Busy flag | `stage`? |
 |---|---|---|---|
-| Transaction | `useSend`, `useSendNonFungible`, `useMultiSend`, `useBatch`, `useMint`, `useMintNonFungible`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `useTransaction`, all four `usePswap*` writes | `isLoading` | yes |
+| Transaction | `useSend`, `useSendNonFungible`, `useMultiSend`, `useBatch`, `useMint`, `useMintNonFungible`, `useBurnNonFungible`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `useTransaction`, all four `usePswap*` writes | `isLoading` | yes |
 | Account create / import | `useCreateWallet`, `useCreateFaucet`, `useCreateNonFungibleFaucet`, `useImportAccount` | `isCreating` (`isImporting` for the last) | no |
 | Everything else names its own | `useChainAnchor().isCapturing`, `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting` | as named | no |
 
@@ -309,6 +309,20 @@ await mintNonFungible({
     AccountId.fromHex(nftFaucetId),
     new Word(new BigUint64Array([1n, 2n, 3n, 4n])) // the NFT's data
   ),
+});
+```
+
+To burn an NFT, `useBurnNonFungible` sends it from `accountId` back to its
+faucet in a public BURN note. The asset is burned when the faucet consumes that
+note, for example with `useConsume`.
+
+```tsx
+const { burnNonFungible } = useBurnNonFungible();
+const { nonFungibleAssets } = useAccount(holderAccountId);
+
+await burnNonFungible({
+  accountId: holderAccountId,
+  nonFungibleAsset: nonFungibleAssets[0].asset,
 });
 ```
 
@@ -723,6 +737,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | `useBatch()` | `batch({ items })` - items are `{ account, request }` pairs | `BatchResult` (with `blockNumber`) |
 | `useMint()` | `mint({ faucetId, targetAccountId, amount })` | `TransactionResult` |
 | `useMintNonFungible()` | `mintNonFungible({ faucetId, targetAccountId, nonFungibleAsset })` | `TransactionResult` |
+| `useBurnNonFungible()` | `burnNonFungible({ accountId, nonFungibleAsset })` | `TransactionResult` (the faucet burns the asset when it consumes the BURN note) |
 | `useBridge()` | `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress })` | `TransactionResult` (emits an AggLayer B2AGG bridge-out note) |
 | `useCreateNetworkNote()` | `createNetworkNote({ accountId, target, script \| recipient, ... })` | `NetworkNoteResult` (`{ txId, note }`; note satisfies `note.isNetworkNote()`) |
 | `useConsume()` | `consume({ accountId, notes })` | `TransactionResult` |

@@ -191,7 +191,7 @@ A note on `ids`: the hook uses `TransactionFilter.ids(...)` only when every entr
 ## Mutation Hooks
 
 Each returns its own action function plus `error` and `reset`. The families differ in their loading/progress fields:
-- **Transaction hooks** (`useSend`, `useSendNonFungible`, `useMultiSend`, `useBatch`, `useMint`, `useMintNonFungible`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`, `usePswapCancel`, `usePswapCancelByOrder`, `useTransaction`) expose `isLoading` and `stage` (a `TransactionStage`).
+- **Transaction hooks** (`useSend`, `useSendNonFungible`, `useMultiSend`, `useBatch`, `useMint`, `useMintNonFungible`, `useBurnNonFungible`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`, `usePswapCancel`, `usePswapCancelByOrder`, `useTransaction`) expose `isLoading` and `stage` (a `TransactionStage`).
 - **Account create/import hooks** (`useCreateWallet`, `useCreateFaucet`, `useCreateNonFungibleFaucet`, `useImportAccount`) expose `isCreating` (or `isImporting` for the latter) and have **no** `stage`.
 - **Everything else names its own busy flag**: `useChainAnchor().isCapturing`, `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting`.
 
@@ -347,6 +347,14 @@ await mintNonFungible({
   faucetId: nftFaucetId,
   nonFungibleAsset: new NonFungibleAsset(AccountId.fromHex(nftFaucetId), nftDataWord),
 });
+```
+
+### useBurnNonFungible()
+```tsx
+const { burnNonFungible, result, isLoading, stage, error, reset } = useBurnNonFungible();
+// Sends the NFT back to its faucet in a public BURN note. The asset is burned
+// when the faucet consumes that note (e.g. with useConsume).
+await burnNonFungible({ accountId: holderId, nonFungibleAsset: nonFungibleAssets[0].asset });
 ```
 
 ### useConsume()
@@ -680,7 +688,7 @@ await runExclusive(async () => {
 });
 ```
 
-**The built-in hooks route their own client calls through `runExclusive` too.** 23 files under `src/hooks/` pull it out of `useMiden()` and wrap their multi-call work, using the pattern `const runExclusiveSafe = runExclusive ?? runExclusiveDirect;` so they still serialize when no provider-supplied lock is available: `useSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useTransaction`, `usePreview`, `useChainAnchor`, `useCreateWallet`, `useCreateFaucet`, `useExecuteProgram`, `useCreateNetworkNote`, `useMultiSend`, `useWaitForNotes`, the four export/import hooks and all four PSWAP transaction hooks. Use it for your own multi-step sequences for the same reason they do - the client serializes each individual forwarded call, not your group of them (see `frontend-pitfalls` FP2, which also names the raw-bound `SYNC_METHODS` that serialize themselves not at all).
+**The built-in hooks route their own client calls through `runExclusive` too.** 24 files under `src/hooks/` pull it out of `useMiden()` and wrap their multi-call work, using the pattern `const runExclusiveSafe = runExclusive ?? runExclusiveDirect;` so they still serialize when no provider-supplied lock is available: `useSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useTransaction`, `usePreview`, `useChainAnchor`, `useCreateWallet`, `useCreateFaucet`, `useExecuteProgram`, `useCreateNetworkNote`, `useMultiSend`, `useWaitForNotes`, the four export/import hooks and all four PSWAP transaction hooks. Use it for your own multi-step sequences for the same reason they do - the client serializes each individual forwarded call, not your group of them (see `frontend-pitfalls` FP2, which also names the raw-bound `SYNC_METHODS` that serialize themselves not at all).
 
 ## Non-Surface: Do Not Invent These
 
