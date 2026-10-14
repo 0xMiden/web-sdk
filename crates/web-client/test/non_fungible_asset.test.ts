@@ -488,7 +488,7 @@ test.describe("unified note assets", () => {
     expect(result.vaultValue).toBe(result.expectedValue);
   });
 
-  test("mints and sends an NFT issued by a non-fungible faucet", async ({
+  test("mints, sends and burns an NFT issued by a non-fungible faucet", async ({
     run,
   }) => {
     const result = await run(async ({ client, sdk }) => {
@@ -574,6 +574,13 @@ test.describe("unified note assets", () => {
       await consume(bob.id(), send.outputNotes().notes()[0].id().toString());
       const bobAfterSend = await nfts(bob.id());
 
+      // Bob sends it back to the faucet in a BURN note, which the faucet consumes.
+      const burnRequest =
+        await client.newBurnNonFungibleAssetTransactionRequest(bob.id(), nft);
+      const burn = await submit(bob.id(), burnRequest);
+      const bobAfterBurn = await nfts(bob.id());
+      await consume(faucet.id(), burn.outputNotes().notes()[0].id().toString());
+
       return {
         isFaucet: faucet.isFaucet(),
         isNonFungibleFaucet: faucet.isNonFungibleFaucet(),
@@ -583,6 +590,7 @@ test.describe("unified note assets", () => {
         aliceAfterMint,
         aliceAfterSend,
         bobAfterSend,
+        bobAfterBurn,
       };
     });
     expect(result.isFaucet).toBe(false);
@@ -592,5 +600,6 @@ test.describe("unified note assets", () => {
     expect(result.aliceAfterMint).toEqual([result.expected]);
     expect(result.aliceAfterSend).toEqual([]);
     expect(result.bobAfterSend).toEqual([result.expected]);
+    expect(result.bobAfterBurn).toEqual([]);
   });
 });

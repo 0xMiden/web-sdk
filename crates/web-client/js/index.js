@@ -106,6 +106,7 @@ const WRITE_METHODS = new Set([
   "insertAccountAddress",
   "newAccount",
   "newB2AggTransactionRequest",
+  "newBurnNonFungibleAssetTransactionRequest",
   "newConsumeTransactionRequest",
   "newMintNonFungibleTransactionRequest",
   "newMintTransactionRequest",

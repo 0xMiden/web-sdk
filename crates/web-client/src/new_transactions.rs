@@ -219,6 +219,30 @@ impl WebClient {
         Ok(request.into())
     }
 
+    /// Builds a transaction request that sends `asset` from `sender_account_id` back to its faucet
+    /// in a public BURN note. The asset is burned when the faucet that issued it consumes the note.
+    #[js_export(js_name = "newBurnNonFungibleAssetTransactionRequest")]
+    pub async fn new_burn_non_fungible_asset_transaction_request(
+        &self,
+        sender_account_id: &AccountId,
+        asset: &NonFungibleAsset,
+    ) -> Result<TransactionRequest, JsErr> {
+        let asset: NativeNonFungibleAsset = asset.into();
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| {
+            from_str_err("Client not initialized while generating transaction request")
+        })?;
+
+        let builder = fee_aware_builder(client, sender_account_id.into()).await?;
+        let request = builder
+            .build_burn_non_fungible_asset(asset, sender_account_id.into(), client.rng())
+            .map_err(|err| {
+                js_error_with_context(err, "failed to create burn transaction request")
+            })?;
+
+        Ok(request.into())
+    }
+
     /// Builds a transaction request that bridges a fungible asset out to another network via the
     /// `AggLayer`.
     ///
