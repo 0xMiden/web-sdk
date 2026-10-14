@@ -82,6 +82,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         const bob = await client.accounts.create();
         const faucet = await client.accounts.create({
           type: window.FaucetType.NonFungibleFaucet,
+          storage: "private",
           name: "Collectible",
           symbol: "NFT",
         });
@@ -132,7 +133,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         await consumeOutput(faucet, burnTxId);
 
         return {
-          isFaucet: faucet.isFaucet(),
+          isNonFungibleFaucet: faucet.isNonFungibleFaucet(),
           expected: value.toHex(),
           aliceAfterMint,
           aliceAfterSend: await nfts(alice),
@@ -141,7 +142,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         };
       });
 
-      expect(result.isFaucet).toBe(true);
+      expect(result.isNonFungibleFaucet).toBe(true);
       expect(result.aliceAfterMint).toEqual([result.expected]);
       expect(result.aliceAfterSend).toEqual([]);
       expect(result.bobAfterSend).toEqual([result.expected]);
