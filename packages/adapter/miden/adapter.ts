@@ -98,6 +98,25 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
   private _address: string | null;
   private _publicKey: Uint8Array | null;
   private _privateDataPermission: string;
+  // Providers update these fields before emitting accountChange. Reuse the
+  // adapter's connect/disconnect events so every existing consumer refreshes.
+  private readonly _handleAccountChange = () => {
+    const wallet = this._wallet;
+    if (!wallet) return;
+
+    if (!wallet.address) {
+      wallet.off("accountChange", this._handleAccountChange);
+      this._wallet = null;
+      this._address = null;
+      this._publicKey = null;
+      this.emit("disconnect");
+      return;
+    }
+
+    this._address = wallet.address;
+    this._publicKey = wallet.publicKey ?? null;
+    this.emit("connect", this._address);
+  };
   private _readyState: WalletReadyState =
     typeof window === "undefined" || typeof document === "undefined"
       ? WalletReadyState.Unsupported
@@ -418,7 +437,9 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
         throw new WalletConnectionError(error?.message, error);
       }
 
+      this._wallet?.off("accountChange", this._handleAccountChange);
       this._wallet = wallet;
+      wallet.on("accountChange", this._handleAccountChange);
       this._privateDataPermission = privateDataPermission;
 
       this.emit("connect", this._address);
@@ -433,6 +454,7 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
   async disconnect(): Promise<void> {
     const wallet = this._wallet;
     if (wallet) {
+      wallet.off("accountChange", this._handleAccountChange);
       this._wallet = null;
       this._address = null;
       this._publicKey = null;
