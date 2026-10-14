@@ -516,7 +516,7 @@ test.describe("unified note assets", () => {
           .map((asset: any) => asset.intoWord().toHex());
 
       const faucet = await client.newNonFungibleFaucet(
-        sdk.AccountStorageMode.public(),
+        sdk.AccountStorageMode.private(),
         "Collectible",
         "NFT",
         sdk.AuthScheme.AuthRpoFalcon512

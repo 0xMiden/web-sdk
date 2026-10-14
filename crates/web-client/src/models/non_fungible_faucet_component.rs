@@ -16,8 +16,7 @@ pub struct NonFungibleFaucetComponent(NativeNonFungibleFaucet);
 impl NonFungibleFaucetComponent {
     /// Extracts the collection metadata from a non-fungible faucet account.
     #[js_export(js_name = "fromAccount")]
-    #[allow(clippy::needless_pass_by_value)]
-    pub fn from_account(account: Account) -> Result<Self, JsErr> {
+    pub fn from_account(account: &Account) -> Result<Self, JsErr> {
         let native_account: NativeAccount = account.into();
         let faucet = NativeNonFungibleFaucet::try_from(&native_account).map_err(|e| {
             js_error_with_context(e, "failed to get non-fungible faucet details from account")

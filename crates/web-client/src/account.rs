@@ -176,8 +176,6 @@ impl WebClient {
         Ok(())
     }
 
-    /// Removes `address` from the account it belongs to. `account_id` is kept for compatibility
-    /// and is not used: the address identifies its account.
     #[js_export(js_name = "removeAccountAddress")]
     pub async fn remove_account_address(
         &self,
