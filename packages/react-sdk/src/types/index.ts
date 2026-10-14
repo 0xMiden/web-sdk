@@ -503,6 +503,14 @@ export interface MintNonFungibleOptions {
   noteType?: NoteVisibility;
 }
 
+/** Options for `useBurnNonFungible`: burn one non-fungible asset. */
+export interface BurnNonFungibleOptions {
+  /** Account that holds the asset and creates the BURN note */
+  accountId: AccountRef;
+  /** The non-fungible asset to burn. Its faucet burns it when it consumes the note. */
+  nonFungibleAsset: NonFungibleAsset;
+}
+
 // Create-network-note options
 export interface CreateNetworkNoteOptions {
   /** Account that creates, funds, and submits the note (executing sender). */

@@ -117,7 +117,7 @@ the SDK's own `setup.ts` mocks.
 
 **Mutation hooks** return idle state by default. **Every mutation mock needs all six keys** - omitting `reset`, `error` or `result` is a type error, not a shortcut:
 - `useSend()` - `{ send: vi.fn(), result: null, isLoading: false, stage: "idle", error: null, reset: vi.fn() }`. Its `result` type is `SendResult { txId, note }` - distinct from `TransactionResult { transactionId }`. `note` is non-null **only** when the call passed `returnNote: true`. `useSendNonFungible()` has the same keys with `sendNonFungible` in place of `send`.
-- `useMint()`, `useMintNonFungible()` (`mintNonFungible` in place of `mint`), `useConsume()`, `useSwap()`, `useMultiSend()`, `useBridge()`, `usePswapCreate()`, `usePswapConsume()`, `usePswapCancel()`, `usePswapCancelByOrder()`, `useTransaction()` - same six keys, `result: TransactionResult | null`.
+- `useMint()`, `useMintNonFungible()` (`mintNonFungible` in place of `mint`), `useBurnNonFungible()` (`burnNonFungible`), `useConsume()`, `useSwap()`, `useMultiSend()`, `useBridge()`, `usePswapCreate()`, `usePswapConsume()`, `usePswapCancel()`, `usePswapCancelByOrder()`, `useTransaction()` - same six keys, `result: TransactionResult | null`.
 - `useCreateNetworkNote()` - same six keys, `result: NetworkNoteResult | null` (`{ txId, note }`).
 - `useBatch()` - same six keys with `batch` as the action, `result: BatchResult | null` (`{ blockNumber }`).
 - `useCreateWallet()` - `{ createWallet: vi.fn(), wallet: null, isCreating: false, error: null, reset: vi.fn() }`. `useCreateFaucet` and `useCreateNonFungibleFaucet` mirror it with `faucet` (and `createFaucet` / `createNonFungibleFaucet`); `useImportAccount` with `account` and `isImporting`.
