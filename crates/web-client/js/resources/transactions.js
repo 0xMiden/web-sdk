@@ -11,6 +11,7 @@ export const PREVIEW_BUILT_IN_OPERATIONS = new Set([
   "sendNonFungible",
   "mint",
   "mintNonFungible",
+  "burnNonFungible",
   "bridge",
   "consume",
   "swap",
@@ -355,6 +356,32 @@ export class TransactionsResource {
     return { txId, result };
   }
 
+  /**
+   * Sends one non-fungible asset back to its faucet in a public BURN note. The
+   * asset is burned when the faucet that issued it consumes the note.
+   */
+  async burnNonFungible(opts) {
+    rejectUnexpectedAnchor(opts, "burnNonFungible", "submit()");
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const { accountId, request } = await this.#buildBurnNonFungibleRequest(
+      opts,
+      wasm
+    );
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      accountId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, result };
+  }
+
   async bridge(opts) {
     rejectUnexpectedAnchor(opts, "bridge", "submit()");
     this.#client.assertNotTerminated();
@@ -603,6 +630,13 @@ export class TransactionsResource {
         ));
         break;
       }
+      case "burnNonFungible": {
+        ({ accountId, request } = await this.#buildBurnNonFungibleRequest(
+          opts,
+          wasm
+        ));
+        break;
+      }
       case "bridge": {
         ({ accountId, request } = await this.#buildB2AggRequest(opts, wasm));
         break;
@@ -722,6 +756,9 @@ export class TransactionsResource {
           break;
         case "mintNonFungible":
           built = await this.#buildMintNonFungibleRequest(op, wasm);
+          break;
+        case "burnNonFungible":
+          built = await this.#buildBurnNonFungibleRequest(op, wasm);
           break;
         case "consume":
           built = await this.#buildConsumeRequest(op, wasm);
@@ -1184,6 +1221,15 @@ export class TransactionsResource {
       resolveAccountRef(opts.to, wasm),
       opts.nonFungibleAsset,
       resolveNoteType(opts.type, wasm)
+    );
+    return { accountId, request };
+  }
+
+  async #buildBurnNonFungibleRequest(opts, wasm) {
+    const accountId = resolveAccountRef(opts.account, wasm);
+    const request = await this.#inner.newBurnNonFungibleAssetTransactionRequest(
+      accountId,
+      opts.nonFungibleAsset
     );
     return { accountId, request };
   }

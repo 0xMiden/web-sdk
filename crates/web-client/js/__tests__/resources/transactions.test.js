@@ -229,6 +229,9 @@ function makeInner(overrides = {}) {
     newSendNonFungibleAssetTransactionRequest: vi
       .fn()
       .mockResolvedValue("sendAssetRequest"),
+    newBurnNonFungibleAssetTransactionRequest: vi
+      .fn()
+      .mockResolvedValue("burnAssetRequest"),
     newB2AggTransactionRequest: vi.fn().mockResolvedValue("b2aggRequest"),
     newConsumeTransactionRequest: vi.fn().mockResolvedValue("consumeRequest"),
     // Keep the builder the resource actually used, so a test can assert what was
@@ -739,6 +742,38 @@ describe("TransactionsResource", () => {
       expect(inner.newMintNonFungibleTransactionRequest).toHaveBeenCalledTimes(
         2
       );
+    });
+  });
+
+  describe("burnNonFungible", () => {
+    it("builds a burn request from the holding account and submits it", async () => {
+      const { resource, inner } = makeResource();
+      const nft = makeNft();
+      const result = await resource.burnNonFungible({
+        account: "0xholder",
+        nonFungibleAsset: nft,
+      });
+      expect(
+        inner.newBurnNonFungibleAssetTransactionRequest
+      ).toHaveBeenCalledWith(expect.objectContaining({ hex: "0xholder" }), nft);
+      expect(inner.executeTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xholder" }),
+        "burnAssetRequest"
+      );
+      expect(result.txId).toBeDefined();
+    });
+
+    it("previews and batches the burnNonFungible operation", async () => {
+      const { resource, inner } = makeResource();
+      inner.submitNewTransactionBatch = vi.fn().mockResolvedValue(1);
+      const burn = { account: "0xholder", nonFungibleAsset: makeNft() };
+      await resource.preview({ operation: "burnNonFungible", ...burn });
+      await resource.batch({
+        operations: [{ kind: "burnNonFungible", ...burn }],
+      });
+      expect(
+        inner.newBurnNonFungibleAssetTransactionRequest
+      ).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -1528,6 +1563,7 @@ describe("TransactionsResource", () => {
       "createNetworkNote",
       "mint",
       "mintNonFungible",
+      "burnNonFungible",
       "bridge",
       "consume",
       "consumeAll",

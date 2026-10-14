@@ -648,6 +648,14 @@ export interface MintNonFungibleOptions extends TransactionOptions {
   type?: NoteVisibility;
 }
 
+/** Options for `burnNonFungible`. */
+export interface BurnNonFungibleOptions extends TransactionOptions {
+  /** Account that holds the asset and creates the BURN note. */
+  account: AccountRef;
+  /** The non-fungible asset to burn. Its faucet burns it when it consumes the note. */
+  nonFungibleAsset: NonFungibleAsset;
+}
+
 export interface BridgeOptions extends TransactionOptions {
   /** Account that creates and funds the bridge note (the sender / executing account). */
   account: AccountRef;
@@ -715,6 +723,11 @@ export type BatchOperation =
       to: AccountRef;
       nonFungibleAsset: NonFungibleAsset;
       type?: NoteVisibility;
+    }
+  | {
+      kind: "burnNonFungible";
+      account: AccountRef;
+      nonFungibleAsset: NonFungibleAsset;
     }
   | {
       kind: "consume";
@@ -977,6 +990,12 @@ export interface PreviewMintNonFungibleOptions {
   type?: NoteVisibility;
 }
 
+export interface PreviewBurnNonFungibleOptions {
+  operation: "burnNonFungible";
+  account: AccountRef;
+  nonFungibleAsset: NonFungibleAsset;
+}
+
 export interface PreviewBridgeOptions {
   operation: "bridge";
   account: AccountRef;
@@ -1036,6 +1055,7 @@ export type PreviewOptions =
   | PreviewSendNonFungibleOptions
   | PreviewMintOptions
   | PreviewMintNonFungibleOptions
+  | PreviewBurnNonFungibleOptions
   | PreviewBridgeOptions
   | PreviewConsumeOptions
   | PreviewSwapOptions
@@ -1335,6 +1355,16 @@ export interface TransactionsResource {
    */
   mintNonFungible(
     options: MintNonFungibleOptions
+  ): Promise<TransactionSubmitResult>;
+  /**
+   * Send one non-fungible asset back to its faucet in a public BURN note. The
+   * asset is burned when the faucet that issued it consumes the note, for
+   * example with `consume({ account: faucet, notes })`.
+   *
+   * @param options - The holding account and the non-fungible asset.
+   */
+  burnNonFungible(
+    options: BurnNonFungibleOptions
   ): Promise<TransactionSubmitResult>;
   /**
    * Builds a Public custom-script note carrying a `NetworkAccountTarget`

@@ -74,7 +74,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
   );
 
   mockTest(
-    "non-fungible flow: create NFT faucet, mintNonFungible and sendNonFungible",
+    "non-fungible flow: create NFT faucet, mintNonFungible, sendNonFungible and burnNonFungible",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
         const client = await window.MidenClient.createMock();
@@ -123,13 +123,21 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
           nonFungibleAsset: asset,
         });
         await consumeOutput(bob, sendTxId);
+        const bobAfterSend = await nfts(bob);
+
+        const { txId: burnTxId } = await client.transactions.burnNonFungible({
+          account: bob,
+          nonFungibleAsset: asset,
+        });
+        await consumeOutput(faucet, burnTxId);
 
         return {
           isFaucet: faucet.isFaucet(),
           expected: value.toHex(),
           aliceAfterMint,
           aliceAfterSend: await nfts(alice),
-          bobAfterSend: await nfts(bob),
+          bobAfterSend,
+          bobAfterBurn: await nfts(bob),
         };
       });
 
@@ -137,6 +145,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       expect(result.aliceAfterMint).toEqual([result.expected]);
       expect(result.aliceAfterSend).toEqual([]);
       expect(result.bobAfterSend).toEqual([result.expected]);
+      expect(result.bobAfterBurn).toEqual([]);
     }
   );
 
