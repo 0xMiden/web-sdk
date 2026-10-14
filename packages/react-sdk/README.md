@@ -34,6 +34,7 @@ React hooks library for the Miden Web Client. Provides a simple, ergonomic inter
 - **Session Wallets** - `useSessionAccount()` manages the create-fund-consume lifecycle for temporary wallets
 - **AggLayer Bridge-Out** - `useBridge()` emits a B2AGG note to bridge a fungible asset out to another network via the AggLayer
 - **Network Notes** - `useCreateNetworkNote()` creates custom-script network notes
+- **Non-Fungible Assets** - Create NFT faucets, mint and send NFTs, and list them with `useAccount().nonFungibleAssets`
 - **Concurrency Safety** - Transaction hooks prevent double-sends with built-in concurrency guards
 - **Auto Pre-Sync** - Transaction hooks sync before executing by default (opt out with `skipSync`)
 - **WASM Error Wrapping** - Cryptic WASM errors are intercepted and replaced with actionable messages
@@ -473,6 +474,18 @@ function AccountDetails({ accountId }: { accountId: string }) {
 }
 ```
 
+`assets` and `getBalance` cover fungible assets only. NFTs are on
+`nonFungibleAssets`, an array of `{ faucetId, vaultKey, value, asset }`:
+`faucetId`, `vaultKey` and `value` are hex strings (`vaultKey` is unique per
+NFT), and `asset` is the `NonFungibleAsset` to pass as `nonFungibleAsset` to
+`useSendNonFungible` or `useCreateNetworkNote`.
+
+```tsx
+const { nonFungibleAssets } = useAccount(accountId);
+
+nonFungibleAssets.map((nft) => <div key={nft.vaultKey}>{nft.faucetId}</div>);
+```
+
 #### `useCreateWallet()`
 
 Create new wallet accounts. Supports storage mode, mutability, and auth scheme
@@ -565,6 +578,19 @@ function CreateFaucetForm() {
     </div>
   );
 }
+```
+
+#### `useCreateNonFungibleFaucet()`
+
+Create a faucet that mints NFTs. It takes no `decimals` or `maxSupply`.
+
+```tsx
+import { useCreateNonFungibleFaucet } from '@miden-sdk/react';
+
+const { createNonFungibleFaucet, faucet, isCreating, error, reset } =
+  useCreateNonFungibleFaucet();
+
+const nftFaucet = await createNonFungibleFaucet({ tokenSymbol: 'ART' });
 ```
 
 #### `useImportAccount()`
@@ -800,6 +826,23 @@ function SendForm() {
     </div>
   );
 }
+```
+
+#### `useSendNonFungible()`
+
+Send an NFT. Takes the same options as `useSend`, with `nonFungibleAsset` in
+place of `assetId` and `amount` (`sendAll` does not apply).
+
+```tsx
+const { sendNonFungible, result, isLoading, stage, error, reset } =
+  useSendNonFungible();
+const { nonFungibleAssets } = useAccount('0xsender...');
+
+await sendNonFungible({
+  from: '0xsender...',
+  to: '0xrecipient...',
+  nonFungibleAsset: nonFungibleAssets[0].asset,
+});
 ```
 
 #### `useMultiSend()`
@@ -1060,6 +1103,26 @@ function MintForm() {
     </button>
   );
 }
+```
+
+#### `useMintNonFungible()`
+
+Mint an NFT from a non-fungible faucet. The asset must be issued by `faucetId`.
+
+```tsx
+import { AccountId, NonFungibleAsset, Word } from '@miden-sdk/miden-sdk';
+
+const { mintNonFungible, result, isLoading, stage, error, reset } =
+  useMintNonFungible();
+
+await mintNonFungible({
+  faucetId: nftFaucetId,
+  targetAccountId: '0xwallet...',
+  nonFungibleAsset: new NonFungibleAsset(
+    AccountId.fromHex(nftFaucetId),
+    new Word(new BigUint64Array([1n, 2n, 3n, 4n])) // the NFT's data
+  ),
+});
 ```
 
 #### `useConsume()`
