@@ -24,7 +24,7 @@ export interface UseCreateNonFungibleFaucetResult {
 
 /**
  * Hook to create a non-fungible faucet account, which mints `NonFungibleAsset`s
- * with `useMint`. Use `useCreateFaucet` for a fungible token faucet.
+ * with `useMintNonFungible`. Use `useCreateFaucet` for a fungible token faucet.
  *
  * @example
  * ```tsx

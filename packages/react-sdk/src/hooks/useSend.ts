@@ -85,7 +85,7 @@ export interface UseSendNonFungibleResult {
  * ```
  */
 export function useSend(): UseSendResult {
-  return useSendAsset();
+  return useSendAsset(false);
 }
 
 /**
@@ -107,11 +107,11 @@ export function useSend(): UseSendResult {
  * ```
  */
 export function useSendNonFungible(): UseSendNonFungibleResult {
-  const { send, ...state } = useSendAsset();
+  const { send, ...state } = useSendAsset(true);
   return { sendNonFungible: send, ...state };
 }
 
-function useSendAsset() {
+function useSendAsset(nonFungible: boolean) {
   const { client, isReady, sync, runExclusive, prover } = useMiden();
   const runExclusiveSafe = runExclusive ?? runExclusiveDirect;
   const isBusyRef = useRef(false);
@@ -142,18 +142,20 @@ function useSendAsset() {
       setError(null);
 
       try {
+        const nonFungibleAsset = nonFungible
+          ? (options as SendNonFungibleOptions).nonFungibleAsset
+          : undefined;
+        if (nonFungible && !nonFungibleAsset) {
+          throw new Error("sendNonFungible requires `nonFungibleAsset`");
+        }
+        const fungible = nonFungible ? undefined : (options as SendOptions);
+
         // Auto-sync before send unless opted out
         if (!options.skipSync) {
           await sync();
         }
 
         const noteType = getNoteType(options.noteType ?? DEFAULTS.NOTE_TYPE);
-        const nonFungibleAsset =
-          "nonFungibleAsset" in options ? options.nonFungibleAsset : undefined;
-        const fungible = nonFungibleAsset
-          ? undefined
-          : (options as SendOptions);
-
         // Resolve amount — if sendAll, query the account balance
         let amount = fungible?.amount;
         if (fungible?.sendAll) {
@@ -377,7 +379,7 @@ function useSendAsset() {
         isBusyRef.current = false;
       }
     },
-    [client, isReady, prover, runExclusive, sync]
+    [client, isReady, nonFungible, prover, runExclusive, sync]
   );
 
   const reset = useCallback(() => {

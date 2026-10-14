@@ -96,7 +96,13 @@ export const getNoteSummary = (
         });
       }
       nonFungibleAssets = (noteAssets?.nonFungibleAssets?.() ?? []).map(
-        toNonFungibleAssetInfo
+        (asset) => {
+          const info = toNonFungibleAssetInfo(asset);
+          return {
+            ...info,
+            symbol: getAssetMetadata?.(info.faucetId)?.symbol,
+          };
+        }
       );
     } catch {
       // Keep assets empty if details are unavailable.
@@ -122,7 +128,7 @@ export const formatNoteSummary = (
   const parts = [
     ...summary.assets.map(formatAsset),
     ...(summary.nonFungibleAssets ?? []).map(
-      (asset) => `NFT ${asset.faucetId}`
+      (asset) => `NFT ${asset.symbol ?? asset.faucetId}`
     ),
   ];
   if (!parts.length) {

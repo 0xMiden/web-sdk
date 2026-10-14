@@ -2,6 +2,7 @@ import { useEffect, useMemo } from "react";
 import {
   BasicFungibleFaucetComponent,
   Endpoint,
+  NonFungibleFaucetComponent,
   RpcClient,
 } from "@miden-sdk/miden-sdk";
 import { useAssetMetadataStore, useMidenStore } from "../store/MidenStore";
@@ -35,19 +36,28 @@ const fetchAssetMetadata = async (
 
     if (!account) return null;
 
-    const faucet = BasicFungibleFaucetComponent.fromAccount(account as never);
-    const symbol = faucet.symbol().toString();
-    const decimals = faucet.decimals();
-
-    return { assetId, symbol, decimals };
+    try {
+      const faucet = BasicFungibleFaucetComponent.fromAccount(account as never);
+      return {
+        assetId,
+        symbol: faucet.symbol().toString(),
+        decimals: faucet.decimals(),
+      };
+    } catch {
+      // Not a fungible faucet: read the collection symbol of a non-fungible one.
+      const collection = NonFungibleFaucetComponent.fromAccount(
+        account as never
+      );
+      return { assetId, symbol: collection.symbol().toString() };
+    }
   } catch {
     return null;
   }
 };
 
 /**
- * Fetches token metadata (`symbol`, `decimals`) for fungible faucets and caches
- * it in the store.
+ * Fetches token metadata (`symbol`, `decimals`) for fungible faucets, and the
+ * collection `symbol` for non-fungible faucets, and caches it in the store.
  *
  * Reads go to the node the provider's client was created against, taken from
  * `client.endpoint()`. Nothing is fetched until `MidenProvider` has a client,

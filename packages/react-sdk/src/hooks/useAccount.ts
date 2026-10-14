@@ -130,7 +130,7 @@ export function useAccount(accountId: AccountRef | undefined): AccountResult {
     }
   }, [account]);
 
-  const nonFungibleAssets = useMemo((): NonFungibleAssetInfo[] => {
+  const rawNonFungibleAssets = useMemo((): NonFungibleAssetInfo[] => {
     if (!account) return [];
 
     try {
@@ -141,8 +141,11 @@ export function useAccount(accountId: AccountRef | undefined): AccountResult {
   }, [account]);
 
   const assetIds = useMemo(
-    () => rawAssets.map((asset) => asset.assetId),
-    [rawAssets]
+    () => [
+      ...rawAssets.map((asset) => asset.assetId),
+      ...rawNonFungibleAssets.map((asset) => asset.faucetId),
+    ],
+    [rawAssets, rawNonFungibleAssets]
   );
   const { assetMetadata } = useAssetMetadata(assetIds);
 
@@ -157,6 +160,15 @@ export function useAccount(accountId: AccountRef | undefined): AccountResult {
         };
       }),
     [rawAssets, assetMetadata]
+  );
+
+  const nonFungibleAssets = useMemo(
+    () =>
+      rawNonFungibleAssets.map((asset) => ({
+        ...asset,
+        symbol: assetMetadata.get(asset.faucetId)?.symbol,
+      })),
+    [rawNonFungibleAssets, assetMetadata]
   );
 
   // Helper to get balance for a specific faucet

@@ -160,6 +160,30 @@ describe("useMint", () => {
       ).not.toHaveBeenCalled();
     });
 
+    it("should reject mintNonFungible without nonFungibleAsset", async () => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useMintNonFungible());
+
+      await act(async () => {
+        await expect(
+          result.current.mintNonFungible({
+            targetAccountId: "0xtarget",
+            faucetId: "0xfaucet",
+          } as never)
+        ).rejects.toThrow("mintNonFungible requires `nonFungibleAsset`");
+      });
+      expect(result.current.error?.message).toBe(
+        "mintNonFungible requires `nonFungibleAsset`"
+      );
+      expect(mockClient.newMintTransactionRequest).not.toHaveBeenCalled();
+    });
+
     it("should execute mint transaction with custom note type", async () => {
       const mockTxId = createMockTransactionId();
       const mockClient = createMockWebClient({

@@ -146,4 +146,26 @@ describe("useBurnNonFungible", () => {
     expect(result.current.error).toBeNull();
     expect(result.current.result).toBeNull();
   });
+  it("should reject burnNonFungible without nonFungibleAsset", async () => {
+    const mockClient = createMockWebClient();
+    mockUseMiden.mockReturnValue({
+      client: mockClient,
+      isReady: true,
+      sync: vi.fn(),
+    });
+
+    const { result } = renderHook(() => useBurnNonFungible());
+
+    await act(async () => {
+      await expect(
+        result.current.burnNonFungible({ accountId: "0xholder" } as never)
+      ).rejects.toThrow("burnNonFungible requires `nonFungibleAsset`");
+    });
+    expect(result.current.error?.message).toBe(
+      "burnNonFungible requires `nonFungibleAsset`"
+    );
+    expect(
+      mockClient.newBurnNonFungibleAssetTransactionRequest
+    ).not.toHaveBeenCalled();
+  });
 });
