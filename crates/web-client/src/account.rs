@@ -176,16 +176,18 @@ impl WebClient {
         Ok(())
     }
 
+    /// Removes `address` from the account it belongs to. `account_id` is kept for compatibility
+    /// and is not used: the address identifies its account.
     #[js_export(js_name = "removeAccountAddress")]
     pub async fn remove_account_address(
         &self,
-        account_id: &AccountId,
+        _account_id: &AccountId,
         address: &Address,
     ) -> Result<(), JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
         client
-            .remove_address(address.into(), account_id.into())
+            .remove_address(address.into())
             .await
             .map_err(|err| js_error_with_context(err, "failed to remove address from account"))?;
         Ok(())
