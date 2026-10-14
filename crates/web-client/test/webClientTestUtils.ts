@@ -576,13 +576,7 @@ export const createNewFaucet = async (
   authSchemeId: number = 2
 ): Promise<NewAccountTestResult> => {
   return await testingPage.evaluate(
-    async ({
-      storageMode,
-      tokenSymbol,
-      decimals,
-      maxSupply,
-      authSchemeId,
-    }) => {
+    async ({ storageMode, tokenSymbol, decimals, maxSupply, authSchemeId }) => {
       const client = window.client;
       const accountStorageMode =
         window.AccountStorageMode.tryFromStr(storageMode);
