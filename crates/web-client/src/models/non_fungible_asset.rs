@@ -1,9 +1,10 @@
 use js_export_macro::js_export;
+use miden_client::account::standards::faucets::NonFungibleFaucet as NativeNonFungibleFaucet;
 use miden_client::asset::{Asset as NativeAsset, NonFungibleAsset as NativeNonFungibleAsset};
 
 use super::account_id::AccountId;
 use super::word::Word;
-use crate::platform::{JsErr, from_str_err};
+use crate::platform::{JsBytes, JsErr, from_str_err, js_to_bytes};
 
 /// A non-fungible asset with an issuer and a four-element value word.
 ///
@@ -18,10 +19,24 @@ impl NonFungibleAsset {
     /// Creates a non-fungible asset issued by `faucet_id` with the given value word.
     ///
     /// The first two elements of `value` form the asset's token ID, which the faucet records as
-    /// issued when it mints the asset. Use this to build the asset passed to a non-fungible mint.
+    /// issued when it mints the asset. Prefer [`Self::from_data`], which derives the value word
+    /// from the asset's data; use this constructor when you already have the value word.
     #[js_export(constructor)]
     pub fn new(faucet_id: &AccountId, value: &Word) -> NonFungibleAsset {
         NonFungibleAsset(NativeNonFungibleAsset::from_parts(faucet_id.into(), value.into()))
+    }
+
+    /// Creates the non-fungible asset issued by `faucet_id` that commits to `data`.
+    ///
+    /// The value word is `hash(hash(data), salt)`, the commitment the non-fungible faucet expects.
+    /// The faucet only sees this word, so keep `data` and `salt` to show later which data the asset
+    /// refers to. Use a random `salt` so the value word does not reveal `data`.
+    #[js_export(js_name = "fromData")]
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn from_data(faucet_id: &AccountId, data: JsBytes, salt: &Word) -> NonFungibleAsset {
+        let value =
+            NativeNonFungibleFaucet::compute_asset_commitment(&js_to_bytes(&data), salt.into());
+        NonFungibleAsset(NativeNonFungibleAsset::from_parts(faucet_id.into(), value))
     }
 
     /// Reconstructs an asset from its vault key and value words.

@@ -603,3 +603,71 @@ test.describe("unified note assets", () => {
     expect(result.bobAfterBurn).toEqual([]);
   });
 });
+
+test.describe("non-fungible faucet helpers", () => {
+  test("fromData commits to the data and salt, and the faucet component reads the collection metadata", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk }) => {
+      const faucet = await client.newNonFungibleFaucet(
+        sdk.AccountStorageMode.public(),
+        "Collectible",
+        "NFT",
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const fungibleFaucet = await client.newFaucet(
+        sdk.AccountStorageMode.public(),
+        "Token",
+        "TOK",
+        8,
+        sdk.u64(1000),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const data = new Uint8Array([1, 2, 3, 4, 5]);
+      const salt = new sdk.Word(sdk.u64Array([7n, 8n, 9n, 10n]));
+      const otherSalt = new sdk.Word(sdk.u64Array([7n, 8n, 9n, 11n]));
+      const value = (asset: any) => asset.intoWord().toHex();
+
+      const asset = sdk.NonFungibleAsset.fromData(faucet.id(), data, salt);
+      const sameInputs = sdk.NonFungibleAsset.fromData(faucet.id(), data, salt);
+      const otherSaltAsset = sdk.NonFungibleAsset.fromData(
+        faucet.id(),
+        data,
+        otherSalt
+      );
+      const otherData = sdk.NonFungibleAsset.fromData(
+        faucet.id(),
+        new Uint8Array([1, 2, 3, 4, 6]),
+        salt
+      );
+
+      const component = sdk.NonFungibleFaucetComponent.fromAccount(faucet);
+      let fungibleError = "";
+      try {
+        sdk.NonFungibleFaucetComponent.fromAccount(fungibleFaucet);
+      } catch (error: any) {
+        fungibleError = String(error?.message ?? error);
+      }
+
+      return {
+        faucetId: faucet.id().toString(),
+        assetFaucetId: asset.faucetId().toString(),
+        sameValue: value(asset) === value(sameInputs),
+        saltChangesValue: value(asset) !== value(otherSaltAsset),
+        dataChangesValue: value(asset) !== value(otherData),
+        symbol: component.symbol().toString(),
+        tokenName: component.tokenName(),
+        description: component.description() ?? null,
+        fungibleError,
+      };
+    });
+    expect(result.assetFaucetId).toBe(result.faucetId);
+    expect(result.sameValue).toBe(true);
+    expect(result.saltChangesValue).toBe(true);
+    expect(result.dataChangesValue).toBe(true);
+    expect(result.symbol).toBe("NFT");
+    expect(result.tokenName).toBe("Collectible");
+    expect(result.description).toBeNull();
+    expect(result.fungibleError).toContain("non-fungible faucet");
+  });
+});
