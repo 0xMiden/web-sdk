@@ -2,6 +2,10 @@
 
 ## 0.17.4 (TBD)
 
+### Enhancements
+
+* [FEATURE][web] Add the auth inputs a multisig needs to a request that another party built with `client.withFeeAwareAuth(request, account, options?)`. It returns a copy of the request with the same auth argument, advice-map preimage and bound block that `feeAwareTransactionRequestBuilder` declares, and keeps every other field; for any other account it returns the request unchanged. It takes the same `options`, and refuses a request that already has an auth argument (`AUTH_ALREADY_SET`) or a conflicting advice-map entry (`CONFLICTING_ADVICE_MAP_ENTRY`). A wallet can now execute a dApp's request from a multisig account without rebuilding it ([rust-sdk#2698](https://github.com/0xMiden/rust-sdk/pull/2698)).
+
 ### Fixes
 
 * [FIX][web] The Node.js SDK now runs on Alpine and other musl Linux distributions. Releases publish a new `@miden-sdk/node-linux-x64-musl` native package alongside `@miden-sdk/node-linux-x64-gnu`, and the loader picks between the two by the runtime C library, so a musl-based container (a common ECS or Docker base image) no longer fails at import with `Miden napi module not found`. Both Linux packages declare a `libc` field, so npm and pnpm install only the matching one. With npm, an install for Linux from another OS (`npm install --os=linux --cpu=x64`, as when bundling on macOS) must now also pass `--libc=glibc`, or `--libc=musl` for an Alpine target, or npm skips both Linux packages ([#234](https://github.com/0xMiden/web-sdk/pull/234)).

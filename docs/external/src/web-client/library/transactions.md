@@ -261,6 +261,22 @@ The salt is a *declaration*, not a commitment: `request.feeConversionSalt()` rep
 
 `withAuthArg` and `withFeeConversionSalt` are **mutually exclusive**, and miden-client enforces that by having each setter clear the other — so whichever you call last simply wins, rather than producing an error. That makes either setter destructive on a builder from `feeAwareTransactionRequestBuilder` for a multisig: it already carries the component's three-word auth args, and clearing them leaves the auth procedure piping a preimage that was never written. Pass `feeConversionSalt` to the builder instead, as above.
 
+### Executing a request someone else built
+
+A wallet that executes a dApp's finished request from a multisig account cannot use the builder: the request is already built, and a rebuild from its public accessors does not keep every field. Add the auth inputs to the request instead:
+
+```typescript
+const request = await client.withFeeAwareAuth(dappRequest, multisig);
+await client.transactions.submit(multisig, request);
+```
+
+`withFeeAwareAuth` returns a copy of the request with the same auth argument, advice-map preimage and bound block that `feeAwareTransactionRequestBuilder` declares. The auth argument replaces a declared fee conversion salt, and every other field stays the same. For an account that is not a multisig the request comes back unchanged. It takes the same `options` as the builder (`approvalExpirationDelta`, `feeConversionSalt`, `boundBlockNum`).
+
+It refuses two requests, each with an error `code` you can branch on (on Node.js the code prefixes the message):
+
+- `AUTH_ALREADY_SET`: the request already has an auth argument. The author of the request owns it, so it is not replaced.
+- `CONFLICTING_ADVICE_MAP_ENTRY`: the advice map of the request already holds the auth argument as a key with a different value.
+
 ### Custom auth procedures
 
 miden-client only commits conversion info for auth components it recognises. If you have written your own, which way out applies depends on the procedure:
