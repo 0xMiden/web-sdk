@@ -61,6 +61,10 @@ export function useBurnNonFungible(): UseBurnNonFungibleResult {
       setError(null);
 
       try {
+        if (!options.nonFungibleAsset) {
+          throw new Error("burnNonFungible requires `nonFungibleAsset`");
+        }
+
         const txResult = await runExclusiveSafe(async () => {
           // Create the WASM AccountId objects inside runExclusiveSafe so they
           // are not stale when the client consumes them.

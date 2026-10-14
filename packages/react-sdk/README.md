@@ -475,10 +475,11 @@ function AccountDetails({ accountId }: { accountId: string }) {
 ```
 
 `assets` and `getBalance` cover fungible assets only. NFTs are on
-`nonFungibleAssets`, an array of `{ faucetId, vaultKey, value, asset }`:
+`nonFungibleAssets`, an array of `{ faucetId, vaultKey, value, asset, symbol? }`:
 `faucetId`, `vaultKey` and `value` are hex strings (`vaultKey` is unique per
-NFT), and `asset` is the `NonFungibleAsset` to pass as `nonFungibleAsset` to
-`useSendNonFungible` or `useCreateNetworkNote`.
+NFT), `asset` is the `NonFungibleAsset` to pass as `nonFungibleAsset` to
+`useSendNonFungible` or `useCreateNetworkNote`, and `symbol` is the collection
+symbol once its metadata has been fetched.
 
 ```tsx
 const { nonFungibleAssets } = useAccount(accountId);
@@ -726,7 +727,8 @@ interface StreamedNote {
 
 #### `useAssetMetadata(assetIds)`
 
-Fetch asset symbols/decimals for a list of asset IDs. This is the lightweight
+Fetch asset symbols/decimals for a list of asset IDs (for an NFT collection,
+only the symbol). This is the lightweight
 way to enrich balances and note lists with human-friendly token info.
 It batches lookups and caches results for reuse across components. That avoids
 repeated RPC calls and inconsistent labels. Lookups go to the node the
@@ -1115,12 +1117,18 @@ import { AccountId, NonFungibleAsset, Word } from '@miden-sdk/miden-sdk';
 const { mintNonFungible, result, isLoading, stage, error, reset } =
   useMintNonFungible();
 
+// The asset commits to its data and a random salt; keep both to show later
+// which data the NFT refers to.
+const salt = new Word(
+  BigUint64Array.from(crypto.getRandomValues(new Uint32Array(4)), BigInt)
+);
 await mintNonFungible({
   faucetId: nftFaucetId,
   targetAccountId: '0xwallet...',
-  nonFungibleAsset: new NonFungibleAsset(
+  nonFungibleAsset: NonFungibleAsset.fromData(
     AccountId.fromHex(nftFaucetId),
-    new Word(new BigUint64Array([1n, 2n, 3n, 4n])) // the NFT's data
+    new TextEncoder().encode('ipfs://bafy.../1.json'), // the NFT's data
+    salt
   ),
 });
 ```

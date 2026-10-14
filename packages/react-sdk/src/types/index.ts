@@ -235,6 +235,8 @@ export interface NonFungibleAssetInfo {
   value: string;
   /** The asset itself. Pass it as `nonFungibleAsset` to `useSendNonFungible` or `useCreateNetworkNote`. */
   asset: NonFungibleAsset;
+  /** Symbol of the issuing collection, once its metadata has been fetched. */
+  symbol?: string;
 }
 
 // Notes types
@@ -329,7 +331,7 @@ export interface CreateFaucetOptions {
   authScheme?: AuthScheme;
 }
 
-/** Options for a non-fungible faucet, which mints `NonFungibleAsset`s with `useMint`. */
+/** Options for a non-fungible faucet, which mints `NonFungibleAsset`s with `useMintNonFungible`. */
 export interface CreateNonFungibleFaucetOptions {
   /** Collection symbol (e.g., "ART") */
   tokenSymbol: string;
@@ -496,7 +498,7 @@ export interface MintNonFungibleOptions {
   faucetId: AccountRef;
   /**
    * The asset to mint. It must be issued by `faucetId`; build it with
-   * `new NonFungibleAsset(faucetId, value)`.
+   * `NonFungibleAsset.fromData(faucetId, data, salt)`.
    */
   nonFungibleAsset: NonFungibleAsset;
   /** Note type. Default: private */

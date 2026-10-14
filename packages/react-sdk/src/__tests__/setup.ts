@@ -191,6 +191,11 @@ vi.mock("@miden-sdk/miden-sdk", () => {
         decimals: vi.fn(() => 0),
       })),
     },
+    NonFungibleFaucetComponent: {
+      fromAccount: vi.fn(() => ({
+        symbol: vi.fn(() => ({ toString: () => "NFT" })),
+      })),
+    },
     NoteId: {
       // Mirror the wasm-bindgen ownership model: a NoteId handle becomes
       // unusable once the underlying Rust value is moved out of it (e.g.

@@ -108,11 +108,11 @@ const { account, assets, nonFungibleAssets, getBalance, isLoading, error, refetc
   useAccount(accountId);
 // account - Account object (.id(), .nonce(), .bech32id(), .isFaucet())
 // assets - AssetBalance[] (assetId, amount, symbol?, decimals?) - fungible only
-// nonFungibleAssets - NonFungibleAssetInfo[] (faucetId, vaultKey, value, asset)
+// nonFungibleAssets - NonFungibleAssetInfo[] (faucetId, vaultKey, value, asset, symbol?)
 // getBalance(faucetId) - bigint balance for specific token
 ```
 
-`nonFungibleAssets` lists the NFTs in the vault. `faucetId`, `vaultKey` and `value` are hex strings, and `vaultKey` is unique per NFT. `asset` is the `NonFungibleAsset` to pass as `nonFungibleAsset` to `useSendNonFungible` or `useCreateNetworkNote`. `getBalance` only counts fungible assets.
+`nonFungibleAssets` lists the NFTs in the vault. `faucetId`, `vaultKey` and `value` are hex strings, and `vaultKey` is unique per NFT. `asset` is the `NonFungibleAsset` to pass as `nonFungibleAsset` to `useSendNonFungible` or `useCreateNetworkNote`, and `symbol` is the collection symbol once `useAssetMetadata` has fetched it. `getBalance` only counts fungible assets.
 
 `account.id()` and `account.nonce()` are methods (call them, then `.toString()` to render). `bech32id()` is installed on the `Account` prototype by the React SDK.
 
@@ -345,7 +345,8 @@ const { mintNonFungible } = useMintNonFungible();
 await mintNonFungible({
   targetAccountId: recipientId,
   faucetId: nftFaucetId,
-  nonFungibleAsset: new NonFungibleAsset(AccountId.fromHex(nftFaucetId), nftDataWord),
+  // Commits to the NFT's data and a random salt (a Word); keep both.
+  nonFungibleAsset: NonFungibleAsset.fromData(AccountId.fromHex(nftFaucetId), nftDataBytes, salt),
 });
 ```
 

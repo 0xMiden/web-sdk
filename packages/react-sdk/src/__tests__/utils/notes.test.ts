@@ -91,6 +91,20 @@ describe("getNoteSummary", () => {
     ]);
   });
 
+  it("adds the collection symbol to non-fungible assets when metadata is known", () => {
+    const nft = createMockNonFungibleAsset("0xnftfaucet", "0xkey", "0xvalue");
+    const note = makeInputNoteRecord({
+      id: "0xnote_nft",
+      assets: [],
+      nonFungibleAssets: [nft],
+    });
+    const summary = getNoteSummary(note as never, (assetId) =>
+      assetId === "0xnftfaucet" ? { assetId, symbol: "ART" } : undefined
+    );
+    expect(summary?.nonFungibleAssets?.[0].symbol).toBe("ART");
+    expect(formatNoteSummary(summary!)).toBe("NFT ART");
+  });
+
   it("populates assets from details().assets().fungibleAssets()", () => {
     const note = makeInputNoteRecord({
       id: "0xnote_with_assets",

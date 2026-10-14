@@ -114,14 +114,15 @@ const { account, assets, nonFungibleAssets, getBalance, isLoading, error, refetc
 
 // account   - Account object: .id(), .nonce(), .bech32id(), .isFaucet()
 // assets    - AssetBalance[] of { assetId, amount, symbol?, decimals? } (fungible only)
-// nonFungibleAssets - NonFungibleAssetInfo[] of { faucetId, vaultKey, value, asset }
+// nonFungibleAssets - NonFungibleAssetInfo[] of { faucetId, vaultKey, value, asset, symbol? }
 // getBalance(faucetId) - bigint balance for one token
 ```
 
 `nonFungibleAssets` lists the NFTs in the vault. `faucetId`, `vaultKey` and
 `value` are hex strings; `vaultKey` is unique per NFT, so use it as the React
 key. `asset` is the `NonFungibleAsset` itself, which you pass as
-`nonFungibleAsset` to `useSendNonFungible` or `useCreateNetworkNote`.
+`nonFungibleAsset` to `useSendNonFungible` or `useCreateNetworkNote`. `symbol`
+is the collection symbol, set once `useAssetMetadata` has fetched it.
 
 Prefer the hook's `getBalance(faucetId)`, which takes the id as a string.
 `account.vault().getBalance(...)` exists but wants an `AccountId` instance, not
@@ -301,13 +302,19 @@ in place of `amount`. The asset must be issued by `faucetId`, or the hook throws
 ```tsx
 import { AccountId, NonFungibleAsset, Word } from "@miden-sdk/miden-sdk";
 
+// The asset commits to its data and a random salt; keep both to show later
+// which data the NFT refers to.
+const salt = new Word(
+  BigUint64Array.from(crypto.getRandomValues(new Uint32Array(4)), BigInt)
+);
 const { mintNonFungible } = useMintNonFungible();
 await mintNonFungible({
   faucetId: nftFaucetId,
   targetAccountId: recipientAccountId,
-  nonFungibleAsset: new NonFungibleAsset(
+  nonFungibleAsset: NonFungibleAsset.fromData(
     AccountId.fromHex(nftFaucetId),
-    new Word(new BigUint64Array([1n, 2n, 3n, 4n])) // the NFT's data
+    new TextEncoder().encode("ipfs://bafy.../1.json"), // the NFT's data
+    salt
   ),
 });
 ```
@@ -713,7 +720,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | `useNoteStream(filter?)` | streaming variant of `useNotes` | Auto-updates as notes arrive |
 | `useSyncState()` | `syncHeight`, `isSyncing`, `lastSyncTime`, `sync()` | Sync status + manual trigger |
 | `useSyncControl()` | `pauseSync()`, `resumeSync()`, `isPaused` | Pause/resume the auto-sync timer |
-| `useAssetMetadata(ids?)` | `assetMetadata: Map<string, AssetMetadata>` | Token info. Takes a `string[]`, never a bare string |
+| `useAssetMetadata(ids?)` | `assetMetadata: Map<string, AssetMetadata>` | Token info (`symbol`/`decimals`; `symbol` only for an NFT collection). Takes a `string[]`, never a bare string |
 | `useTransactionHistory(options?)` | `records`, `record`, `status` | Local transaction log. `record` / `status` are set when you pass a single id |
 | `useSessionAccount()` | `account` | The signer's connected account |
 | `useWaitForNotes(...)` | resolves when matching notes appear | Pull-style note waiting |

@@ -73,13 +73,13 @@ export interface UseMintNonFungibleResult {
  * ```
  */
 export function useMint(): UseMintResult {
-  return useMintAsset();
+  return useMintAsset(false);
 }
 
 /**
  * Hook to mint one non-fungible asset from a non-fungible faucet. The asset
  * must be issued by `faucetId`; build it with
- * `new NonFungibleAsset(faucetId, value)`.
+ * `NonFungibleAsset.fromData(faucetId, data, salt)`.
  *
  * @example
  * ```tsx
@@ -88,16 +88,20 @@ export function useMint(): UseMintResult {
  * await mintNonFungible({
  *   faucetId,
  *   targetAccountId,
- *   nonFungibleAsset: new NonFungibleAsset(AccountId.fromHex(faucetId), value),
+ *   nonFungibleAsset: NonFungibleAsset.fromData(
+ *     AccountId.fromHex(faucetId),
+ *     data, // the NFT's data, as bytes
+ *     salt // a random Word; keep it with the data
+ *   ),
  * });
  * ```
  */
 export function useMintNonFungible(): UseMintNonFungibleResult {
-  const { mint, ...state } = useMintAsset();
+  const { mint, ...state } = useMintAsset(true);
   return { mintNonFungible: mint, ...state };
 }
 
-function useMintAsset() {
+function useMintAsset(nonFungible: boolean) {
   const { client, isReady, sync, runExclusive, prover } = useMiden();
   const runExclusiveSafe = runExclusive ?? runExclusiveDirect;
 
@@ -124,9 +128,12 @@ function useMintAsset() {
         // Convert string IDs to AccountId objects
         const targetAccountIdObj = parseAccountId(options.targetAccountId);
         const faucetIdObj = parseAccountId(options.faucetId);
-        const nonFungibleAsset =
-          "nonFungibleAsset" in options ? options.nonFungibleAsset : undefined;
-
+        const nonFungibleAsset = nonFungible
+          ? (options as MintNonFungibleOptions).nonFungibleAsset
+          : undefined;
+        if (nonFungible && !nonFungibleAsset) {
+          throw new Error("mintNonFungible requires `nonFungibleAsset`");
+        }
         if (
           nonFungibleAsset &&
           nonFungibleAsset.faucetId().toString() !== faucetIdObj.toString()
@@ -177,7 +184,7 @@ function useMintAsset() {
         setIsLoading(false);
       }
     },
-    [client, isReady, prover, runExclusive, sync]
+    [client, isReady, nonFungible, prover, runExclusive, sync]
   );
 
   const reset = useCallback(() => {

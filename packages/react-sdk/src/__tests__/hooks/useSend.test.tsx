@@ -243,6 +243,30 @@ describe("useSend", () => {
       ).not.toHaveBeenCalled();
     });
 
+    it("should reject sendNonFungible without nonFungibleAsset", async () => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useSendNonFungible());
+
+      await act(async () => {
+        await expect(
+          result.current.sendNonFungible({
+            from: "0xsender",
+            to: "0xrecipient",
+          } as never)
+        ).rejects.toThrow("sendNonFungible requires `nonFungibleAsset`");
+      });
+      expect(result.current.error?.message).toBe(
+        "sendNonFungible requires `nonFungibleAsset`"
+      );
+      expect(mockClient.newSendTransactionRequest).not.toHaveBeenCalled();
+    });
+
     it("should execute send with returnNote=true via submitNewTransaction", async () => {
       const mockSync = vi.fn().mockResolvedValue(undefined);
       const mockTxId = { toHex: vi.fn(() => "0xtx456") };
