@@ -221,6 +221,9 @@ impl WebClient {
 
     /// Builds a transaction request that sends `asset` from `sender_account_id` back to its faucet
     /// in a public BURN note. The asset is burned when the faucet that issued it consumes the note.
+    ///
+    /// A BURN note for a public faucet is a network note targeted at that faucet, so a public
+    /// faucet must be a network account. Private faucets are not affected.
     #[js_export(js_name = "newBurnNonFungibleAssetTransactionRequest")]
     pub async fn new_burn_non_fungible_asset_transaction_request(
         &self,
