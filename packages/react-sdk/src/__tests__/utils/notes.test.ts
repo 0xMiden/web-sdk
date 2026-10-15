@@ -205,7 +205,7 @@ describe("formatNoteSummary", () => {
     expect(formatNoteSummary(summary)).toBe("1 A + 2 B");
   });
 
-  it("lists non-fungible assets after fungible ones", () => {
+  it("formats note summary containing both fungible and non-fungible assets", () => {
     const summary: NoteSummary = {
       id: "0xnote",
       assets: [{ assetId: "0xfaucet", amount: 1n, symbol: "A", decimals: 0 }],

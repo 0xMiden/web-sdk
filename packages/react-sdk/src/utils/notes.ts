@@ -125,16 +125,16 @@ export const formatNoteSummary = (
       asset.symbol ?? asset.assetId
     }`
 ): string => {
-  const parts = [
+  const formattedAssets = [
     ...summary.assets.map(formatAsset),
     ...(summary.nonFungibleAssets ?? []).map(
       (asset) => `NFT ${asset.symbol ?? asset.faucetId}`
     ),
   ];
-  if (!parts.length) {
+  if (!formattedAssets.length) {
     return summary.id;
   }
 
-  const assetsText = parts.join(" + ");
+  const assetsText = formattedAssets.join(" + ");
   return summary.sender ? `${assetsText} from ${summary.sender}` : assetsText;
 };

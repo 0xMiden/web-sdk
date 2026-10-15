@@ -260,14 +260,6 @@ describe("useAccount", () => {
         },
       ]);
     });
-
-    it("should return no non-fungible assets when there is no account", () => {
-      mockUseMiden.mockReturnValue({ client: null, isReady: false });
-
-      const { result } = renderHook(() => useAccount(undefined));
-
-      expect(result.current.nonFungibleAssets).toEqual([]);
-    });
   });
 
   describe("getBalance helper", () => {

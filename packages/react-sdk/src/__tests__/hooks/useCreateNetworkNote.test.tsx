@@ -206,10 +206,12 @@ describe("useCreateNetworkNote", () => {
       });
     });
 
-    const [noteAssets] = vi.mocked(Note.withAttachments).mock.calls[0];
-    expect((noteAssets as unknown as { assets: unknown[] }).assets).toEqual([
-      asset,
-    ]);
+    expect(Note.withAttachments).toHaveBeenCalledWith(
+      expect.objectContaining({ assets: [asset] }), // the NoteAssets passed in
+      expect.anything(), // metadata
+      expect.anything(), // recipient
+      expect.anything() // attachments
+    );
     expect(mockClient.submitNewTransaction).toHaveBeenCalled();
   });
 

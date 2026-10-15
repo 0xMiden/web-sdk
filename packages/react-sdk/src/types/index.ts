@@ -496,10 +496,7 @@ export interface MintNonFungibleOptions {
   targetAccountId: AccountRef;
   /** Non-fungible faucet to mint from */
   faucetId: AccountRef;
-  /**
-   * The asset to mint. It must be issued by `faucetId`; build it with
-   * `NonFungibleAsset.fromData(faucetId, data, salt)`.
-   */
+  /** The asset to mint. It must be issued by `faucetId` */
   nonFungibleAsset: NonFungibleAsset;
   /** Note type. Default: private */
   noteType?: NoteVisibility;

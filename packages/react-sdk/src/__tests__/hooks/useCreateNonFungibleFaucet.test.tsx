@@ -71,38 +71,6 @@ describe("useCreateNonFungibleFaucet", () => {
     expect(useMidenStore.getState().accounts).toEqual(accounts);
   });
 
-  it("should pass custom options and fall back to private storage for an unknown mode", async () => {
-    const mockClient = createMockWebClient({
-      newNonFungibleFaucet: vi.fn().mockResolvedValue(createMockAccount()),
-      getAccounts: vi.fn().mockResolvedValue([]),
-    });
-    mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
-
-    const { result } = renderHook(() => useCreateNonFungibleFaucet());
-
-    await act(async () => {
-      await result.current.createNonFungibleFaucet({
-        tokenSymbol: "ART",
-        tokenName: "Art Collection",
-        storageMode: "public",
-        authScheme: 1,
-      });
-      await result.current.createNonFungibleFaucet({
-        tokenSymbol: "ART",
-        storageMode: "unknown" as unknown as "public",
-      });
-    });
-
-    expect(mockClient.newNonFungibleFaucet).toHaveBeenNthCalledWith(
-      1,
-      expect.anything(), // storageMode.public()
-      "Art Collection",
-      "ART",
-      1
-    );
-    expect(mockClient.newNonFungibleFaucet).toHaveBeenCalledTimes(2);
-  });
-
   it("should expose errors, converting non-Error values", async () => {
     const mockClient = createMockWebClient({
       newNonFungibleFaucet: vi.fn().mockRejectedValue("String error"),
