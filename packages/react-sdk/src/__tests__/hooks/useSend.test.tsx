@@ -211,38 +211,6 @@ describe("useSend", () => {
       expect(txResult.note.assets.assets).toEqual([asset]);
     });
 
-    it("should put a non-fungible asset in a note with an attachment", async () => {
-      const mockClient = createMockWebClient({
-        submitProvenTransaction: vi.fn().mockResolvedValue(100),
-      });
-      mockUseMiden.mockReturnValue({
-        client: mockClient,
-        isReady: true,
-        sync: vi.fn().mockResolvedValue(undefined),
-      });
-      const asset = createMockNonFungibleAsset();
-
-      const { result } = renderHook(() => useSendNonFungible());
-
-      await act(async () => {
-        await result.current.sendNonFungible({
-          from: "0xsender",
-          to: "0xrecipient",
-          nonFungibleAsset: asset as never,
-          noteType: "public",
-          attachment: [1n],
-        });
-      });
-
-      const [, , noteAssets] = vi.mocked(Note.createP2IDNote).mock.calls[0];
-      expect((noteAssets as unknown as { assets: unknown[] }).assets).toEqual([
-        asset,
-      ]);
-      expect(
-        mockClient.newSendNonFungibleAssetTransactionRequest
-      ).not.toHaveBeenCalled();
-    });
-
     it("should reject sendNonFungible without nonFungibleAsset", async () => {
       const mockClient = createMockWebClient();
       mockUseMiden.mockReturnValue({

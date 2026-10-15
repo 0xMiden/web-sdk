@@ -78,8 +78,7 @@ export function useMint(): UseMintResult {
 
 /**
  * Hook to mint one non-fungible asset from a non-fungible faucet. The asset
- * must be issued by `faucetId`; build it with
- * `NonFungibleAsset.fromData(faucetId, data, salt)`.
+ * must be issued by `faucetId`
  *
  * @example
  * ```tsx
