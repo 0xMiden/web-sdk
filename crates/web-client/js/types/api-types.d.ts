@@ -1336,6 +1336,10 @@ export interface TransactionsResource {
    * asset is burned when the faucet that issued it consumes the note, for
    * example with `consume({ account: faucet, notes })`.
    *
+   * A BURN note for a public faucet is a network note targeted at that faucet,
+   * so a public faucet must be a network account. Private faucets are not
+   * affected.
+   *
    * @param options - The holding account and the non-fungible asset.
    */
   burnNonFungible(

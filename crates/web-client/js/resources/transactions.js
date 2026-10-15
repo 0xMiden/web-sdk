@@ -366,7 +366,9 @@ export class TransactionsResource {
 
   /**
    * Sends one non-fungible asset back to its faucet in a public BURN note. The
-   * asset is burned when the faucet that issued it consumes the note.
+   * asset is burned when the faucet that issued it consumes the note. A BURN
+   * note for a public faucet is a network note, so a public faucet must be a
+   * network account.
    */
   async burnNonFungible(opts) {
     rejectUnexpectedAnchor(opts, "burnNonFungible", "submit()");
