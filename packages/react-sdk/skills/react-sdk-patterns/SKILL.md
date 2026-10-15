@@ -112,7 +112,7 @@ const { account, assets, nonFungibleAssets, getBalance, isLoading, error, refetc
 // getBalance(faucetId) - bigint balance for specific token
 ```
 
-`nonFungibleAssets` lists the NFTs in the vault. `faucetId`, `vaultKey` and `value` are hex strings, and `vaultKey` is unique per NFT. `asset` is the `NonFungibleAsset` to pass as `nonFungibleAsset` to `useSendNonFungible` or `useCreateNetworkNote`, and `symbol` is the collection symbol once `useAssetMetadata` has fetched it. `getBalance` only counts fungible assets.
+`nonFungibleAssets` lists the NFTs in the vault. `faucetId`, `vaultKey` and `value` are hex strings, and `vaultKey` is unique per NFT, so use it as the React key. `asset` is the `NonFungibleAsset` to pass as `nonFungibleAsset` to `useSendNonFungible` or `useCreateNetworkNote`, and `symbol` is the collection symbol once `useAssetMetadata` has fetched it. `getBalance` only counts fungible assets.
 
 `account.id()` and `account.nonce()` are methods (call them, then `.toString()` to render). `bech32id()` is installed on the `Account` prototype by the React SDK.
 
@@ -235,7 +235,7 @@ const account = await createFaucet({
 const { createNonFungibleFaucet, faucet, isCreating, error, reset } =
   useCreateNonFungibleFaucet();
 
-// Mints NonFungibleAssets with useMint; takes no decimals or maxSupply.
+// Mints NonFungibleAssets with useMintNonFungible; takes no decimals or maxSupply.
 const nftFaucet = await createNonFungibleFaucet({
   tokenSymbol: "ART",
   tokenName: "Art Collection",              // optional: defaults to tokenSymbol
@@ -341,11 +341,13 @@ await mint({
 
 // From a non-fungible faucet: useMintNonFungible, with `nonFungibleAsset` in
 // place of `amount`. The asset must be issued by `faucetId`, or the hook throws.
+// The asset commits to its data and a random salt; keep both to show later which
+// data the NFT refers to.
+const salt = new Word(BigUint64Array.from(crypto.getRandomValues(new Uint32Array(4)), BigInt));
 const { mintNonFungible } = useMintNonFungible();
 await mintNonFungible({
   targetAccountId: recipientId,
   faucetId: nftFaucetId,
-  // Commits to the NFT's data and a random salt (a Word); keep both.
   nonFungibleAsset: NonFungibleAsset.fromData(AccountId.fromHex(nftFaucetId), nftDataBytes, salt),
 });
 ```
@@ -509,7 +511,7 @@ const { txId, note } = await createNetworkNote({
   executionHint: hint,        // optional: defaults to `always`
   assetId: faucetId,          // optional: omit for a zero-asset note
   amount: 1000n,
-  // asset: myNft,            // ...or one NonFungibleAsset instead of assetId + amount
+  // nonFungibleAsset: myNft, // ...or one NonFungibleAsset instead of assetId + amount (passing both throws)
   attachment: [7n],           // optional: extra payload appended after the target
 });
 ```
@@ -662,7 +664,7 @@ import {
 formatAssetAmount(1000000n, 8)       // "0.01"
 parseAssetAmount("0.01", 8)           // 1000000n
 const summary = getNoteSummary(note); // { id, assets, nonFungibleAssets, sender } | null
-formatNoteSummary(summary);           // "1.5 TEST from mtst1..."; NFTs show as "NFT <faucetId>"
+formatNoteSummary(summary);           // "1.5 TEST from mtst1..."; NFTs show as "NFT <symbol>" (the faucet ID until the symbol is fetched)
 toBech32AccountId("0x1234...");       // "mtst1..." on testnet; the hex ID when the network is unknown
 ```
 
