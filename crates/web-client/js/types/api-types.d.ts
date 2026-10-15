@@ -349,8 +349,7 @@ export interface FaucetCreateOptions {
 
 /**
  * Options for a non-fungible faucet. It mints `NonFungibleAsset`s with
- * `transactions.mintNonFungible({ account, to, nonFungibleAsset })`, so it takes no `decimals` or
- * `maxSupply`; passing either throws.
+ * `transactions.mintNonFungible({ account, to, nonFungibleAsset })`.
  */
 export interface NonFungibleFaucetCreateOptions {
   /** Use `FaucetType.NonFungibleFaucet`. */
@@ -620,7 +619,7 @@ export interface MintNonFungibleOptions extends TransactionOptions {
   to: AccountRef;
   /**
    * The asset to mint. It must be issued by `account`; build it with
-   * `NonFungibleAsset.fromData(faucetId, data, salt)`.
+   * `new NonFungibleAsset` or `NonFungibleAsset.fromData`.
    */
   nonFungibleAsset: NonFungibleAsset;
   /** Note visibility. Defaults to "public". */
