@@ -3,13 +3,17 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { useMidenStore } from "../../store/MidenStore";
 
 // Shared mocks hoisted above vi.mock so the factory can reference them
-const { mockGetAccountDetails, mockFromAccount, mockEndpointUrls } = vi.hoisted(
-  () => ({
-    mockGetAccountDetails: vi.fn(),
-    mockFromAccount: vi.fn(),
-    mockEndpointUrls: [] as string[],
-  })
-);
+const {
+  mockGetAccountDetails,
+  mockFromAccount,
+  mockNftFromAccount,
+  mockEndpointUrls,
+} = vi.hoisted(() => ({
+  mockGetAccountDetails: vi.fn(),
+  mockFromAccount: vi.fn(),
+  mockNftFromAccount: vi.fn(),
+  mockEndpointUrls: [] as string[],
+}));
 
 // Override the SDK mock for this file so we can control RpcClient behavior
 vi.mock("@miden-sdk/miden-sdk", () => {
@@ -35,6 +39,9 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     BasicFungibleFaucetComponent: {
       fromAccount: mockFromAccount,
     },
+    NonFungibleFaucetComponent: {
+      fromAccount: mockNftFromAccount,
+    },
   };
 });
 
@@ -45,6 +52,7 @@ beforeEach(() => {
   useMidenStore.getState().reset();
   mockGetAccountDetails.mockReset();
   mockFromAccount.mockReset();
+  mockNftFromAccount.mockReset();
   // The hook reads its endpoint from the store's client, so it fetches only once
   // a client exists.
   useMidenStore.getState().setClient({
@@ -238,6 +246,9 @@ describe("useAssetMetadata", () => {
     mockFromAccount.mockImplementation(() => {
       throw new Error("Not a fungible faucet");
     });
+    mockNftFromAccount.mockImplementation(() => {
+      throw new Error("Not a non-fungible faucet");
+    });
 
     const { result } = renderHook(() => useAssetMetadata(["0xfaucet6"]));
 
@@ -247,5 +258,28 @@ describe("useAssetMetadata", () => {
 
     const meta = result.current.assetMetadata.get("0xfaucet6");
     expect(meta).toEqual({ assetId: "0xfaucet6" });
+  });
+
+  it("should read the collection symbol of a non-fungible faucet", async () => {
+    mockGetAccountDetails.mockResolvedValue({
+      account: () => ({ id: "nft-faucet" }),
+    });
+    mockFromAccount.mockImplementation(() => {
+      throw new Error("Not a fungible faucet");
+    });
+    mockNftFromAccount.mockReturnValue({
+      symbol: () => ({ toString: () => "ART" }),
+    });
+
+    const { result } = renderHook(() => useAssetMetadata(["0xnftfaucet"]));
+
+    await waitFor(() => {
+      expect(result.current.assetMetadata.has("0xnftfaucet")).toBe(true);
+    });
+
+    expect(result.current.assetMetadata.get("0xnftfaucet")).toEqual({
+      assetId: "0xnftfaucet",
+      symbol: "ART",
+    });
   });
 });

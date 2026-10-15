@@ -109,18 +109,18 @@ the SDK's own `setup.ts` mocks.
 
 **Query hooks** return populated data by default:
 - `useAccounts()` - `{ accounts, wallets, faucets, isLoading, error, refetch }`. A template mock may keep the `wallets`/`faucets` split populated so the query-hook pattern can exercise both lists, but that is a mock artifact. **The real 0.16 hook deprecates both fields**: it returns `wallets: accounts` and `faucets: []`, because protocol 0.15 removed faucet-vs-wallet from the account id and accounts can no longer be split from headers alone. Detect faucet-ness per-account via `account.isFaucet()` on the full `Account` from `useAccount`. The real hook's `error` is also always `null`, so a mock returning an error there tests a state production never reaches.
-- `useAccount()` - `{ account, assets, getBalance, isLoading, error, refetch }`; an account with a 10.0 TEST balance.
+- `useAccount()` - `{ account, assets, nonFungibleAssets, getBalance, isLoading, error, refetch }`; an account with a 10.0 TEST balance and no NFTs (`nonFungibleAssets: []`).
 - `useNotes()` - all **four** data arrays, not two: `notes`, `consumableNotes`, `noteSummaries`, `consumableNoteSummaries`, plus `isLoading`, `error`, `refetch`. A mock returning only the first two will not typecheck.
 - `useSyncState()` - `{ syncHeight: 12345, isSyncing: false, lastSyncTime, sync, error }`.
 - `useAssetMetadata()` - `{ assetMetadata: new Map([[FAUCET_ID, { assetId, symbol: "TEST", decimals: 8 }]]) }`. It is a `Map` keyed by asset id, not a bare metadata object, and the hook takes a `string[]`.
 - `useMiden()` - **nine** keys: `{ client, isReady: true, isInitializing: false, error: null, sync: vi.fn(), runExclusive: (fn) => fn(), prover: null, signerAccountId: null, signerConnected: null }`. Stubbing only `isReady: true` breaks any hook that awaits `sync()` or reads `prover`, and `runExclusive` must actually invoke its callback.
 
 **Mutation hooks** return idle state by default. **Every mutation mock needs all six keys** - omitting `reset`, `error` or `result` is a type error, not a shortcut:
-- `useSend()` - `{ send: vi.fn(), result: null, isLoading: false, stage: "idle", error: null, reset: vi.fn() }`. Its `result` type is `SendResult { txId, note }` - distinct from `TransactionResult { transactionId }`. `note` is non-null **only** when the call passed `returnNote: true`.
-- `useMint()`, `useConsume()`, `useSwap()`, `useMultiSend()`, `useBridge()`, `usePswapCreate()`, `usePswapConsume()`, `usePswapCancel()`, `usePswapCancelByOrder()`, `useTransaction()` - same six keys, `result: TransactionResult | null`.
+- `useSend()` - `{ send: vi.fn(), result: null, isLoading: false, stage: "idle", error: null, reset: vi.fn() }`. Its `result` type is `SendResult { txId, note }` - distinct from `TransactionResult { transactionId }`. `note` is non-null **only** when the call passed `returnNote: true`. `useSendNonFungible()` has the same keys with `sendNonFungible` in place of `send`.
+- `useMint()`, `useMintNonFungible()` (`mintNonFungible` in place of `mint`), `useBurnNonFungible()` (`burnNonFungible`), `useConsume()`, `useSwap()`, `useMultiSend()`, `useBridge()`, `usePswapCreate()`, `usePswapConsume()`, `usePswapCancel()`, `usePswapCancelByOrder()`, `useTransaction()` - same six keys, `result: TransactionResult | null`.
 - `useCreateNetworkNote()` - same six keys, `result: NetworkNoteResult | null` (`{ txId, note }`).
 - `useBatch()` - same six keys with `batch` as the action, `result: BatchResult | null` (`{ blockNumber }`).
-- `useCreateWallet()` - `{ createWallet: vi.fn(), wallet: null, isCreating: false, error: null, reset: vi.fn() }`. `useCreateFaucet` mirrors it with `faucet`; `useImportAccount` with `account` and `isImporting`.
+- `useCreateWallet()` - `{ createWallet: vi.fn(), wallet: null, isCreating: false, error: null, reset: vi.fn() }`. `useCreateFaucet` and `useCreateNonFungibleFaucet` mirror it with `faucet` (and `createFaucet` / `createNonFungibleFaucet`); `useImportAccount` with `account` and `isImporting`.
 
 **Hooks that do not follow either shape.** These name their own busy flag, and mocking them by analogy with `useSend` gets the field names wrong:
 - `useChainAnchor()` - `{ captureAnchor: vi.fn(), anchor: null, anchoredRequest: null, isCapturing: false, error: null, reset: vi.fn() }`. Its `error` is a `CodedError` carrying `code: "OPERATION_BUSY" | "INVALID_CHAIN_ANCHOR" | "STALE_CLIENT"`, so a test asserting on a failure mode should set `code`, not just `message`.

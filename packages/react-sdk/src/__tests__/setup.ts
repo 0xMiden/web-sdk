@@ -27,6 +27,7 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     getAccount: vi.fn().mockResolvedValue(null),
     newWallet: vi.fn().mockResolvedValue({}),
     newFaucet: vi.fn().mockResolvedValue({}),
+    newNonFungibleFaucet: vi.fn().mockResolvedValue({}),
     newAccount: vi.fn().mockResolvedValue(undefined),
     syncState: vi.fn().mockResolvedValue({ blockNum: vi.fn(() => 100) }),
     getSyncHeight: vi.fn().mockResolvedValue(100),
@@ -49,6 +50,9 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     newB2AggTransactionRequest: vi.fn().mockResolvedValue({}),
     newConsumeTransactionRequest: vi.fn().mockResolvedValue({}),
     newSwapTransactionRequest: vi.fn().mockResolvedValue({}),
+    newSendNonFungibleAssetTransactionRequest: vi.fn().mockResolvedValue({}),
+    newMintNonFungibleTransactionRequest: vi.fn().mockResolvedValue({}),
+    newBurnNonFungibleAssetTransactionRequest: vi.fn().mockResolvedValue({}),
     feeAwareTransactionRequestBuilder: vi.fn().mockImplementation(async () => {
       const builder = {
         withOwnOutputNotes: vi.fn(() => builder),
@@ -185,6 +189,11 @@ vi.mock("@miden-sdk/miden-sdk", () => {
       fromAccount: vi.fn(() => ({
         symbol: vi.fn(() => ({ toString: () => "TKN" })),
         decimals: vi.fn(() => 0),
+      })),
+    },
+    NonFungibleFaucetComponent: {
+      fromAccount: vi.fn(() => ({
+        symbol: vi.fn(() => ({ toString: () => "NFT" })),
       })),
     },
     NoteId: {

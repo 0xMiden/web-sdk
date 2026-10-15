@@ -104,11 +104,15 @@ An account's faucet-vs-wallet kind is not encoded in the account id, so `wallets
 
 ### useAccount(accountId: AccountRef | undefined)
 ```tsx
-const { account, assets, getBalance, isLoading, error, refetch } = useAccount(accountId);
+const { account, assets, nonFungibleAssets, getBalance, isLoading, error, refetch } =
+  useAccount(accountId);
 // account - Account object (.id(), .nonce(), .bech32id(), .isFaucet())
-// assets - AssetBalance[] (assetId, amount, symbol?, decimals?)
+// assets - AssetBalance[] (assetId, amount, symbol?, decimals?) - fungible only
+// nonFungibleAssets - NonFungibleAssetInfo[] (faucetId, vaultKey, value, asset, symbol?)
 // getBalance(faucetId) - bigint balance for specific token
 ```
+
+`nonFungibleAssets` lists the NFTs in the vault. `faucetId`, `vaultKey` and `value` are hex strings, and `vaultKey` is unique per NFT, so use it as the React key. `asset` is the `NonFungibleAsset` to pass as `nonFungibleAsset` to `useSendNonFungible` or `useCreateNetworkNote`, and `symbol` is the collection symbol once `useAssetMetadata` has fetched it. `getBalance` only counts fungible assets.
 
 `account.id()` and `account.nonce()` are methods (call them, then `.toString()` to render). `bech32id()` is installed on the `Account` prototype by the React SDK.
 
@@ -119,7 +123,7 @@ const { account, assets, getBalance, isLoading, error, refetch } = useAccount(ac
 const { notes, consumableNotes, noteSummaries, consumableNoteSummaries, isLoading, error, refetch } = useNotes();
 // notes - InputNoteRecord[] (filtered ONLY by `status`)
 // consumableNotes - ConsumableNoteRecord[] (filtered ONLY by `accountId`)
-// noteSummaries - NoteSummary[] (id, assets, sender) - also filtered by `sender` and `excludeIds`
+// noteSummaries - NoteSummary[] (id, assets, nonFungibleAssets, sender) - also filtered by `sender` and `excludeIds`
 // consumableNoteSummaries - NoteSummary[] - also filtered by `sender` and `excludeIds`
 
 // Each filter option only narrows specific fields - destructure the one it affects:
@@ -187,8 +191,8 @@ A note on `ids`: the hook uses `TransactionFilter.ids(...)` only when every entr
 ## Mutation Hooks
 
 Each returns its own action function plus `error` and `reset`. The families differ in their loading/progress fields:
-- **Transaction hooks** (`useSend`, `useMultiSend`, `useBatch`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`, `usePswapCancel`, `usePswapCancelByOrder`, `useTransaction`) expose `isLoading` and `stage` (a `TransactionStage`).
-- **Account create/import hooks** (`useCreateWallet`, `useCreateFaucet`, `useImportAccount`) expose `isCreating` (or `isImporting` for the latter) and have **no** `stage`.
+- **Transaction hooks** (`useSend`, `useSendNonFungible`, `useMultiSend`, `useBatch`, `useMint`, `useMintNonFungible`, `useBurnNonFungible`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`, `usePswapCancel`, `usePswapCancelByOrder`, `useTransaction`) expose `isLoading` and `stage` (a `TransactionStage`).
+- **Account create/import hooks** (`useCreateWallet`, `useCreateFaucet`, `useCreateNonFungibleFaucet`, `useImportAccount`) expose `isCreating` (or `isImporting` for the latter) and have **no** `stage`.
 - **Everything else names its own busy flag**: `useChainAnchor().isCapturing`, `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting`.
 
 **Transaction stages**: `"idle"` -> `"executing"` -> `"proving"` -> `"submitting"` -> `"complete"`
@@ -201,7 +205,7 @@ import { AuthScheme } from "@miden-sdk/react";
 // AuthScheme.AuthRpoFalcon512 === undefined   <- the trap below
 ```
 
-> **Known issue, still OPEN in 0.16 ([web-sdk#223](https://github.com/0xMiden/web-sdk/issues/223)):** `useCreateWallet`, `useCreateFaucet`, `useImportAccount` and `useSessionAccount` forward `authScheme` straight to the low-level wasm calls (`newWallet`, `newFaucet`, `importPublicAccountFromSeed`), which expect the **numeric** wasm enum (`AuthRpoFalcon512 = 2`, `AuthEcdsaK256Keccak = 1`), not the friendly string. The hooks' own default is `AuthScheme.AuthRpoFalcon512`, which resolves to `undefined` for the reason above, and wasm-bindgen's `invalid enum value passed` throws inside a worker closure so the promise **never settles** - the call hangs rather than rejecting. Until it is fixed, always pass the numeric value explicitly: `authScheme: 2` (Falcon) or `authScheme: 1` (ECDSA). The examples below use `2`.
+> **Known issue, still OPEN in 0.16 ([web-sdk#223](https://github.com/0xMiden/web-sdk/issues/223)):** `useCreateWallet`, `useCreateFaucet`, `useCreateNonFungibleFaucet`, `useImportAccount` and `useSessionAccount` forward `authScheme` straight to the low-level wasm calls (`newWallet`, `newFaucet`, `newNonFungibleFaucet`, `importPublicAccountFromSeed`), which expect the **numeric** wasm enum (`AuthRpoFalcon512 = 2`, `AuthEcdsaK256Keccak = 1`), not the friendly string. The hooks' own default is `AuthScheme.AuthRpoFalcon512`, which resolves to `undefined` for the reason above, and wasm-bindgen's `invalid enum value passed` throws inside a worker closure so the promise **never settles** - the call hangs rather than rejecting. Until it is fixed, always pass the numeric value explicitly: `authScheme: 2` (Falcon) or `authScheme: 1` (ECDSA). The examples below use `2`.
 
 ### useCreateWallet()
 ```tsx
@@ -223,6 +227,20 @@ const account = await createFaucet({
   maxSupply: 1000000n,                      // bigint | number
   storageMode: "private",                   // "private" | "public". Default: "private"
   authScheme: 2,                            // 2 = Falcon; friendly AuthScheme.* not accepted here yet (web-sdk#223)
+});
+```
+
+### useCreateNonFungibleFaucet()
+```tsx
+const { createNonFungibleFaucet, faucet, isCreating, error, reset } =
+  useCreateNonFungibleFaucet();
+
+// Mints NonFungibleAssets with useMintNonFungible; takes no decimals or maxSupply.
+const nftFaucet = await createNonFungibleFaucet({
+  tokenSymbol: "ART",
+  tokenName: "Art Collection",              // optional: defaults to tokenSymbol
+  storageMode: "public",
+  authScheme: 2,
 });
 ```
 
@@ -266,6 +284,14 @@ await send({
 ```
 
 `amount` is optional in the type (it is ignored when `sendAll: true`) and accepts `bigint | number`, but pass `bigint` - a `number` silently loses precision above `Number.MAX_SAFE_INTEGER`.
+
+**Sending an NFT.** Use `useSendNonFungible`. It takes the same options as `useSend`, with `nonFungibleAsset` in place of `assetId` and `amount`; `sendAll` does not apply.
+
+```tsx
+const { sendNonFungible } = useSendNonFungible();
+const { nonFungibleAssets } = useAccount(senderAccountId);
+await sendNonFungible({ from: senderAccountId, to: recipientAccountId, nonFungibleAsset: nonFungibleAssets[0].asset });
+```
 
 **Combining `attachment` with `recallHeight` or `timelockHeight` throws**, before anything is built: `"recallHeight and timelockHeight are not supported when attachment is provided"`. The attachment path constructs the P2ID note by hand and has nowhere to put either height. Pick one or the other.
 
@@ -312,6 +338,27 @@ await mint({
   amount: 10000n,         // bigint!
   noteType: "public",
 });
+
+// From a non-fungible faucet: useMintNonFungible, with `nonFungibleAsset` in
+// place of `amount`. The asset must be issued by `faucetId`, or the hook throws.
+// The asset commits to its data and a random salt; keep both to show later which
+// data the NFT refers to.
+const salt = new Word(BigUint64Array.from(crypto.getRandomValues(new Uint32Array(4)), BigInt));
+const { mintNonFungible } = useMintNonFungible();
+await mintNonFungible({
+  targetAccountId: recipientId,
+  faucetId: nftFaucetId,
+  nonFungibleAsset: NonFungibleAsset.fromData(AccountId.fromHex(nftFaucetId), nftDataBytes, salt),
+});
+```
+
+### useBurnNonFungible()
+```tsx
+const { burnNonFungible, result, isLoading, stage, error, reset } = useBurnNonFungible();
+// Sends the NFT back to its faucet in a public BURN note. The asset is burned
+// when the faucet consumes that note (e.g. with useConsume). A BURN note for a
+// public faucet is a network note, so a public faucet must be a network account.
+await burnNonFungible({ accountId: holderId, nonFungibleAsset: nonFungibleAssets[0].asset });
 ```
 
 ### useConsume()
@@ -465,6 +512,7 @@ const { txId, note } = await createNetworkNote({
   executionHint: hint,        // optional: defaults to `always`
   assetId: faucetId,          // optional: omit for a zero-asset note
   amount: 1000n,
+  // nonFungibleAsset: myNft, // ...or one NonFungibleAsset instead of assetId + amount (passing both throws)
   attachment: [7n],           // optional: extra payload appended after the target
 });
 ```
@@ -616,8 +664,8 @@ import {
 
 formatAssetAmount(1000000n, 8)       // "0.01"
 parseAssetAmount("0.01", 8)           // 1000000n
-const summary = getNoteSummary(note); // { id, assets, sender } | null
-formatNoteSummary(summary);           // "1.5 TEST from mtst1..."
+const summary = getNoteSummary(note); // { id, assets, nonFungibleAssets, sender } | null
+formatNoteSummary(summary);           // "1.5 TEST from mtst1..."; NFTs show as "NFT <symbol>" (the faucet ID until the symbol is fetched)
 toBech32AccountId("0x1234...");       // "mtst1..." on testnet; the hex ID when the network is unknown
 ```
 
@@ -644,7 +692,7 @@ await runExclusive(async () => {
 });
 ```
 
-**The built-in hooks route their own client calls through `runExclusive` too.** 22 files under `src/hooks/` pull it out of `useMiden()` and wrap their multi-call work, using the pattern `const runExclusiveSafe = runExclusive ?? runExclusiveDirect;` so they still serialize when no provider-supplied lock is available: `useSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useTransaction`, `usePreview`, `useChainAnchor`, `useCreateWallet`, `useCreateFaucet`, `useExecuteProgram`, `useCreateNetworkNote`, `useMultiSend`, `useWaitForNotes`, the four export/import hooks and all four PSWAP transaction hooks. Use it for your own multi-step sequences for the same reason they do - the client serializes each individual forwarded call, not your group of them (see `frontend-pitfalls` FP2, which also names the raw-bound `SYNC_METHODS` that serialize themselves not at all).
+**The built-in hooks route their own client calls through `runExclusive` too.** 24 files under `src/hooks/` pull it out of `useMiden()` and wrap their multi-call work, using the pattern `const runExclusiveSafe = runExclusive ?? runExclusiveDirect;` so they still serialize when no provider-supplied lock is available: `useSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useTransaction`, `usePreview`, `useChainAnchor`, `useCreateWallet`, `useCreateFaucet`, `useExecuteProgram`, `useCreateNetworkNote`, `useMultiSend`, `useWaitForNotes`, the four export/import hooks and all four PSWAP transaction hooks. Use it for your own multi-step sequences for the same reason they do - the client serializes each individual forwarded call, not your group of them (see `frontend-pitfalls` FP2, which also names the raw-bound `SYNC_METHODS` that serialize themselves not at all).
 
 ## Non-Surface: Do Not Invent These
 

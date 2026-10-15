@@ -34,6 +34,7 @@ React hooks library for the Miden Web Client. Provides a simple, ergonomic inter
 - **Session Wallets** - `useSessionAccount()` manages the create-fund-consume lifecycle for temporary wallets
 - **AggLayer Bridge-Out** - `useBridge()` emits a B2AGG note to bridge a fungible asset out to another network via the AggLayer
 - **Network Notes** - `useCreateNetworkNote()` creates custom-script network notes
+- **Non-Fungible Assets** - Create NFT faucets, mint and send NFTs, and list them with `useAccount().nonFungibleAssets`
 - **Concurrency Safety** - Transaction hooks prevent double-sends with built-in concurrency guards
 - **Auto Pre-Sync** - Transaction hooks sync before executing by default (opt out with `skipSync`)
 - **WASM Error Wrapping** - Cryptic WASM errors are intercepted and replaced with actionable messages
@@ -700,7 +701,8 @@ interface StreamedNote {
 
 #### `useAssetMetadata(assetIds)`
 
-Fetch asset symbols/decimals for a list of asset IDs. This is the lightweight
+Fetch asset symbols/decimals for a list of asset IDs (for an NFT collection,
+only the symbol). This is the lightweight
 way to enrich balances and note lists with human-friendly token info.
 It batches lookups and caches results for reuse across components. That avoids
 repeated RPC calls and inconsistent labels. Lookups go to the node the

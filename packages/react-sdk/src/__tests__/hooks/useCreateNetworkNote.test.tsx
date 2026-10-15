@@ -2,8 +2,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useCreateNetworkNote } from "../../hooks/useCreateNetworkNote";
 import { useMiden } from "../../context/MidenProvider";
-import { createMockWebClient } from "../mocks/miden-sdk";
-import { FeltArray } from "@miden-sdk/miden-sdk";
+import {
+  createMockWebClient,
+  createMockNonFungibleAsset,
+} from "../mocks/miden-sdk";
+import { FeltArray, Note } from "@miden-sdk/miden-sdk";
 import type { NoteScript, NoteRecipient } from "@miden-sdk/miden-sdk";
 
 vi.mock("../../context/MidenProvider", () => ({ useMiden: vi.fn() }));
@@ -180,6 +183,56 @@ describe("useCreateNetworkNote", () => {
     });
 
     expect(mockClient.submitNewTransaction).toHaveBeenCalled();
+  });
+
+  it("includes a non-fungible asset when nonFungibleAsset is provided", async () => {
+    const mockClient = createMockWebClient({
+      submitNewTransaction: vi.fn().mockResolvedValue({ toHex: () => "0xtx" }),
+    });
+    mockUseMiden.mockReturnValue({
+      client: mockClient,
+      isReady: true,
+      sync: vi.fn(),
+    });
+    const asset = createMockNonFungibleAsset();
+
+    const { result } = renderHook(() => useCreateNetworkNote());
+    await act(async () => {
+      await result.current.createNetworkNote({
+        accountId: "0xsender",
+        target: "0xnetwork",
+        script: mockScript,
+        nonFungibleAsset: asset as never,
+      });
+    });
+
+    expect(Note.withAttachments).toHaveBeenCalledWith(
+      expect.objectContaining({ assets: [asset] }), // the NoteAssets passed in
+      expect.anything(), // metadata
+      expect.anything(), // recipient
+      expect.anything() // attachments
+    );
+    expect(mockClient.submitNewTransaction).toHaveBeenCalled();
+  });
+
+  it("throws when both asset and assetId are provided", async () => {
+    mockUseMiden.mockReturnValue({
+      client: createMockWebClient(),
+      isReady: true,
+      sync: vi.fn(),
+    });
+    const { result } = renderHook(() => useCreateNetworkNote());
+    await expect(
+      result.current.createNetworkNote({
+        accountId: "0xs",
+        target: "0xt",
+        script: mockScript,
+        assetId: "0xfaucet",
+        nonFungibleAsset: createMockNonFungibleAsset() as never,
+      })
+    ).rejects.toThrow(
+      "createNetworkNote takes either `nonFungibleAsset` or `assetId`, not both."
+    );
   });
 
   it("defaults amount to 0 when assetId is provided without an amount", async () => {

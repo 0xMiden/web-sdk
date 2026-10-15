@@ -141,6 +141,7 @@ export function useNotes(options?: NotesFilter): NotesResult {
       const summary = getNoteSummary(note as never);
       if (!summary) return;
       summary.assets.forEach((asset) => ids.add(asset.assetId));
+      summary.nonFungibleAssets?.forEach((asset) => ids.add(asset.faucetId));
     };
 
     notes.forEach(collect);
