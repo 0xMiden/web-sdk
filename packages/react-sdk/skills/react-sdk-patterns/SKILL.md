@@ -356,7 +356,8 @@ await mintNonFungible({
 ```tsx
 const { burnNonFungible, result, isLoading, stage, error, reset } = useBurnNonFungible();
 // Sends the NFT back to its faucet in a public BURN note. The asset is burned
-// when the faucet consumes that note (e.g. with useConsume).
+// when the faucet consumes that note (e.g. with useConsume). A BURN note for a
+// public faucet is a network note, so a public faucet must be a network account.
 await burnNonFungible({ accountId: holderId, nonFungibleAsset: nonFungibleAssets[0].asset });
 ```
 

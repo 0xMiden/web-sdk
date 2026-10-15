@@ -28,7 +28,8 @@ export interface UseBurnNonFungibleResult {
 /**
  * Hook to burn a non-fungible asset. It sends the asset from `accountId` back
  * to its faucet in a public BURN note; the asset is burned when the faucet that
- * issued it consumes the note (for example with `useConsume`).
+ * issued it consumes the note (for example with `useConsume`). A BURN note for a
+ * public faucet is a network note, so a public faucet must be a network account.
  *
  * @example
  * ```tsx
