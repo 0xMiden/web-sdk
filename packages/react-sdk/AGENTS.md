@@ -118,12 +118,6 @@ const { account, assets, nonFungibleAssets, getBalance, isLoading, error, refetc
 // getBalance(faucetId) - bigint balance for one token
 ```
 
-`nonFungibleAssets` lists the NFTs in the vault. `faucetId`, `vaultKey` and
-`value` are hex strings; `vaultKey` is unique per NFT, so use it as the React
-key. `asset` is the `NonFungibleAsset` itself, which you pass as
-`nonFungibleAsset` to `useSendNonFungible` or `useCreateNetworkNote`. `symbol`
-is the collection symbol, set once `useAssetMetadata` has fetched it.
-
 Prefer the hook's `getBalance(faucetId)`, which takes the id as a string.
 `account.vault().getBalance(...)` exists but wants an `AccountId` instance, not
 a string, so it throws if you hand it the same value.
@@ -227,21 +221,6 @@ await send({
 });
 ```
 
-To send an NFT, use `useSendNonFungible`. It takes the same options as
-`useSend`, with `nonFungibleAsset` in place of `assetId` and `amount`
-(`sendAll` does not apply).
-
-```tsx
-const { sendNonFungible } = useSendNonFungible();
-const { nonFungibleAssets } = useAccount(senderAccountId);
-
-await sendNonFungible({
-  from: senderAccountId,
-  to: recipientAccountId,
-  nonFungibleAsset: nonFungibleAssets[0].asset,
-});
-```
-
 ### Send to Multiple Recipients
 ```tsx
 const { multiSend } = useMultiSend();
@@ -296,43 +275,6 @@ await mint({
 });
 ```
 
-From a non-fungible faucet, use `useMintNonFungible` with `nonFungibleAsset`
-in place of `amount`. The asset must be issued by `faucetId`, or the hook throws.
-
-```tsx
-import { AccountId, NonFungibleAsset, Word } from "@miden-sdk/miden-sdk";
-
-// The asset commits to its data and a random salt; keep both to show later
-// which data the NFT refers to.
-const salt = new Word(
-  BigUint64Array.from(crypto.getRandomValues(new Uint32Array(4)), BigInt)
-);
-const { mintNonFungible } = useMintNonFungible();
-await mintNonFungible({
-  faucetId: nftFaucetId,
-  targetAccountId: recipientAccountId,
-  nonFungibleAsset: NonFungibleAsset.fromData(
-    AccountId.fromHex(nftFaucetId),
-    new TextEncoder().encode("ipfs://bafy.../1.json"), // the NFT's data
-    salt
-  ),
-});
-```
-
-To burn an NFT, `useBurnNonFungible` sends it from `accountId` back to its
-faucet in a public BURN note. The asset is burned when the faucet consumes that
-note, for example with `useConsume`.
-
-```tsx
-const { burnNonFungible } = useBurnNonFungible();
-const { nonFungibleAssets } = useAccount(holderAccountId);
-
-await burnNonFungible({
-  accountId: holderAccountId,
-  nonFungibleAsset: nonFungibleAssets[0].asset,
-});
-```
-
 ### Bridge Out (AggLayer)
 ```tsx
 const { bridge } = useBridge();
@@ -365,11 +307,6 @@ const { txId, note } = await createNetworkNote({
 note.isNetworkNote(); // true
 ```
 
-To lock one asset into the note, pass `assetId` and `amount` for a fungible
-asset, or `nonFungibleAsset` for a `NonFungibleAsset`. Passing both
-`nonFungibleAsset` and `assetId`
-throws.
-
 ### Create Faucet
 ```tsx
 const { createFaucet, faucet, isCreating, error, reset } = useCreateFaucet();
@@ -381,15 +318,6 @@ const account = await createFaucet({
   maxSupply: 1000000n,      // required. bigint | number
   storageMode: "public",    // "private" | "public". Default: "private"
   authScheme: 2,            // 2 = Falcon. Pass the number - see the trap above
-});
-
-// Non-fungible faucet: mints NonFungibleAssets with
-// useMintNonFungible. It takes no decimals or maxSupply.
-const { createNonFungibleFaucet } = useCreateNonFungibleFaucet();
-const nftFaucet = await createNonFungibleFaucet({
-  tokenSymbol: "ART",
-  storageMode: "public",
-  authScheme: 2,
 });
 ```
 
@@ -436,8 +364,6 @@ import { getNoteSummary, formatNoteSummary } from "@miden-sdk/react";
 
 const summary = getNoteSummary(note);
 const text = formatNoteSummary(summary);  // "1.5 TOKEN"
-// summary.nonFungibleAssets lists the note's NFTs; formatNoteSummary shows each
-// as "NFT <faucetId>", e.g. "1.5 TOKEN + NFT 0x1234... from mtst1..."
 ```
 
 ### Wait for Transaction Confirmation

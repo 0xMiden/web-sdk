@@ -474,19 +474,6 @@ function AccountDetails({ accountId }: { accountId: string }) {
 }
 ```
 
-`assets` and `getBalance` cover fungible assets only. NFTs are on
-`nonFungibleAssets`, an array of `{ faucetId, vaultKey, value, asset, symbol? }`:
-`faucetId`, `vaultKey` and `value` are hex strings (`vaultKey` is unique per
-NFT), `asset` is the `NonFungibleAsset` to pass as `nonFungibleAsset` to
-`useSendNonFungible` or `useCreateNetworkNote`, and `symbol` is the collection
-symbol once its metadata has been fetched.
-
-```tsx
-const { nonFungibleAssets } = useAccount(accountId);
-
-nonFungibleAssets.map((nft) => <div key={nft.vaultKey}>{nft.faucetId}</div>);
-```
-
 #### `useCreateWallet()`
 
 Create new wallet accounts. Supports storage mode, mutability, and auth scheme
@@ -579,19 +566,6 @@ function CreateFaucetForm() {
     </div>
   );
 }
-```
-
-#### `useCreateNonFungibleFaucet()`
-
-Create a faucet that mints NFTs. It takes no `decimals` or `maxSupply`.
-
-```tsx
-import { useCreateNonFungibleFaucet } from '@miden-sdk/react';
-
-const { createNonFungibleFaucet, faucet, isCreating, error, reset } =
-  useCreateNonFungibleFaucet();
-
-const nftFaucet = await createNonFungibleFaucet({ tokenSymbol: 'ART' });
 ```
 
 #### `useImportAccount()`
@@ -828,23 +802,6 @@ function SendForm() {
     </div>
   );
 }
-```
-
-#### `useSendNonFungible()`
-
-Send an NFT. Takes the same options as `useSend`, with `nonFungibleAsset` in
-place of `assetId` and `amount` (`sendAll` does not apply).
-
-```tsx
-const { sendNonFungible, result, isLoading, stage, error, reset } =
-  useSendNonFungible();
-const { nonFungibleAssets } = useAccount('0xsender...');
-
-await sendNonFungible({
-  from: '0xsender...',
-  to: '0xrecipient...',
-  nonFungibleAsset: nonFungibleAssets[0].asset,
-});
 ```
 
 #### `useMultiSend()`
@@ -1105,49 +1062,6 @@ function MintForm() {
     </button>
   );
 }
-```
-
-#### `useMintNonFungible()`
-
-Mint an NFT from a non-fungible faucet. The asset must be issued by `faucetId`.
-
-```tsx
-import { AccountId, NonFungibleAsset, Word } from '@miden-sdk/miden-sdk';
-
-const { mintNonFungible, result, isLoading, stage, error, reset } =
-  useMintNonFungible();
-
-// The asset commits to its data and a random salt; keep both to show later
-// which data the NFT refers to.
-const salt = new Word(
-  BigUint64Array.from(crypto.getRandomValues(new Uint32Array(4)), BigInt)
-);
-await mintNonFungible({
-  faucetId: nftFaucetId,
-  targetAccountId: '0xwallet...',
-  nonFungibleAsset: NonFungibleAsset.fromData(
-    AccountId.fromHex(nftFaucetId),
-    new TextEncoder().encode('ipfs://bafy.../1.json'), // the NFT's data
-    salt
-  ),
-});
-```
-
-#### `useBurnNonFungible()`
-
-Burn an NFT. The hook sends it from `accountId` back to its faucet in a public
-BURN note; the asset is burned when the faucet consumes that note, for example
-with `useConsume`.
-
-```tsx
-const { burnNonFungible, result, isLoading, stage, error, reset } =
-  useBurnNonFungible();
-const { nonFungibleAssets } = useAccount('0xholder...');
-
-await burnNonFungible({
-  accountId: '0xholder...',
-  nonFungibleAsset: nonFungibleAssets[0].asset,
-});
 ```
 
 #### `useConsume()`
