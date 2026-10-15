@@ -2420,7 +2420,7 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.17.2"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-typed-settings-remove-defaults#eb76f24dfb72ce590d03dedff6e85ba467e78d12"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-remove-client-serializable#40b45568ac209f4333bbb94d32fe7a665d2e9bda"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2460,7 +2460,7 @@ dependencies = [
 [[package]]
 name = "miden-client-proto"
 version = "0.17.2"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-typed-settings-remove-defaults#eb76f24dfb72ce590d03dedff6e85ba467e78d12"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-remove-client-serializable#40b45568ac209f4333bbb94d32fe7a665d2e9bda"
 dependencies = [
  "miden-client",
  "miden-objects",
@@ -2474,7 +2474,7 @@ dependencies = [
 [[package]]
 name = "miden-client-sqlite-store"
 version = "0.17.2"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-typed-settings-remove-defaults#eb76f24dfb72ce590d03dedff6e85ba467e78d12"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-remove-client-serializable#40b45568ac209f4333bbb94d32fe7a665d2e9bda"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2501,6 +2501,7 @@ dependencies = [
  "js-export-macro",
  "js-sys",
  "miden-client",
+ "miden-client-proto",
  "miden-client-sqlite-store",
  "miden-idxdb-store",
  "miden-precompiles-air",
@@ -2508,6 +2509,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "prost",
  "rand 0.10.2",
  "rayon",
  "serde",

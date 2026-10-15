@@ -4,7 +4,7 @@ use miden_client::transaction::ChainAnchor as NativeChainAnchor;
 use super::block_header::BlockHeader;
 use super::word::Word;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{deserialize_untrusted_bytes, serialize_to_bytes};
+use crate::utils::{decode_untrusted_proto, encode_proto};
 
 /// A self-contained, verifiable anchor that pins transaction execution to a specific reference
 /// block instead of the client's current sync height.
@@ -42,20 +42,21 @@ pub struct ChainAnchor(NativeChainAnchor);
 impl ChainAnchor {
     /// Serializes the anchor into bytes, for shipping alongside a summary awaiting signatures.
     pub fn serialize(&self) -> JsBytes {
-        serialize_to_bytes(&self.0)
+        encode_proto(&self.0)
     }
 
-    /// Deserializes an anchor from bytes.
+    /// Deserializes an anchor from the bytes that [`Self::serialize`] returns.
     ///
     /// Rejects bytes whose partial blockchain is inconsistent with the header, so an anchor from
-    /// an untrusted source cannot be malformed — only pinned to the wrong block, which
-    /// [`Self::commitment`] detects. Trailing bytes are rejected, since these bytes arrive from a
-    /// counterparty rather than local storage and the blob is naturally treated as an identity.
+    /// an untrusted source cannot be malformed, only pinned to the wrong block, which
+    /// [`Self::commitment`] detects.
     ///
-    /// The encoding carries no version tag, so anchors are only interchangeable between parties
-    /// on compatible SDK versions; a skew surfaces here as a generic deserialization failure.
+    /// The bytes are a protobuf message. Bytes that the message does not use are rejected, since
+    /// these bytes arrive from a counterparty and the blob is naturally treated as an identity.
+    /// Other encodings of one anchor can still differ, for example in field order, so compare
+    /// anchors by [`Self::commitment`], not by their bytes.
     pub fn deserialize(bytes: JsBytes) -> Result<ChainAnchor, JsErr> {
-        deserialize_untrusted_bytes::<NativeChainAnchor>(&bytes).map(ChainAnchor)
+        decode_untrusted_proto::<NativeChainAnchor>(&bytes).map(ChainAnchor)
     }
 
     /// Returns the number of the anchored reference block.

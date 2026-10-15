@@ -191,46 +191,51 @@ describe("MidenDatabase migrations", () => {
     expect(await mdb.inputNotes.count()).toBe(2);
   });
 
-  // v4/v5: `settings` is rekeyed on `[scope+key]`, which Dexie can only do by dropping and
-  // recreating the table. See the version(4) and version(5) blocks in schema.ts.
-  it("v4/v5 migration rekeys settings by scope and drops the old rows", async () => {
+  // v7/v8: `settings` splits into `userSettings` and `clientConfig`, as SQLite migration 5 does.
+  // The fixture rebuilds the version 6 schema, so the upgrade runs on scoped rows.
+  it("v7/v8 migration splits settings and keeps only the rows it needs", async () => {
     const name = uniqueDbName();
 
-    const dbV1 = trackDb(new Dexie(name));
-    dbV1.version(1).stores(V1_STORES);
-    await dbV1.open();
-    await dbV1.table("settings").put({
-      key: "stale",
-      value: new Uint8Array([1]),
+    const dbV6 = trackDb(new Dexie(name));
+    dbV6.version(1).stores(V1_STORES);
+    dbV6.version(3).stores({
+      inputNotes:
+        "detailsCommitment,noteId,nullifier,scriptRoot,stateDiscriminant,[consumedBlockHeight+consumedTxOrder+detailsCommitment]",
     });
-    dbV1.close();
-
-    const mdb = trackMidenDb(new MidenDatabase(name));
-    expect(await mdb.open("0.15.5")).toBe(true);
-
-    // The pre-scope row cannot be addressed under the new primary key, so it goes. The only row
-    // left is the client version `ensureClientVersion` persisted on this open.
-    expect(await mdb.settings.toArray()).toEqual([
+    dbV6.version(4).stores({ settings: null });
+    dbV6.version(5).stores({ settings: "[scope+key],scope" });
+    dbV6.version(6).stores({ accountWitnesses: "&accountId" });
+    await dbV6.open();
+    const value = (byte: number) => new Uint8Array([byte]);
+    await dbV6.table("settings").bulkPut([
       {
         scope: SETTING_SCOPE_CLIENT,
         key: CLIENT_VERSION_SETTING_KEY,
-        value: new TextEncoder().encode("0.15.5"),
+        value: new TextEncoder().encode("0.18.0"),
       },
-    ]);
-
-    // The same name in each scope is now a separate row.
-    await mdb.settings.bulkPut([
       {
         scope: SETTING_SCOPE_CLIENT,
-        key: "shared",
-        value: new Uint8Array([1]),
+        key: "protocol_config:0x01",
+        value: value(1),
       },
-      { scope: SETTING_SCOPE_USER, key: "shared", value: new Uint8Array([2]) },
+      { scope: SETTING_SCOPE_CLIENT, key: "rpc_limits", value: value(2) },
+      { scope: SETTING_SCOPE_CLIENT, key: "pswap/order/01", value: value(3) },
+      { scope: SETTING_SCOPE_USER, key: "rpc_limits", value: value(4) },
     ]);
-    const clientRow = await mdb.settings.get([SETTING_SCOPE_CLIENT, "shared"]);
-    expect(clientRow!.value).toEqual(new Uint8Array([1]));
-    const userRow = await mdb.settings.get([SETTING_SCOPE_USER, "shared"]);
-    expect(userRow!.value).toEqual(new Uint8Array([2]));
+    dbV6.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.18.0")).toBe(true);
+
+    expect(await mdb.userSettings.toArray()).toEqual([
+      { key: "rpc_limits", value: value(4) },
+    ]);
+    expect(
+      (await mdb.clientConfig.toCollection().primaryKeys()).sort()
+    ).toEqual([CLIENT_VERSION_SETTING_KEY, "protocol_config:0x01"]);
+    expect(mdb.dexie.tables.map((table) => table.name)).not.toContain(
+      "settings"
+    );
   });
 
   // v6: account witness registry. A null witness is a registered account the sync has not
@@ -272,10 +277,7 @@ describe("openDatabase", () => {
     await openDatabase(name, "1.0.0");
     const db = getDatabase(name);
     openMidenDbs.push(db);
-    const record = await db.settings.get([
-      SETTING_SCOPE_CLIENT,
-      CLIENT_VERSION_SETTING_KEY,
-    ]);
+    const record = await db.clientConfig.get(CLIENT_VERSION_SETTING_KEY);
     expect(record).toBeDefined();
     expect(new TextDecoder().decode(record!.value)).toBe("1.0.0");
   });
@@ -293,8 +295,7 @@ describe("ensureClientVersion: same version already stored", () => {
     openMidenDbs.push(db1);
 
     // Insert a sentinel row that should survive if the DB is NOT nuked
-    await db1.settings.put({
-      scope: SETTING_SCOPE_USER,
+    await db1.userSettings.put({
       key: "sentinel",
       value: new TextEncoder().encode("alive"),
     });
@@ -307,7 +308,7 @@ describe("ensureClientVersion: same version already stored", () => {
     expect(success).toBe(true);
 
     // Sentinel must still be there
-    const sentinel = await mdb2.settings.get([SETTING_SCOPE_USER, "sentinel"]);
+    const sentinel = await mdb2.userSettings.get("sentinel");
     expect(sentinel).toBeDefined();
     expect(new TextDecoder().decode(sentinel!.value)).toBe("alive");
   });
@@ -322,8 +323,7 @@ describe("ensureClientVersion: same major.minor, new patch", () => {
     await openDatabase(name, "1.2.0");
     const db1 = getDatabase(name);
     openMidenDbs.push(db1);
-    await db1.settings.put({
-      scope: SETTING_SCOPE_USER,
+    await db1.userSettings.put({
       key: "sentinel",
       value: new TextEncoder().encode("safe"),
     });
@@ -335,14 +335,13 @@ describe("ensureClientVersion: same major.minor, new patch", () => {
     expect(success).toBe(true);
 
     // Sentinel must survive (no nuke)
-    const sentinel = await mdb2.settings.get([SETTING_SCOPE_USER, "sentinel"]);
+    const sentinel = await mdb2.userSettings.get("sentinel");
     expect(sentinel).toBeDefined();
 
     // Version must be updated
-    const versionRecord = await mdb2.settings.get([
-      SETTING_SCOPE_CLIENT,
-      CLIENT_VERSION_SETTING_KEY,
-    ]);
+    const versionRecord = await mdb2.clientConfig.get(
+      CLIENT_VERSION_SETTING_KEY
+    );
     expect(new TextDecoder().decode(versionRecord!.value)).toBe("1.2.5");
   });
 });
@@ -356,8 +355,7 @@ describe("ensureClientVersion: stored version is newer (downgrade path)", () => 
     await openDatabase(name, "2.0.0");
     const db1 = getDatabase(name);
     openMidenDbs.push(db1);
-    await db1.settings.put({
-      scope: SETTING_SCOPE_USER,
+    await db1.userSettings.put({
       key: "sentinel",
       value: new TextEncoder().encode("present"),
     });
@@ -368,7 +366,7 @@ describe("ensureClientVersion: stored version is newer (downgrade path)", () => 
     await mdb2.open("1.9.0");
 
     // The non-gt branch just persists the new version without nuking
-    const sentinel = await mdb2.settings.get([SETTING_SCOPE_USER, "sentinel"]);
+    const sentinel = await mdb2.userSettings.get("sentinel");
     expect(sentinel).toBeDefined();
   });
 });
@@ -383,8 +381,7 @@ describe("ensureClientVersion: major version bump triggers nuke", () => {
     const db1 = getDatabase(name);
     openMidenDbs.push(db1);
     // Insert a sentinel row that should be GONE after nuke
-    await db1.settings.put({
-      scope: SETTING_SCOPE_USER,
+    await db1.userSettings.put({
       key: "sentinel",
       value: new TextEncoder().encode("gone-after-nuke"),
     });
@@ -396,14 +393,13 @@ describe("ensureClientVersion: major version bump triggers nuke", () => {
     expect(success).toBe(true);
 
     // Sentinel should be gone (DB was nuked)
-    const sentinel = await mdb2.settings.get([SETTING_SCOPE_USER, "sentinel"]);
+    const sentinel = await mdb2.userSettings.get("sentinel");
     expect(sentinel).toBeUndefined();
 
     // New version should be persisted
-    const versionRecord = await mdb2.settings.get([
-      SETTING_SCOPE_CLIENT,
-      CLIENT_VERSION_SETTING_KEY,
-    ]);
+    const versionRecord = await mdb2.clientConfig.get(
+      CLIENT_VERSION_SETTING_KEY
+    );
     expect(new TextDecoder().decode(versionRecord!.value)).toBe("2.0.0");
   });
 });
@@ -418,8 +414,7 @@ describe("ensureClientVersion: invalid semver strings", () => {
     await openDatabase(name, "not-a-version");
     const db1 = getDatabase(name);
     openMidenDbs.push(db1);
-    await db1.settings.put({
-      scope: SETTING_SCOPE_USER,
+    await db1.userSettings.put({
       key: "sentinel",
       value: new TextEncoder().encode("will-be-nuked"),
     });
@@ -431,7 +426,7 @@ describe("ensureClientVersion: invalid semver strings", () => {
     expect(success).toBe(true);
 
     // After the nuke the sentinel is gone
-    const sentinel = await mdb2.settings.get([SETTING_SCOPE_USER, "sentinel"]);
+    const sentinel = await mdb2.userSettings.get("sentinel");
     expect(sentinel).toBeUndefined();
   });
 });
@@ -448,7 +443,9 @@ describe("ensureClientVersion: empty clientVersion", () => {
     expect(success).toBe(true);
 
     // No version record should be stored
-    const versionRecord = await mdb.settings.get(CLIENT_VERSION_SETTING_KEY);
+    const versionRecord = await mdb.clientConfig.get(
+      CLIENT_VERSION_SETTING_KEY
+    );
     expect(versionRecord).toBeUndefined();
   });
 });
