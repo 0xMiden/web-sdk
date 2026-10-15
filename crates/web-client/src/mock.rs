@@ -43,9 +43,10 @@ impl WebClient {
 
         let mock_note_transport_api = match serialized_mock_note_transport_node {
             Some(node_bytes) => {
-                let node = MockNoteTransportNode::read_from_bytes(&node_bytes).map_err(|err| {
-                    js_error_with_context(err, "failed to deserialize mock note transport node")
-                })?;
+                let node = miden_client_proto::decode::<MockNoteTransportNode>(&node_bytes)
+                    .map_err(|err| {
+                        js_error_with_context(err, "failed to decode mock note transport node")
+                    })?;
                 Arc::new(MockNoteTransportApi::new(Arc::new(RwLock::new(node))))
             },
             None => Arc::new(MockNoteTransportApi::default()),
@@ -112,9 +113,10 @@ impl WebClient {
 
         let mock_note_transport_api = match serialized_mock_note_transport_node {
             Some(node_bytes) => {
-                let node = MockNoteTransportNode::read_from_bytes(&node_bytes).map_err(|err| {
-                    js_error_with_context(err, "failed to deserialize mock note transport node")
-                })?;
+                let node = miden_client_proto::decode::<MockNoteTransportNode>(&node_bytes)
+                    .map_err(|err| {
+                        js_error_with_context(err, "failed to decode mock note transport node")
+                    })?;
                 Arc::new(MockNoteTransportApi::new(Arc::new(RwLock::new(node))))
             },
             None => Arc::new(MockNoteTransportApi::default()),
@@ -225,9 +227,14 @@ impl WebClient {
     #[js_export(js_name = "serializeMockNoteTransportNode")]
     pub async fn serialize_mock_note_transport_node(&self) -> Result<Vec<u8>, JsErr> {
         let guard = self.mock_note_transport_api.lock().await;
-        guard.as_ref().map(|api| api.mock_node.read().to_bytes()).ok_or_else(|| {
-            from_str_err("Mock note transport node is not initialized. Create a mock client first.")
-        })
+        guard
+            .as_ref()
+            .map(|api| miden_client_proto::encode(&*api.mock_node.read()))
+            .ok_or_else(|| {
+                from_str_err(
+                    "Mock note transport node is not initialized. Create a mock client first.",
+                )
+            })
     }
 
     #[js_export(js_name = "proveBlock")]
