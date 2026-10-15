@@ -3,7 +3,6 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { useSend, useSendNonFungible } from "../../hooks/useSend";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
-import { Note } from "@miden-sdk/miden-sdk";
 import {
   createMockWebClient,
   createMockTransactionRequest,
