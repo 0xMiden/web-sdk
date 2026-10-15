@@ -478,17 +478,19 @@ const builder = new AccountBuilder(new Uint8Array(32))
 ```
 
 For `client.accounts.create()`, select visibility with `storage: "public"` or
-`"private"`, and create a fungible faucet with `type: FaucetType.FungibleFaucet`.
+`"private"`, create a fungible faucet with `type: FaucetType.FungibleFaucet`,
+and a non-fungible faucet with `type: FaucetType.NonFungibleFaucet` (`symbol`
+and an optional `name`; no `decimals` or `maxSupply`).
 Migrate previous `AccountType.FungibleFaucet` uses to `FaucetType.FungibleFaucet`.
 Omit `type` to create a wallet, or pass `components` to create a contract.
-The legacy selectors `0`, `1` and `"NonFungibleFaucet"` are still read as
-faucet types (non-fungible faucets are not supported yet and are rejected);
-`0` and `1` are also `AccountType.Private` / `AccountType.Public`, so never pass
-a visibility value as `type`. `create()` throws a `TypeError` for any other
-`type`, for faucet fields (`name`, `symbol`, `decimals`, `maxSupply`) without a
-faucet type, for `components` on a faucet, and for a faucet missing `symbol`,
-`decimals` or `maxSupply`, so a missed migration fails instead of creating a
-wallet.
+The legacy selectors `0` (fungible) and `1` (non-fungible) are still read as
+faucet types; they are also `AccountType.Private` / `AccountType.Public`, so
+never pass a visibility value as `type`. `create()` throws a `TypeError` for any
+other `type`, for faucet fields (`name`, `symbol`, `decimals`, `maxSupply`)
+without a faucet type, for `components` on a faucet, for a fungible faucet
+missing `symbol`, `decimals` or `maxSupply`, and for a non-fungible faucet
+missing `symbol` or given `decimals` or `maxSupply`, so a missed migration
+fails instead of creating a wallet.
 
 ### Create a New Wallet
 

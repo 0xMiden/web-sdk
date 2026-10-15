@@ -8,6 +8,7 @@ import type {
   AccountFile,
   AccountCode,
   AssetVault,
+  NonFungibleAsset,
   Word,
   Felt,
   TransactionId,
@@ -158,6 +159,7 @@ export type FaucetType = (typeof FaucetType)[keyof typeof FaucetType];
  */
 export declare const FaucetType: {
   readonly FungibleFaucet: "FungibleFaucet";
+  readonly NonFungibleFaucet: "NonFungibleFaucet";
 };
 
 // ════════════════════════════════════════════════════════════════
@@ -301,6 +303,12 @@ export interface Asset {
 }
 
 /**
+ * An asset to transfer: a fungible amount (`{ token, amount }`) or one
+ * `NonFungibleAsset`.
+ */
+export type TransferAsset = Asset | NonFungibleAsset;
+
+/**
  * A note reference: hex note ID string, NoteId object, InputNoteRecord, or Note object.
  */
 export type NoteInput = string | NoteId | Note | InputNoteRecord;
@@ -311,12 +319,14 @@ export type NoteInput = string | NoteId | Note | InputNoteRecord;
 
 /**
  * Create a wallet, faucet, or contract. A faucet sets `type:
- * FaucetType.FungibleFaucet`, a contract passes `components`, and a wallet is
- * the default (neither). Visibility comes from `storage`.
+ * FaucetType.FungibleFaucet` or `type: FaucetType.NonFungibleFaucet`, a
+ * contract passes `components`, and a wallet is the default (neither).
+ * Visibility comes from `storage`.
  */
 export type CreateAccountOptions =
   | WalletCreateOptions
   | FaucetCreateOptions
+  | NonFungibleFaucetCreateOptions
   | ContractCreateOptions;
 
 export interface WalletCreateOptions {
@@ -327,12 +337,26 @@ export interface WalletCreateOptions {
 
 export interface FaucetCreateOptions {
   /** Use `FaucetType.FungibleFaucet`. */
-  type: FaucetType;
+  type: typeof FaucetType.FungibleFaucet;
   /** Human-readable token name. Defaults to `symbol` when omitted. */
   name?: string;
   symbol: string;
   decimals: number;
   maxSupply: number | bigint;
+  storage?: StorageMode;
+  auth?: AuthSchemeType;
+}
+
+/**
+ * Options for a non-fungible faucet. It mints `NonFungibleAsset`s with
+ * `transactions.mintNonFungible({ account, to, nonFungibleAsset })`.
+ */
+export interface NonFungibleFaucetCreateOptions {
+  /** Use `FaucetType.NonFungibleFaucet`. */
+  type: typeof FaucetType.NonFungibleFaucet;
+  /** Human-readable collection name. Defaults to `symbol` when omitted. */
+  name?: string;
+  symbol: string;
   storage?: StorageMode;
   auth?: AuthSchemeType;
 }
@@ -495,6 +519,30 @@ export interface SendOptionsReturnNote extends TransactionOptions {
   returnNote: true;
 }
 
+/** Options for `sendNonFungible`: one non-fungible asset in a P2ID note (P2IDE with `reclaimAfter` / `timelockUntil`). */
+export interface SendNonFungibleOptions extends TransactionOptions {
+  account: AccountRef;
+  to: AccountRef;
+  /** The non-fungible asset to send. */
+  nonFungibleAsset: NonFungibleAsset;
+  type?: NoteVisibility;
+  returnNote?: false;
+  /** Block height after which the sender can reclaim the note. This is a block number, not wall-clock time. */
+  reclaimAfter?: number;
+  /** Block height until which the note is timelocked. This is a block number, not wall-clock time. */
+  timelockUntil?: number;
+}
+
+/** Options for `sendNonFungible` that return the created P2ID note. */
+export interface SendNonFungibleReturnNoteOptions extends TransactionOptions {
+  account: AccountRef;
+  to: AccountRef;
+  /** The non-fungible asset to send. */
+  nonFungibleAsset: NonFungibleAsset;
+  type?: NoteVisibility;
+  returnNote: true;
+}
+
 /** @deprecated Use SendOptionsDefault or SendOptionsReturnNote instead */
 export type SendOptions = SendOptionsDefault | SendOptionsReturnNote;
 
@@ -533,7 +581,7 @@ export interface NetworkNoteOptions extends TransactionOptions {
   /** Note storage / inputs the script reads (used with `script`). */
   inputs?: bigint[];
   /** Assets locked into the note. Optional — a note may carry no assets. */
-  assets?: Asset | Asset[];
+  assets?: TransferAsset | TransferAsset[];
   /** Extra attachment payload appended AFTER the required `NetworkAccountTarget`. */
   attachment?: bigint[];
 }
@@ -561,6 +609,29 @@ export interface MintOptions extends TransactionOptions {
   amount: number | bigint;
   /** Note visibility. Defaults to "public". */
   type?: NoteVisibility;
+}
+
+/** Options for `mintNonFungible`. */
+export interface MintNonFungibleOptions extends TransactionOptions {
+  /** Non-fungible faucet (executing account). */
+  account: AccountRef;
+  /** Recipient account. */
+  to: AccountRef;
+  /**
+   * The asset to mint. It must be issued by `account`; build it with
+   * `new NonFungibleAsset` or `NonFungibleAsset.fromData`.
+   */
+  nonFungibleAsset: NonFungibleAsset;
+  /** Note visibility. Defaults to "public". */
+  type?: NoteVisibility;
+}
+
+/** Options for `burnNonFungible`. */
+export interface BurnNonFungibleOptions extends TransactionOptions {
+  /** Account that holds the asset and creates the BURN note. */
+  account: AccountRef;
+  /** The non-fungible asset to burn. Its faucet burns it when it consumes the note. */
+  nonFungibleAsset: NonFungibleAsset;
 }
 
 export interface BridgeOptions extends TransactionOptions {
@@ -609,11 +680,32 @@ export type BatchOperation =
       timelockUntil?: number;
     }
   | {
+      kind: "sendNonFungible";
+      account: AccountRef;
+      to: AccountRef;
+      nonFungibleAsset: NonFungibleAsset;
+      type?: NoteVisibility;
+      reclaimAfter?: number;
+      timelockUntil?: number;
+    }
+  | {
       kind: "mint";
       account: AccountRef;
       to: AccountRef;
       amount: number | bigint;
       type?: NoteVisibility;
+    }
+  | {
+      kind: "mintNonFungible";
+      account: AccountRef;
+      to: AccountRef;
+      nonFungibleAsset: NonFungibleAsset;
+      type?: NoteVisibility;
+    }
+  | {
+      kind: "burnNonFungible";
+      account: AccountRef;
+      nonFungibleAsset: NonFungibleAsset;
     }
   | {
       kind: "consume";
@@ -663,7 +755,6 @@ export interface BatchOptions {
   /** Wall-clock polling timeout for `waitForConfirmation` (default 60_000ms). */
   timeout?: number;
 }
-
 
 export interface BatchSubmitResult {
   /**
@@ -859,6 +950,30 @@ export interface PreviewMintOptions {
   type?: NoteVisibility;
 }
 
+export interface PreviewSendNonFungibleOptions {
+  operation: "sendNonFungible";
+  account: AccountRef;
+  to: AccountRef;
+  nonFungibleAsset: NonFungibleAsset;
+  type?: NoteVisibility;
+  reclaimAfter?: number;
+  timelockUntil?: number;
+}
+
+export interface PreviewMintNonFungibleOptions {
+  operation: "mintNonFungible";
+  account: AccountRef;
+  to: AccountRef;
+  nonFungibleAsset: NonFungibleAsset;
+  type?: NoteVisibility;
+}
+
+export interface PreviewBurnNonFungibleOptions {
+  operation: "burnNonFungible";
+  account: AccountRef;
+  nonFungibleAsset: NonFungibleAsset;
+}
+
 export interface PreviewBridgeOptions {
   operation: "bridge";
   account: AccountRef;
@@ -915,7 +1030,10 @@ export interface PreviewCustomOptions extends AnchoredOptions {
 
 export type PreviewOptions =
   | PreviewSendOptions
+  | PreviewSendNonFungibleOptions
   | PreviewMintOptions
+  | PreviewMintNonFungibleOptions
+  | PreviewBurnNonFungibleOptions
   | PreviewBridgeOptions
   | PreviewConsumeOptions
   | PreviewSwapOptions
@@ -1163,9 +1281,10 @@ export interface AccountsResource {
    */
   addAddress(accountId: AccountRef, address: string): Promise<void>;
   /**
-   * Remove a Bech32 address from an account.
+   * Remove a Bech32 address from the account it belongs to.
    *
-   * @param accountId - The account to remove the address from.
+   * @param accountId - Not used: the address identifies its account. Kept so
+   * existing calls keep working.
    * @param address - The Bech32 address string to remove.
    */
   removeAddress(accountId: AccountRef, address: string): Promise<void>;
@@ -1186,11 +1305,46 @@ export interface TransactionsResource {
   ): Promise<{ txId: TransactionId; note: Note; result: TransactionResult }>;
   send(options: SendOptions): Promise<SendResult>;
   /**
+   * Send one non-fungible asset to another account by creating a pay-to-ID
+   * note. Set `returnNote: true` to get the created note back.
+   *
+   * @param options - Send options including sender, recipient, and the non-fungible asset.
+   */
+  sendNonFungible(
+    options: SendNonFungibleOptions
+  ): Promise<{ txId: TransactionId; note: null; result: TransactionResult }>;
+  sendNonFungible(
+    options: SendNonFungibleReturnNoteOptions
+  ): Promise<{ txId: TransactionId; note: Note; result: TransactionResult }>;
+  /**
    * Mint new tokens from a faucet account.
    *
    * @param options - Mint options including the faucet, recipient, and amount.
    */
   mint(options: MintOptions): Promise<TransactionSubmitResult>;
+  /**
+   * Mint one non-fungible asset from a non-fungible faucet. The asset must be
+   * issued by `account`.
+   *
+   * @param options - Mint options including the faucet, recipient, and the non-fungible asset.
+   */
+  mintNonFungible(
+    options: MintNonFungibleOptions
+  ): Promise<TransactionSubmitResult>;
+  /**
+   * Send one non-fungible asset back to its faucet in a public BURN note. The
+   * asset is burned when the faucet that issued it consumes the note, for
+   * example with `consume({ account: faucet, notes })`.
+   *
+   * A BURN note for a public faucet is a network note targeted at that faucet,
+   * so a public faucet must be a network account. Private faucets are not
+   * affected.
+   *
+   * @param options - The holding account and the non-fungible asset.
+   */
+  burnNonFungible(
+    options: BurnNonFungibleOptions
+  ): Promise<TransactionSubmitResult>;
   /**
    * Builds a Public custom-script note carrying a `NetworkAccountTarget`
    * attachment, submits it as an own output note, and (optionally) waits for
