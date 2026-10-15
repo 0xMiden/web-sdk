@@ -86,7 +86,6 @@ describe("useCreateFaucet", () => {
       // Verify default options were used; token name falls back to symbol.
       expect(mockClient.newFaucet).toHaveBeenCalledWith(
         expect.anything(), // storageMode.private() (default)
-        false, // nonFungible (always false for now)
         "TEST", // tokenName falls back to tokenSymbol
         "TEST",
         8, // decimals (default)
@@ -122,7 +121,6 @@ describe("useCreateFaucet", () => {
 
       expect(mockClient.newFaucet).toHaveBeenCalledWith(
         expect.anything(), // storageMode.public()
-        false,
         "USD Coin",
         "USDC",
         6,
@@ -358,7 +356,6 @@ describe("useCreateFaucet", () => {
 
       expect(mockClient.newFaucet).toHaveBeenCalledWith(
         expect.anything(),
-        false,
         "Big Token",
         "BIG",
         8,

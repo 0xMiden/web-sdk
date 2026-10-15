@@ -22,7 +22,6 @@ test("transport basic", async ({ run }) => {
     );
     const faucetAccount = await mockClient.newFaucet(
       sdk.AccountStorageMode.private(),
-      false,
       "DAG",
       "DAG",
       8,

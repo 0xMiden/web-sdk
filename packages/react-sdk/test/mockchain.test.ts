@@ -162,7 +162,6 @@ test.describe("MockWebClient Integration", () => {
 
       const faucet = await client.newFaucet(
         (window as any).AccountStorageMode.private(),
-        false,
         "TEST",
         "TEST",
         8,
@@ -247,7 +246,6 @@ test.describe("MockWebClient Integration", () => {
       );
       const faucet = await client.newFaucet(
         (window as any).AccountStorageMode.private(),
-        false,
         "TOKEN",
         "TOKEN",
         8,
@@ -341,7 +339,6 @@ test.describe("MockWebClient Integration", () => {
       );
       const faucet = await client.newFaucet(
         (window as any).AccountStorageMode.private(),
-        false,
         "SEND",
         "SEND",
         8,
