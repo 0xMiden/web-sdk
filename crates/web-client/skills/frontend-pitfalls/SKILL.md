@@ -117,7 +117,10 @@ which one you are relying on tells you what a second browser tab can still do to
    pending run of the *same* sync only while no other call has been queued on that client
    since the run; after one has, it starts a run of its own behind that call, so it never
    settles ahead of a call made before it. Every other call, the same sync on another
-   client included, queues for the lock in turn. With no Web Locks API it
+   client included, queues for the lock in turn. The exported `withSyncLock` takes this
+   same lock and is not reentrant: its callback must not await any of the calls above on
+   the same store, because that call waits for the lock the callback holds and every
+   client on the store stops. With no Web Locks API it
    degrades to an in-process per-database chain. Two writes take no lock: the free
    `importStore` function, which replaces a whole store, so run it only while no client
    uses that store; and the genesis block header `createClient` stores in a store that

@@ -134,6 +134,13 @@ export function coalesceRun(dbId, methodId, start, registry = inFlight, epoch) {
  * (coalescing). Concurrent calls on the same dbId with different methodIds
  * serialize via the Web Lock.
  *
+ * It is the store lock a `WebClient` takes on the store named `dbId`, and it
+ * is not reentrant: `fn` must not await a store-locked call of a client on
+ * that store (`syncState`, `syncChain`, `syncNoteTransport`, `importNoteFile`
+ * or `notes.import`, `fetchPrivateNotes` or `notes.fetchPrivate`,
+ * `newWallet`, `newFaucet`, `newAccount`, `newAccountWithSecretKey`). That
+ * call waits for the lock `fn` holds, so every client on the store stops.
+ *
  * @param {string} dbId - Database ID
  * @param {string} methodId - Method identifier (see MethodName constants)
  * @param {() => Promise<T>} fn - Work to run under the lock
