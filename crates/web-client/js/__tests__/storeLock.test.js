@@ -514,7 +514,7 @@ describe("store lock across WebClient instances (Web Locks)", () => {
     ]);
   });
 
-  it("keys clients omitting storeName on different node URLs by different stores, so neither waits", async () => {
+  it("takes different locks for two clients whose node URLs resolve to different default stores, so neither waits", async () => {
     const a = await createWebClient("A", "http://node-a").created;
     const b = await createWebClient("B", "http://node-b").created;
 
@@ -531,6 +531,57 @@ describe("store lock across WebClient instances (Web Locks)", () => {
       "miden-sync-MidenClientDB_http://node-b",
     ]);
   });
+
+  it.each(["createClient", "createClientWithExternalKeystore"])(
+    "makes a client built by %s with a storeName take the lock of that store, the default store of another node URL",
+    async (factory) => {
+      const store = "MidenClientDB_http://node-a";
+      const a = await createWebClient("A", "http://node-a", undefined, factory)
+        .created;
+      const b = await createWebClient("B", "http://node-b", store, factory)
+        .created;
+
+      const sync = a.syncState();
+      await waitForStart("A.syncState");
+      const imported = b.importNoteFile("f1");
+      await flush();
+      expect(lockRequest.mock.calls.map(([name]) => name)).toEqual([
+        `miden-sync-${store}`,
+        `miden-sync-${store}`,
+      ]);
+      expect(events).toEqual(["start A.syncState"]);
+
+      await release("A.syncState");
+      await release("B.importNoteFile f1");
+      await Promise.all([sync, imported]);
+      expect(events).toEqual([
+        "start A.syncState",
+        "end A.syncState",
+        "start B.importNoteFile f1",
+        "end B.importNoteFile f1",
+      ]);
+    }
+  );
+
+  it.each(["createClient", "createClientWithExternalKeystore"])(
+    "makes a client built by %s with a custom storeName take the lock named after it",
+    async (factory) => {
+      const client = await createWebClient(
+        "A",
+        "http://node-a",
+        "custom-store",
+        factory
+      ).created;
+
+      const sync = client.syncState();
+      await waitForStart("A.syncState");
+      expect(lockRequest.mock.calls.map(([name]) => name)).toEqual([
+        "miden-sync-custom-store",
+      ]);
+      await release("A.syncState");
+      await sync;
+    }
+  );
 
   it.each(["createClient", "createClientWithExternalKeystore"])(
     "makes %s terminate the instance it built when the store name cannot be resolved",
