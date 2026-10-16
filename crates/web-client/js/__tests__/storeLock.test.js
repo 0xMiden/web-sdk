@@ -75,6 +75,18 @@ function makeWebClient(storeName, name, { mock = false } = {}) {
   return { instance, client: createClientProxy(instance), wasmClient };
 }
 
+// Puts a client in worker mode, behind a worker that answers nothing.
+function inWorkerMode(instance) {
+  const worker = { postMessage: vi.fn(), terminate: vi.fn() };
+  Object.assign(instance, {
+    worker,
+    pendingRequests: new Map(),
+    ready: Promise.resolve(),
+    readyRejecter: () => {},
+  });
+  return worker;
+}
+
 async function waitForStart(label) {
   await vi.waitFor(() => expect(parked.has(label)).toBe(true));
 }
@@ -213,7 +225,7 @@ describe("store lock across WebClient instances (Web Locks)", () => {
     ]);
   });
 
-  it("queues imports one after another instead of sharing a run, while concurrent syncs still share one", async () => {
+  it("queues imports, and the same sync on two clients, one after another instead of sharing a run", async () => {
     const store = uniqueStore();
     const a = makeWebClient(store, "A");
     const b = makeWebClient(store, "B");
@@ -233,11 +245,97 @@ describe("store lock across WebClient instances (Web Locks)", () => {
 
     const syncs = [a.client.syncState(), b.client.syncState()];
     await release("A.syncState");
-    await expect(Promise.all(syncs)).resolves.toEqual([
+    await expect(syncs[0]).resolves.toBe("A.syncState");
+    expect(await state(syncs[1])).toBe("pending");
+    await release("B.syncState");
+    await expect(syncs[1]).resolves.toBe("B.syncState");
+    expect(a.wasmClient.syncStateImpl).toHaveBeenCalledTimes(1);
+    expect(b.wasmClient.syncStateImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { name: "syncState", method: "syncState", mock: false },
+    { name: "syncChain", method: "syncChain", mock: false },
+    { name: "syncNoteTransport", method: "syncNoteTransport", mock: false },
+    { name: "MockWebClient syncState", method: "syncState", mock: true },
+    { name: "MockWebClient syncChain", method: "syncChain", mock: true },
+    {
+      name: "MockWebClient syncNoteTransport",
+      method: "syncNoteTransport",
+      mock: true,
+    },
+  ])(
+    "runs $name on a second client on the store as its own run after the first client's, never joining it",
+    async ({ method, mock }) => {
+      const store = mock ? undefined : uniqueStore();
+      const a = makeWebClient(store, "A", { mock });
+      const b = makeWebClient(store, "B", { mock });
+
+      const first = a.client[method]();
+      await waitForStart(`A.${method}`);
+      const second = b.client[method]();
+      await flush();
+      expect(events).toEqual([`start A.${method}`]);
+
+      await release(`A.${method}`);
+      await first;
+      expect(await state(second)).toBe("pending");
+      await release(`B.${method}`);
+      await second;
+      expect(events).toEqual([
+        `start A.${method}`,
+        `end A.${method}`,
+        `start B.${method}`,
+        `end B.${method}`,
+      ]);
+      expect(b.wasmClient[`${method}Impl`]).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it("shares one run among a client's concurrent calls of the same sync, and waitForIdle on that client waits for it", async () => {
+    const store = uniqueStore();
+    const a = makeWebClient(store, "A");
+
+    const first = a.client.syncState();
+    const second = a.client.syncState();
+    const idle = a.instance.waitForIdle();
+    await waitForStart("A.syncState");
+    expect(await state(idle)).toBe("pending");
+
+    await release("A.syncState");
+    await expect(Promise.all([first, second])).resolves.toEqual([
       "A.syncState",
       "A.syncState",
     ]);
-    expect(b.wasmClient.syncStateImpl).not.toHaveBeenCalled();
+    await idle;
+    expect(a.wasmClient.syncStateImpl).toHaveBeenCalledTimes(1);
+    expect(lockRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs a live client's sync as its own run when a worker-mode client with the same sync queued is terminated", async () => {
+    const store = uniqueStore();
+    const a = makeWebClient(store, "A");
+    const b = makeWebClient(store, "B");
+    const c = makeWebClient(store, "C");
+    inWorkerMode(a.instance);
+
+    const holder = c.client.syncChain();
+    await waitForStart("C.syncChain");
+    const owned = a.client.syncState();
+    owned.catch(() => {});
+    await flush();
+    const own = b.client.syncState();
+    own.catch(() => {});
+    await flush();
+    a.instance.terminate();
+    await release("C.syncChain");
+    await holder;
+
+    await expect(owned).rejects.toThrow("WebClient terminated");
+    expect(await state(own)).toBe("pending");
+    await release("B.syncState");
+    await expect(own).resolves.toBe("B.syncState");
+    expect(b.wasmClient.syncStateImpl).toHaveBeenCalledTimes(1);
   });
 
   it("keys the lock by store, so a client on another store does not wait", async () => {
@@ -326,6 +424,116 @@ describe("store lock across WebClient instances (Web Locks)", () => {
       events.indexOf("start B.newWallet private")
     );
   });
+
+  // Each call is the first on its client, so nothing else on that client can
+  // hold it behind the holder: only its own lock request can.
+  const midenOf = (c) => new MidenClient(c.client, async () => fakeWasm, null);
+  it.each([
+    {
+      name: "newWallet",
+      call: (c) => c.client.newWallet("private", "falcon"),
+      label: "newWallet private",
+    },
+    {
+      name: "newFaucet",
+      call: (c) =>
+        c.client.newFaucet("private", false, "T", "TOK", 8, 1n, "falcon"),
+      label: "newFaucet private",
+    },
+    {
+      name: "newAccount",
+      call: (c) => c.client.newAccount("account", false),
+      label: "newAccount account",
+    },
+    {
+      name: "newAccountWithSecretKey",
+      call: (c) => c.client.newAccountWithSecretKey("keyed", "key"),
+      label: "newAccountWithSecretKey keyed",
+    },
+    {
+      name: "importNoteFile",
+      call: (c) => c.client.importNoteFile("f1"),
+      label: "importNoteFile f1",
+    },
+    {
+      name: "notes.import",
+      call: (c) => midenOf(c).notes.import("f1"),
+      label: "importNoteFile f1",
+    },
+    {
+      name: "fetchPrivateNotes",
+      call: (c) => c.client.fetchPrivateNotes(),
+      label: "fetchPrivateNotes",
+    },
+    {
+      name: "notes.fetchPrivate",
+      call: (c) => midenOf(c).notes.fetchPrivate(),
+      label: "fetchPrivateNotes",
+    },
+    {
+      name: "syncState",
+      call: (c) => c.client.syncState(),
+      label: "syncState",
+    },
+    {
+      name: "syncChain",
+      call: (c) => c.client.syncChain(),
+      label: "syncChain",
+    },
+    {
+      name: "syncNoteTransport",
+      call: (c) => c.client.syncNoteTransport(),
+      label: "syncNoteTransport",
+    },
+    {
+      name: "MockWebClient syncState",
+      mock: true,
+      call: (c) => c.client.syncState(),
+      label: "syncState",
+    },
+    {
+      name: "MockWebClient syncChain",
+      mock: true,
+      call: (c) => c.client.syncChain(),
+      label: "syncChain",
+    },
+    {
+      name: "MockWebClient syncNoteTransport",
+      mock: true,
+      call: (c) => c.client.syncNoteTransport(),
+      label: "syncNoteTransport",
+    },
+  ])(
+    "makes $name, the first call on its client, request the store lock and wait for another client's holder",
+    async ({ mock = false, call, label }) => {
+      const store = mock ? undefined : uniqueStore();
+      const lockName = mock
+        ? "miden-sync-mock_client_db"
+        : `miden-sync-${store}`;
+      const a = makeWebClient(store, "A", { mock });
+      const b = makeWebClient(store, "B", { mock });
+
+      const held = a.client.importNoteFile("held");
+      await waitForStart("A.importNoteFile held");
+      const requestsBefore = lockRequest.mock.calls.length;
+      const result = call(b);
+      await flush();
+      expect(events).toEqual(["start A.importNoteFile held"]);
+      expect(
+        lockRequest.mock.calls.slice(requestsBefore).map(([name]) => name)
+      ).toEqual([lockName]);
+
+      await release("A.importNoteFile held");
+      await release(`B.${label}`);
+      await Promise.all([held, result]);
+      expect(events).toEqual([
+        "start A.importNoteFile held",
+        "end A.importNoteFile held",
+        `start B.${label}`,
+        `end B.${label}`,
+      ]);
+    }
+  );
 
   it("holds the lock across a worker-mode sync", async () => {
     const store = uniqueStore();
@@ -488,7 +696,7 @@ describe("store lock across WebClient instances (Web Locks)", () => {
     ]);
   });
 
-  it("resolves a live client joining a sync whose owner was terminated while it waited for the lock", async () => {
+  it("runs a live client's sync as its own run after a terminated client's queued run of the same sync, which still settles and frees its client", async () => {
     const store = uniqueStore();
     const a = makeWebClient(store, "A");
     const b = makeWebClient(store, "B");
@@ -499,15 +707,24 @@ describe("store lock across WebClient instances (Web Locks)", () => {
     const owned = a.client.syncState();
     await flush();
     a.instance.terminate();
-    const joined = b.client.syncState();
+    const own = b.client.syncState();
     await release("C.syncChain");
     await holder;
 
-    expect(await state(joined)).toBe("pending");
     await release("A.syncState");
-    await expect(joined).resolves.toBe("A.syncState");
     await expect(owned).resolves.toBe("A.syncState");
-    expect(b.wasmClient.syncStateImpl).not.toHaveBeenCalled();
+    expect(await state(own)).toBe("pending");
+    await release("B.syncState");
+    await expect(own).resolves.toBe("B.syncState");
+    expect(b.wasmClient.syncStateImpl).toHaveBeenCalledTimes(1);
+    expect(events).toEqual([
+      "start C.syncChain",
+      "end C.syncChain",
+      "start A.syncState",
+      "end A.syncState",
+      "start B.syncState",
+      "end B.syncState",
+    ]);
     await a.instance.waitForIdle();
     expect(a.wasmClient.free).toHaveBeenCalledTimes(1);
   });
