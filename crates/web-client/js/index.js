@@ -1206,8 +1206,12 @@ class WebClient {
    *
    * @param {string} method - The wasm creation method, also the op name.
    * @param {(wasm: object) => any[]} resolveArgs - Its arguments, before the
-   *   trailing `skipPreSync`. Resolved before the pre-sync, so an invalid one
-   *   rejects without syncing.
+   *   trailing `skipPreSync`. Resolved before the pre-sync takes the store
+   *   lock, so an argument it checks itself, an unknown auth scheme or
+   *   `newFaucet`'s `nonFungible` of `true`, rejects without syncing. A type
+   *   error at the wasm boundary (a storage mode, account or secret key of the
+   *   wrong type, a `maxSupply` that is not a bigint) still rejects only after
+   *   the locked pre-sync.
    * @returns {Promise<any>} The result of the creation.
    * @private
    */
@@ -1240,15 +1244,23 @@ class WebClient {
     maxSupply,
     authSchemeId
   ) {
-    return this._createAccount("newFaucet", (wasm) => [
-      storageMode,
-      nonFungible,
-      tokenName,
-      tokenSymbol,
-      decimals,
-      maxSupply,
-      resolveAuthScheme(authSchemeId, wasm),
-    ]);
+    return this._createAccount("newFaucet", (wasm) => {
+      const authScheme = resolveAuthScheme(authSchemeId, wasm);
+      // The wasm newFaucet refuses this before its own pre-sync, with a bare
+      // string rather than an Error; this rejects with the same value.
+      if (nonFungible === true) {
+        throw "Non-fungible faucets are not supported yet";
+      }
+      return [
+        storageMode,
+        nonFungible,
+        tokenName,
+        tokenSymbol,
+        decimals,
+        maxSupply,
+        authScheme,
+      ];
+    });
   }
 
   async importPublicAccountFromSeed(seed, authSchemeId) {
