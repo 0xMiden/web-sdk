@@ -556,6 +556,47 @@ export class MidenClient {
     );
   }
 
+  /**
+   * Returns a copy of a finished `TransactionRequest` that carries the auth
+   * args the executing account needs.
+   *
+   * Use this when another party built the request, such as a dApp that gives a
+   * finished request to a wallet, and the executing account is a multisig. For
+   * a multisig this sets the same auth args that
+   * `feeAwareTransactionRequestBuilder` declares, through
+   * `TransactionRequest.withAuthArgs`: the auth argument and its advice-map
+   * preimage. The auth args replace a declared fee conversion salt.
+   * Every other field of the request stays the same. For every other account
+   * the request comes back unchanged.
+   *
+   * @param {TransactionRequest} request - The finished request. It is not
+   *   consumed and not changed.
+   * @param {AccountRef} account - The executing account.
+   * @param {object} [options] - Multisig-only overrides, the same as for
+   *   `feeAwareTransactionRequestBuilder`.
+   * @param {number} [options.approvalExpirationDelta] - Expires the approvers'
+   *   signatures this many blocks after the block the summary binds.
+   * @param {Word} [options.feeConversionSalt] - The salt the summary binds.
+   *   Consumed by the call. When omitted, the salt that the request declares,
+   *   or a fresh one.
+   * @param {number} [options.boundBlockNum] - The block the summary binds.
+   * @returns {Promise<TransactionRequest>} The request with the auth inputs.
+   * @throws An error with `code` `"AUTH_ALREADY_SET"` if the request already
+   *   has an auth argument (on Node.js the code prefixes the message
+   *   instead).
+   */
+  async withFeeAwareAuth(request, account, options) {
+    this.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    return await this.#inner.withFeeAwareAuth(
+      request,
+      resolveAccountRef(account, wasm),
+      options?.approvalExpirationDelta,
+      options?.feeConversionSalt,
+      options?.boundBlockNum
+    );
+  }
+
   // ── Mock-only methods ──
 
   /** Advances the mock chain by one block. Only available on mock clients. */

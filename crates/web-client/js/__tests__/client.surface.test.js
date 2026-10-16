@@ -126,6 +126,7 @@ describe("MidenClient declared surface", () => {
     expect(statics).toContain("create");
     expect(methods).toContain("sync");
     expect(methods).toContain("feeAwareTransactionRequestBuilder");
+    expect(methods).toContain("withFeeAwareAuth");
     expect(fields).toContain("transactions");
     expect(methods).toContain(Symbol.dispose);
     expect(methods.length).toBeGreaterThan(5);

@@ -72,6 +72,7 @@ const makeClient = (innerOverrides = {}) => {
     feeAwareTransactionRequestBuilder: vi
       .fn()
       .mockResolvedValue({ kind: "builder" }),
+    withFeeAwareAuth: vi.fn().mockResolvedValue({ kind: "authedRequest" }),
     storeIdentifier: vi.fn().mockResolvedValue("store"),
     ...innerOverrides,
   };
@@ -189,6 +190,107 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
       client.feeAwareTransactionRequestBuilder("0xabc")
     ).rejects.toThrow("Client terminated");
     expect(inner.feeAwareTransactionRequestBuilder).not.toHaveBeenCalled();
+  });
+});
+
+describe("MidenClient.withFeeAwareAuth", () => {
+  let client;
+  let inner;
+  let wasm;
+  const request = { kind: "request" };
+
+  beforeEach(() => {
+    ({ client, inner, wasm } = makeClient());
+  });
+
+  it("returns the request the inner client produced", async () => {
+    await expect(client.withFeeAwareAuth(request, "0xabc")).resolves.toEqual({
+      kind: "authedRequest",
+    });
+  });
+
+  // The request goes first and untouched; the account goes through
+  // `resolveAccountRef` like every other account argument.
+  it("passes the request through and parses a hex account", async () => {
+    await client.withFeeAwareAuth(request, "0xabc");
+    expect(wasm.AccountId.fromHex).toHaveBeenCalledWith("0xabc");
+    expect(inner.withFeeAwareAuth).toHaveBeenCalledWith(
+      request,
+      expect.objectContaining({ kind: "fromHex", hex: "0xabc" }),
+      undefined,
+      undefined,
+      undefined
+    );
+  });
+
+  it("parses a bech32 account into an AccountId", async () => {
+    await client.withFeeAwareAuth(request, "mtst1qabc");
+    expect(wasm.AccountId.fromBech32).toHaveBeenCalledWith("mtst1qabc");
+    expect(inner.withFeeAwareAuth).toHaveBeenCalledWith(
+      request,
+      expect.objectContaining({ kind: "fromBech32", bech32: "mtst1qabc" }),
+      undefined,
+      undefined,
+      undefined
+    );
+  });
+
+  it("resolves an Account through its id()", async () => {
+    const id = { toString: () => "0xfromAccount" };
+    const account = { id: vi.fn(() => id) };
+    await client.withFeeAwareAuth(request, account);
+    expect(account.id).toHaveBeenCalled();
+    expect(inner.withFeeAwareAuth).toHaveBeenCalledWith(
+      request,
+      id,
+      undefined,
+      undefined,
+      undefined
+    );
+  });
+
+  it("rejects a nullish account rather than passing null into WASM", async () => {
+    await expect(client.withFeeAwareAuth(request, undefined)).rejects.toThrow(
+      /cannot be null or undefined/i
+    );
+    expect(inner.withFeeAwareAuth).not.toHaveBeenCalled();
+  });
+
+  it("forwards every multisig option in its own positional slot", async () => {
+    const accountId = { kind: "accountId" };
+    const salt = { kind: "word" };
+    await client.withFeeAwareAuth(request, accountId, {
+      approvalExpirationDelta: 100,
+      feeConversionSalt: salt,
+      boundBlockNum: 42,
+    });
+    expect(inner.withFeeAwareAuth).toHaveBeenCalledWith(
+      request,
+      accountId,
+      100,
+      salt,
+      42
+    );
+  });
+
+  // The coded refusals come from the WASM side; the wrapper must let them
+  // through unchanged so a caller can branch on `code`.
+  it("propagates a coded refusal from the inner client", async () => {
+    const refusal = Object.assign(new Error("auth already set"), {
+      code: "AUTH_ALREADY_SET",
+    });
+    inner.withFeeAwareAuth.mockRejectedValueOnce(refusal);
+    await expect(
+      client.withFeeAwareAuth(request, "0xabc")
+    ).rejects.toMatchObject({ code: "AUTH_ALREADY_SET" });
+  });
+
+  it("throws once terminated", async () => {
+    client.terminate();
+    await expect(client.withFeeAwareAuth(request, "0xabc")).rejects.toThrow(
+      "Client terminated"
+    );
+    expect(inner.withFeeAwareAuth).not.toHaveBeenCalled();
   });
 });
 

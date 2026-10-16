@@ -261,11 +261,37 @@ The salt is a *declaration*, not a commitment: `request.feeConversionSalt()` rep
 
 `withAuthArg` and `withFeeConversionSalt` are **mutually exclusive**, and miden-client enforces that by having each setter clear the other — so whichever you call last simply wins, rather than producing an error. That makes either setter destructive on a builder from `feeAwareTransactionRequestBuilder` for a multisig: it already carries the component's three-word auth args, and clearing them leaves the auth procedure piping a preimage that was never written. Pass `feeConversionSalt` to the builder instead, as above.
 
+### Executing a request someone else built
+
+A wallet that executes a dApp's finished request from a multisig account cannot use the builder, because the request is already built. If the request declares a salt, it executes as it is: miden-client derives the multisig auth args from the salt and binds them to the reference block of each execution. If it declares no salt, execution fails with `FeeConversionInfoRequired`. Set the auth args on the request instead:
+
+```typescript
+const request = await client.withFeeAwareAuth(dappRequest, multisig);
+await client.transactions.submit(multisig, request);
+```
+
+`withFeeAwareAuth` returns a copy of the request with the same auth argument and advice-map preimage that `feeAwareTransactionRequestBuilder` declares. The auth args replace a declared fee conversion salt, and every other field stays the same. For an account that is not a multisig the request comes back unchanged. It takes the same `options` as the builder (`approvalExpirationDelta`, `feeConversionSalt`, `boundBlockNum`). When `feeConversionSalt` is omitted, it uses the salt that the request declares, or draws a fresh one if the request declares none.
+
+The copy does not declare the bound block as a block number. miden-client adds the bound block when it executes the request, so the request executes at the chain tip with no anchor. An anchor from `chainAnchorForRequest` does not track the bound block, so do not execute the copy at such an anchor.
+
+It refuses a request that already has an auth argument, with the error `code` `AUTH_ALREADY_SET` (on Node.js the code prefixes the message). The author of the request owns that argument, so it is not replaced.
+
+#### Setting your own auth args
+
+`withFeeAwareAuth` is built on `request.withAuthArgs(preimage)`, which mirrors miden-client's `TransactionRequest::with_auth_args`. Use it directly when you build the auth args yourself, for example for a custom auth procedure that loads its auth args from the advice map:
+
+```typescript
+// `preimage` is a Felt[]: the auth args as the auth procedure reads them.
+const request = finishedRequest.withAuthArgs(preimage);
+```
+
+It returns a copy whose auth argument is the Poseidon2 hash of `preimage`, with `preimage` in the advice map under that hash, so the auth argument and its preimage always agree. It replaces an existing auth argument and a declared fee conversion salt without a check, and every other field stays the same.
+
 ### Custom auth procedures
 
 miden-client only commits conversion info for auth components it recognises. If you have written your own, which way out applies depends on the procedure:
 
-- **It reads the conversion info from `AUTH_ARGS`** (it calls `fee::load_conversion_info`, like the standard signature components). Compute the commitment yourself and attach it with `TransactionRequestBuilder.withAuthArg`, plus `extendAdviceMap` for the preimage. Setting an auth argument opts the request out of the client's fee machinery entirely — it commits only when the request carries none — so the word you set is the one the procedure reads.
+- **It reads the conversion info from `AUTH_ARGS`** (it calls `fee::load_conversion_info`, like the standard signature components). Compute the commitment yourself and attach it with `TransactionRequestBuilder.withAuthArg`, plus `extendAdviceMap` for the preimage. On a finished request, `request.withAuthArgs(preimage)` does both in one call. Setting an auth argument opts the request out of the client's fee machinery entirely — it commits only when the request carries none — so the word you set is the one the procedure reads.
 - **It is still yours to write.** Read the chain's native conversion info in the procedure instead, the way the no-auth and network-account components do, and the transaction needs no auth argument at all.
 
 Note that declaring a *salt* against such an account does not work: miden-client rejects a salt whose auth component it cannot see reading it, with `FeeConversionInfoUnsupported` naming the component.

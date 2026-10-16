@@ -1892,7 +1892,8 @@ export interface KeystoreResource {
 // ════════════════════════════════════════════════════════════════
 
 /**
- * Multisig-only overrides for {@link MidenClient.feeAwareTransactionRequestBuilder}.
+ * Multisig-only overrides for {@link MidenClient.feeAwareTransactionRequestBuilder}
+ * and {@link MidenClient.withFeeAwareAuth}.
  *
  * Each field pins a value the approvers sign over. Omit them all for the party
  * creating a proposal; supply them to reproduce one without transporting the
@@ -2118,6 +2119,58 @@ export declare class MidenClient {
     account: AccountRef,
     options?: MultisigAuthOptions
   ): Promise<TransactionRequestBuilder>;
+
+  /**
+   * Returns a copy of a finished `TransactionRequest` that carries the auth
+   * args the executing account needs.
+   *
+   * Use this when another party built the request, such as a dApp that gives a
+   * finished request to a wallet, and the executing account is a multisig.
+   * miden-client derives multisig auth args only from a declared fee
+   * conversion salt, so a request without one fails with
+   * `FeeConversionInfoRequired`. For a multisig this sets the same auth args
+   * that {@link MidenClient.feeAwareTransactionRequestBuilder} declares,
+   * through `TransactionRequest.withAuthArgs`: the auth argument and its
+   * advice-map preimage. The auth args replace a declared fee conversion salt. Every other field of the request stays the
+   * same.
+   *
+   * For every other account the request comes back unchanged, because
+   * miden-client commits the fee conversion info for those accounts itself.
+   *
+   * When `options.feeConversionSalt` is omitted, the auth args use the salt
+   * that the request declares, or a fresh one if it declares none.
+   *
+   * The copy does not declare the bound block as a block number. miden-client
+   * adds it when it executes the request, so the request executes at the chain
+   * tip with no anchor. An anchor from `chainAnchorForRequest` does not track
+   * the bound block.
+   *
+   * The request passed in is not consumed and not changed.
+   *
+   * @param request - The finished request.
+   * @param account - The account that will execute the request.
+   * @param options - Multisig-only overrides, the same as for
+   *   {@link MidenClient.feeAwareTransactionRequestBuilder}; every field is
+   *   defaulted when omitted and ignored for an account that is not a
+   *   multisig.
+   * @throws An error with `code` `"AUTH_ALREADY_SET"` if the request already
+   *   has an auth argument that commits anything: its author owns that
+   *   argument, so it is not replaced (`TransactionRequest.withAuthArgs`
+   *   replaces it without this check). On Node.js the code prefixes the
+   *   message (`"AUTH_ALREADY_SET: ..."`) instead.
+   *
+   * @example
+   * ```js
+   * // A wallet executes a request that a dApp built.
+   * const request = await client.withFeeAwareAuth(dappRequest, multisig);
+   * await client.transactions.submit(multisig, request);
+   * ```
+   */
+  withFeeAwareAuth(
+    request: TransactionRequest,
+    account: AccountRef,
+    options?: MultisigAuthOptions
+  ): Promise<TransactionRequest>;
 
   /** Advances the mock chain by one block. Only available on mock clients. */
   proveBlock(): Promise<void>;

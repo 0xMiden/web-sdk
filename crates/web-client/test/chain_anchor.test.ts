@@ -352,8 +352,10 @@ test.describe("chain anchor", () => {
   });
 
   // A multisig proposal binds its summary to the block its auth args name, and
-  // the fee-aware builder declares that block on the request. Re-executing at a
-  // later tip, with no anchor, must reproduce the summary the approvers signed.
+  // the fee-aware builder declares that block on the request, so an anchor
+  // from `chainAnchorForRequest` tracks it. Re-executing at a later tip, with
+  // no anchor or at a late anchor, must reproduce the summary the approvers
+  // signed.
   test("a multisig proposal reproduces its summary at a later tip without an anchor", async ({
     run,
   }) => {
@@ -385,19 +387,17 @@ test.describe("chain anchor", () => {
         lateAnchor
       );
 
-      // The same auth args without the declared block: the kernel cannot
-      // authenticate the bound block at the tip, which is what the declaration
-      // on the fee-aware request fixes.
+      // The same auth args without the declared block. miden-client reads the
+      // bound block out of the multisig auth args and tracks it at execution,
+      // so the summary is the same at the tip without the declaration.
       const undeclared = new sdk.TransactionRequestBuilder()
         .withAuthArg(request.authArg())
         .extendAdviceMap(request.adviceMap())
         .build();
-      let undeclaredError = null;
-      try {
-        await client.executeForSummary(multisigAccountId, undeclared);
-      } catch (err) {
-        undeclaredError = String(err?.message ?? err);
-      }
+      const undeclaredAtTip = await client.executeForSummary(
+        multisigAccountId,
+        undeclared
+      );
 
       return {
         boundBlock,
@@ -408,7 +408,7 @@ test.describe("chain anchor", () => {
         atTip: atTip.toCommitment().toHex(),
         atLateAnchor: atLateAnchor.toCommitment().toHex(),
         undeclaredBlocks: Array.from(undeclared.blockNumbers()),
-        undeclaredError,
+        undeclaredAtTip: undeclaredAtTip.toCommitment().toHex(),
       };
     });
 
@@ -417,12 +417,9 @@ test.describe("chain anchor", () => {
     expect(result.lateAnchorBlock).toBe(result.tip);
     expect(result.atTip).toBe(result.original);
     expect(result.atLateAnchor).toBe(result.original);
-    // The control differs from the request only by the declaration, and fails
-    // for exactly that reason.
+    // The control differs from the request only by the declaration.
     expect(result.undeclaredBlocks).toEqual([]);
-    expect(result.undeclaredError).toContain(
-      "failed to lookup value in Merkle store"
-    );
+    expect(result.undeclaredAtTip).toBe(result.original);
   });
   // The node-backed counterpart of the test above, and the regression for
   // web-sdk#432. A node serves account state only ~50 blocks back, so a
