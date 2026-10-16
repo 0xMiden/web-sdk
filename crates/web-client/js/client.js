@@ -563,8 +563,9 @@ export class MidenClient {
    * Use this when another party built the request, such as a dApp that gives a
    * finished request to a wallet, and the executing account is a multisig. For
    * a multisig this sets the same auth args that
-   * `feeAwareTransactionRequestBuilder` declares: the auth argument and its
-   * advice-map preimage. The auth args replace a declared fee conversion salt.
+   * `feeAwareTransactionRequestBuilder` declares, through
+   * `TransactionRequest.withAuthArgs`: the auth argument and its advice-map
+   * preimage. The auth args replace a declared fee conversion salt.
    * Every other field of the request stays the same. For every other account
    * the request comes back unchanged.
    *
@@ -581,9 +582,8 @@ export class MidenClient {
    * @param {number} [options.boundBlockNum] - The block the summary binds.
    * @returns {Promise<TransactionRequest>} The request with the auth inputs.
    * @throws An error with `code` `"AUTH_ALREADY_SET"` if the request already
-   *   has an auth argument, or `"CONFLICTING_ADVICE_MAP_ENTRY"` if its advice
-   *   map holds the auth argument with a different value (on Node.js the code
-   *   prefixes the message instead).
+   *   has an auth argument (on Node.js the code prefixes the message
+   *   instead).
    */
   async withFeeAwareAuth(request, account, options) {
     this.assertNotTerminated();

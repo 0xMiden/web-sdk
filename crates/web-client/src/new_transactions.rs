@@ -28,7 +28,6 @@ use miden_client::transaction::{
     TransactionRequestBuilder as NativeTransactionRequestBuilder,
 };
 use miden_client::{Client, ClientError, Word as NativeWord};
-use miden_protocol::crypto::SequentialCommit;
 
 use crate::models::NoteType;
 use crate::models::account_id::AccountId;
@@ -905,9 +904,9 @@ impl WebClient {
     /// to a wallet, and the executing account is a multisig. miden-client derives multisig auth
     /// args only from a declared fee conversion salt, so a request without one fails with
     /// `FeeConversionInfoRequired`. This sets the same auth args that
-    /// `feeAwareTransactionRequestBuilder` declares: the auth argument and its advice-map
-    /// preimage. The auth args replace the declared fee conversion salt. Every other field of the
-    /// request stays the same.
+    /// `feeAwareTransactionRequestBuilder` declares, through `TransactionRequest.withAuthArgs`: the
+    /// auth argument and its advice-map preimage. The auth args replace the declared fee
+    /// conversion salt. Every other field of the request stays the same.
     ///
     /// For every other account this returns the request unchanged, because miden-client commits
     /// the fee conversion info for those accounts itself.
@@ -923,9 +922,8 @@ impl WebClient {
     ///
     /// # Errors
     /// - `AUTH_ALREADY_SET` if the request already has an auth argument that commits anything. The
-    ///   author of the request owns that argument, so this does not replace it.
-    /// - `CONFLICTING_ADVICE_MAP_ENTRY` if the advice map of the request already holds the auth
-    ///   argument as a key with a different value.
+    ///   author of the request owns that argument, so this does not replace it. `withAuthArgs`
+    ///   replaces it without this check.
     /// - Every error of `feeAwareTransactionRequestBuilder`, such as an approval expiration delta
     ///   of zero.
     #[js_export(js_name = "withFeeAwareAuth")]
@@ -956,43 +954,16 @@ impl WebClient {
             return Ok(native_request.into());
         };
 
-        check_auth_args_fit(&native_request, &auth_args)?;
-        Ok(native_request.with_auth_args(&auth_args).into())
-    }
-}
+        // `withAuthArgs` replaces the auth argument, so the refusal happens here.
+        if native_request.has_auth_arg() {
+            return Err(from_str_err_with_code(
+                "failed to add the fee-aware auth args to the request: the request already has \
+                 an auth argument, which its author owns and which this does not replace",
+                "AUTH_ALREADY_SET",
+            ));
+        }
 
-/// Refuses auth args that would overwrite data the author of `request` set.
-///
-/// `TransactionRequest::with_auth_args` replaces the auth argument and overwrites an advice-map
-/// entry under the same key, so the two refusals happen here, each with a stable code.
-fn check_auth_args_fit(
-    request: &NativeTransactionRequest,
-    auth_args: &MultisigAuthArgs,
-) -> Result<(), JsErr> {
-    const CONTEXT: &str = "failed to add the fee-aware auth inputs to the request";
-
-    if request.has_auth_arg() {
-        return Err(from_str_err_with_code(
-            &format!(
-                "{CONTEXT}: the request already has an auth argument, which its author owns and \
-                 which this does not replace"
-            ),
-            "AUTH_ALREADY_SET",
-        ));
-    }
-
-    let commitment = auth_args.to_commitment();
-    match request.advice_map().get(&commitment) {
-        Some(existing) if existing.as_ref() != auth_args.to_elements().as_slice() => {
-            Err(from_str_err_with_code(
-                &format!(
-                    "{CONTEXT}: the advice map already holds the auth argument {commitment} with a \
-                     different value"
-                ),
-                "CONFLICTING_ADVICE_MAP_ENTRY",
-            ))
-        },
-        _ => Ok(()),
+        Ok(request.with_native_auth_args(&auth_args))
     }
 }
 

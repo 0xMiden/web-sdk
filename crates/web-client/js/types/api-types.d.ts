@@ -2129,9 +2129,9 @@ export declare class MidenClient {
    * miden-client derives multisig auth args only from a declared fee
    * conversion salt, so a request without one fails with
    * `FeeConversionInfoRequired`. For a multisig this sets the same auth args
-   * that {@link MidenClient.feeAwareTransactionRequestBuilder} declares: the
-   * auth argument and its advice-map preimage. The auth args replace a
-   * declared fee conversion salt. Every other field of the request stays the
+   * that {@link MidenClient.feeAwareTransactionRequestBuilder} declares,
+   * through `TransactionRequest.withAuthArgs`: the auth argument and its
+   * advice-map preimage. The auth args replace a declared fee conversion salt. Every other field of the request stays the
    * same.
    *
    * For every other account the request comes back unchanged, because
@@ -2155,10 +2155,9 @@ export declare class MidenClient {
    *   multisig.
    * @throws An error with `code` `"AUTH_ALREADY_SET"` if the request already
    *   has an auth argument that commits anything: its author owns that
-   *   argument, so it is not replaced. An error with `code`
-   *   `"CONFLICTING_ADVICE_MAP_ENTRY"` if the advice map of the request already
-   *   holds the auth argument as a key with a different value. On Node.js the
-   *   code prefixes the message (`"AUTH_ALREADY_SET: ..."`) instead.
+   *   argument, so it is not replaced (`TransactionRequest.withAuthArgs`
+   *   replaces it without this check). On Node.js the code prefixes the
+   *   message (`"AUTH_ALREADY_SET: ..."`) instead.
    *
    * @example
    * ```js
