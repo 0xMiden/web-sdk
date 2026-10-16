@@ -795,11 +795,16 @@ class WebClient {
   }
 
   /**
-   * The id the store lock is keyed by.
+   * The id the store lock is keyed by: the name of the store this client
+   * opens, which its factory resolves with `resolveStoreName`, the derivation
+   * `createClient` names the store with, so clients that reach one store by
+   * different arguments take one lock. A `MockWebClient`, whose store name is
+   * fixed, and an instance built without a factory are keyed by the store
+   * name they were constructed with.
    * @private
    */
   _storeLockId() {
-    return this.storeName || "default";
+    return this._openedStoreName ?? this.storeName ?? "default";
   }
 
   /**
@@ -811,6 +816,10 @@ class WebClient {
    * the node, then stores a header whose path is trimmed to the forest it
    * read, and a sync committing new peaks in between leaves that path too
    * short.
+   *
+   * The lock is per store opened (see `_storeLockId`): a client that omits
+   * `storeName` and one naming the same default store take one lock, and
+   * clients on different default stores do not block each other.
    *
    * The calls that take it: `syncState`, `syncChain` and `syncNoteTransport`
    * on `WebClient` and `MockWebClient`, `importNoteFile`, `fetchPrivateNotes`,
@@ -1014,6 +1023,11 @@ class WebClient {
 
       // Wait for the underlying wasmWebClient to be initialized.
       const wasmWebClient = await instance.getWasmWebClient();
+      // Keys the store lock; see `_storeLockId`.
+      instance._openedStoreName = (await getWasmOrThrow()).resolveStoreName(
+        rpcUrl,
+        network
+      );
       await wasmWebClient.createClient(
         rpcUrl,
         noteTransportUrl,
@@ -1100,6 +1114,11 @@ class WebClient {
 
       // Wait for the underlying wasmWebClient to be initialized.
       const wasmWebClient = await instance.getWasmWebClient();
+      // Keys the store lock; see `_storeLockId`.
+      instance._openedStoreName = (await getWasmOrThrow()).resolveStoreName(
+        rpcUrl,
+        storeName
+      );
       await wasmWebClient.createClientWithExternalKeystore(
         rpcUrl,
         noteTransportUrl,
@@ -1634,10 +1653,6 @@ class MockWebClient extends WebClient {
       undefined,
       logLevel
     );
-  }
-
-  _storeLockId() {
-    return this.storeName || "mock";
   }
 
   initializeWorker() {

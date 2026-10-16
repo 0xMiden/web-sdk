@@ -107,7 +107,10 @@ which one you are relying on tells you what a second browser tab can still do to
    `newFaucet`, `newAccount`, `newAccountWithSecretKey`), whose first sync of a new store
    writes it too. Two clients interleaving those writes leave a store that fails every
    later sync and import with `inconsistent partial mmr: missing sibling for tracked leaf`.
-   Such a call takes its place on the layer 1 chain when it is made and requests the lock
+   The lock is per store opened: a client that omits `storeName` opens
+   `MidenClientDB_<network id>` for its node URL and takes the same lock as one that names
+   that store, and clients on different default stores do not block each other. Such a
+   call takes its place on the layer 1 chain when it is made and requests the lock
    when its turn comes (chain, then lock), so call order, `waitForIdle()` and
    `terminate()` treat it like any other call. While it waits for another client's lock,
    later calls on its own client wait behind it. A call of a sync joins its client's
