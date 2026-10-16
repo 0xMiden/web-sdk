@@ -111,11 +111,12 @@ jobs:
         uses: ./.github/actions/inject-linked-protocol-pr
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
-      - name: Install Rust with nightly clippy
+      # rust-toolchain.toml's pinned nightly (with clippy), the compiler the
+      # build uses, rather than whichever nightly is newest.
+      - name: Install Rust
         run: |
-          rustup update --no-self-update nightly
-          rustup target add --toolchain nightly wasm32-unknown-unknown
-          rustup +nightly component add clippy
+          rustup update --no-self-update
+          rustup target add wasm32-unknown-unknown
       # `make clippy-wasm` depends on `rust-client-ts-build` which calls
       # `pnpm --filter web_store run build`. Need pnpm + populated install.
       - name: Install pnpm
