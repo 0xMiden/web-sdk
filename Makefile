@@ -12,13 +12,13 @@ WEB_CLIENT_DIR=crates/web-client
 
 .PHONY: clippy-wasm
 clippy-wasm: rust-client-ts-build ## Run Clippy for the WASM packages (web client and idxdb store)
-	cargo +nightly clippy --package miden-client-web --target wasm32-unknown-unknown --all-targets -- -D warnings
-	cargo +nightly clippy --package miden-idxdb-store --target wasm32-unknown-unknown --all-targets -- -D warnings
+	cargo clippy --package miden-client-web --target wasm32-unknown-unknown --all-targets -- -D warnings
+	cargo clippy --package miden-idxdb-store --target wasm32-unknown-unknown --all-targets -- -D warnings
 
 .PHONY: fix-wasm
 fix-wasm: ## Run Fix for the WASM packages (web client and idxdb store)
-	cargo +nightly fix --package miden-client-web --target wasm32-unknown-unknown --allow-staged --allow-dirty --all-targets
-	cargo +nightly fix --package miden-idxdb-store --target wasm32-unknown-unknown --allow-staged --allow-dirty --all-targets
+	cargo fix --package miden-client-web --target wasm32-unknown-unknown --allow-staged --allow-dirty --all-targets
+	cargo fix --package miden-idxdb-store --target wasm32-unknown-unknown --allow-staged --allow-dirty --all-targets
 
 .PHONY: format
 format: ## Run format using nightly toolchain
