@@ -2122,20 +2122,28 @@ export declare class MidenClient {
 
   /**
    * Returns a copy of a finished `TransactionRequest` that carries the auth
-   * inputs the executing account needs.
+   * args the executing account needs.
    *
    * Use this when another party built the request, such as a dApp that gives a
-   * finished request to a wallet, and the executing account is a multisig. Such
-   * a request has no multisig auth args, and a rebuild from its public
-   * accessors does not keep every field. For a multisig this adds the same auth
-   * inputs that {@link MidenClient.feeAwareTransactionRequestBuilder} declares:
-   * the auth argument, its advice-map preimage, and the bound block as a block
-   * the transaction authenticates. The auth argument replaces a declared fee
-   * conversion salt, as `withAuthArg` does on a builder. Every other field of
-   * the request stays the same.
+   * finished request to a wallet, and the executing account is a multisig.
+   * miden-client derives multisig auth args only from a declared fee
+   * conversion salt, so a request without one fails with
+   * `FeeConversionInfoRequired`. For a multisig this sets the same auth args
+   * that {@link MidenClient.feeAwareTransactionRequestBuilder} declares: the
+   * auth argument and its advice-map preimage. The auth args replace a
+   * declared fee conversion salt. Every other field of the request stays the
+   * same.
    *
    * For every other account the request comes back unchanged, because
    * miden-client commits the fee conversion info for those accounts itself.
+   *
+   * When `options.feeConversionSalt` is omitted, the auth args use the salt
+   * that the request declares, or a fresh one if it declares none.
+   *
+   * The copy does not declare the bound block as a block number. miden-client
+   * adds it when it executes the request, so the request executes at the chain
+   * tip with no anchor. An anchor from `chainAnchorForRequest` does not track
+   * the bound block.
    *
    * The request passed in is not consumed and not changed.
    *

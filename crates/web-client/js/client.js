@@ -558,14 +558,13 @@ export class MidenClient {
 
   /**
    * Returns a copy of a finished `TransactionRequest` that carries the auth
-   * inputs the executing account needs.
+   * args the executing account needs.
    *
    * Use this when another party built the request, such as a dApp that gives a
    * finished request to a wallet, and the executing account is a multisig. For
-   * a multisig this adds the same auth inputs that
-   * `feeAwareTransactionRequestBuilder` declares: the auth argument, its
-   * advice-map preimage, and the bound block as a block the transaction
-   * authenticates. The auth argument replaces a declared fee conversion salt.
+   * a multisig this sets the same auth args that
+   * `feeAwareTransactionRequestBuilder` declares: the auth argument and its
+   * advice-map preimage. The auth args replace a declared fee conversion salt.
    * Every other field of the request stays the same. For every other account
    * the request comes back unchanged.
    *
@@ -577,7 +576,8 @@ export class MidenClient {
    * @param {number} [options.approvalExpirationDelta] - Expires the approvers'
    *   signatures this many blocks after the block the summary binds.
    * @param {Word} [options.feeConversionSalt] - The salt the summary binds.
-   *   Consumed by the call.
+   *   Consumed by the call. When omitted, the salt that the request declares,
+   *   or a fresh one.
    * @param {number} [options.boundBlockNum] - The block the summary binds.
    * @returns {Promise<TransactionRequest>} The request with the auth inputs.
    * @throws An error with `code` `"AUTH_ALREADY_SET"` if the request already

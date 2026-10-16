@@ -263,14 +263,16 @@ The salt is a *declaration*, not a commitment: `request.feeConversionSalt()` rep
 
 ### Executing a request someone else built
 
-A wallet that executes a dApp's finished request from a multisig account cannot use the builder: the request is already built, and a rebuild from its public accessors does not keep every field. Add the auth inputs to the request instead:
+A wallet that executes a dApp's finished request from a multisig account cannot use the builder, because the request is already built. If the request declares a salt, it executes as it is: miden-client derives the multisig auth args from the salt and binds them to the reference block of each execution. If it declares no salt, execution fails with `FeeConversionInfoRequired`. Set the auth args on the request instead:
 
 ```typescript
 const request = await client.withFeeAwareAuth(dappRequest, multisig);
 await client.transactions.submit(multisig, request);
 ```
 
-`withFeeAwareAuth` returns a copy of the request with the same auth argument, advice-map preimage and bound block that `feeAwareTransactionRequestBuilder` declares. The auth argument replaces a declared fee conversion salt, and every other field stays the same. For an account that is not a multisig the request comes back unchanged. It takes the same `options` as the builder (`approvalExpirationDelta`, `feeConversionSalt`, `boundBlockNum`).
+`withFeeAwareAuth` returns a copy of the request with the same auth argument and advice-map preimage that `feeAwareTransactionRequestBuilder` declares. The auth args replace a declared fee conversion salt, and every other field stays the same. For an account that is not a multisig the request comes back unchanged. It takes the same `options` as the builder (`approvalExpirationDelta`, `feeConversionSalt`, `boundBlockNum`). When `feeConversionSalt` is omitted, it uses the salt that the request declares, or draws a fresh one if the request declares none.
+
+The copy does not declare the bound block as a block number. miden-client adds the bound block when it executes the request, so the request executes at the chain tip with no anchor. An anchor from `chainAnchorForRequest` does not track the bound block, so do not execute the copy at such an anchor.
 
 It refuses two requests, each with an error `code` you can branch on (on Node.js the code prefixes the message):
 

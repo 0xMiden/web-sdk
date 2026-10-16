@@ -26,9 +26,8 @@ use miden_client::transaction::{
     TransactionExecutorError,
     TransactionRequest as NativeTransactionRequest,
     TransactionRequestBuilder as NativeTransactionRequestBuilder,
-    TransactionRequestError,
 };
-use miden_client::{Client, ClientError, Felt as NativeFelt, Word as NativeWord};
+use miden_client::{Client, ClientError, Word as NativeWord};
 use miden_protocol::crypto::SequentialCommit;
 
 use crate::models::NoteType;
@@ -903,18 +902,24 @@ impl WebClient {
     /// A copy of `request` that carries the auth inputs `account_id` needs to execute it.
     ///
     /// Use this when another party built the request, such as a dApp that gives a finished request
-    /// to a wallet, and the executing account is a multisig. Such a request has no multisig auth
-    /// args, and a rebuild from its public accessors does not keep every field. This adds the
-    /// same auth inputs that `feeAwareTransactionRequestBuilder` declares: the auth argument, its
-    /// advice-map preimage, and the bound block as a block the transaction authenticates. The auth
-    /// argument replaces a declared fee conversion salt, as `withAuthArg` does on a builder. Every
-    /// other field of the request stays the same.
+    /// to a wallet, and the executing account is a multisig. miden-client derives multisig auth
+    /// args only from a declared fee conversion salt, so a request without one fails with
+    /// `FeeConversionInfoRequired`. This sets the same auth args that
+    /// `feeAwareTransactionRequestBuilder` declares: the auth argument and its advice-map
+    /// preimage. The auth args replace the declared fee conversion salt. Every other field of the
+    /// request stays the same.
     ///
     /// For every other account this returns the request unchanged, because miden-client commits
     /// the fee conversion info for those accounts itself.
     ///
     /// The three options are the same as those of `feeAwareTransactionRequestBuilder`, with the
-    /// same defaults, and they are ignored for an account that is not a multisig.
+    /// same defaults, and they are ignored for an account that is not a multisig. One difference:
+    /// when `fee_conversion_salt` is left out and the request declares a salt, the auth args use
+    /// the declared salt instead of a fresh one.
+    ///
+    /// The request does not declare the bound block as a block number. miden-client adds it when
+    /// it executes the request, so the request executes at the chain tip with no anchor. An anchor
+    /// from `chainAnchorForRequest` does not track the bound block.
     ///
     /// # Errors
     /// - `AUTH_ALREADY_SET` if the request already has an auth argument that commits anything. The
@@ -937,44 +942,57 @@ impl WebClient {
             from_str_err("Client not initialized while adding fee-aware auth to a request")
         })?;
 
+        let native_request = NativeTransactionRequest::from(request);
         let overrides = MultisigAuthOverrides {
             approval_expiration_delta,
-            salt: fee_conversion_salt.as_ref().map(NativeWord::from),
+            salt: fee_conversion_salt
+                .as_ref()
+                .map(NativeWord::from)
+                .or(native_request.fee_conversion_salt()),
             bound_block_num: bound_block_num.map(BlockNumber::from),
         };
-        let native_request = NativeTransactionRequest::from(request);
-        let Some(auth_inputs) = multisig_auth_inputs(client, account_id.into(), overrides).await?
+        let Some(auth_args) = multisig_auth_args_for(client, account_id.into(), overrides).await?
         else {
             return Ok(native_request.into());
         };
 
-        native_request
-            .with_auth(
-                auth_inputs.commitment,
-                [(auth_inputs.commitment, auth_inputs.elements)],
-                [auth_inputs.bound_block_num],
-            )
-            .map(TransactionRequest::from)
-            .map_err(map_with_auth_err)
+        check_auth_args_fit(&native_request, &auth_args)?;
+        Ok(native_request.with_auth_args(&auth_args).into())
     }
 }
 
-/// Maps a failure of `TransactionRequest::with_auth` to a JS error. The two refusals a caller can
-/// act on carry a stable code.
-fn map_with_auth_err(err: TransactionRequestError) -> JsErr {
+/// Refuses auth args that would overwrite data the author of `request` set.
+///
+/// `TransactionRequest::with_auth_args` replaces the auth argument and overwrites an advice-map
+/// entry under the same key, so the two refusals happen here, each with a stable code.
+fn check_auth_args_fit(
+    request: &NativeTransactionRequest,
+    auth_args: &MultisigAuthArgs,
+) -> Result<(), JsErr> {
     const CONTEXT: &str = "failed to add the fee-aware auth inputs to the request";
-    match err {
-        TransactionRequestError::AuthAlreadySet => from_str_err_with_code(
+
+    if request.has_auth_arg() {
+        return Err(from_str_err_with_code(
             &format!(
                 "{CONTEXT}: the request already has an auth argument, which its author owns and \
                  which this does not replace"
             ),
             "AUTH_ALREADY_SET",
-        ),
-        TransactionRequestError::ConflictingAdviceMapEntry(_) => {
-            from_str_err_with_code(&format!("{CONTEXT}: {err}"), "CONFLICTING_ADVICE_MAP_ENTRY")
+        ));
+    }
+
+    let commitment = auth_args.to_commitment();
+    match request.advice_map().get(&commitment) {
+        Some(existing) if existing.as_ref() != auth_args.to_elements().as_slice() => {
+            Err(from_str_err_with_code(
+                &format!(
+                    "{CONTEXT}: the advice map already holds the auth argument {commitment} with a \
+                     different value"
+                ),
+                "CONFLICTING_ADVICE_MAP_ENTRY",
+            ))
         },
-        err => js_error_with_context(err, CONTEXT),
+        _ => Ok(()),
     }
 }
 
@@ -1144,7 +1162,7 @@ async fn requires_caller_chosen_salt(
 /// request building to miden-client, which builds from a bare `TransactionRequestBuilder`, so a
 /// multisig creator's cancel fails with `FeeConversionInfoRequired`. Cancelling by note through
 /// `newPswapCancelTransactionRequest` is the alternative. A finished request from any other party
-/// gets the same auth inputs through `withFeeAwareAuth`.
+/// gets the same auth args through `withFeeAwareAuth`.
 async fn fee_aware_builder(
     client: &mut Client<crate::ClientAuth>,
     executing_account_id: NativeAccountId,
@@ -1170,55 +1188,38 @@ async fn fee_aware_builder_with(
     overrides: MultisigAuthOverrides,
 ) -> Result<NativeTransactionRequestBuilder, JsErr> {
     let builder = NativeTransactionRequestBuilder::new();
-    let Some(auth_inputs) = multisig_auth_inputs(client, executing_account_id, overrides).await?
+    let Some(auth_args) = multisig_auth_args_for(client, executing_account_id, overrides).await?
     else {
         return Ok(builder);
     };
 
-    Ok(builder
-        .auth_arg(auth_inputs.commitment)
-        .extend_advice_map([(auth_inputs.commitment, auth_inputs.elements)])
-        .block_numbers([auth_inputs.bound_block_num]))
+    // The bound block is also declared as a block the transaction authenticates. miden-client
+    // adds it itself when it executes the request, but `chainAnchorForRequest` reads only the
+    // declared block numbers, so an anchor captured for this request tracks the bound block only
+    // through this declaration.
+    let bound_block_num = auth_args.bound_block_num();
+    Ok(builder.auth_args(&auth_args).block_numbers([bound_block_num]))
 }
 
-/// The auth inputs that a multisig account needs in a request: the auth argument, its advice-map
-/// preimage, and the block that the summary binds.
-struct MultisigAuthInputs {
-    commitment: NativeWord,
-    elements: Vec<NativeFelt>,
-    bound_block_num: BlockNumber,
-}
-
-/// The auth inputs that `executing_account_id` needs in a request, or `None` when it is not a
-/// multisig. `fee_aware_builder_with` declares them on a new builder and `withFeeAwareAuth` adds
-/// them to a finished request, so both attach the same values.
-async fn multisig_auth_inputs(
+/// The multisig auth args that `executing_account_id` needs in a request, or `None` when it is not
+/// a multisig. `fee_aware_builder_with` sets them on a new builder and `withFeeAwareAuth` sets them
+/// on a finished request, so both attach the same values.
+///
+/// miden-client also derives multisig auth args from a declared fee conversion salt, but it binds
+/// them to the reference block of the execution and sets no approval expiration. The SDK builds
+/// them here instead, so the bound block is fixed when the request is built and the caller can
+/// pin the bound block and the approval expiration. miden-client does not change auth args that
+/// the request already carries.
+async fn multisig_auth_args_for(
     client: &mut Client<crate::ClientAuth>,
     executing_account_id: NativeAccountId,
     overrides: MultisigAuthOverrides,
-) -> Result<Option<MultisigAuthInputs>, JsErr> {
+) -> Result<Option<MultisigAuthArgs>, JsErr> {
     if !requires_caller_chosen_salt(client, executing_account_id).await? {
         return Ok(None);
     }
 
-    // A multisig account reads three words out of its auth args - the block the summary binds and
-    // its approval expiration, the salt, and the fee conversion info - while miden-client's own
-    // `fee_conversion_salt` path commits the two-word fee pair that a fixed-salt component reads.
-    // Handing a multisig the shorter preimage makes its auth procedure abort while piping it
-    // ("advice stack read failed"), so build the multisig shape here and set it as the auth arg;
-    // miden-client leaves a request that already carries one alone.
-    //
-    // The bound block is also declared as a block the transaction authenticates. That is what
-    // lets the proposal execute at the chain tip: the kernel needs the bound block in the partial
-    // blockchain, and without it the only way to supply it was an anchor at that block, which
-    // loads foreign accounts (the fee faucet among them) at a block the node prunes after ~50
-    // blocks.
-    let auth_args = multisig_auth_args(client, overrides).await?;
-    Ok(Some(MultisigAuthInputs {
-        commitment: auth_args.to_commitment(),
-        elements: auth_args.to_elements(),
-        bound_block_num: auth_args.bound_block_num(),
-    }))
+    multisig_auth_args(client, overrides).await.map(Some)
 }
 
 /// The multisig auth args for a request built now: bound to the store's sync height, carrying the
