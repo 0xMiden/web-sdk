@@ -190,7 +190,11 @@ export interface MidenObservation {
   /** Client operation name, e.g. `"syncState"`, `"proveTransaction"`. */
   op: string;
   outcome: "ok" | "error";
-  /** Wall time the caller waited, in milliseconds. */
+  /**
+   * Milliseconds from when the call's turn on its client's queue started
+   * until it settled; time queued behind the same client's earlier calls is
+   * not counted.
+   */
   durationMs: number;
   /**
    * Absent unless the client was constructed with `observeSensitive: true`.

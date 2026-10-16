@@ -1005,14 +1005,14 @@ Neither package depends on its vendor, not even as a peer — both are typed aga
 interface MidenObservation {
   op: string;                             // "syncState", "proveTransaction", …
   outcome: "ok" | "error";
-  durationMs: number;                     // wall time the caller waited
+  durationMs: number;                     // from the call's turn on its queue
   sensitive?: MidenObservationSensitive;  // absent by default — see below
 }
 ```
 
 `op` is the name of the underlying client method, not the name of the high-level call you made. One call into a resource API usually produces **several** observations: `client.transactions.send(...)` builds the request and then runs execute → prove → submit → apply, so it reports `newSendTransactionRequest`, `executeTransaction`, `proveTransaction`, `submitProvenTransaction`, and `applyTransaction` as five separate observations. Aggregate by `op` rather than assuming a one-to-one mapping with your own call sites.
 
-`durationMs` is measured with `performance.now()` around the awaited call, so it is a fractional millisecond value, not an integer. Round it yourself if your backend wants integers.
+`durationMs` is measured with `performance.now()` from when the call's turn on its client's queue starts until the call settles, so time spent queued behind the same client's earlier calls is not in it. It is a fractional millisecond value, not an integer. Round it yourself if your backend wants integers.
 
 Two properties are worth relying on:
 
