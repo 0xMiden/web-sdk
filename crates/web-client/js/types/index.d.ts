@@ -218,14 +218,14 @@ export declare class WasmWebClient extends WasmWebClientBase {
    * same store.
    *
    * A call already queued or running that executes against the main-realm
-   * wasm client still finishes. A call that needs the worker, whether in
-   * flight, waiting for the worker to be ready or still queued behind
-   * terminate(), rejects with "WebClient terminated", and so does a call
-   * still waiting for the store lock, which is not queued yet: a sync, a
-   * note import, `fetchPrivateNotes` or account creation. Every wasm call made
-   * after terminate() fails with it too: a synchronous member or an accessor
-   * throws, every other member rejects. The release waits until all of these
-   * calls have settled. Calling it again is harmless.
+   * wasm client still finishes, one that waits for the store lock first
+   * included (the `frontend-pitfalls` skill lists those calls). A call that
+   * needs the worker, whether in flight, waiting for the worker to be ready
+   * or still queued behind terminate(), rejects with "WebClient terminated".
+   * Every wasm call made after terminate() fails with it too: a synchronous
+   * member or an accessor throws, every other member rejects. The release
+   * waits until all of these calls have settled. Calling it again is
+   * harmless.
    *
    * The release and the rejections are browser-only: on the Node.js binding
    * WasmWebClient.terminate() is a no-op.

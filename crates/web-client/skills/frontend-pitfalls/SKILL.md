@@ -107,11 +107,15 @@ which one you are relying on tells you what a second browser tab can still do to
    `newFaucet`, `newAccount`, `newAccountWithSecretKey`), whose first sync of a new store
    writes it too. Two clients interleaving those writes leave a store that fails every
    later sync and import with `inconsistent partial mmr: missing sibling for tracked leaf`.
-   Concurrent calls of the *same* sync share one promise; every other call queues for the
-   lock in turn. With no Web Locks API it degrades to an in-process per-database chain. A
-   call still waiting for the lock is not on the layer 1 chain yet, so `waitForIdle()`
-   does not await it, and a later call on the same client can run first: await these
-   calls before relying on their effect.
+   Such a call takes its place on the layer 1 chain when it is made and requests the lock
+   when its turn comes (chain, then lock), so call order, `waitForIdle()` and
+   `terminate()` treat it like any other call. While it waits for another client's lock,
+   later calls on its own client wait behind it. Concurrent calls of the *same* sync share
+   one run; every other call queues for the lock in turn. With no Web Locks API it
+   degrades to an in-process per-database chain. Two writes take no lock: the free
+   `importStore` function, which replaces a whole store, so run it only while no client
+   uses that store; and the genesis block header `createClient` stores in a store that
+   has none.
 3. **Cross-tab state change.** `client.onStateChanged(cb)` fires when another tab mutates
    the store, where `BroadcastChannel` exists. `MidenProvider` subscribes and refreshes the
    Zustand store so the UI re-renders; the client has already synced its own Rust state by

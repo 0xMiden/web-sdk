@@ -1980,11 +1980,10 @@ export declare class MidenClient {
    * its auth callback doesn't race with the key being cleared. Does NOT
    * wait for calls enqueued after `waitForIdle()` returns.
    *
-   * Caveat for the calls that take the store lock (a Web Lock shared by
-   * every client on the same store): a sync, `notes.import`,
-   * `notes.fetchPrivate` or account creation still waiting for it has not
-   * yet reached the internal chain, so `waitForIdle` does not await it.
-   * Other serialized methods are always observed.
+   * A call that takes the store lock, a Web Lock shared by every client on
+   * the same store, is on the internal chain from the moment it is made,
+   * like every other call; the `frontend-pitfalls` skill shipped with this
+   * package lists those calls.
    *
    * Returns immediately if nothing was in flight.
    */

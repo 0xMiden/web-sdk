@@ -89,10 +89,10 @@ export class MidenClient {
    * inline, racing wasm-bindgen's borrow check. The wallet pattern
    * (own outer mutex around `_withInnerWebClient`) satisfies this.
    *
-   * A sync, note import or account creation inside `fn` still takes the
-   * store lock that excludes other clients on the same store, unless a
-   * call of this client already holds it and waits behind `fn`; then it
-   * runs under that hold rather than deadlocking on it.
+   * A call inside `fn` that takes the store lock (see
+   * `WebClient._withStoreLock`) still waits for other clients on the same
+   * store, and runs its own work rather than joining a sync this client
+   * queued behind `fn`.
    *
    * Stability: marked `@internal`. The shape of the proxied client is
    * intentionally not part of the documented public API and may change
@@ -391,13 +391,8 @@ export class MidenClient {
    * intentional, so a caller can drain and proceed without being blocked
    * indefinitely by concurrent workload.
    *
-   * Caveat for the calls that take the store lock (a Web Lock shared by
-   * every client on the same store): the syncs, `notes.import`,
-   * `notes.fetchPrivate` and account creation await it BEFORE putting
-   * their WASM call onto the chain, so one still waiting for the lock is
-   * not visible to `waitForIdle` and will not be awaited. Other methods
-   * (`executeTransaction`, etc.) route through the chain synchronously on
-   * call and are always observed.
+   * A call that takes the store lock is on the chain from the moment it is
+   * made, like every other call; see `WebClient._withStoreLock`.
    *
    * Safe to call at any time; returns immediately if nothing was in
    * flight.

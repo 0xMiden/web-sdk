@@ -806,6 +806,15 @@ class WebClient {
    * read, and a sync committing new peaks in between leaves that path too
    * short.
    *
+   * The calls that take it: `syncState`, `syncChain` and `syncNoteTransport`
+   * on `WebClient` and `MockWebClient`, `importNoteFile`, `fetchPrivateNotes`,
+   * and account creation (`newWallet`, `newFaucet`, `newAccount`,
+   * `newAccountWithSecretKey`), whose first sync of a store still at genesis
+   * writes the MMR too. Two writes take no lock: the free `importStore`
+   * function, which replaces a whole store, and the genesis block header
+   * `createClient` stores in a store that has none. The shipped
+   * `frontend-pitfalls` skill keeps the consumer copy of this list.
+   *
    * Lock order is always call chain, then store lock: the call takes its
    * chain slot when it is made, like any other call, and requests the lock
    * when that slot starts. So call order, `terminate()` and `waitForIdle()`
@@ -856,14 +865,8 @@ class WebClient {
    * this is intentional, so a caller can drain and then proceed without
    * being blocked indefinitely by a concurrent workload.
    *
-   * Caveat for the calls that take the store lock (the syncs,
-   * `importNoteFile`, `fetchPrivateNotes` and account creation): they
-   * acquire it BEFORE wrapping their WASM call in `_serializeWasmCall`
-   * (see `_withStoreLock`), so one still waiting for the lock is not on
-   * the chain and will not be awaited. Every other serialized method
-   * (`executeTransaction`, `submitNewTransaction`, `proveTransaction`,
-   * `applyTransaction`, and the proxy-fallback reads) routes through the
-   * chain synchronously on call and is always observed.
+   * A call that takes the store lock is on the chain from the moment it is
+   * made, like every other serialized call; see `_withStoreLock`.
    *
    * @returns {Promise<void>}
    */
@@ -1512,11 +1515,10 @@ class WebClient {
    *
    * Call this method when you're done using a WebClient to free up browser
    * resources. A call already queued or running that executes against the
-   * main-realm wasm client still finishes. A call that needs the worker,
+   * main-realm wasm client still finishes, one that waits for the store lock
+   * first included (see `_withStoreLock`). A call that needs the worker,
    * whether in flight, waiting for the worker to be ready or still queued
-   * behind terminate(), rejects with "WebClient terminated", and so does a
-   * call still waiting for the store lock, which is not queued yet: a sync,
-   * a note import, `fetchPrivateNotes` or account creation. Every wasm call
+   * behind terminate(), rejects with "WebClient terminated". Every wasm call
    * made after terminate() fails with it too: a synchronous member or an
    * accessor throws, every other member rejects. The release waits until all
    * of these calls have settled. Calling it again is harmless.
