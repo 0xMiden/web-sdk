@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // `../wasm.js`. Both are stubbed; the stand-in module's `WebClient` counts the
 // clients built, so a test can tell that a terminated wrapper builds none, keeps
 // the last one built, lets a test hold `createMockClient` open, and fails every
-// create call with `createFailure` when a test sets it.
+// create call with `createFailure` when a test sets it. `resolveStoreName`
+// stands in for the export the factories name a client's store with.
 const fakeWasm = vi.hoisted(() => {
   class WebClient {
     static constructed = 0;
@@ -29,6 +30,8 @@ const fakeWasm = vi.hoisted(() => {
   }
   return {
     WebClient,
+    resolveStoreName: (nodeUrl, storeName) =>
+      storeName ?? `MidenClientDB_${nodeUrl}`,
     TransactionResult: { deserialize: () => ({ id: () => "tx-id" }) },
     // The AuthScheme enum in the shape wasm-bindgen emits (each value also
     // maps back to its name), read by the WebClient wrapper's scheme resolution.

@@ -1,11 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetObserverForTest, setObserver } from "../observability.js";
 
-const fakeWasm = vi.hoisted(() => ({
-  WebClient: class {},
-  SyncSummary: { deserialize: (bytes) => `summary ${bytes.length}` },
-  AuthScheme: Object.freeze({ AuthRpoFalcon512: 2, 2: "AuthRpoFalcon512" }),
-}));
+const fakeWasm = vi.hoisted(() => {
+  const wasm = {
+    // The wasm client a factory's `new WebClient()` builds next.
+    nextClients: [],
+    WebClient: class {
+      constructor() {
+        return wasm.nextClients.shift() ?? this;
+      }
+    },
+    SyncSummary: { deserialize: (bytes) => `summary ${bytes.length}` },
+    AuthScheme: Object.freeze({ AuthRpoFalcon512: 2, 2: "AuthRpoFalcon512" }),
+    // Names the store a client opens: the name given, else one per node URL.
+    // Throws `storeNameFailure` instead when a test sets it.
+    storeNameFailure: null,
+    resolveStoreName: (nodeUrl, storeName) => {
+      if (wasm.storeNameFailure) throw wasm.storeNameFailure;
+      return storeName ?? `MidenClientDB_${nodeUrl}`;
+    },
+  };
+  return wasm;
+});
 vi.mock("../../Cargo.toml", () => ({}));
 vi.mock("../wasm.js", () => ({ default: async () => fakeWasm }));
 
@@ -73,6 +89,36 @@ function makeWebClient(storeName, name, { mock = false } = {}) {
   instance.wasmWebClient = wasmClient;
   instance.wasmWebClientPromise = Promise.resolve(wasmClient);
   return { instance, client: createClientProxy(instance), wasmClient };
+}
+
+// Builds a client through a factory, as an application does.
+function createWebClient(name, rpcUrl, storeName, factory = "createClient") {
+  const wasmClient = makeWasmClient(name);
+  wasmClient.createClient = vi.fn(async () => {});
+  wasmClient.createClientWithExternalKeystore = vi.fn(async () => {});
+  fakeWasm.nextClients.push(wasmClient);
+  const created =
+    factory === "createClient"
+      ? WasmWebClient.createClient(
+          rpcUrl,
+          undefined,
+          undefined,
+          storeName,
+          undefined,
+          false
+        )
+      : WasmWebClient.createClientWithExternalKeystore(
+          rpcUrl,
+          undefined,
+          undefined,
+          storeName,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          false
+        );
+  return { created, wasmClient };
 }
 
 // Puts a client in worker mode, behind a worker that answers nothing.
@@ -161,6 +207,8 @@ afterEach(async () => {
     value: origNavigator,
   });
   events.length = 0;
+  fakeWasm.nextClients.length = 0;
+  fakeWasm.storeNameFailure = null;
   __resetObserverForTest();
   vi.restoreAllMocks();
 });
@@ -253,7 +301,7 @@ describe("store lock across WebClient instances (Web Locks)", () => {
     expect(b.wasmClient.syncStateImpl).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
+  const coalescingSyncs = [
     { name: "syncState", method: "syncState", mock: false },
     { name: "syncChain", method: "syncChain", mock: false },
     { name: "syncNoteTransport", method: "syncNoteTransport", mock: false },
@@ -264,7 +312,9 @@ describe("store lock across WebClient instances (Web Locks)", () => {
       method: "syncNoteTransport",
       mock: true,
     },
-  ])(
+  ];
+
+  it.each(coalescingSyncs)(
     "runs $name on a second client on the store as its own run after the first client's, never joining it",
     async ({ method, mock }) => {
       const store = mock ? undefined : uniqueStore();
@@ -311,6 +361,75 @@ describe("store lock across WebClient instances (Web Locks)", () => {
     expect(a.wasmClient.syncStateImpl).toHaveBeenCalledTimes(1);
     expect(lockRequest).toHaveBeenCalledTimes(1);
   });
+
+  it("shares a client's running sync with a later call of it when nothing was queued on the client in between", async () => {
+    const store = uniqueStore();
+    const a = makeWebClient(store, "A");
+
+    const first = a.client.syncState();
+    await waitForStart("A.syncState");
+    const second = a.client.syncState();
+    await flush();
+
+    await release("A.syncState");
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      "A.syncState",
+      "A.syncState",
+    ]);
+    expect(a.wasmClient.syncStateImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs a sync called after another call was queued on its client as its own run, behind that call", async () => {
+    const store = uniqueStore();
+    const a = makeWebClient(store, "A");
+
+    const first = a.client.syncState();
+    await waitForStart("A.syncState");
+    const imported = a.client.importNoteFile("f1");
+    const second = a.client.syncState();
+    await flush();
+
+    await release("A.syncState");
+    await expect(first).resolves.toBe("A.syncState");
+    expect(await state(second)).toBe("pending");
+    await release("A.importNoteFile f1");
+    await expect(imported).resolves.toBe("A.importNoteFile f1");
+    await release("A.syncState");
+    await expect(second).resolves.toBe("A.syncState");
+    expect(events).toEqual([
+      "start A.syncState",
+      "end A.syncState",
+      "start A.importNoteFile f1",
+      "end A.importNoteFile f1",
+      "start A.syncState",
+      "end A.syncState",
+    ]);
+    expect(a.wasmClient.syncStateImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(coalescingSyncs)(
+    "rejects $name called again on a terminated client instead of joining its queued run, which still settles",
+    async ({ method, mock }) => {
+      const store = mock ? undefined : uniqueStore();
+      const a = makeWebClient(store, "A", { mock });
+      const holder = makeWebClient(store, "H", { mock });
+
+      const held = holder.client.importNoteFile("held");
+      await waitForStart("H.importNoteFile held");
+      const queued = a.client[method]();
+      await flush();
+      a.instance.terminate();
+      const again = a.client[method]();
+      again.catch(() => {});
+
+      await release("H.importNoteFile held");
+      await held;
+      await release(`A.${method}`);
+      await queued;
+      await expect(again).rejects.toThrow("WebClient terminated");
+      expect(a.wasmClient[`${method}Impl`]).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it("runs a live client's sync as its own run when a worker-mode client with the same sync queued is terminated", async () => {
     const store = uniqueStore();
@@ -364,6 +483,69 @@ describe("store lock across WebClient instances (Web Locks)", () => {
       ].sort()
     );
   });
+
+  it("keys the lock by the store a client opens, so a client omitting storeName and one naming that store take one lock", async () => {
+    const rpcUrl = "http://node-a";
+    const omitted = createWebClient(
+      "A",
+      rpcUrl,
+      undefined,
+      "createClientWithExternalKeystore"
+    );
+    const named = createWebClient("B", rpcUrl, `MidenClientDB_${rpcUrl}`);
+    const a = await omitted.created;
+    const b = await named.created;
+
+    const sync = a.syncState();
+    await waitForStart("A.syncState");
+    const imported = b.importNoteFile("f1");
+    await flush();
+    expect(events).toEqual(["start A.syncState"]);
+
+    await release("A.syncState");
+    await release("B.importNoteFile f1");
+    await Promise.all([sync, imported]);
+    expect(lockRequest.mock.calls.map(([name]) => name)).toEqual([
+      `miden-sync-MidenClientDB_${rpcUrl}`,
+      `miden-sync-MidenClientDB_${rpcUrl}`,
+    ]);
+  });
+
+  it("keys clients omitting storeName on different node URLs by different stores, so neither waits", async () => {
+    const a = await createWebClient("A", "http://node-a").created;
+    const b = await createWebClient("B", "http://node-b").created;
+
+    const sync = a.syncState();
+    await waitForStart("A.syncState");
+    const imported = b.importNoteFile("f1");
+    await waitForStart("B.importNoteFile f1");
+
+    await release("B.importNoteFile f1");
+    await release("A.syncState");
+    await Promise.all([sync, imported]);
+    expect(lockRequest.mock.calls.map(([name]) => name)).toEqual([
+      "miden-sync-MidenClientDB_http://node-a",
+      "miden-sync-MidenClientDB_http://node-b",
+    ]);
+  });
+
+  it.each(["createClient", "createClientWithExternalKeystore"])(
+    "makes %s terminate the instance it built when the store name cannot be resolved",
+    async (factory) => {
+      const failure = new Error("Invalid node URL");
+      fakeWasm.storeNameFailure = failure;
+      const { created, wasmClient } = createWebClient(
+        "A",
+        "not a url",
+        undefined,
+        factory
+      );
+
+      await expect(created).rejects.toBe(failure);
+      await flush();
+      expect(wasmClient.free).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it("routes notes.import and notes.fetchPrivate on a MidenClient through the lock", async () => {
     const store = uniqueStore();
@@ -752,19 +934,13 @@ describe("store lock across WebClient instances (Web Locks)", () => {
     await idle;
     expect(b.wasmClient.free).toHaveBeenCalledTimes(1);
 
+    // The early check in _withStoreLock and _serializeWasmCall both reject
+    // here, so this pins the drain, not either guard.
     const requests = lockRequest.mock.calls.length;
     await expect(b.client.fetchPrivateNotes()).rejects.toThrow(
       "WebClient terminated"
     );
     expect(lockRequest).toHaveBeenCalledTimes(requests);
-
-    // Nor does it share a live client's run.
-    const live = a.client.syncState();
-    expect(await state(b.client.syncState())).toBe(
-      "rejected: WebClient terminated"
-    );
-    await release("A.syncState");
-    await expect(live).resolves.toBe("A.syncState");
   });
 });
 

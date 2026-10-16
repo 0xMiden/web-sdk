@@ -285,6 +285,58 @@ test.describe("Sync Lock Tests", () => {
     });
   });
 
+  test.describe("Store Lock Key", () => {
+    test("a client that omits storeName locks the store it opens, named as resolveStoreName names it", async ({
+      page,
+    }) => {
+      const result = await page.evaluate(async () => {
+        const derived = window.resolveStoreName(window.rpcUrl, undefined);
+        const client = await window.WasmWebClient.createClient(
+          window.rpcUrl,
+          undefined,
+          undefined,
+          undefined, // storeName, omitted
+          undefined, // logLevel
+          false, // useWorker
+          undefined, // observability
+          window.feeFaucetId
+        );
+        const opened = await client.storeIdentifier();
+
+        const locks = navigator.locks;
+        const request = locks.request;
+        const lockNames = [];
+        locks.request = (name, ...rest) => {
+          lockNames.push(name);
+          return request.call(locks, name, ...rest);
+        };
+        try {
+          await client.syncState();
+        } finally {
+          delete locks.request;
+          client.terminate();
+        }
+
+        return {
+          derived,
+          opened,
+          lockNames,
+          named: window.resolveStoreName(window.rpcUrl, "named-store"),
+          testnet: window.resolveStoreName("https://rpc.testnet.miden.io"),
+          defaulted: window.resolveStoreName(undefined, undefined),
+          devnet: window.resolveStoreName("https://rpc.devnet.miden.io"),
+        };
+      });
+
+      expect(result.derived).toMatch(/^MidenClientDB_/);
+      expect(result.opened).toBe(result.derived);
+      expect(result.lockNames).toEqual([`miden-sync-${result.derived}`]);
+      expect(result.named).toBe("named-store");
+      expect(result.defaulted).toBe(result.testnet);
+      expect(result.devnet).not.toBe(result.testnet);
+    });
+  });
+
   test.describe("Different Stores", () => {
     test("concurrent syncs to different stores are independent", async ({
       page,
