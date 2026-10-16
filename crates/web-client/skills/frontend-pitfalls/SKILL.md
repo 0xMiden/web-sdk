@@ -118,13 +118,18 @@ which one you are relying on tells you what a second browser tab can still do to
    since the run; after one has, it starts a run of its own behind that call, so it never
    settles ahead of a call made before it. Every other call, the same sync on another
    client included, queues for the lock in turn. The exported `withSyncLock` takes this
-   same lock and is not reentrant: its callback must not await any of the calls above on
-   the same store, because that call waits for the lock the callback holds and every
-   client on the store stops. With no Web Locks API it
-   degrades to an in-process per-database chain. Two writes take no lock: the free
-   `importStore` function, which replaces a whole store, so run it only while no client
-   uses that store; and the genesis block header `createClient` stores in a store that
-   has none.
+   same lock and is not reentrant: its callback must not wait, directly or through any
+   lock or queue, for anything that waits for a call on a client of the same store. That
+   is any call on such a client, not only the calls above: one of them already queued on
+   that client, an auto-sync for example, holds the client's chain while it waits for the
+   lock the callback holds, and every later call on that client waits behind it. It is
+   also any lock whose holder is waiting on such a call, such as `@miden-sdk/react`'s
+   `runExclusive`, which `MidenProvider` holds across its init sync, or an application
+   mutex around `_withInnerWebClient`. Every client on the store then stops. With no Web
+   Locks API it degrades to an in-process per-database chain. Two writes take no lock:
+   the free `importStore` function, which replaces a whole store, so run it only while no
+   client uses that store; and the genesis block header `createClient` stores in a store
+   that has none.
 3. **Cross-tab state change.** `client.onStateChanged(cb)` fires when another tab mutates
    the store, where `BroadcastChannel` exists. `MidenProvider` subscribes and refreshes the
    Zustand store so the UI re-renders; the client has already synced its own Rust state by

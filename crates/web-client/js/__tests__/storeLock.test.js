@@ -25,10 +25,12 @@ const fakeWasm = vi.hoisted(() => {
 vi.mock("../../Cargo.toml", () => ({}));
 vi.mock("../wasm.js", () => ({ default: async () => fakeWasm }));
 
+import { AsyncLock } from "../asyncLock.js";
 import { MidenClient } from "../client.js";
 import {
   WasmWebClient,
   MockWasmWebClient,
+  withSyncLock,
   __createClientProxyForTest as createClientProxy,
 } from "../index.js";
 
@@ -68,6 +70,7 @@ function makeWasmClient(name) {
     newAccount: call("newAccount"),
     newAccountWithSecretKey: call("newAccountWithSecretKey"),
     executeTransaction: call("executeTransaction"),
+    getAccounts: call("getAccounts"),
   };
 }
 
@@ -941,6 +944,73 @@ describe("store lock across WebClient instances (Web Locks)", () => {
       "WebClient terminated"
     );
     expect(lockRequest).toHaveBeenCalledTimes(requests);
+  });
+
+  // A withSyncLock callback that holds the store lock until `go` resolves.
+  const holdStoreLock = (store, go, work) =>
+    withSyncLock(store, "callback", async () => {
+      events.push("start callback");
+      await go;
+      return work();
+    });
+
+  it("does not start a read on a client while a withSyncLock callback holds the store lock a sync queued on that client waits for", async () => {
+    const store = uniqueStore();
+    const a = makeWebClient(store, "A");
+    const go = deferred();
+    let read;
+    const callback = holdStoreLock(store, go.promise, async () => {
+      read = a.client.getAccounts();
+      await Promise.race([read, flush()]);
+      return [...events];
+    });
+    await vi.waitFor(() => expect(events).toEqual(["start callback"]));
+
+    const sync = a.client.syncState();
+    await flush();
+    go.resolve();
+    expect(await callback).toEqual(["start callback"]);
+
+    await release("A.syncState");
+    await expect(sync).resolves.toBe("A.syncState");
+    await release("A.getAccounts");
+    await expect(read).resolves.toBe("A.getAccounts");
+    expect(events).toEqual([
+      "start callback",
+      "start A.syncState",
+      "end A.syncState",
+      "start A.getAccounts",
+      "end A.getAccounts",
+    ]);
+  });
+
+  it("does not grant a lock held across a client's queued sync to a withSyncLock callback holding the store lock that sync waits for", async () => {
+    const store = uniqueStore();
+    const a = makeWebClient(store, "A");
+    const appLock = new AsyncLock();
+    const go = deferred();
+    let acquired;
+    const callback = holdStoreLock(store, go.promise, async () => {
+      acquired = appLock.runExclusive(async () => events.push("acquired"));
+      await Promise.race([acquired, flush()]);
+      return [...events];
+    });
+    await vi.waitFor(() => expect(events).toEqual(["start callback"]));
+
+    const held = appLock.runExclusive(() => a.client.syncState());
+    await flush();
+    go.resolve();
+    expect(await callback).toEqual(["start callback"]);
+
+    await release("A.syncState");
+    await expect(held).resolves.toBe("A.syncState");
+    await acquired;
+    expect(events).toEqual([
+      "start callback",
+      "start A.syncState",
+      "end A.syncState",
+      "acquired",
+    ]);
   });
 });
 
