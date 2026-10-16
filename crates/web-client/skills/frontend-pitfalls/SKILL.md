@@ -110,8 +110,9 @@ which one you are relying on tells you what a second browser tab can still do to
    Such a call takes its place on the layer 1 chain when it is made and requests the lock
    when its turn comes (chain, then lock), so call order, `waitForIdle()` and
    `terminate()` treat it like any other call. While it waits for another client's lock,
-   later calls on its own client wait behind it. Concurrent calls of the *same* sync share
-   one run; every other call queues for the lock in turn. With no Web Locks API it
+   later calls on its own client wait behind it. Concurrent calls of the *same* sync on one
+   client share one run; every other call, the same sync on another client included,
+   queues for the lock in turn. With no Web Locks API it
    degrades to an in-process per-database chain. Two writes take no lock: the free
    `importStore` function, which replaces a whole store, so run it only while no client
    uses that store; and the genesis block header `createClient` stores in a store that

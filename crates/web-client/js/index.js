@@ -675,6 +675,8 @@ class WebClient {
     // it on the chain — see the comment on `_serializeWasmCall` for the
     // safety contract.
     this._withInnerLockDepth = 0;
+    // This client's in-flight coalesced syncs; see `_withStoreLock`.
+    this._syncRuns = new Map();
 
     // The high-fidelity channel is decided here and nowhere else. Writing it
     // as a non-writable, non-configurable property means no later assignment
@@ -823,11 +825,13 @@ class WebClient {
    * holder holds this instance's chain meanwhile, and its observation, named
    * by `opName`, includes that wait.
    *
-   * `syncMethod` coalesces concurrent calls of that sync on the store into
-   * the first caller's run, registered when that call is made. A joiner gets
-   * the run's result even when the run's client is terminated afterwards:
-   * the run's slot was already queued, so it still runs. Without `syncMethod`
-   * every call runs its own `fn`.
+   * `syncMethod` coalesces concurrent calls of that sync on this instance
+   * into the first caller's run, registered when that call is made. The run
+   * is on this instance's chain, so call order, `waitForIdle()` and
+   * `terminate()` cover every caller sharing it. The registry is this
+   * instance's own: a sync on another instance never joins the run, but runs
+   * its own, serialized with it by the store lock. Without `syncMethod` every
+   * call runs its own `fn`.
    *
    * Nested in `_withInnerWebClient`, the call runs inline like any nested call
    * and requests the lock itself. It never joins a coalesced run, which may
@@ -850,7 +854,7 @@ class WebClient {
     if (!syncMethod || this._withInnerLockDepth > 0) {
       return run();
     }
-    return coalesceRun(dbId, syncMethod, run);
+    return coalesceRun(dbId, syncMethod, run, this._syncRuns);
   }
 
   /**
@@ -1417,8 +1421,10 @@ class WebClient {
    * Syncs the client (NTL followed by chain sync, failing fast on either).
    *
    * This method coordinates concurrent sync calls using the Web Locks API when available,
-   * with an in-process mutex fallback for older browsers. If a sync is already in progress,
-   * subsequent callers will wait and receive the same result (coalescing behavior).
+   * with an in-process mutex fallback for older browsers. If a sync is already in progress
+   * on this client, subsequent callers on this client wait and receive the same result
+   * (coalescing behavior). A sync on another client on the same store never shares it: it
+   * runs its own sync, serialized with this one by the store lock.
    *
    * @returns {Promise<SyncSummary>} The sync summary
    */
@@ -1426,7 +1432,8 @@ class WebClient {
     const methodId = MethodName.SYNC_STATE;
 
     try {
-      // Concurrent callers of this sync share one run; see `_withStoreLock`.
+      // Concurrent calls of this sync on this client share one run; see
+      // `_withStoreLock`.
       return await this._withStoreLock(
         async () => {
           if (!this.worker) {
@@ -1683,8 +1690,10 @@ class MockWebClient extends WebClient {
    * Syncs the mock client state.
    *
    * This method coordinates concurrent sync calls using the Web Locks API when available,
-   * with an in-process mutex fallback for older browsers. If a sync is already in progress,
-   * subsequent callers will wait and receive the same result (coalescing behavior).
+   * with an in-process mutex fallback for older browsers. If a sync is already in progress
+   * on this client, subsequent callers on this client wait and receive the same result
+   * (coalescing behavior). A sync on another client on the same store never shares it: it
+   * runs its own sync, serialized with this one by the store lock.
    *
    * @returns {Promise<SyncSummary>} The sync summary
    */

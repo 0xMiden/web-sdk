@@ -11,7 +11,9 @@
  *   in-process per-dbId promise chain when Web Locks are unavailable
  * - Web Locks also serialize across tabs (Chrome 69+, Safari 15.4+)
  * - `WebClient._withStoreLock` in `index.js` takes the same lock, through
- *   `runUnderLock` and `coalesceRun`, for every call that writes the chain MMR
+ *   `runUnderLock` and `coalesceRun`, for every call that writes the chain MMR.
+ *   It coalesces in a registry of its own client, so a sync joins only a
+ *   pending run of the same sync on that client, never another client's
  */
 
 /**
@@ -25,7 +27,8 @@ export function hasWebLocks() {
   );
 }
 
-// Coalesce map keyed by `${dbId}:${methodId}` -> in-flight promise.
+// Coalesce map keyed by `${dbId}:${methodId}` -> in-flight promise, used by
+// `withSyncLock`. A WebClient passes `coalesceRun` a map of its own instead.
 const inFlight = new Map();
 
 // Per-dbId promise tail used to serialize cross-method calls when Web Locks
@@ -82,28 +85,31 @@ export function runUnderLock(dbId, fn) {
 /**
  * Share one in-flight run of (dbId, methodId) among concurrent callers.
  *
- * The first caller's `start()` begins the run, and it stays registered until
- * it settles; a caller arriving meanwhile gets the same promise and starts
- * nothing. `start` takes the lock itself, if it needs one.
+ * The first caller's `start()` begins the run, and it stays registered in
+ * `registry` until it settles; a caller arriving meanwhile with the same
+ * registry gets the same promise and starts nothing. `start` takes the lock
+ * itself, if it needs one.
  *
  * @param {string} dbId - Database ID
  * @param {string} methodId - Method identifier (see MethodName constants)
  * @param {() => Promise<T>} start - Begins the run
+ * @param {Map<string, Promise<T>>} [registry] - The runs callers can join.
+ *   Defaults to the module-wide one `withSyncLock` uses.
  * @returns {Promise<T>}
  * @template T
  */
-export function coalesceRun(dbId, methodId, start) {
+export function coalesceRun(dbId, methodId, start, registry = inFlight) {
   const key = coalesceKey(dbId, methodId);
 
-  let work = inFlight.get(key);
+  let work = registry.get(key);
   if (!work) {
     work = start();
-    inFlight.set(key, work);
+    registry.set(key, work);
     // Swallow on the derived promise so a rejection here doesn't surface as
     // an unhandled rejection; the caller still sees the error through `work`.
     work
       .finally(() => {
-        if (inFlight.get(key) === work) inFlight.delete(key);
+        if (registry.get(key) === work) registry.delete(key);
       })
       .catch(() => {});
   }
