@@ -198,9 +198,22 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
 describe("WebClient AuthScheme resolution", () => {
   let client;
   let inner;
+  let lockRequest;
+  let navigatorDescriptor;
 
   beforeEach(() => {
     vi.spyOn(console, "log").mockImplementation(() => {});
+    // Without Web Locks the store lock is an in-process chain, which leaves no
+    // request to assert on.
+    navigatorDescriptor = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "navigator"
+    );
+    lockRequest = vi.fn((_name, _options, fn) => fn());
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { locks: { request: lockRequest } },
+    });
     inner = {
       syncBeforeAccountCreation: vi.fn().mockResolvedValue(undefined),
       newWallet: vi.fn().mockResolvedValue("wallet"),
@@ -222,7 +235,14 @@ describe("WebClient AuthScheme resolution", () => {
     client = createClientProxy(instance);
   });
 
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    if (navigatorDescriptor) {
+      Object.defineProperty(globalThis, "navigator", navigatorDescriptor);
+    } else {
+      delete globalThis.navigator;
+    }
+    vi.restoreAllMocks();
+  });
 
   it("newWallet hands the wasm client the ECDSA enum value", async () => {
     await expect(client.newWallet("mode", "ecdsa")).resolves.toBe("wallet");
@@ -259,6 +279,22 @@ describe("WebClient AuthScheme resolution", () => {
     ).rejects.toThrow('Unknown auth scheme: "99"');
     expect(inner.importPublicAccountFromSeed).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { method: "newWallet", call: (c) => c.newWallet("mode", 99) },
+    {
+      method: "newFaucet",
+      call: (c) => c.newFaucet("mode", false, "Token", "TOK", 8, 1000n, 99),
+    },
+  ])(
+    "$method rejects a number that is not an AuthScheme value before its genesis sync or a store-lock request",
+    async ({ method, call }) => {
+      await expect(call(client)).rejects.toThrow('Unknown auth scheme: "99"');
+      expect(lockRequest).not.toHaveBeenCalled();
+      expect(inner.syncBeforeAccountCreation).not.toHaveBeenCalled();
+      expect(inner[method]).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe("WasmWebClient.terminate", () => {

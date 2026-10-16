@@ -681,7 +681,7 @@ describe("store lock across WebClient instances (Web Locks)", () => {
   // Each call is the first on its client, so nothing else on that client can
   // hold it behind the holder: only its own lock request can.
   const midenOf = (c) => new MidenClient(c.client, async () => fakeWasm, null);
-  it.each([
+  const firstCalls = [
     {
       name: "newWallet",
       call: (c) => c.client.newWallet("private", "falcon"),
@@ -767,7 +767,8 @@ describe("store lock across WebClient instances (Web Locks)", () => {
       call: (c) => c.client.syncNoteTransport(),
       label: "syncNoteTransport",
     },
-  ])(
+  ];
+  it.each(firstCalls)(
     "makes $name, the first call on its client, request the store lock and wait for another client's holder",
     async ({ mock = false, prepare, call, label }) => {
       const store = mock ? undefined : uniqueStore();
@@ -796,6 +797,35 @@ describe("store lock across WebClient instances (Web Locks)", () => {
         "end A.importNoteFile held",
         `start B.${label}`,
         `end B.${label}`,
+      ]);
+    }
+  );
+
+  // MockWebClient's syncs are not observed.
+  it.each(firstCalls.filter(({ mock }) => !mock))(
+    "observes $name, the first call on its client, once, timed from when it was made, so its duration includes another client's hold of the store lock",
+    async ({ prepare, call, label }) => {
+      const store = uniqueStore();
+      const a = makeWebClient(store, "A");
+      const b = makeWebClient(store, "B");
+      prepare?.(b);
+      let now = 0;
+      vi.spyOn(performance, "now").mockImplementation(() => now);
+
+      const held = a.client.importNoteFile("held");
+      await waitForStart("A.importNoteFile held");
+      // Registered after the holder's call, so only `call` is observed.
+      const seen = [];
+      setObserver((observation) => seen.push(observation));
+      const result = call(b);
+      await flush();
+      now = 1000;
+
+      await release("A.importNoteFile held");
+      await release(`B.${label}`);
+      await Promise.all([held, result]);
+      expect(seen).toEqual([
+        { op: label.split(" ")[0], outcome: "ok", durationMs: 1000 },
       ]);
     }
   );
@@ -848,6 +878,24 @@ describe("store lock across WebClient instances (Web Locks)", () => {
       expect(ops).toEqual([name]);
     }
   );
+
+  it("refuses a non-fungible faucet with the wasm client's bare string before its genesis sync or a store-lock request", async () => {
+    const message = "Non-fungible faucets are not supported yet";
+    const store = uniqueStore();
+    const a = makeWebClient(store, "A");
+    // As the wasm newFaucet does: a bare string, not an Error.
+    a.wasmClient.newFaucet = vi.fn(async (_mode, nonFungible) => {
+      if (nonFungible) throw message;
+      return "faucet";
+    });
+
+    await expect(
+      a.client.newFaucet("private", true, "T", "TOK", 8, 1n, "falcon")
+    ).rejects.toBe(message);
+    expect(lockRequest).not.toHaveBeenCalled();
+    expect(a.wasmClient.syncBeforeAccountCreation).not.toHaveBeenCalled();
+    expect(a.wasmClient.newFaucet).not.toHaveBeenCalled();
+  });
 
   it("finishes newWallet when the external keystore's insertKey awaits a sync on another client of the store, and both settle", async () => {
     const store = uniqueStore();
