@@ -13,7 +13,8 @@
  * - `WebClient._withStoreLock` in `index.js` takes the same lock, through
  *   `runUnderLock` and `coalesceRun`, for every call that writes the chain MMR.
  *   It coalesces in a registry of its own client, so a sync joins only a
- *   pending run of the same sync on that client, never another client's
+ *   pending run of the same sync on that client, never another client's, and
+ *   only while no other call has been queued on that client since the run
  */
 
 /**
@@ -30,6 +31,9 @@ export function hasWebLocks() {
 // Coalesce map keyed by `${dbId}:${methodId}` -> in-flight promise, used by
 // `withSyncLock`. A WebClient passes `coalesceRun` a map of its own instead.
 const inFlight = new Map();
+
+// The `epoch()` each run registered with one was started in; see `coalesceRun`.
+const startedIn = new WeakMap();
 
 // Per-dbId promise tail used to serialize cross-method calls when Web Locks
 // are unavailable. Each new task chains onto the current tail so different
@@ -87,24 +91,30 @@ export function runUnderLock(dbId, fn) {
  *
  * The first caller's `start()` begins the run, and it stays registered in
  * `registry` until it settles; a caller arriving meanwhile with the same
- * registry gets the same promise and starts nothing. `start` takes the lock
- * itself, if it needs one.
+ * registry gets the same promise and starts nothing. With `epoch`, a caller
+ * joins only while `epoch()` still returns what it returned once the run had
+ * started; otherwise it starts a run of its own, which replaces that one in
+ * the registry. `start` takes the lock itself, if it needs one.
  *
  * @param {string} dbId - Database ID
  * @param {string} methodId - Method identifier (see MethodName constants)
  * @param {() => Promise<T>} start - Begins the run
  * @param {Map<string, Promise<T>>} [registry] - The runs callers can join.
  *   Defaults to the module-wide one `withSyncLock` uses.
+ * @param {() => number} [epoch] - Moves once a joiner would no longer settle
+ *   after every call made before it. Omitted, a run is joinable until it
+ *   settles.
  * @returns {Promise<T>}
  * @template T
  */
-export function coalesceRun(dbId, methodId, start, registry = inFlight) {
+export function coalesceRun(dbId, methodId, start, registry = inFlight, epoch) {
   const key = coalesceKey(dbId, methodId);
 
   let work = registry.get(key);
-  if (!work) {
+  if (!work || (epoch && startedIn.get(work) !== epoch())) {
     work = start();
     registry.set(key, work);
+    if (epoch) startedIn.set(work, epoch());
     // Swallow on the derived promise so a rejection here doesn't surface as
     // an unhandled rejection; the caller still sees the error through `work`.
     work

@@ -95,10 +95,12 @@ Four categories emit nothing, and each has bitten someone:
 
 - **Concurrent syncs on one client coalesce.** `syncState`, `syncChain` and
   `syncNoteTransport` share one in-flight run per client and method, so N
-  concurrent `sync()` callers on one client produce **one** observation per
-  run. The same sync on another client on the same store is not shared: it runs
-  its own, serialized by the store lock, and reports its own observation, lock
-  wait included.
+  `sync()` callers on one client with no other call queued on it between them
+  produce **one** observation per run. A sync called after another call was
+  queued on that client starts, and reports, a run of its own. The same sync
+  on another client on the same store is not shared: it runs its own,
+  serialized by the store lock, and reports its own observation, lock wait
+  included.
 - **`waitForConfirmation: true` inflates the stream.** The wait loop polls
   `syncChain` plus `getTransactions` on every interval (5 s by default, up to a
   60 s timeout), so a single confirmed transaction can contribute dozens of
