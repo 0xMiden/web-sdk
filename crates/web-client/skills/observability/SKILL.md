@@ -33,7 +33,8 @@ interface MidenObservation {
 it settles: time queued behind the same client's earlier calls is not in it.
 Round it yourself. A call that takes the store lock - `syncState`, `syncChain`,
 `syncNoteTransport`, `importNoteFile` (`notes.import`), `fetchPrivateNotes`
-(`notes.fetchPrivate`) and account creation (`newWallet`, `newFaucet`,
+(`notes.fetchPrivate`), and, on a store still at genesis only,
+`syncBeforeAccountCreation` and account creation (`newWallet`, `newFaucet`,
 `newAccount`, `newAccountWithSecretKey`) - requests the lock once its turn has
 started, so its `durationMs` includes any wait for another client's or tab's
 store lock. A slow observation of one of these can be lock wait, not work.
