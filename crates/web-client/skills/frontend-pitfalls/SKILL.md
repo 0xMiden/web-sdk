@@ -103,10 +103,13 @@ which one you are relying on tells you what a second browser tab can still do to
 2. **Web Locks.** Every call that writes the chain MMR or its tracked block headers holds
    one per-database Web Lock, **across tabs** and clients: the syncs (`syncState`,
    `syncChain`, `syncNoteTransport`), `importNoteFile` (`notes.import`),
-   `fetchPrivateNotes` (`notes.fetchPrivate`) and account creation (`newWallet`,
-   `newFaucet`, `newAccount`, `newAccountWithSecretKey`), whose first sync of a new store
-   writes it too. Two clients interleaving those writes leave a store that fails every
-   later sync and import with `inconsistent partial mmr: missing sibling for tracked leaf`.
+   `fetchPrivateNotes` (`notes.fetchPrivate`) and `syncBeforeAccountCreation`, the sync
+   of a store still at genesis that account creation (`newWallet`, `newFaucet`,
+   `newAccount`, `newAccountWithSecretKey`) runs first. A creation holds the lock only
+   for that sync and releases it before it generates a key, stores the account or calls
+   an external keystore's `insertKey`, so no callback of yours runs under the lock. Two
+   clients interleaving those writes leave a store that fails every later sync and
+   import with `inconsistent partial mmr: missing sibling for tracked leaf`.
    The lock is per store opened: a client that omits `storeName` opens
    `MidenClientDB_<network id>` for its node URL and takes the same lock as one that names
    that store, and clients on different default stores do not block each other. Such a

@@ -822,13 +822,17 @@ class WebClient {
    * clients on different default stores do not block each other.
    *
    * The calls that take it: `syncState`, `syncChain` and `syncNoteTransport`
-   * on `WebClient` and `MockWebClient`, `importNoteFile`, `fetchPrivateNotes`,
-   * and account creation (`newWallet`, `newFaucet`, `newAccount`,
-   * `newAccountWithSecretKey`), whose first sync of a store still at genesis
-   * writes the MMR too. Two writes take no lock: the free `importStore`
-   * function, which replaces a whole store, and the genesis block header
-   * `createClient` stores in a store that has none. The shipped
-   * `frontend-pitfalls` skill keeps the consumer copy of this list.
+   * on `WebClient` and `MockWebClient`, `importNoteFile`, `fetchPrivateNotes`
+   * and `syncBeforeAccountCreation`, the sync of a store still at genesis that
+   * account creation (`newWallet`, `newFaucet`, `newAccount`,
+   * `newAccountWithSecretKey`) runs first. A creation takes the lock only for
+   * that sync, inside its own call (see `_createAccount`), and releases it
+   * before it generates a key, stores the account or calls an external
+   * keystore's `insertKey`, so no application callback runs under the lock.
+   * Two writes take no lock: the free `importStore` function, which replaces a
+   * whole store, and the genesis block header `createClient` stores in a store
+   * that has none. The shipped `frontend-pitfalls` skill keeps the consumer
+   * copy of this list.
    *
    * Lock order is always call chain, then store lock: the call takes its
    * chain slot when it is made, like any other call, and requests the lock
@@ -1174,19 +1178,57 @@ class WebClient {
 
   // ----- Explicitly Wrapped Methods (Worker-Forwarded) -----
 
-  // Account creation syncs a store still at genesis first
-  // (`maybe_sync_before_account_creation`), and that sync writes the chain
-  // MMR, so the four creation methods take the store lock like the syncs.
-  async newWallet(storageMode, authSchemeId, seed) {
+  /**
+   * Syncs this client if its sync height is still the genesis block, as
+   * account creation does first, so the next sync after creating an account
+   * does not scan the whole chain. Sync errors are ignored. The sync writes
+   * the chain MMR, so it takes the store lock; see `_withStoreLock`.
+   *
+   * @returns {Promise<void>}
+   */
+  async syncBeforeAccountCreation() {
     return this._withStoreLock(async () => {
-      const wasm = await getWasmOrThrow();
       const wasmWebClient = await this.getWasmWebClient();
-      return await wasmWebClient.newWallet(
-        storageMode,
-        resolveAuthScheme(authSchemeId, wasm),
-        seed
+      return await wasmWebClient.syncBeforeAccountCreation();
+    }, "syncBeforeAccountCreation");
+  }
+
+  /**
+   * Runs the account creation `method` of the wasm client as one call on this
+   * instance's chain, observed under its name. Account creation first syncs a
+   * store still at genesis, its only chain write. Inside the call, that sync
+   * runs under the store lock, which is released before the creation runs
+   * with its own pre-sync skipped, so key generation, the account insert and
+   * an external keystore's `insertKey` callback run without it: no
+   * application callback runs under the lock. Taking the chain slot first
+   * keeps call order, `terminate()` and `waitForIdle()` treating a creation
+   * as one call, and its observation includes the lock wait.
+   *
+   * @param {string} method - The wasm creation method, also the op name.
+   * @param {(wasm: object) => any[]} resolveArgs - Its arguments, before the
+   *   trailing `skipPreSync`. Resolved before the pre-sync, so an invalid one
+   *   rejects without syncing.
+   * @returns {Promise<any>} The result of the creation.
+   * @private
+   */
+  _createAccount(method, resolveArgs) {
+    return this._serializeWasmCall(async () => {
+      const wasm = await getWasmOrThrow();
+      const args = resolveArgs(wasm);
+      const wasmWebClient = await this.getWasmWebClient();
+      await runUnderLock(this._storeLockId(), () =>
+        wasmWebClient.syncBeforeAccountCreation()
       );
-    }, "newWallet");
+      return await wasmWebClient[method](...args, true);
+    }, method);
+  }
+
+  async newWallet(storageMode, authSchemeId, seed) {
+    return this._createAccount("newWallet", (wasm) => [
+      storageMode,
+      resolveAuthScheme(authSchemeId, wasm),
+      seed,
+    ]);
   }
 
   async newFaucet(
@@ -1198,19 +1240,15 @@ class WebClient {
     maxSupply,
     authSchemeId
   ) {
-    return this._withStoreLock(async () => {
-      const wasm = await getWasmOrThrow();
-      const wasmWebClient = await this.getWasmWebClient();
-      return await wasmWebClient.newFaucet(
-        storageMode,
-        nonFungible,
-        tokenName,
-        tokenSymbol,
-        decimals,
-        maxSupply,
-        resolveAuthScheme(authSchemeId, wasm)
-      );
-    }, "newFaucet");
+    return this._createAccount("newFaucet", (wasm) => [
+      storageMode,
+      nonFungible,
+      tokenName,
+      tokenSymbol,
+      decimals,
+      maxSupply,
+      resolveAuthScheme(authSchemeId, wasm),
+    ]);
   }
 
   async importPublicAccountFromSeed(seed, authSchemeId) {
@@ -1225,17 +1263,14 @@ class WebClient {
   }
 
   async newAccount(account, overwrite) {
-    return this._withStoreLock(async () => {
-      const wasmWebClient = await this.getWasmWebClient();
-      return await wasmWebClient.newAccount(account, overwrite);
-    }, "newAccount");
+    return this._createAccount("newAccount", () => [account, overwrite]);
   }
 
   async newAccountWithSecretKey(account, secretKey) {
-    return this._withStoreLock(async () => {
-      const wasmWebClient = await this.getWasmWebClient();
-      return await wasmWebClient.newAccountWithSecretKey(account, secretKey);
-    }, "newAccountWithSecretKey");
+    return this._createAccount("newAccountWithSecretKey", () => [
+      account,
+      secretKey,
+    ]);
   }
 
   async importNoteFile(noteFile) {

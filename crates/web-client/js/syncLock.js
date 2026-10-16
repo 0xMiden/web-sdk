@@ -140,12 +140,15 @@ export function coalesceRun(dbId, methodId, start, registry = inFlight, epoch) {
  *
  * - Any call on such a client, not only its store-locked calls (`syncState`,
  *   `syncChain`, `syncNoteTransport`, `importNoteFile` or `notes.import`,
- *   `fetchPrivateNotes` or `notes.fetchPrivate`, `newWallet`, `newFaucet`,
- *   `newAccount`, `newAccountWithSecretKey`). A store-locked call takes its
- *   place on its client's call chain first and requests the lock inside it,
- *   so one already queued on that client, an auto-sync for example, holds
- *   the chain while it waits for the lock `fn` holds, and every later call on
- *   that client queues behind it.
+ *   `fetchPrivateNotes` or `notes.fetchPrivate`, `syncBeforeAccountCreation`,
+ *   and `newWallet`, `newFaucet`, `newAccount` and `newAccountWithSecretKey`,
+ *   which hold the lock only for the sync of a store still at genesis they
+ *   run first, so no application callback such as an external keystore's
+ *   `insertKey` runs under it). A store-locked call takes its place on its
+ *   client's call chain first and requests the lock inside it, so one already
+ *   queued on that client, an auto-sync for example, holds the chain while it
+ *   waits for the lock `fn` holds, and every later call on that client queues
+ *   behind it.
  * - Any lock whose holder is waiting on such a call, such as
  *   `@miden-sdk/react`'s `runExclusive`, which `MidenProvider` holds across
  *   its init sync, or an application mutex around `_withInnerWebClient`.
