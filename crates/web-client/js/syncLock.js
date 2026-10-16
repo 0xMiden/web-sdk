@@ -10,8 +10,8 @@
  *   syncNoteTransport) wait for each other via the Web Lock, or via an
  *   in-process per-dbId promise chain when Web Locks are unavailable
  * - Web Locks also serialize across tabs (Chrome 69+, Safari 15.4+)
- * - Other calls that write the chain MMR (note imports, account creation)
- *   take the same lock through `runUnderLock`, which never coalesces
+ * - `WebClient._withStoreLock` in `index.js` takes the same lock, through
+ *   `runUnderLock` and `coalesceRun`, for every call that writes the chain MMR
  */
 
 /**
@@ -80,6 +80,38 @@ export function runUnderLock(dbId, fn) {
 }
 
 /**
+ * Share one in-flight run of (dbId, methodId) among concurrent callers.
+ *
+ * The first caller's `start()` begins the run, and it stays registered until
+ * it settles; a caller arriving meanwhile gets the same promise and starts
+ * nothing. `start` takes the lock itself, if it needs one.
+ *
+ * @param {string} dbId - Database ID
+ * @param {string} methodId - Method identifier (see MethodName constants)
+ * @param {() => Promise<T>} start - Begins the run
+ * @returns {Promise<T>}
+ * @template T
+ */
+export function coalesceRun(dbId, methodId, start) {
+  const key = coalesceKey(dbId, methodId);
+
+  let work = inFlight.get(key);
+  if (!work) {
+    work = start();
+    inFlight.set(key, work);
+    // Swallow on the derived promise so a rejection here doesn't surface as
+    // an unhandled rejection; the caller still sees the error through `work`.
+    work
+      .finally(() => {
+        if (inFlight.get(key) === work) inFlight.delete(key);
+      })
+      .catch(() => {});
+  }
+
+  return work;
+}
+
+/**
  * Run `fn` under the sync lock for (dbId, methodId).
  *
  * Concurrent calls with the same (dbId, methodId) share the same promise
@@ -92,20 +124,5 @@ export function runUnderLock(dbId, fn) {
  * @returns {Promise<T>}
  */
 export function withSyncLock(dbId, methodId, fn) {
-  const key = coalesceKey(dbId, methodId);
-
-  let work = inFlight.get(key);
-  if (!work) {
-    work = runUnderLock(dbId, fn);
-    inFlight.set(key, work);
-    // Swallow on the derived promise so a rejection here doesn't surface as
-    // an unhandled rejection; the caller still sees the error through `work`.
-    work
-      .finally(() => {
-        if (inFlight.get(key) === work) inFlight.delete(key);
-      })
-      .catch(() => {});
-  }
-
-  return work;
+  return coalesceRun(dbId, methodId, () => runUnderLock(dbId, fn));
 }

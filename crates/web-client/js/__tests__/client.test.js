@@ -278,10 +278,6 @@ describe("WasmWebClient.terminate", () => {
       if (this.freed) throw new Error("used after free");
       return "wallet";
     }
-    async importPublicAccountFromSeed() {
-      if (this.freed) throw new Error("used after free");
-      return "account";
-    }
     async submitNewTransaction() {
       throw new Error("ran in-realm");
     }
@@ -390,14 +386,11 @@ describe("WasmWebClient.terminate", () => {
     const { client, wasmClient } = makeWebClient();
     const inFlight = deferred();
     client._serializeWasmCall(() => inFlight.promise);
-    const queued = client.importPublicAccountFromSeed(
-      new Uint8Array(32),
-      "falcon"
-    );
+    const queued = client.newWallet("private", "falcon");
 
     client.terminate();
     inFlight.resolve();
-    await expect(queued).resolves.toBe("account");
+    await expect(queued).resolves.toBe("wallet");
     await client.waitForIdle();
     expect(wasmClient.free).toHaveBeenCalledTimes(1);
   });
@@ -440,10 +433,7 @@ describe("WasmWebClient.terminate", () => {
     const worker = attachWorker(client);
     const inFlight = deferred();
     client._serializeWasmCall(() => inFlight.promise);
-    const account = client.importPublicAccountFromSeed(
-      new Uint8Array(32),
-      "falcon"
-    );
+    const wallet = client.newWallet("private", "falcon");
     const submitted = client.submitNewTransaction(
       { toString: () => "0xacc" },
       { serialize: () => new Uint8Array() }
@@ -452,7 +442,7 @@ describe("WasmWebClient.terminate", () => {
     client.terminate();
     const submitOutcome = outcomeAfterFlush(submitted);
     inFlight.resolve();
-    await expect(account).resolves.toBe("account");
+    await expect(wallet).resolves.toBe("wallet");
     expect(await submitOutcome).toBe("WebClient terminated");
     expect(worker.postMessage).not.toHaveBeenCalled();
     await client.waitForIdle();

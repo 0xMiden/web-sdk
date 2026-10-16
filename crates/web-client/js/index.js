@@ -1,6 +1,6 @@
 import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
-import { runUnderLock, withSyncLock } from "./syncLock.js";
+import { coalesceRun, runUnderLock, withSyncLock } from "./syncLock.js";
 import { emitObservation, hasObserver, setObserver } from "./observability.js";
 import { MidenClient } from "./client.js";
 import { CompilerResource } from "./resources/compiler.js";
@@ -675,9 +675,6 @@ class WebClient {
     // it on the chain — see the comment on `_serializeWasmCall` for the
     // safety contract.
     this._withInnerLockDepth = 0;
-    // Calls of this instance that hold the store lock while their chain slot
-    // has not started yet; see `_withStoreLock`.
-    this._queuedStoreLockCalls = 0;
 
     // The high-fidelity channel is decided here and nowhere else. Writing it
     // as a non-writable, non-configurable property means no later assignment
@@ -800,23 +797,32 @@ class WebClient {
   }
 
   /**
-   * Runs `fn` through `_serializeWasmCall` while holding the store lock, the
+   * Runs `fn` on this instance's call chain while holding the store lock, the
    * per-store Web Lock of `syncLock.js`, so every call that writes the chain
    * MMR or its tracked block headers excludes every other such call on the
    * same store, across instances, tabs and workers. One that interleaves
    * corrupts the MMR for good: a note import reads the partial MMR, awaits
    * the node, then stores a header whose path is trimmed to the forest it
    * read, and a sync committing new peaks in between leaves that path too
-   * short. Lock order is always store lock, then call chain.
+   * short.
    *
-   * `syncMethod` coalesces concurrent calls of that sync into one run. Without
-   * it every call runs, queued behind the current holder.
+   * Lock order is always call chain, then store lock: the call takes its
+   * chain slot when it is made, like any other call, and requests the lock
+   * when that slot starts. So call order, `terminate()` and `waitForIdle()`
+   * treat it like any other call, and a lock holder never waits for a
+   * callback of its own instance. A call waiting for another instance's
+   * holder holds this instance's chain meanwhile, and its observation, named
+   * by `opName`, includes that wait.
    *
-   * Nested in `_withInnerWebClient`, this instance's chain is already held. A
-   * call of this instance that took the lock before that slot started waits
-   * behind it on the chain, so waiting for the lock here would deadlock both.
-   * The nested call then runs inline, still excluding other instances: the
-   * queued holder keeps the lock until it has run.
+   * `syncMethod` coalesces concurrent calls of that sync on the store into
+   * the first caller's run, registered when that call is made. A joiner gets
+   * the run's result even when the run's client is terminated afterwards:
+   * the run's slot was already queued, so it still runs. Without `syncMethod`
+   * every call runs its own `fn`.
+   *
+   * Nested in `_withInnerWebClient`, the call runs inline like any nested call
+   * and requests the lock itself. It never joins a coalesced run, which may
+   * be queued behind the callback.
    *
    * @param {() => Promise<any>} fn - The WASM work.
    * @param {string} [opName] - Operation name, as for `_serializeWasmCall`.
@@ -825,34 +831,17 @@ class WebClient {
    * @private
    */
   _withStoreLock(fn, opName, syncMethod) {
-    // A terminated client contends for no lock and shares no other run.
+    // `_serializeWasmCall` rejects too, but a joiner never reaches it.
     if (this._terminated && this._withInnerLockDepth === 0) {
       return Promise.reject(new Error("WebClient terminated"));
     }
-    if (this._withInnerLockDepth > 0 && this._queuedStoreLockCalls > 0) {
-      return this._serializeWasmCall(fn, opName);
-    }
-    const underLock = () => {
-      let queued = this._withInnerLockDepth === 0;
-      if (queued) this._queuedStoreLockCalls += 1;
-      const started = () => {
-        if (queued) {
-          queued = false;
-          this._queuedStoreLockCalls -= 1;
-        }
-      };
-      const call = this._serializeWasmCall(() => {
-        started();
-        return fn();
-      }, opName);
-      // Also settles a call `_serializeWasmCall` rejected without running.
-      call.then(started, started);
-      return call;
-    };
     const dbId = this._storeLockId();
-    return syncMethod
-      ? withSyncLock(dbId, syncMethod, underLock)
-      : runUnderLock(dbId, underLock);
+    const run = () =>
+      this._serializeWasmCall(() => runUnderLock(dbId, fn), opName);
+    if (!syncMethod || this._withInnerLockDepth > 0) {
+      return run();
+    }
+    return coalesceRun(dbId, syncMethod, run);
   }
 
   /**
@@ -1434,8 +1423,7 @@ class WebClient {
     const methodId = MethodName.SYNC_STATE;
 
     try {
-      // `_withStoreLock` coalesces concurrent callers of this sync under the
-      // store lock, then serializes the WASM phase on this instance's chain.
+      // Concurrent callers of this sync share one run; see `_withStoreLock`.
       return await this._withStoreLock(
         async () => {
           if (!this.worker) {

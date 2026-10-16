@@ -51,6 +51,7 @@ function makeWasmClient(name) {
     newFaucet: call("newFaucet"),
     newAccount: call("newAccount"),
     newAccountWithSecretKey: call("newAccountWithSecretKey"),
+    executeTransaction: call("executeTransaction"),
   };
 }
 
@@ -103,12 +104,14 @@ const deferred = () => {
   return { promise, resolve };
 };
 
-// An exclusive, first-come Web Locks stand-in that grants asynchronously, as
-// browsers do.
+// An exclusive, first-come Web Locks stand-in. Like a browser, it grants a
+// request in a later macrotask, never in the task that made it.
 function installWebLocks() {
   const tails = new Map();
   const request = vi.fn((name, _options, fn) => {
-    const granted = (tails.get(name) ?? Promise.resolve()).then(() => fn());
+    const granted = (tails.get(name) ?? Promise.resolve())
+      .then(() => new Promise((resolve) => setTimeout(resolve, 0)))
+      .then(() => fn());
     tails.set(
       name,
       granted.then(
@@ -385,13 +388,13 @@ describe("store lock across WebClient instances (Web Locks)", () => {
     await sync;
   });
 
-  it("runs calls nested in _withInnerWebClient under the client's own holder queued behind it instead of deadlocking", async () => {
+  it("runs calls nested in _withInnerWebClient, then the client's call queued behind the callback, without deadlocking", async () => {
     const store = uniqueStore();
     const a = makeWebClient(store, "A");
     const midenA = new MidenClient(a.client, async () => fakeWasm, null);
 
     // The escape hatch queues behind a running call, and a sync of the same
-    // client takes the lock and queues behind the escape hatch.
+    // client queues behind the escape hatch.
     const running = deferred();
     a.instance._serializeWasmCall(() => running.promise);
     const hatch = midenA._withInnerWebClient(async (inner) => {
@@ -401,7 +404,6 @@ describe("store lock across WebClient instances (Web Locks)", () => {
     });
     const sync = a.client.syncState();
     await flush();
-    expect(lockRequest).toHaveBeenCalledTimes(1);
     expect(events).toEqual([]);
 
     running.resolve();
@@ -410,10 +412,107 @@ describe("store lock across WebClient instances (Web Locks)", () => {
     await expect(hatch).resolves.toBe("hatch");
     await release("A.syncState");
     await expect(sync).resolves.toBe("A.syncState");
-    expect(lockRequest).toHaveBeenCalledTimes(1);
+    expect(events).toEqual([
+      "start A.importNoteFile f1",
+      "end A.importNoteFile f1",
+      "start A.syncChain",
+      "end A.syncChain",
+      "start A.syncState",
+      "end A.syncState",
+    ]);
   });
 
-  it("rejects a call still waiting for the lock when its client is terminated, and takes no lock afterwards", async () => {
+  it("runs a sync nested in _withInnerWebClient on its own while the same sync of the client is queued behind the callback", async () => {
+    const store = uniqueStore();
+    const a = makeWebClient(store, "A");
+    const midenA = new MidenClient(a.client, async () => fakeWasm, null);
+
+    const running = deferred();
+    a.instance._serializeWasmCall(() => running.promise);
+    const hatch = midenA._withInnerWebClient(
+      async (inner) => `hatch ${await inner.syncState()}`
+    );
+    const queued = a.client.syncState();
+    await flush();
+
+    running.resolve();
+    await release("A.syncState");
+    await expect(hatch).resolves.toBe("hatch A.syncState");
+    await release("A.syncState");
+    await expect(queued).resolves.toBe("A.syncState");
+    expect(a.wasmClient.syncStateImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("runs an import made in the same tick before an _withInnerWebClient callback before the callback starts", async () => {
+    const store = uniqueStore();
+    const a = makeWebClient(store, "A");
+    const midenA = new MidenClient(a.client, async () => fakeWasm, null);
+
+    const imported = a.client.importNoteFile("f1");
+    const hatch = midenA._withInnerWebClient(async () => {
+      events.push("start callback");
+      await flush();
+      events.push("end callback");
+      return "hatch";
+    });
+    await flush();
+    await release("A.importNoteFile f1");
+    await expect(imported).resolves.toBe("A.importNoteFile f1");
+    await expect(hatch).resolves.toBe("hatch");
+    expect(events).toEqual([
+      "start A.importNoteFile f1",
+      "end A.importNoteFile f1",
+      "start callback",
+      "end callback",
+    ]);
+  });
+
+  it("runs account creation and an un-awaited transaction made after it in call order", async () => {
+    const store = uniqueStore();
+    const a = makeWebClient(store, "A");
+
+    const created = a.client.newAccount("account", false);
+    const executed = a.client.executeTransaction("acc", "request");
+    await flush();
+    expect(events).toEqual(["start A.newAccount account"]);
+
+    await release("A.newAccount account");
+    await release("A.executeTransaction acc");
+    await expect(created).resolves.toBe("A.newAccount account");
+    await expect(executed).resolves.toBe("A.executeTransaction acc");
+    expect(events).toEqual([
+      "start A.newAccount account",
+      "end A.newAccount account",
+      "start A.executeTransaction acc",
+      "end A.executeTransaction acc",
+    ]);
+  });
+
+  it("resolves a live client joining a sync whose owner was terminated while it waited for the lock", async () => {
+    const store = uniqueStore();
+    const a = makeWebClient(store, "A");
+    const b = makeWebClient(store, "B");
+    const c = makeWebClient(store, "C");
+
+    const holder = c.client.syncChain();
+    await waitForStart("C.syncChain");
+    const owned = a.client.syncState();
+    await flush();
+    a.instance.terminate();
+    const joined = b.client.syncState();
+    await release("C.syncChain");
+    await holder;
+
+    expect(await state(joined)).toBe("pending");
+    await release("A.syncState");
+    await expect(joined).resolves.toBe("A.syncState");
+    await expect(owned).resolves.toBe("A.syncState");
+    expect(b.wasmClient.syncStateImpl).not.toHaveBeenCalled();
+    await a.instance.waitForIdle();
+    expect(a.wasmClient.free).toHaveBeenCalledTimes(1);
+  });
+
+  it("drains a call queued before terminate, frees the client only after it, and takes no lock afterwards", async () => {
     const store = uniqueStore();
     const a = makeWebClient(store, "A");
     const b = makeWebClient(store, "B");
@@ -423,12 +522,17 @@ describe("store lock across WebClient instances (Web Locks)", () => {
     const imported = b.client.importNoteFile("f1");
     await flush();
     b.instance.terminate();
+    const idle = b.instance.waitForIdle();
     await release("A.syncState");
     await sync;
 
-    expect(await state(imported)).toBe("rejected: WebClient terminated");
-    expect(b.wasmClient.importNoteFile).not.toHaveBeenCalled();
-    await b.instance.waitForIdle();
+    expect(await state(imported)).toBe("pending");
+    await waitForStart("B.importNoteFile f1");
+    expect(await state(idle)).toBe("pending");
+    expect(b.wasmClient.free).not.toHaveBeenCalled();
+    await release("B.importNoteFile f1");
+    await expect(imported).resolves.toBe("B.importNoteFile f1");
+    await idle;
     expect(b.wasmClient.free).toHaveBeenCalledTimes(1);
 
     const requests = lockRequest.mock.calls.length;
@@ -436,6 +540,14 @@ describe("store lock across WebClient instances (Web Locks)", () => {
       "WebClient terminated"
     );
     expect(lockRequest).toHaveBeenCalledTimes(requests);
+
+    // Nor does it share a live client's run.
+    const live = a.client.syncState();
+    expect(await state(b.client.syncState())).toBe(
+      "rejected: WebClient terminated"
+    );
+    await release("A.syncState");
+    await expect(live).resolves.toBe("A.syncState");
   });
 });
 
