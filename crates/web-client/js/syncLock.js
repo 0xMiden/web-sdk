@@ -10,6 +10,8 @@
  *   syncNoteTransport) wait for each other via the Web Lock, or via an
  *   in-process per-dbId promise chain when Web Locks are unavailable
  * - Web Locks also serialize across tabs (Chrome 69+, Safari 15.4+)
+ * - Other calls that write the chain MMR (note imports, account creation)
+ *   take the same lock through `runUnderLock`, which never coalesces
  */
 
 /**
@@ -50,12 +52,15 @@ function coalesceKey(dbId, methodId) {
  * cross-method borrows would throw "recursive use of an object detected
  * which would lead to unsafe aliasing in rust".
  *
+ * Every call runs its own `fn`, queued behind the current holder; see
+ * `withSyncLock` for the coalescing variant.
+ *
  * @param {string} dbId
  * @param {() => Promise<T>} fn
  * @returns {Promise<T>}
  * @template T
  */
-function runUnderLock(dbId, fn) {
+export function runUnderLock(dbId, fn) {
   if (!hasWebLocks()) {
     const prev = fallbackTails.get(dbId) ?? Promise.resolve();
     const next = prev.catch(() => {}).then(fn);

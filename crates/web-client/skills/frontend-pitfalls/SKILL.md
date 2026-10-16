@@ -100,13 +100,18 @@ which one you are relying on tells you what a second browser tab can still do to
    promise chain (`_serializeWasmCall`), including methods it does not wrap explicitly.
    The raw-bound `SYNC_METHODS` are the only exceptions. This is what stops
    "recursive use of an object detected".
-2. **Web Locks.** Exactly three entry points run under `withSyncLock(dbId, methodId, fn)`:
-   `syncState`, `syncChain` and `syncNoteTransport` - six call sites, since `MockWebClient`
-   extends `WebClient`. It coalesces concurrent calls of the *same* method into one shared
-   promise and serializes *different* methods on the same database, **across tabs**. With
-   no Web Locks API it degrades to an in-process per-database chain. `fetchPrivateNotes`
-   is **not** among them: it has no JS wrapper, so it gets layer 1 only - no Web Lock, no
-   cross-tab coalescing.
+2. **Web Locks.** Every call that writes the chain MMR or its tracked block headers holds
+   one per-database Web Lock, **across tabs** and clients: the syncs (`syncState`,
+   `syncChain`, `syncNoteTransport`), `importNoteFile` (`notes.import`),
+   `fetchPrivateNotes` (`notes.fetchPrivate`) and account creation (`newWallet`,
+   `newFaucet`, `newAccount`, `newAccountWithSecretKey`), whose first sync of a new store
+   writes it too. Two clients interleaving those writes leave a store that fails every
+   later sync and import with `inconsistent partial mmr: missing sibling for tracked leaf`.
+   Concurrent calls of the *same* sync share one promise; every other call queues for the
+   lock in turn. With no Web Locks API it degrades to an in-process per-database chain. A
+   call still waiting for the lock is not on the layer 1 chain yet, so `waitForIdle()`
+   does not await it, and a later call on the same client can run first: await these
+   calls before relying on their effect.
 3. **Cross-tab state change.** `client.onStateChanged(cb)` fires when another tab mutates
    the store, where `BroadcastChannel` exists. `MidenProvider` subscribes and refreshes the
    Zustand store so the UI re-renders; the client has already synced its own Rust state by

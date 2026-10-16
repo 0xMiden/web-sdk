@@ -1,6 +1,6 @@
 import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
-import { withSyncLock } from "./syncLock.js";
+import { runUnderLock, withSyncLock } from "./syncLock.js";
 import { emitObservation, hasObserver, setObserver } from "./observability.js";
 import { MidenClient } from "./client.js";
 import { CompilerResource } from "./resources/compiler.js";
@@ -675,6 +675,9 @@ class WebClient {
     // it on the chain — see the comment on `_serializeWasmCall` for the
     // safety contract.
     this._withInnerLockDepth = 0;
+    // Calls of this instance that hold the store lock while their chain slot
+    // has not started yet; see `_withStoreLock`.
+    this._queuedStoreLockCalls = 0;
 
     // The high-fidelity channel is decided here and nowhere else. Writing it
     // as a non-writable, non-configurable property means no later assignment
@@ -789,6 +792,70 @@ class WebClient {
   }
 
   /**
+   * The id the store lock is keyed by.
+   * @private
+   */
+  _storeLockId() {
+    return this.storeName || "default";
+  }
+
+  /**
+   * Runs `fn` through `_serializeWasmCall` while holding the store lock, the
+   * per-store Web Lock of `syncLock.js`, so every call that writes the chain
+   * MMR or its tracked block headers excludes every other such call on the
+   * same store, across instances, tabs and workers. One that interleaves
+   * corrupts the MMR for good: a note import reads the partial MMR, awaits
+   * the node, then stores a header whose path is trimmed to the forest it
+   * read, and a sync committing new peaks in between leaves that path too
+   * short. Lock order is always store lock, then call chain.
+   *
+   * `syncMethod` coalesces concurrent calls of that sync into one run. Without
+   * it every call runs, queued behind the current holder.
+   *
+   * Nested in `_withInnerWebClient`, this instance's chain is already held. A
+   * call of this instance that took the lock before that slot started waits
+   * behind it on the chain, so waiting for the lock here would deadlock both.
+   * The nested call then runs inline, still excluding other instances: the
+   * queued holder keeps the lock until it has run.
+   *
+   * @param {() => Promise<any>} fn - The WASM work.
+   * @param {string} [opName] - Operation name, as for `_serializeWasmCall`.
+   * @param {string} [syncMethod] - The sync method to coalesce under.
+   * @returns {Promise<any>} The result of fn.
+   * @private
+   */
+  _withStoreLock(fn, opName, syncMethod) {
+    // A terminated client contends for no lock and shares no other run.
+    if (this._terminated && this._withInnerLockDepth === 0) {
+      return Promise.reject(new Error("WebClient terminated"));
+    }
+    if (this._withInnerLockDepth > 0 && this._queuedStoreLockCalls > 0) {
+      return this._serializeWasmCall(fn, opName);
+    }
+    const underLock = () => {
+      let queued = this._withInnerLockDepth === 0;
+      if (queued) this._queuedStoreLockCalls += 1;
+      const started = () => {
+        if (queued) {
+          queued = false;
+          this._queuedStoreLockCalls -= 1;
+        }
+      };
+      const call = this._serializeWasmCall(() => {
+        started();
+        return fn();
+      }, opName);
+      // Also settles a call `_serializeWasmCall` rejected without running.
+      call.then(started, started);
+      return call;
+    };
+    const dbId = this._storeLockId();
+    return syncMethod
+      ? withSyncLock(dbId, syncMethod, underLock)
+      : runUnderLock(dbId, underLock);
+  }
+
+  /**
    * Returns a promise that resolves once every serialized WASM call that
    * was already on `_wasmCallChain` when `waitForIdle()` was called has
    * settled. Use this from callers that need to perform a non-WASM-side
@@ -800,14 +867,14 @@ class WebClient {
    * this is intentional, so a caller can drain and then proceed without
    * being blocked indefinitely by a concurrent workload.
    *
-   * Caveat for `syncState`: `syncStateWithTimeout` awaits
-   * `acquireSyncLock` (Web Locks) BEFORE wrapping its WASM call in
-   * `_serializeWasmCall`, so a sync that is queued on the sync lock but
-   * has not yet reached its WASM phase is not on the chain and will not
-   * be awaited. Every other serialized method (`executeTransaction`,
-   * `newWallet`, `submitNewTransaction`, `proveTransaction`,
-   * `applyTransaction`, and the proxy-fallback reads) routes through
-   * the chain synchronously on call and is always observed.
+   * Caveat for the calls that take the store lock (the syncs,
+   * `importNoteFile`, `fetchPrivateNotes` and account creation): they
+   * acquire it BEFORE wrapping their WASM call in `_serializeWasmCall`
+   * (see `_withStoreLock`), so one still waiting for the lock is not on
+   * the chain and will not be awaited. Every other serialized method
+   * (`executeTransaction`, `submitNewTransaction`, `proveTransaction`,
+   * `applyTransaction`, and the proxy-fallback reads) routes through the
+   * chain synchronously on call and is always observed.
    *
    * @returns {Promise<void>}
    */
@@ -1077,8 +1144,11 @@ class WebClient {
 
   // ----- Explicitly Wrapped Methods (Worker-Forwarded) -----
 
+  // Account creation syncs a store still at genesis first
+  // (`maybe_sync_before_account_creation`), and that sync writes the chain
+  // MMR, so the four creation methods take the store lock like the syncs.
   async newWallet(storageMode, authSchemeId, seed) {
-    return this._serializeWasmCall(async () => {
+    return this._withStoreLock(async () => {
       const wasm = await getWasmOrThrow();
       const wasmWebClient = await this.getWasmWebClient();
       return await wasmWebClient.newWallet(
@@ -1098,7 +1168,7 @@ class WebClient {
     maxSupply,
     authSchemeId
   ) {
-    return this._serializeWasmCall(async () => {
+    return this._withStoreLock(async () => {
       const wasm = await getWasmOrThrow();
       const wasmWebClient = await this.getWasmWebClient();
       return await wasmWebClient.newFaucet(
@@ -1125,17 +1195,31 @@ class WebClient {
   }
 
   async newAccount(account, overwrite) {
-    return this._serializeWasmCall(async () => {
+    return this._withStoreLock(async () => {
       const wasmWebClient = await this.getWasmWebClient();
       return await wasmWebClient.newAccount(account, overwrite);
     }, "newAccount");
   }
 
   async newAccountWithSecretKey(account, secretKey) {
-    return this._serializeWasmCall(async () => {
+    return this._withStoreLock(async () => {
       const wasmWebClient = await this.getWasmWebClient();
       return await wasmWebClient.newAccountWithSecretKey(account, secretKey);
     }, "newAccountWithSecretKey");
+  }
+
+  async importNoteFile(noteFile) {
+    return this._withStoreLock(async () => {
+      const wasmWebClient = await this.getWasmWebClient();
+      return await wasmWebClient.importNoteFile(noteFile);
+    }, "importNoteFile");
+  }
+
+  async fetchPrivateNotes() {
+    return this._withStoreLock(async () => {
+      const wasmWebClient = await this.getWasmWebClient();
+      return await wasmWebClient.fetchPrivateNotes();
+    }, "fetchPrivateNotes");
   }
 
   async submitNewTransaction(accountId, transactionRequest) {
@@ -1347,16 +1431,13 @@ class WebClient {
    * @returns {Promise<SyncSummary>} The sync summary
    */
   async syncState() {
-    const dbId = this.storeName || "default";
     const methodId = MethodName.SYNC_STATE;
 
     try {
-      // The sync lock coalesces concurrent sync callers; the inner
-      // `_serializeWasmCall` keeps the WASM phase from racing any other
-      // serialized method on this instance. Lock order is always
-      // sync lock → chain, so the two can't deadlock.
-      return await withSyncLock(dbId, methodId, async () =>
-        this._serializeWasmCall(async () => {
+      // `_withStoreLock` coalesces concurrent callers of this sync under the
+      // store lock, then serializes the WASM phase on this instance's chain.
+      return await this._withStoreLock(
+        async () => {
           if (!this.worker) {
             const wasmWebClient = await this.getWasmWebClient();
             return await wasmWebClient.syncStateImpl();
@@ -1367,7 +1448,9 @@ class WebClient {
           return wasm.SyncSummary.deserialize(
             new Uint8Array(serializedSyncSummaryBytes)
           );
-        }, methodId)
+        },
+        methodId,
+        methodId
       );
     } catch (error) {
       console.error("INDEX.JS: Error in syncState:", error);
@@ -1381,19 +1464,20 @@ class WebClient {
    * @returns {Promise<void>}
    */
   async syncNoteTransport() {
-    const dbId = this.storeName || "default";
     const methodId = MethodName.SYNC_NOTE_TRANSPORT;
 
     try {
-      await withSyncLock(dbId, methodId, async () =>
-        this._serializeWasmCall(async () => {
+      await this._withStoreLock(
+        async () => {
           if (!this.worker) {
             const wasmWebClient = await this.getWasmWebClient();
             await wasmWebClient.syncNoteTransportImpl();
           } else {
             await this.callMethodWithWorker(methodId);
           }
-        }, methodId)
+        },
+        methodId,
+        methodId
       );
     } catch (error) {
       console.error("INDEX.JS: Error in syncNoteTransport:", error);
@@ -1407,12 +1491,11 @@ class WebClient {
    * @returns {Promise<SyncSummary>}
    */
   async syncChain() {
-    const dbId = this.storeName || "default";
     const methodId = MethodName.SYNC_CHAIN;
 
     try {
-      return await withSyncLock(dbId, methodId, async () =>
-        this._serializeWasmCall(async () => {
+      return await this._withStoreLock(
+        async () => {
           if (!this.worker) {
             const wasmWebClient = await this.getWasmWebClient();
             return await wasmWebClient.syncChainImpl();
@@ -1423,7 +1506,9 @@ class WebClient {
           return wasm.SyncSummary.deserialize(
             new Uint8Array(serializedSyncSummaryBytes)
           );
-        }, methodId)
+        },
+        methodId,
+        methodId
       );
     } catch (error) {
       console.error("INDEX.JS: Error in syncChain:", error);
@@ -1441,7 +1526,9 @@ class WebClient {
    * resources. A call already queued or running that executes against the
    * main-realm wasm client still finishes. A call that needs the worker,
    * whether in flight, waiting for the worker to be ready or still queued
-   * behind terminate(), rejects with "WebClient terminated". Every wasm call
+   * behind terminate(), rejects with "WebClient terminated", and so does a
+   * call still waiting for the store lock, which is not queued yet: a sync,
+   * a note import, `fetchPrivateNotes` or account creation. Every wasm call
    * made after terminate() fails with it too: a synchronous member or an
    * accessor throws, every other member rejects. The release waits until all
    * of these calls have settled. Calling it again is harmless.
@@ -1534,6 +1621,10 @@ class MockWebClient extends WebClient {
     );
   }
 
+  _storeLockId() {
+    return this.storeName || "mock";
+  }
+
   initializeWorker() {
     // Pass `numThreads` exactly like the real INIT path: every prove runs
     // inside the worker's own WASM instance, and rayon's pool is
@@ -1608,12 +1699,11 @@ class MockWebClient extends WebClient {
    * @returns {Promise<SyncSummary>} The sync summary
    */
   async syncState() {
-    const dbId = this.storeName || "mock";
     const methodId = MethodName.SYNC_STATE;
 
     try {
-      return await withSyncLock(dbId, methodId, async () =>
-        this._serializeWasmCall(async () => {
+      return await this._withStoreLock(
+        async () => {
           const wasmWebClient = await this.getWasmWebClient();
 
           if (!this.worker) {
@@ -1635,7 +1725,9 @@ class MockWebClient extends WebClient {
           return wasm.SyncSummary.deserialize(
             new Uint8Array(serializedSyncSummaryBytes)
           );
-        })
+        },
+        undefined,
+        methodId
       );
     } catch (error) {
       console.error("INDEX.JS: Error in syncState:", error);
@@ -1654,12 +1746,11 @@ class MockWebClient extends WebClient {
    * @returns {Promise<SyncSummary>}
    */
   async syncChain() {
-    const dbId = this.storeName || "mock";
     const methodId = MethodName.SYNC_CHAIN;
 
     try {
-      return await withSyncLock(dbId, methodId, async () =>
-        this._serializeWasmCall(async () => {
+      return await this._withStoreLock(
+        async () => {
           const wasmWebClient = await this.getWasmWebClient();
 
           if (!this.worker) {
@@ -1681,7 +1772,9 @@ class MockWebClient extends WebClient {
           return wasm.SyncSummary.deserialize(
             new Uint8Array(serializedSyncSummaryBytes)
           );
-        })
+        },
+        undefined,
+        methodId
       );
     } catch (error) {
       console.error("INDEX.JS: Error in syncChain:", error);
@@ -1699,12 +1792,11 @@ class MockWebClient extends WebClient {
    * @returns {Promise<void>}
    */
   async syncNoteTransport() {
-    const dbId = this.storeName || "mock";
     const methodId = MethodName.SYNC_NOTE_TRANSPORT;
 
     try {
-      await withSyncLock(dbId, methodId, async () =>
-        this._serializeWasmCall(async () => {
+      await this._withStoreLock(
+        async () => {
           const wasmWebClient = await this.getWasmWebClient();
 
           if (!this.worker) {
@@ -1723,7 +1815,9 @@ class MockWebClient extends WebClient {
             serializedMockChain,
             serializedMockNoteTransportNode
           );
-        })
+        },
+        undefined,
+        methodId
       );
     } catch (error) {
       console.error("INDEX.JS: Error in syncNoteTransport:", error);

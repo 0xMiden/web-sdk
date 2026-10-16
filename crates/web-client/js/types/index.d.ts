@@ -220,7 +220,9 @@ export declare class WasmWebClient extends WasmWebClientBase {
    * A call already queued or running that executes against the main-realm
    * wasm client still finishes. A call that needs the worker, whether in
    * flight, waiting for the worker to be ready or still queued behind
-   * terminate(), rejects with "WebClient terminated". Every wasm call made
+   * terminate(), rejects with "WebClient terminated", and so does a call
+   * still waiting for the store lock, which is not queued yet: a sync, a
+   * note import, `fetchPrivateNotes` or account creation. Every wasm call made
    * after terminate() fails with it too: a synchronous member or an accessor
    * throws, every other member rejects. The release waits until all of these
    * calls have settled. Calling it again is harmless.
