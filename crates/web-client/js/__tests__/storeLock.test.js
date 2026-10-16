@@ -46,18 +46,21 @@ function uniqueStore() {
 const events = [];
 const parked = new Map();
 
+function parkedCall(name, method) {
+  return vi.fn(async (...args) => {
+    const label =
+      args[0] === undefined
+        ? `${name}.${method}`
+        : `${name}.${method} ${args[0]}`;
+    events.push(`start ${label}`);
+    await new Promise((resolve) => parked.set(label, resolve));
+    events.push(`end ${label}`);
+    return label;
+  });
+}
+
 function makeWasmClient(name) {
-  const call = (method) =>
-    vi.fn(async (...args) => {
-      const label =
-        args[0] === undefined
-          ? `${name}.${method}`
-          : `${name}.${method} ${args[0]}`;
-      events.push(`start ${label}`);
-      await new Promise((resolve) => parked.set(label, resolve));
-      events.push(`end ${label}`);
-      return label;
-    });
+  const call = (method) => parkedCall(name, method);
   return {
     free: vi.fn(),
     syncStateImpl: call("syncState"),
@@ -71,6 +74,9 @@ function makeWasmClient(name) {
     newAccountWithSecretKey: call("newAccountWithSecretKey"),
     executeTransaction: call("executeTransaction"),
     getAccounts: call("getAccounts"),
+    // The genesis sync account creation runs first returns at once and records
+    // nothing, so a creation's events are its create call's.
+    syncBeforeAccountCreation: vi.fn(async () => {}),
   };
 }
 
@@ -165,6 +171,9 @@ const deferred = () => {
   return { promise, resolve };
 };
 
+// The names of the locks the stand-in below has granted and not yet released.
+const heldLocks = new Set();
+
 // An exclusive, first-come Web Locks stand-in. Like a browser, it grants a
 // request in a later macrotask, never in the task that made it.
 function installWebLocks() {
@@ -172,7 +181,14 @@ function installWebLocks() {
   const request = vi.fn((name, _options, fn) => {
     const granted = (tails.get(name) ?? Promise.resolve())
       .then(() => new Promise((resolve) => setTimeout(resolve, 0)))
-      .then(() => fn());
+      .then(async () => {
+        heldLocks.add(name);
+        try {
+          return await fn();
+        } finally {
+          heldLocks.delete(name);
+        }
+      });
     tails.set(
       name,
       granted.then(
@@ -210,6 +226,7 @@ afterEach(async () => {
     value: origNavigator,
   });
   events.length = 0;
+  heldLocks.clear();
   fakeWasm.nextClients.length = 0;
   fakeWasm.storeNameFailure = null;
   __resetObserverForTest();
@@ -707,6 +724,17 @@ describe("store lock across WebClient instances (Web Locks)", () => {
       label: "fetchPrivateNotes",
     },
     {
+      name: "syncBeforeAccountCreation",
+      prepare: (c) => {
+        c.wasmClient.syncBeforeAccountCreation = parkedCall(
+          "B",
+          "syncBeforeAccountCreation"
+        );
+      },
+      call: (c) => c.client.syncBeforeAccountCreation(),
+      label: "syncBeforeAccountCreation",
+    },
+    {
       name: "syncState",
       call: (c) => c.client.syncState(),
       label: "syncState",
@@ -741,13 +769,14 @@ describe("store lock across WebClient instances (Web Locks)", () => {
     },
   ])(
     "makes $name, the first call on its client, request the store lock and wait for another client's holder",
-    async ({ mock = false, call, label }) => {
+    async ({ mock = false, prepare, call, label }) => {
       const store = mock ? undefined : uniqueStore();
       const lockName = mock
         ? "miden-sync-mock_client_db"
         : `miden-sync-${store}`;
       const a = makeWebClient(store, "A", { mock });
       const b = makeWebClient(store, "B", { mock });
+      prepare?.(b);
 
       const held = a.client.importNoteFile("held");
       await waitForStart("A.importNoteFile held");
@@ -770,6 +799,115 @@ describe("store lock across WebClient instances (Web Locks)", () => {
       ]);
     }
   );
+
+  const creations = [
+    {
+      name: "newWallet",
+      call: (c) => c.client.newWallet("private", "falcon"),
+      args: ["private", 2, undefined, true],
+    },
+    {
+      name: "newFaucet",
+      call: (c) =>
+        c.client.newFaucet("private", false, "T", "TOK", 8, 1n, "falcon"),
+      args: ["private", false, "T", "TOK", 8, 1n, 2, true],
+    },
+    {
+      name: "newAccount",
+      call: (c) => c.client.newAccount("account", false),
+      args: ["account", false, true],
+    },
+    {
+      name: "newAccountWithSecretKey",
+      call: (c) => c.client.newAccountWithSecretKey("keyed", "key"),
+      args: ["keyed", "key", true],
+    },
+  ];
+
+  it.each(creations)(
+    "runs $name as one observed call holding the store lock for its genesis sync only, then creating with its own pre-sync skipped",
+    async ({ name, call, args }) => {
+      const ops = [];
+      setObserver((observation) => ops.push(observation.op));
+      const store = uniqueStore();
+      const a = makeWebClient(store, "A");
+      const lock = () =>
+        heldLocks.has(`miden-sync-${store}`) ? "locked" : "unlocked";
+      const steps = [];
+      a.wasmClient.syncBeforeAccountCreation = vi.fn(async () => {
+        steps.push(`pre-sync ${lock()}`);
+      });
+      a.wasmClient[name] = vi.fn(async () => {
+        steps.push(`${name} ${lock()}`);
+        return name;
+      });
+
+      await expect(call(a)).resolves.toBe(name);
+      expect(steps).toEqual(["pre-sync locked", `${name} unlocked`]);
+      expect(a.wasmClient[name]).toHaveBeenCalledWith(...args);
+      expect(ops).toEqual([name]);
+    }
+  );
+
+  it("finishes newWallet when the external keystore's insertKey awaits a sync on another client of the store, and both settle", async () => {
+    const store = uniqueStore();
+    const b = makeWebClient(store, "B");
+    b.wasmClient.syncStateImpl = vi.fn(async () => "B.syncState");
+    let synced;
+    const insertKey = vi.fn(async () => {
+      synced = b.client.syncState();
+      await synced;
+    });
+    const wasmClient = makeWasmClient("A");
+    wasmClient.createClientWithExternalKeystore = vi.fn(async () => {});
+    // As the Rust keystore does once the wallet is stored.
+    wasmClient.newWallet = vi.fn(async () => {
+      const insertKeyCb =
+        wasmClient.createClientWithExternalKeystore.mock.calls[0][6];
+      await insertKeyCb("key", "account");
+      return "wallet";
+    });
+    fakeWasm.nextClients.push(wasmClient);
+    const a = await WasmWebClient.createClientWithExternalKeystore(
+      undefined,
+      undefined,
+      undefined,
+      store,
+      undefined,
+      insertKey,
+      undefined,
+      undefined,
+      false
+    );
+
+    const created = a.newWallet("private", "falcon");
+    const timedOut = new Promise((resolve) =>
+      setTimeout(() => resolve("timed out"), 1000)
+    );
+    expect(await Promise.race([created, timedOut])).toBe("wallet");
+    expect(insertKey).toHaveBeenCalledTimes(1);
+    await expect(synced).resolves.toBe("B.syncState");
+  });
+
+  it("resolves a newWallet queued before terminate() while its genesis sync waits for the store lock", async () => {
+    const store = uniqueStore();
+    const a = makeWebClient(store, "A");
+    const holder = makeWebClient(store, "H");
+
+    const held = holder.client.importNoteFile("held");
+    await waitForStart("H.importNoteFile held");
+    const created = a.client.newWallet("private", "falcon");
+    await flush();
+    a.instance.terminate();
+    await release("H.importNoteFile held");
+    await held;
+
+    expect(await state(created)).toBe("pending");
+    await release("A.newWallet private");
+    await expect(created).resolves.toBe("A.newWallet private");
+    await a.instance.waitForIdle();
+    expect(a.wasmClient.free).toHaveBeenCalledTimes(1);
+  });
 
   it("holds the lock across a worker-mode sync", async () => {
     const store = uniqueStore();

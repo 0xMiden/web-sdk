@@ -202,6 +202,7 @@ describe("WebClient AuthScheme resolution", () => {
   beforeEach(() => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     inner = {
+      syncBeforeAccountCreation: vi.fn().mockResolvedValue(undefined),
       newWallet: vi.fn().mockResolvedValue("wallet"),
       newFaucet: vi.fn().mockResolvedValue("faucet"),
       importPublicAccountFromSeed: vi.fn().mockResolvedValue("account"),
@@ -225,7 +226,7 @@ describe("WebClient AuthScheme resolution", () => {
 
   it("newWallet hands the wasm client the ECDSA enum value", async () => {
     await expect(client.newWallet("mode", "ecdsa")).resolves.toBe("wallet");
-    expect(inner.newWallet).toHaveBeenCalledWith("mode", 1, undefined);
+    expect(inner.newWallet).toHaveBeenCalledWith("mode", 1, undefined, true);
   });
 
   it("newFaucet hands the wasm client the Falcon enum value", async () => {
@@ -239,7 +240,8 @@ describe("WebClient AuthScheme resolution", () => {
       "TOK",
       8,
       1000n,
-      2
+      2,
+      true
     );
   });
 
@@ -276,6 +278,9 @@ describe("WasmWebClient.terminate", () => {
       this.calls += 1;
       if (this.freed) throw new Error("used after free");
       return ["account"];
+    }
+    async syncBeforeAccountCreation() {
+      if (this.freed) throw new Error("used after free");
     }
     async newWallet() {
       if (this.freed) throw new Error("used after free");
