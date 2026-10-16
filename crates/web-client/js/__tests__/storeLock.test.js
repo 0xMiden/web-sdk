@@ -1002,6 +1002,41 @@ describe("store lock across WebClient instances (Web Locks)", () => {
     }
   );
 
+  // The earlier call is a read, which holds its client's chain slot and no
+  // store lock, so only the chain slot can hold the height read back.
+  const readsSyncHeight = new Set([
+    ...creations.map(({ name }) => name),
+    "syncBeforeAccountCreation",
+  ]);
+  it.each(firstCalls.filter(({ name }) => readsSyncHeight.has(name)))(
+    "makes $name read the sync height only after an earlier call on its client settles",
+    async ({ prepare, call, label }) => {
+      const b = makeWebClient(uniqueStore(), "B");
+      prepare?.(b);
+      b.wasmClient.getSyncHeight = vi.fn(async () => {
+        events.push("height B");
+        return 0;
+      });
+
+      const read = b.client.getAccounts();
+      await waitForStart("B.getAccounts");
+      const result = call(b);
+      await flush();
+      expect(events).toEqual(["start B.getAccounts"]);
+
+      await release("B.getAccounts");
+      await release(`B.${label}`);
+      await Promise.all([read, result]);
+      expect(events).toEqual([
+        "start B.getAccounts",
+        "end B.getAccounts",
+        "height B",
+        `start B.${label}`,
+        `end B.${label}`,
+      ]);
+    }
+  );
+
   it("refuses a non-fungible faucet with the wasm client's bare string before its genesis sync or a store-lock request", async () => {
     const message = "Non-fungible faucets are not supported yet";
     const store = uniqueStore();
