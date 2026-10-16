@@ -74,8 +74,10 @@ function makeWasmClient(name) {
     newAccountWithSecretKey: call("newAccountWithSecretKey"),
     executeTransaction: call("executeTransaction"),
     getAccounts: call("getAccounts"),
-    // The genesis sync account creation runs first returns at once and records
-    // nothing, so a creation's events are its create call's.
+    // The sync height read and the genesis sync account creation runs first
+    // return at once and record nothing, so a creation's events are its create
+    // call's. The store is at genesis unless a test says otherwise.
+    getSyncHeight: vi.fn(async () => 0),
     syncBeforeAccountCreation: vi.fn(async () => {}),
   };
 }
@@ -679,7 +681,8 @@ describe("store lock across WebClient instances (Web Locks)", () => {
   });
 
   // Each call is the first on its client, so nothing else on that client can
-  // hold it behind the holder: only its own lock request can.
+  // hold it behind the holder: only its own lock request can. The creations
+  // and syncBeforeAccountCreation run on a store at genesis.
   const midenOf = (c) => new MidenClient(c.client, async () => fakeWasm, null);
   const firstCalls = [
     {
@@ -876,6 +879,126 @@ describe("store lock across WebClient instances (Web Locks)", () => {
       expect(steps).toEqual(["pre-sync locked", `${name} unlocked`]);
       expect(a.wasmClient[name]).toHaveBeenCalledWith(...args);
       expect(ops).toEqual([name]);
+    }
+  );
+
+  // The two calls that run account creation's genesis sync.
+  const preSyncCalls = [
+    {
+      name: "newWallet",
+      call: (c) => c.client.newWallet("private", "falcon"),
+      value: "wallet",
+      createCalls: [["private", 2, undefined, true]],
+    },
+    {
+      name: "syncBeforeAccountCreation",
+      call: (c) => c.client.syncBeforeAccountCreation(),
+      value: undefined,
+      createCalls: [],
+    },
+  ];
+
+  // A client whose sync height read is `getSyncHeight`, whose newWallet
+  // settles at once, and whose pre-sync records whether it ran under the lock.
+  function preSyncClient(store, getSyncHeight) {
+    const c = makeWebClient(store, "B");
+    const steps = [];
+    c.wasmClient.getSyncHeight = vi.fn(getSyncHeight);
+    c.wasmClient.syncBeforeAccountCreation = vi.fn(async () => {
+      const held = heldLocks.has(`miden-sync-${store}`);
+      steps.push(held ? "pre-sync locked" : "pre-sync unlocked");
+    });
+    c.wasmClient.newWallet = vi.fn(async () => "wallet");
+    return { ...c, steps };
+  }
+
+  it.each(preSyncCalls)(
+    "settles $name on a store past genesis while another client holds the store lock, requesting no lock and skipping the pre-sync",
+    async ({ call, value, createCalls }) => {
+      const store = uniqueStore();
+      const a = makeWebClient(store, "A");
+      const b = preSyncClient(store, async () => 7);
+
+      const held = a.client.importNoteFile("held");
+      await waitForStart("A.importNoteFile held");
+      const requestsBefore = lockRequest.mock.calls.length;
+      const result = call(b);
+      expect(await state(result)).toBe("resolved");
+      expect(heldLocks.has(`miden-sync-${store}`)).toBe(true);
+      await expect(result).resolves.toBe(value);
+      expect(lockRequest.mock.calls.length).toBe(requestsBefore);
+      expect(b.wasmClient.getSyncHeight).toHaveBeenCalledTimes(1);
+      expect(b.wasmClient.syncBeforeAccountCreation).not.toHaveBeenCalled();
+      expect(b.wasmClient.newWallet.mock.calls).toEqual(createCalls);
+
+      await release("A.importNoteFile held");
+      await held;
+    }
+  );
+
+  it.each(preSyncCalls)(
+    "observes $name on a store past genesis without another client's hold of the store lock in its duration",
+    async ({ name, call }) => {
+      const store = uniqueStore();
+      const a = makeWebClient(store, "A");
+      const b = preSyncClient(store, async () => 7);
+      let now = 0;
+      vi.spyOn(performance, "now").mockImplementation(() => now);
+
+      const held = a.client.importNoteFile("held");
+      await waitForStart("A.importNoteFile held");
+      // Registered after the holder's call, so only `call` is observed.
+      const seen = [];
+      setObserver((observation) => seen.push(observation));
+      const result = call(b);
+      await flush();
+      now = 1000;
+
+      await release("A.importNoteFile held");
+      await Promise.all([held, result]);
+      expect(seen).toEqual([{ op: name, outcome: "ok", durationMs: 0 }]);
+    }
+  );
+
+  it.each(preSyncCalls)(
+    "makes $name on a store at genesis wait for another client's hold of the store lock and run the pre-sync under it",
+    async ({ call, value, createCalls }) => {
+      const store = uniqueStore();
+      const a = makeWebClient(store, "A");
+      const b = preSyncClient(store, async () => 0);
+
+      const held = a.client.importNoteFile("held");
+      await waitForStart("A.importNoteFile held");
+      const requestsBefore = lockRequest.mock.calls.length;
+      const result = call(b);
+      expect(await state(result)).toBe("pending");
+      expect(b.steps).toEqual([]);
+      expect(
+        lockRequest.mock.calls.slice(requestsBefore).map(([name]) => name)
+      ).toEqual([`miden-sync-${store}`]);
+
+      await release("A.importNoteFile held");
+      await held;
+      await expect(result).resolves.toBe(value);
+      expect(b.steps).toEqual(["pre-sync locked"]);
+      expect(b.wasmClient.newWallet.mock.calls).toEqual(createCalls);
+    }
+  );
+
+  it.each(preSyncCalls)(
+    "takes the genesis path for $name when the sync height read rejects: one lock request, the pre-sync under it, and no rejection",
+    async ({ call, value, createCalls }) => {
+      const store = uniqueStore();
+      const b = preSyncClient(store, async () => {
+        throw new Error("failed to get sync height");
+      });
+
+      await expect(call(b)).resolves.toBe(value);
+      expect(lockRequest.mock.calls.map(([name]) => name)).toEqual([
+        `miden-sync-${store}`,
+      ]);
+      expect(b.steps).toEqual(["pre-sync locked"]);
+      expect(b.wasmClient.newWallet.mock.calls).toEqual(createCalls);
     }
   );
 

@@ -215,6 +215,7 @@ describe("WebClient AuthScheme resolution", () => {
       value: { locks: { request: lockRequest } },
     });
     inner = {
+      getSyncHeight: vi.fn().mockResolvedValue(0),
       syncBeforeAccountCreation: vi.fn().mockResolvedValue(undefined),
       newWallet: vi.fn().mockResolvedValue("wallet"),
       newFaucet: vi.fn().mockResolvedValue("faucet"),
@@ -291,6 +292,7 @@ describe("WebClient AuthScheme resolution", () => {
     async ({ method, call }) => {
       await expect(call(client)).rejects.toThrow('Unknown auth scheme: "99"');
       expect(lockRequest).not.toHaveBeenCalled();
+      expect(inner.getSyncHeight).not.toHaveBeenCalled();
       expect(inner.syncBeforeAccountCreation).not.toHaveBeenCalled();
       expect(inner[method]).not.toHaveBeenCalled();
     }
@@ -314,6 +316,10 @@ describe("WasmWebClient.terminate", () => {
       this.calls += 1;
       if (this.freed) throw new Error("used after free");
       return ["account"];
+    }
+    async getSyncHeight() {
+      if (this.freed) throw new Error("used after free");
+      return 0;
     }
     async syncBeforeAccountCreation() {
       if (this.freed) throw new Error("used after free");
