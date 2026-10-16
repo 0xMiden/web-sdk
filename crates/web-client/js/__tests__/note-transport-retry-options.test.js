@@ -1,8 +1,15 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 
 // `js/index.js` re-exports the wasm-bindgen surface from "../Cargo.toml",
-// which the node test environment cannot parse. Nothing below touches WASM.
+// which the node test environment cannot parse. The only WASM the tests below
+// reach is the export the factories name a client's store with, which the
+// stand-in module provides.
 vi.mock("../../Cargo.toml", () => ({}));
+vi.mock("../wasm.js", () => ({
+  default: async () => ({
+    resolveStoreName: (_nodeUrl, storeName) => storeName,
+  }),
+}));
 
 import { MidenClient, WasmWebClient } from "../index.js";
 import { WorkerAction } from "../constants.js";

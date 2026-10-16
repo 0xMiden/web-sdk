@@ -3,9 +3,15 @@ import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 // `js/index.js` re-exports the wasm-bindgen surface with
 // `export * from "../Cargo.toml"`, which the node test environment cannot
 // parse (the rollup rust plugin resolves it only during a real build).
-// Stubbing that one specifier makes the wrapper's own JS testable; nothing
-// below touches WASM.
+// Stubbing that one specifier makes the wrapper's own JS testable. The only
+// WASM the tests below reach is the export the factories name a client's
+// store with, which the stand-in module provides.
 vi.mock("../../Cargo.toml", () => ({}));
+vi.mock("../wasm.js", () => ({
+  default: async () => ({
+    resolveStoreName: (_nodeUrl, storeName) => storeName,
+  }),
+}));
 
 import {
   MidenClient,
@@ -201,8 +207,8 @@ describe("the high-fidelity flag is construction-only", () => {
 
 describe("the WebClient factories forward the observability options", () => {
   /**
-   * Stub the one WASM touchpoint on the factory path so the real static
-   * runs end to end in node.
+   * Stub the wasm client the factory builds so the real static runs end to
+   * end in node; the stand-in module above names its store.
    */
   function stubWasmClient() {
     vi.spyOn(WasmWebClient.prototype, "getWasmWebClient").mockImplementation(

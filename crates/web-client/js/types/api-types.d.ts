@@ -190,7 +190,11 @@ export interface MidenObservation {
   /** Client operation name, e.g. `"syncState"`, `"proveTransaction"`. */
   op: string;
   outcome: "ok" | "error";
-  /** Wall time the caller waited, in milliseconds. */
+  /**
+   * Milliseconds from when the call's turn on its client's queue started
+   * until it settled; time queued behind the same client's earlier calls is
+   * not counted.
+   */
   durationMs: number;
   /**
    * Absent unless the client was constructed with `observeSensitive: true`.
@@ -1980,9 +1984,10 @@ export declare class MidenClient {
    * its auth callback doesn't race with the key being cleared. Does NOT
    * wait for calls enqueued after `waitForIdle()` returns.
    *
-   * Caveat for `sync`: a `syncState` blocked on its sync lock (Web
-   * Locks) has not yet reached the internal chain, so `waitForIdle`
-   * does not await it. Other serialized methods are always observed.
+   * A call that takes the store lock, a Web Lock shared by every client on
+   * the same store, is on the internal chain from the moment it is made,
+   * like every other call; the `frontend-pitfalls` skill shipped with this
+   * package lists those calls.
    *
    * Returns immediately if nothing was in flight.
    */

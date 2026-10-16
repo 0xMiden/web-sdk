@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // `../wasm.js`. Both are stubbed; the stand-in module's `WebClient` counts the
 // clients built, so a test can tell that a terminated wrapper builds none, keeps
 // the last one built, lets a test hold `createMockClient` open, and fails every
-// create call with `createFailure` when a test sets it.
+// create call with `createFailure` when a test sets it. `resolveStoreName`
+// stands in for the export the factories name a client's store with.
 const fakeWasm = vi.hoisted(() => {
   class WebClient {
     static constructed = 0;
@@ -29,6 +30,8 @@ const fakeWasm = vi.hoisted(() => {
   }
   return {
     WebClient,
+    resolveStoreName: (nodeUrl, storeName) =>
+      storeName ?? `MidenClientDB_${nodeUrl}`,
     TransactionResult: { deserialize: () => ({ id: () => "tx-id" }) },
     // The AuthScheme enum in the shape wasm-bindgen emits (each value also
     // maps back to its name), read by the WebClient wrapper's scheme resolution.
@@ -195,10 +198,25 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
 describe("WebClient AuthScheme resolution", () => {
   let client;
   let inner;
+  let lockRequest;
+  let navigatorDescriptor;
 
   beforeEach(() => {
     vi.spyOn(console, "log").mockImplementation(() => {});
+    // Without Web Locks the store lock is an in-process chain, which leaves no
+    // request to assert on.
+    navigatorDescriptor = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "navigator"
+    );
+    lockRequest = vi.fn((_name, _options, fn) => fn());
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { locks: { request: lockRequest } },
+    });
     inner = {
+      getSyncHeight: vi.fn().mockResolvedValue(0),
+      syncBeforeAccountCreation: vi.fn().mockResolvedValue(undefined),
       newWallet: vi.fn().mockResolvedValue("wallet"),
       newFaucet: vi.fn().mockResolvedValue("faucet"),
       importPublicAccountFromSeed: vi.fn().mockResolvedValue("account"),
@@ -218,11 +236,18 @@ describe("WebClient AuthScheme resolution", () => {
     client = createClientProxy(instance);
   });
 
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    if (navigatorDescriptor) {
+      Object.defineProperty(globalThis, "navigator", navigatorDescriptor);
+    } else {
+      delete globalThis.navigator;
+    }
+    vi.restoreAllMocks();
+  });
 
   it("newWallet hands the wasm client the ECDSA enum value", async () => {
     await expect(client.newWallet("mode", "ecdsa")).resolves.toBe("wallet");
-    expect(inner.newWallet).toHaveBeenCalledWith("mode", 1, undefined);
+    expect(inner.newWallet).toHaveBeenCalledWith("mode", 1, undefined, true);
   });
 
   it("newFaucet hands the wasm client the Falcon enum value", async () => {
@@ -236,7 +261,8 @@ describe("WebClient AuthScheme resolution", () => {
       "TOK",
       8,
       1000n,
-      2
+      2,
+      true
     );
   });
 
@@ -254,6 +280,23 @@ describe("WebClient AuthScheme resolution", () => {
     ).rejects.toThrow('Unknown auth scheme: "99"');
     expect(inner.importPublicAccountFromSeed).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { method: "newWallet", call: (c) => c.newWallet("mode", 99) },
+    {
+      method: "newFaucet",
+      call: (c) => c.newFaucet("mode", false, "Token", "TOK", 8, 1000n, 99),
+    },
+  ])(
+    "$method rejects a number that is not an AuthScheme value before its genesis sync or a store-lock request",
+    async ({ method, call }) => {
+      await expect(call(client)).rejects.toThrow('Unknown auth scheme: "99"');
+      expect(lockRequest).not.toHaveBeenCalled();
+      expect(inner.getSyncHeight).not.toHaveBeenCalled();
+      expect(inner.syncBeforeAccountCreation).not.toHaveBeenCalled();
+      expect(inner[method]).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe("WasmWebClient.terminate", () => {
@@ -273,6 +316,13 @@ describe("WasmWebClient.terminate", () => {
       this.calls += 1;
       if (this.freed) throw new Error("used after free");
       return ["account"];
+    }
+    async getSyncHeight() {
+      if (this.freed) throw new Error("used after free");
+      return 0;
+    }
+    async syncBeforeAccountCreation() {
+      if (this.freed) throw new Error("used after free");
     }
     async newWallet() {
       if (this.freed) throw new Error("used after free");

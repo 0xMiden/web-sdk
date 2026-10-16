@@ -89,6 +89,11 @@ export class MidenClient {
    * inline, racing wasm-bindgen's borrow check. The wallet pattern
    * (own outer mutex around `_withInnerWebClient`) satisfies this.
    *
+   * A call inside `fn` that takes the store lock (see
+   * `WebClient._withStoreLock`) still waits for other clients on the same
+   * store, and runs its own work rather than joining a sync this client
+   * queued behind `fn`.
+   *
    * Stability: marked `@internal`. The shape of the proxied client is
    * intentionally not part of the documented public API and may change
    * between SDK versions. If you depend on this method, pin the SDK
@@ -386,13 +391,8 @@ export class MidenClient {
    * intentional, so a caller can drain and proceed without being blocked
    * indefinitely by concurrent workload.
    *
-   * Caveat for `syncState`: `syncStateWithTimeout` awaits the sync lock
-   * (`acquireSyncLock`, which uses Web Locks) BEFORE putting its WASM
-   * call onto the chain, so a `syncState` that is queued on the sync
-   * lock — but has not yet begun its WASM phase — is not visible to
-   * `waitForIdle` and will not be awaited. Other methods (`newWallet`,
-   * `executeTransaction`, etc.) route through the chain synchronously
-   * on call and are always observed.
+   * A call that takes the store lock is on the chain from the moment it is
+   * made, like every other call; see `WebClient._withStoreLock`.
    *
    * Safe to call at any time; returns immediately if nothing was in
    * flight.
