@@ -822,12 +822,14 @@ class WebClient {
    * clients on different default stores do not block each other.
    *
    * The calls that take it: `syncState`, `syncChain` and `syncNoteTransport`
-   * on `WebClient` and `MockWebClient`, `importNoteFile`, `fetchPrivateNotes`
-   * and `syncBeforeAccountCreation`, the sync of a store still at genesis that
-   * account creation (`newWallet`, `newFaucet`, `newAccount`,
-   * `newAccountWithSecretKey`) runs first. A creation takes the lock only for
-   * that sync, inside its own call (see `_createAccount`), and releases it
-   * before it generates a key, stores the account or calls an external
+   * on `WebClient` and `MockWebClient`, `importNoteFile` and
+   * `fetchPrivateNotes`, all through this method; and
+   * `syncBeforeAccountCreation` and account creation (`newWallet`,
+   * `newFaucet`, `newAccount`, `newAccountWithSecretKey`), which request and
+   * wait for it only on a store still at genesis, for the sync a creation
+   * runs first there (see `_syncIfAtGenesis`). A creation takes the lock only
+   * for that sync, inside its own call (see `_createAccount`), and releases
+   * it before it generates a key, stores the account or calls an external
    * keystore's `insertKey`, so no application callback runs under the lock.
    * Two writes take no lock: the free `importStore` function, which replaces a
    * whole store, and the genesis block header `createClient` stores in a store
@@ -1182,36 +1184,68 @@ class WebClient {
    * Syncs this client if its sync height is still the genesis block, as
    * account creation does first, so the next sync after creating an account
    * does not scan the whole chain. Sync errors are ignored. The sync writes
-   * the chain MMR, so it takes the store lock; see `_withStoreLock`.
+   * the chain MMR, so on a store still at genesis it requests and waits for
+   * the store lock; past genesis it neither syncs nor requests the lock. See
+   * `_syncIfAtGenesis`.
    *
    * @returns {Promise<void>}
    */
   async syncBeforeAccountCreation() {
-    return this._withStoreLock(async () => {
+    return this._serializeWasmCall(async () => {
       const wasmWebClient = await this.getWasmWebClient();
-      return await wasmWebClient.syncBeforeAccountCreation();
+      await this._syncIfAtGenesis(wasmWebClient);
     }, "syncBeforeAccountCreation");
+  }
+
+  /**
+   * Runs the wasm client's `syncBeforeAccountCreation` under the store lock
+   * if the store is still at genesis, the only state in which it writes, and
+   * otherwise neither requests the lock nor syncs. Called inside the caller's
+   * chain slot, it reads the height there without the lock: the height only
+   * increases (`importStore` must not run on a store in use), so a store read
+   * past genesis stays past it. A failed read takes the genesis path, where
+   * the Rust pre-sync reads the height again under the lock and ignores
+   * errors.
+   *
+   * @param {object} wasmWebClient - This instance's wasm client.
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _syncIfAtGenesis(wasmWebClient) {
+    let atGenesis = true;
+    try {
+      atGenesis = (await wasmWebClient.getSyncHeight()) === 0;
+    } catch {
+      // Takes the genesis path.
+    }
+    if (atGenesis) {
+      await runUnderLock(this._storeLockId(), () =>
+        wasmWebClient.syncBeforeAccountCreation()
+      );
+    }
   }
 
   /**
    * Runs the account creation `method` of the wasm client as one call on this
    * instance's chain, observed under its name. Account creation first syncs a
    * store still at genesis, its only chain write. Inside the call, that sync
-   * runs under the store lock, which is released before the creation runs
-   * with its own pre-sync skipped, so key generation, the account insert and
-   * an external keystore's `insertKey` callback run without it: no
-   * application callback runs under the lock. Taking the chain slot first
-   * keeps call order, `terminate()` and `waitForIdle()` treating a creation
-   * as one call, and its observation includes the lock wait.
+   * runs under the store lock (see `_syncIfAtGenesis`), which is released
+   * before the creation runs with its own pre-sync skipped, so key
+   * generation, the account insert and an external keystore's `insertKey`
+   * callback run without it: no application callback runs under the lock.
+   * Past genesis the creation neither syncs nor requests the lock. Taking the
+   * chain slot first keeps call order, `terminate()` and `waitForIdle()`
+   * treating a creation as one call, and its observation includes any lock
+   * wait.
    *
    * @param {string} method - The wasm creation method, also the op name.
    * @param {(wasm: object) => any[]} resolveArgs - Its arguments, before the
-   *   trailing `skipPreSync`. Resolved before the pre-sync takes the store
-   *   lock, so an argument it checks itself, an unknown auth scheme or
-   *   `newFaucet`'s `nonFungible` of `true`, rejects without syncing. A type
-   *   error at the wasm boundary (a storage mode, account or secret key of the
-   *   wrong type, a `maxSupply` that is not a bigint) still rejects only after
-   *   the locked pre-sync.
+   *   trailing `skipPreSync`. Resolved before the height read and any
+   *   store-lock request, so an argument it checks itself, an unknown auth
+   *   scheme or `newFaucet`'s `nonFungible` of `true`, rejects without
+   *   syncing. A type error at the wasm boundary (a storage mode, account or
+   *   secret key of the wrong type, a `maxSupply` that is not a bigint) still
+   *   rejects only after them, and after the locked pre-sync at genesis.
    * @returns {Promise<any>} The result of the creation.
    * @private
    */
@@ -1220,9 +1254,7 @@ class WebClient {
       const wasm = await getWasmOrThrow();
       const args = resolveArgs(wasm);
       const wasmWebClient = await this.getWasmWebClient();
-      await runUnderLock(this._storeLockId(), () =>
-        wasmWebClient.syncBeforeAccountCreation()
-      );
+      await this._syncIfAtGenesis(wasmWebClient);
       return await wasmWebClient[method](...args, true);
     }, method);
   }

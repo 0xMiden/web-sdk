@@ -206,9 +206,9 @@ export declare class WasmWebClient extends WasmWebClientBase {
     init_seed: Uint8Array,
     auth_scheme: AuthSchemeType | number
   ): Promise<Account>;
-  // The wrapper runs a creation's pre-sync itself, under the store lock, and
-  // always skips the creation's own, so none of the four creations takes the
-  // generated trailing `skip_pre_sync`.
+  // The wrapper runs a creation's pre-sync itself, under the store lock and
+  // only on a store still at genesis, and always skips the creation's own, so
+  // none of the four creations takes the generated trailing `skip_pre_sync`.
   newAccount(account: Account, overwrite: boolean): Promise<void>;
   newAccountWithSecretKey(
     account: Account,

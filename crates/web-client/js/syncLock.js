@@ -140,9 +140,10 @@ export function coalesceRun(dbId, methodId, start, registry = inFlight, epoch) {
  *
  * - Any call on such a client, not only its store-locked calls (`syncState`,
  *   `syncChain`, `syncNoteTransport`, `importNoteFile` or `notes.import`,
- *   `fetchPrivateNotes` or `notes.fetchPrivate`, `syncBeforeAccountCreation`,
- *   and `newWallet`, `newFaucet`, `newAccount` and `newAccountWithSecretKey`,
- *   which hold the lock only for the sync of a store still at genesis they
+ *   `fetchPrivateNotes` or `notes.fetchPrivate`, and
+ *   `syncBeforeAccountCreation`, `newWallet`, `newFaucet`, `newAccount` and
+ *   `newAccountWithSecretKey`, which request and wait for the lock only on a
+ *   store still at genesis, the creations holding it only for the sync they
  *   run first, so no application callback such as an external keystore's
  *   `insertKey` runs under it). A store-locked call takes its place on its
  *   client's call chain first and requests the lock inside it, so one already
