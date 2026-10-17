@@ -22,6 +22,12 @@ export interface WalletModalProps {
   allowedPrivateData?: AllowedPrivateData;
 }
 
+function opensInBread({ adapter, readyState }: Wallet): boolean {
+  return (
+    adapter.name === MidenWalletName && readyState === WalletReadyState.Loadable
+  );
+}
+
 export const WalletModal: FC<WalletModalProps> = ({
   className = "",
   container = "body",
@@ -245,7 +251,7 @@ export const WalletModal: FC<WalletModalProps> = ({
                         <WalletListItem
                           key={wallet.adapter.name}
                           handleClick={(event) =>
-                            wallet.readyState === WalletReadyState.Loadable
+                            opensInBread(wallet)
                               ? handleLoadableWalletClick(event, wallet)
                               : handleWalletClick(event, wallet.adapter.name)
                           }
@@ -260,7 +266,7 @@ export const WalletModal: FC<WalletModalProps> = ({
               <>
                 <div className="wallet-adapter-modal-middle">
                   <DiscoverMidenMessage />
-                  {getStartedWallet.readyState === WalletReadyState.Loadable ? (
+                  {opensInBread(getStartedWallet) ? (
                     <button
                       type="button"
                       className="wallet-adapter-modal-middle-button"
