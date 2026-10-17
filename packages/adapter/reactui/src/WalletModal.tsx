@@ -92,6 +92,25 @@ export const WalletModal: FC<WalletModalProps> = ({
     [select, handleClose]
   );
 
+  const handleLoadableWalletClick = useCallback(
+    (event: MouseEvent, { adapter }: Wallet) => {
+      // Connecting a Loadable wallet hands off to its app, which the browser
+      // only allows from inside the tap, so it can't wait for the effect that
+      // select() would drive.
+      adapter
+        .connect(
+          privateDataPermission || PrivateDataPermission.UponRequest,
+          network || WalletAdapterNetwork.Testnet,
+          allowedPrivateData ?? AllowedPrivateData.None
+        )
+        .catch((e) => {
+          console.log({ e });
+        });
+      handleClose(event);
+    },
+    [privateDataPermission, network, allowedPrivateData, handleClose]
+  );
+
   const handleTabKey = useCallback(
     (event: KeyboardEvent) => {
       const node = ref.current;
@@ -226,7 +245,9 @@ export const WalletModal: FC<WalletModalProps> = ({
                         <WalletListItem
                           key={wallet.adapter.name}
                           handleClick={(event) =>
-                            handleWalletClick(event, wallet.adapter.name)
+                            wallet.readyState === WalletReadyState.Loadable
+                              ? handleLoadableWalletClick(event, wallet)
+                              : handleWalletClick(event, wallet.adapter.name)
                           }
                           wallet={wallet}
                         />
@@ -239,17 +260,29 @@ export const WalletModal: FC<WalletModalProps> = ({
               <>
                 <div className="wallet-adapter-modal-middle">
                   <DiscoverMidenMessage />
-                  <a
-                    href={getStartedWallet.adapter.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="wallet-adapter-modal-chrome-badge"
-                  >
-                    <img
-                      src="https://developer.chrome.com/static/docs/webstore/branding/image/HRs9MPufa1J1h5glNhut.png"
-                      alt="Available in the Chrome Web Store"
-                    />
-                  </a>
+                  {getStartedWallet.readyState === WalletReadyState.Loadable ? (
+                    <button
+                      type="button"
+                      className="wallet-adapter-modal-middle-button"
+                      onClick={(event) =>
+                        handleLoadableWalletClick(event, getStartedWallet)
+                      }
+                    >
+                      Open in Bread
+                    </button>
+                  ) : (
+                    <a
+                      href={getStartedWallet.adapter.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="wallet-adapter-modal-chrome-badge"
+                    >
+                      <img
+                        src="https://developer.chrome.com/static/docs/webstore/branding/image/HRs9MPufa1J1h5glNhut.png"
+                        alt="Available in the Chrome Web Store"
+                      />
+                    </a>
+                  )}
                 </div>
               </>
             )}
