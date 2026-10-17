@@ -18,6 +18,7 @@
   "license": "MIT",
   "scripts": {
     "build": "tsc && pnpm run copy-files",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "clean": "rimraf dist/ node_modules/",
     "copy-files": "copyfiles styles.css dist/",
     "doc": "typedoc --disableSources --plugin typedoc-plugin-markdown",
