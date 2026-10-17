@@ -47,10 +47,13 @@ about a second later: render from `readyState`, not from a check at mount.
 In a phone browser with nothing injected, the adapter starts at `Loadable`
 instead. That covers an iPhone, iPad or iPod user agent, a Mac user agent with
 more than one touch point (iPadOS asks for desktop sites by default) and an
-Android one. Detection keeps running, so it still moves to `Installed` when
-the wallet appears. The Bread app's own browser is the exception: it defines
-`window.bread` before any page script runs and injects the wallet later, so
-there the adapter starts at `NotDetected` and waits for the wallet.
+Android one, in a browser with the User Activation API
+(`navigator.userActivation`): the handoff needs to know a tap started it, so
+without the API the adapter stays at `NotDetected`. Detection keeps running,
+so it still moves to `Installed` when the wallet appears. The Bread app's own
+browser is the exception: it defines `window.bread` before any page script
+runs and injects the wallet later, so there the adapter starts at
+`NotDetected` and waits for the wallet.
 
 An adapter constructed where `window` or `document` is undefined is
 `Unsupported` **permanently** - the constructor decides once and never starts

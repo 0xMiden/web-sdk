@@ -140,8 +140,10 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
 
     if (this._readyState !== WalletReadyState.Unsupported) {
       // Bread's own browser defines window.bread before any page script runs
-      // and injects the wallet later, so a page there waits for the wallet.
-      if (isMobileBrowser() && !window.bread)
+      // and injects the wallet later, so a page there waits for the wallet. A
+      // browser without the User Activation API can't report the tap that the
+      // handoff needs.
+      if (isMobileBrowser() && !window.bread && navigator.userActivation)
         this._readyState = WalletReadyState.Loadable;
       scopePollingDetectionStrategy(() => this.detectWallet());
     }

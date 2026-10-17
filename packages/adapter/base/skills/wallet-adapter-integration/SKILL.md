@@ -117,7 +117,7 @@ rendered outside the provider, or with `useWallet()` from the same package.
 | `Unsupported` | No DOM. `MidenWalletAdapter` enters this state when `window` or `document` is undefined at construction, and never leaves it.                                                                     |
 | `NotDetected` | DOM present, nothing injected yet. The starting state in a desktop browser.                                                                                                                       |
 | `Installed`   | The wallet injected itself. `MidenWalletAdapter` polls for `window.midenWallet` or `window.miden` once a second, on `DOMContentLoaded`, on `load` and immediately, then emits `readyStateChange`. |
-| `Loadable`    | A phone browser with nothing injected, outside Bread's own browser. `MidenWalletAdapter` starts here on iOS, iPadOS and Android, and `openInBread()` or `connect()` opens the page in the Bread app (see below). |
+| `Loadable`    | A phone browser with nothing injected that has the User Activation API, outside Bread's own browser. `MidenWalletAdapter` starts here on iOS, iPadOS and Android, and `openInBread()` or `connect()` opens the page in the Bread app (see below). |
 
 The connect path is: `select(name)` writes the wallet name to
 `localStorage` (key `walletName`, override with `localStorageKey`), the
