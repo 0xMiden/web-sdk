@@ -5,6 +5,7 @@ import {
   EventEmitter,
   WalletReadyState,
   type Adapter,
+  WalletError,
   type WalletAdapterEvents,
   type WalletName,
 } from "@miden-sdk/miden-wallet-adapter-base";
@@ -159,5 +160,59 @@ describe("autoConnect (useWallet)", () => {
     await mountWithStoredWallet(stubAdapter);
 
     expect(stubAdapter.connect).not.toHaveBeenCalled();
+  });
+});
+
+describe("page lifecycle (useWallet)", () => {
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+  });
+
+  async function selectWithOnError(onError: (error: WalletError) => void) {
+    const stubAdapter = new StubAdapter();
+    const { result } = renderHook(() => useWallet(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <WalletProvider wallets={[stubAdapter]} onError={onError}>
+          {children}
+        </WalletProvider>
+      ),
+    });
+    await act(() => result.current.select(stubAdapter.name));
+    expect(result.current.wallet?.adapter).toBe(stubAdapter);
+    return { stubAdapter, result };
+  }
+
+  it("still handles adapter events after a canceled navigation", async () => {
+    const onError = vi.fn();
+    const { stubAdapter, result } = await selectWithOnError(onError);
+    const error = new WalletError("lost the wallet");
+
+    act(() => {
+      window.dispatchEvent(new Event("beforeunload"));
+      stubAdapter.emit("error", error);
+      stubAdapter.emit("disconnect");
+    });
+
+    expect(onError).toHaveBeenCalledWith(error);
+    expect(result.current.wallet).toBeNull();
+  });
+
+  it("ignores adapter events only while the page is hidden", async () => {
+    const onError = vi.fn();
+    const { stubAdapter } = await selectWithOnError(onError);
+    const error = new WalletError("lost the wallet");
+
+    act(() => {
+      window.dispatchEvent(new Event("pagehide"));
+      stubAdapter.emit("error", error);
+    });
+    expect(onError).not.toHaveBeenCalled();
+
+    act(() => {
+      window.dispatchEvent(new Event("pageshow"));
+      stubAdapter.emit("error", error);
+    });
+    expect(onError).toHaveBeenCalledWith(error);
   });
 });

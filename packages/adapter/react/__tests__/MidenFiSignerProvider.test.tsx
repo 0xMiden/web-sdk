@@ -716,4 +716,52 @@ describe("MidenFiSignerProvider", () => {
       }
     });
   });
+
+  describe("page lifecycle", () => {
+    async function renderWithOnError(onError: (error: unknown) => void) {
+      render(
+        <MidenFiSignerProvider onError={onError}>
+          <div />
+        </MidenFiSignerProvider>
+      );
+      await act(async () => {
+        await flushPromises();
+      });
+      expect(mockAdapter.on).toHaveBeenCalledWith(
+        "error",
+        expect.any(Function)
+      );
+    }
+
+    it("still reports adapter errors after a canceled navigation", async () => {
+      const onError = vi.fn();
+      await renderWithOnError(onError);
+      const error = new Error("lost the wallet");
+
+      act(() => {
+        window.dispatchEvent(new Event("beforeunload"));
+        mockAdapter.emit("error", error);
+      });
+
+      expect(onError).toHaveBeenCalledWith(error);
+    });
+
+    it("ignores adapter errors only while the page is hidden", async () => {
+      const onError = vi.fn();
+      await renderWithOnError(onError);
+      const error = new Error("lost the wallet");
+
+      act(() => {
+        window.dispatchEvent(new Event("pagehide"));
+        mockAdapter.emit("error", error);
+      });
+      expect(onError).not.toHaveBeenCalled();
+
+      act(() => {
+        window.dispatchEvent(new Event("pageshow"));
+        mockAdapter.emit("error", error);
+      });
+      expect(onError).toHaveBeenCalledWith(error);
+    });
+  });
 });

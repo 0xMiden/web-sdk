@@ -269,5 +269,32 @@ describe("Open in Bread", () => {
       vi.advanceTimersByTime(1000);
       expect(onReadyStateChange).toHaveBeenCalledTimes(1);
     });
+
+    it.each([
+      ["on a Mac", WalletReadyState.NotDetected, () => stubBrowser(MAC_UA)],
+      [
+        "inside Bread's own browser",
+        WalletReadyState.NotDetected,
+        () => {
+          stubBrowser(IPHONE_UA, 5);
+          (window as any).bread = { version: 1 };
+        },
+      ],
+      [
+        "without a DOM",
+        WalletReadyState.Unsupported,
+        () => {
+          stubBrowser(IPHONE_UA, 5);
+          vi.stubGlobal("document", undefined);
+        },
+      ],
+    ])("does nothing %s, where the adapter is %s", (_, readyState, setUp) => {
+      setUp();
+      const adapter = new MidenWalletAdapter();
+      expect(adapter.readyState).toBe(readyState);
+
+      adapter.openInBread();
+      expect(location.assign).not.toHaveBeenCalled();
+    });
   });
 });
