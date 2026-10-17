@@ -172,7 +172,8 @@ export const WalletModal: FC<WalletModalProps> = ({
   );
 
   useLayoutEffect(() => {
-    if (wallet) {
+    // A Loadable Bread is handed off by its Open in Bread button, from the tap.
+    if (wallet && !opensInBread(wallet)) {
       connect(
         privateDataPermission || PrivateDataPermission.UponRequest,
         network || WalletAdapterNetwork.Testnet,

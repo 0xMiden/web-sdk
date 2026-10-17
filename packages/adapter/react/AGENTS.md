@@ -69,7 +69,9 @@ one wallet is available.
 **Selection is persisted, connection is not.** The selected wallet name is
 stored in `localStorage` under `walletName` (override with
 `localStorageKey`). Reconnecting on load is `autoConnect`, which is `false` by
-default and silently clears the stored name when it fails.
+default, waits for the stored wallet to be `Installed` (connecting a
+`Loadable` one hands off to its app, which only a tap may start) and silently
+clears the stored name when it fails.
 
 **Server rendering diverges.** The stored name is read inside a `useState`
 initializer; on the server that read fails and is swallowed, so the server

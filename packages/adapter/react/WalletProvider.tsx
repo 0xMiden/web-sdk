@@ -206,17 +206,16 @@ export const WalletProvider: FC<WalletProviderProps> = ({
     };
   }, [adapter]);
 
-  // If autoConnect is enabled, try to connect when the adapter changes and is ready
+  // If autoConnect is enabled, try to connect when the adapter changes and is
+  // installed. Connecting a Loadable wallet hands off to its app, which only a
+  // tap may start.
   useEffect(() => {
     if (
       isConnecting.current ||
       connected ||
       !autoConnect ||
       !adapter ||
-      !(
-        readyState === WalletReadyState.Installed ||
-        readyState === WalletReadyState.Loadable
-      )
+      readyState !== WalletReadyState.Installed
     )
       return;
 

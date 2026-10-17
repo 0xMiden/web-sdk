@@ -134,19 +134,29 @@ describe("autoConnect (useWallet)", () => {
     localStorage.clear();
   });
 
-  it("does not connect a stored Loadable wallet on mount", async () => {
-    const stubAdapter = new StubAdapter();
-    stubAdapter.readyState = WalletReadyState.Loadable;
-    localStorage.setItem("walletName", JSON.stringify(stubAdapter.name));
-
+  async function mountWithStoredWallet(adapter: StubAdapter) {
+    localStorage.setItem("walletName", JSON.stringify(adapter.name));
     renderHook(() => useWallet(), {
       wrapper: ({ children }: { children: ReactNode }) => (
-        <WalletProvider wallets={[stubAdapter]} autoConnect>
+        <WalletProvider wallets={[adapter]} autoConnect>
           {children}
         </WalletProvider>
       ),
     });
     await act(async () => {});
+  }
+
+  it("connects a stored Installed wallet on mount", async () => {
+    const stubAdapter = new StubAdapter();
+    await mountWithStoredWallet(stubAdapter);
+
+    expect(stubAdapter.connect).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not connect a stored Loadable wallet on mount", async () => {
+    const stubAdapter = new StubAdapter();
+    stubAdapter.readyState = WalletReadyState.Loadable;
+    await mountWithStoredWallet(stubAdapter);
 
     expect(stubAdapter.connect).not.toHaveBeenCalled();
   });

@@ -152,6 +152,21 @@ describe("WalletModal", () => {
     ).toBeNull();
   });
 
+  it.each([
+    ["an Installed Bread", "Bread Wallet", WalletReadyState.Installed],
+    [
+      "a Loadable wallet that is not Bread",
+      "Other Wallet",
+      WalletReadyState.Loadable,
+    ],
+  ])("connects %s selected when it opens", (_, name, readyState) => {
+    const wallet = makeWallet(name, readyState);
+    walletContext.wallet = wallet;
+    renderModal([wallet]);
+
+    expect(walletContext.connect).toHaveBeenCalledTimes(1);
+  });
+
   it("connects nothing when it opens with a Loadable Bread selected", () => {
     const bread = makeWallet("Bread Wallet", WalletReadyState.Loadable);
     walletContext.wallet = bread;

@@ -330,6 +330,20 @@ describe("MidenFiSignerProvider", () => {
       expect(result.current.autoConnect).toBe(true);
     });
 
+    it("autoConnect connects an Installed wallet", async () => {
+      mockAdapter = createMockAdapter({ readyState: "Installed" });
+      render(
+        <MidenFiSignerProvider autoConnect={true}>
+          <div />
+        </MidenFiSignerProvider>
+      );
+      await act(async () => {
+        await flushPromises();
+      });
+
+      expect(mockAdapter.connect).toHaveBeenCalledTimes(1);
+    });
+
     it("autoConnect does not connect a Loadable wallet", async () => {
       mockAdapter = createMockAdapter({ readyState: "Loadable" });
       render(

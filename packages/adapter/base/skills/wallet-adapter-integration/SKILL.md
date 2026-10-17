@@ -141,14 +141,16 @@ of navigating, `connect()` then connecting. `adapter.url` is the link while
 `Loadable` and the extension's store listing in every other state. The OS
 hands the link to the app only for a navigation the user's tap started, so
 call `openInBread()` synchronously from the click handler, with no `await`
-before it. Without an active tap it does nothing, so `autoConnect` on page
-load never redirects, and calls within a second of a handoff do not navigate
-again. The reactui modal shows an "Open in Bread" button for this state that
-selects Bread and calls `openInBread()` from inside the tap.
+before it. Without an active tap it does nothing, and calls within a second
+of a handoff do not navigate again. The reactui modal shows an "Open in
+Bread" button for this state that selects Bread and calls `openInBread()`
+from inside the tap; opening the modal with a `Loadable` Bread selected
+connects nothing.
 
 `autoConnect` is off by default. When on, it connects as soon as a stored
-wallet resolves to a ready adapter, and clears the stored name if that fails.
-It never rethrows; the failure reaches you through `onError` only.
+wallet resolves to an `Installed` adapter, and clears the stored name if that
+fails. It never connects a `Loadable` one, which would hand off to its app on
+page load. It never rethrows; the failure reaches you through `onError` only.
 
 Connecting twice is deliberately not a no-op. A second `connect()` re-drives
 the handshake so a dApp whose JS context survived a park and restore gets its

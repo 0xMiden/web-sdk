@@ -69,8 +69,10 @@ injected since the last poll, `openInBread()` moves to `Installed` and emits
 `readyStateChange` instead of navigating, and `connect()` connects. The OS
 hands the link to the app only for a navigation the user's tap started, so
 call `openInBread()` synchronously from the click handler, with no `await`
-before it. Without an active tap, such as an `autoConnect` on page load, it
-does nothing, and a second call within a second of a handoff is ignored.
+before it. Without an active tap, such as a dApp's own `connect()` on page
+load, it does nothing, and a second call within a second of a handoff is
+ignored. The providers' `autoConnect` waits for `Installed`, so it never hands
+off.
 
 **A resolved request with no transaction id is a failure.** The wallet reports
 success as soon as it accepts a transaction into its queue. If it hands back

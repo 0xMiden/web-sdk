@@ -421,9 +421,9 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
   private handOffToBread(): void {
     // iOS and Android hand the link to Bread only for a navigation the user's
     // tap started: this must run before connect() awaits anything, and is
-    // skipped without an active tap (autoConnect on load would just bounce to
-    // the fallback page on every visit). One tap can reach here twice when a
-    // provider effect re-runs, hence the debounce.
+    // skipped without an active tap (a dApp's own connect() on load would just
+    // bounce to the fallback page on every visit). A double tap would navigate
+    // twice, hence the debounce.
     if (!navigator.userActivation?.isActive) return;
     const now = Date.now();
     if (now - this._breadHandoffAt < BREAD_HANDOFF_DEBOUNCE_MS) return;
