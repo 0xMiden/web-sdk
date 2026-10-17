@@ -85,10 +85,34 @@ export interface MidenWalletAdapterConfig {
 
 export const MidenWalletName = "Bread Wallet" as WalletName<"Bread Wallet">;
 
+export const BREAD_OPEN_LINK_BASE = "https://bread.miden.xyz/open";
+
+/**
+ * Link that opens `pageUrl` in the Bread app. The app claims it as an iOS
+ * universal link and Android app link; without the app it loads a web page.
+ */
+export function getBreadOpenLink(
+  pageUrl: string = window.location.href
+): string {
+  return `${BREAD_OPEN_LINK_BASE}?url=${encodeURIComponent(pageUrl)}`;
+}
+
+const BREAD_EXTENSION_URL =
+  "https://chromewebstore.google.com/detail/Bread/coajhopfooegmaifelglfboehacldcbo";
+
+const BREAD_HANDOFF_DEBOUNCE_MS = 1000;
+
+function isMobileBrowser(): boolean {
+  const { userAgent, maxTouchPoints } = navigator;
+  return (
+    /iPhone|iPad|iPod|Android/.test(userAgent) ||
+    // iPadOS asks for desktop sites by default and then sends a Mac user agent.
+    (userAgent.includes("Macintosh") && maxTouchPoints > 1)
+  );
+}
+
 export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
   name = MidenWalletName;
-  url =
-    "https://chromewebstore.google.com/detail/Bread/coajhopfooegmaifelglfboehacldcbo";
   icon =
     "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjExIiBoZWlnaHQ9IjIxNCIgdmlld0JveD0iMCAwIDIxMSAyMTQiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xMDcuNDQgMC4xMjE3NjJDMTIxLjk5IC0wLjkwOTY1MiAxMzQuNzMzIDQuNjc0NjMgMTQ1LjE1NyAxNC40NzYxQzE4My41NjQgLTQuNjYzMDMgMjIyLjk2NSAzNS40NDAxIDIwNi4zNTIgNzMuOTk5MUMyMDQuNzcyIDEwMy4wMDcgMjA4LjUwNyAxMzQuMzIyIDIwNi4zOTUgMTYzLjA1NUMyMDUuNjAyIDE3My43OSAyMDAuMTgyIDE4Mi4yODUgMTkxLjkzNyAxODguODRDMTc5LjgyMiAxOTguNDY1IDE1Ny41MSAyMTEuNzUxIDE0Mi4wNTcgMjEyLjc1MkMxMDEuMzk4IDIxNS4zODggNTcuOTI2NCAyMTAuNjk1IDE2Ljk2ODkgMjEyLjc1MkM2LjQxMDYzIDIxMS45NjUgMS41NzA5MyAyMDUuNTE0IDAuODA4MDQ2IDE5NS4zN0MyLjc5NzY0IDE1NS44MzUgLTEuNzYxMzMgMTEzLjg0NiAwLjgwODA0NiA3NC41OTcyQzMuMjA2NTQgMzcuODgxMyA0MC4wNTY3IC0xLjcwMzA1IDc5LjA4NTcgMTIuNjUxM0M4Ni45MDk4IDUuNTcxNzggOTYuNzk2NyAwLjg3MjQzMSAxMDcuNDQ3IDAuMTE1NjUzTDEwNy40NCAwLjEyMTc2MlpNMTE2LjcxNyAxMjguNTk3QzEzNi45NDIgMTIzLjkyMiAxNDQuMDc3IDk5LjQ3OTMgMTM2LjUyMSA4MS42NTIzQzEzMC45MDcgNjguNDAyNiAxMTcuNDc0IDYxLjgxMTMgMTAzLjYyNiA2MC44ODM3Qzc5LjI3NDkgNTkuMjU0MiA1My4xMjk1IDYyLjE0NyAyOC41ODkxIDYwLjkxNDJDMTguNzAyMiA2Mi4zNDIzIDEwLjQ1MDkgNjcuOTY5MyA4Ljc2MDMzIDc4LjI4MzRMOS4xNzUzIDE5Ny4zNzhDMTAuNTA1OCAyMDAuOTQ5IDEzLjcyODIgMjAzLjgwNSAxNy42MDk3IDIwNC4xODlDNDcuNjE4NCAyMDIuNTIzIDgwLjAwMTEgMjA2LjQwNSAxMDkuNzI5IDIwNC4yMTRDMTQ2LjI2OCAyMDEuNTIyIDE1Ny4wMDkgMTUyLjU2NCAxMjcuNDk1IDEzMy4zNjNMMTE2LjcyMyAxMjguNTk3SDExNi43MTdaIiBmaWxsPSIjRTc3NTM3Ii8+CjxwYXRoIGQ9Ik0xMTYuNzE3IDEyOC41OTdDMTM2Ljk0MiAxMjMuOTIyIDE0NC4wNzcgOTkuNDc5MyAxMzYuNTIxIDgxLjY1MjNDMTMwLjkwNyA2OC40MDI2IDExNy40NzQgNjEuODExMyAxMDMuNjI2IDYwLjg4MzdDNzkuMjc0OSA1OS4yNTQyIDUzLjEyOTUgNjIuMTQ3IDI4LjU4OTEgNjAuOTE0MkMxOC43MDIyIDYyLjM0MjMgMTAuNDUwOSA2Ny45NjkzIDguNzYwMzMgNzguMjgzNEw5LjE3NTMgMTk3LjM3OEMxMC41MDU4IDIwMC45NDkgMTMuNzI4MiAyMDMuODA1IDE3LjYwOTcgMjA0LjE4OUM0Ny42MTg0IDIwMi41MjMgODAuMDAxMSAyMDYuNDA1IDEwOS43MjkgMjA0LjIxNEMxNDYuMjY4IDIwMS41MjIgMTU3LjAwOSAxNTIuNTY0IDEyNy40OTUgMTMzLjM2M0wxMTYuNzIzIDEyOC41OTdIMTE2LjcxN1oiIGZpbGw9IiNGRkZGRkYiLz4KPC9zdmc+Cg==";
   readonly supportedTransactionVersions = null;
@@ -102,6 +126,7 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
     typeof window === "undefined" || typeof document === "undefined"
       ? WalletReadyState.Unsupported
       : WalletReadyState.NotDetected;
+  private _breadHandoffAt = 0;
 
   constructor({ appName = "sample" }: MidenWalletAdapterConfig = {}) {
     super();
@@ -112,6 +137,7 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
     this._privateDataPermission = PrivateDataPermission.UponRequest;
 
     if (this._readyState !== WalletReadyState.Unsupported) {
+      if (isMobileBrowser()) this._readyState = WalletReadyState.Loadable;
       scopePollingDetectionStrategy(() => {
         if (window?.midenWallet || window?.miden) {
           this._readyState = WalletReadyState.Installed;
@@ -145,6 +171,12 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
 
   set readyState(readyState) {
     this._readyState = readyState;
+  }
+
+  get url() {
+    return this._readyState === WalletReadyState.Loadable
+      ? getBreadOpenLink()
+      : BREAD_EXTENSION_URL;
   }
 
   /**
@@ -372,6 +404,19 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
     }
   }
 
+  private openInBread(): void {
+    // iOS and Android hand the link to Bread only for a navigation the user's
+    // tap started: this must run before connect() awaits anything, and is
+    // skipped without an active tap (autoConnect on load would just bounce to
+    // the fallback page on every visit). One tap can reach here twice when a
+    // provider effect re-runs, hence the debounce.
+    if (!navigator.userActivation?.isActive) return;
+    const now = Date.now();
+    if (now - this._breadHandoffAt < BREAD_HANDOFF_DEBOUNCE_MS) return;
+    this._breadHandoffAt = now;
+    window.location.assign(getBreadOpenLink());
+  }
+
   async connect(
     privateDataPermission: PrivateDataPermission,
     network: WalletAdapterNetwork,
@@ -395,6 +440,10 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
       // intended trade-off — a locked wallet genuinely needs to be unlocked
       // to hand back the account.)
       if (this.connecting) return;
+      if (this._readyState === WalletReadyState.Loadable) {
+        this.openInBread();
+        return;
+      }
       if (this._readyState !== WalletReadyState.Installed)
         throw new WalletNotReadyError();
 
