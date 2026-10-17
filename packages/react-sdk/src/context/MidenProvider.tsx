@@ -219,15 +219,13 @@ export function MidenProvider({
     if (signerIsConnected === true && signerStoreName !== null) {
       const store = useMidenStore.getState();
 
-      // Same identity reconnecting and client already exists — hot-swap signCb
+      // Same identity reconnecting and client already exists
       if (
         currentStoreNameRef.current === signerStoreName &&
         store.client !== null
       ) {
-        // Hot-swap the signCb on the existing WebClient instance.
-        // The worker reads this.signCb fresh on every callback invocation.
-        // signCbRef is already kept in sync by the dedicated useEffect above.
-        store.client.setSignCb(wrappedSignCb);
+        // The client was created with wrappedSignCb, which reads signCbRef
+        // (kept in sync above) on every call, so there's nothing to swap.
         setSignerConnected(true);
         return;
       }
@@ -241,6 +239,7 @@ export function MidenProvider({
         // Also clear old client so we get a fresh one for the new identity
         setClient(null);
         setSignerAccountId(null);
+        currentStoreNameRef.current = null;
       }
     }
 
@@ -305,6 +304,8 @@ export function MidenProvider({
             currentStoreNameRef.current = signerContext.storeName;
           } else {
             // No signer provider - standard local keystore (existing behavior)
+            currentStoreNameRef.current = null;
+            setSignerAccountId(null);
             const seed = resolvedConfig.seed as Parameters<
               typeof WebClient.createClient
             >[2];

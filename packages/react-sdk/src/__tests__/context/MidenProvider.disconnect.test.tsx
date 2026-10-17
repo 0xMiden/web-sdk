@@ -224,6 +224,78 @@ describe("MidenProvider resilient disconnect handling", () => {
           .mock.calls.length
       ).toBe(initialCreateCount);
       expect(useMidenStore.getState().client!.terminate).not.toHaveBeenCalled();
+
+      // Verify the wrapped callback passed to the client invokes the latest signCb (signCb2)
+      const passedSignCb = (
+        WebClient.createClientWithExternalKeystore as ReturnType<typeof vi.fn>
+      ).mock.calls[0][6];
+      await passedSignCb(new Uint8Array(32), new Uint8Array(32));
+      expect(signCb2).toHaveBeenCalledTimes(1);
+    });
+
+    it("rebuilds external keystore client when reconnecting signer after local keystore mode", async () => {
+      const connectedSigner = createMockSignerContext({
+        isConnected: true,
+        storeName: "test_wallet",
+      });
+
+      const Wrapper = ({
+        signer,
+        children,
+      }: {
+        signer: SignerContextValue | null;
+        children: React.ReactNode;
+      }) => (
+        <SignerContext.Provider value={signer}>
+          <MidenProvider config={{ rpcUrl: "https://rpc.testnet.miden.io" }}>
+            {children}
+          </MidenProvider>
+        </SignerContext.Provider>
+      );
+
+      const { rerender } = render(
+        <Wrapper signer={connectedSigner}>
+          <StatusDisplay />
+        </Wrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ready").textContent).toBe("true");
+      });
+      expect(screen.getByTestId("signer-connected").textContent).toBe("true");
+
+      const externalKeystoreCallsBefore = (
+        WebClient.createClientWithExternalKeystore as ReturnType<typeof vi.fn>
+      ).mock.calls.length;
+
+      // Switch to local keystore mode (signerContext becomes null)
+      rerender(
+        <Wrapper signer={null}>
+          <StatusDisplay />
+        </Wrapper>
+      );
+
+      await waitFor(() => {
+        expect(WebClient.createClient).toHaveBeenCalled();
+      });
+
+      // Now reconnect the same signer storeName
+      rerender(
+        <Wrapper signer={connectedSigner}>
+          <StatusDisplay />
+        </Wrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("signer-connected").textContent).toBe("true");
+      });
+
+      // Because currentStoreNameRef was reset when local client was built,
+      // it properly builds the external keystore client again instead of erroneously reusing the local client
+      expect(
+        (WebClient.createClientWithExternalKeystore as ReturnType<typeof vi.fn>)
+          .mock.calls.length
+      ).toBeGreaterThan(externalKeystoreCallsBefore);
     });
   });
 
