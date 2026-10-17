@@ -284,14 +284,23 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
     }
   }, [name, wallets]);
 
-  // If the window is closing or reloading, ignore disconnect and error events
+  // While the page unloads or sits in the back-forward cache, ignore disconnect
+  // and error events. Not from beforeunload: it also fires for a navigation that
+  // a prompt cancels or an app takes, and nothing follows it when the page stays.
   useEffect(() => {
-    function listener() {
+    function hide() {
       isUnloading.current = true;
     }
+    function show() {
+      isUnloading.current = false;
+    }
 
-    window.addEventListener("beforeunload", listener);
-    return () => window.removeEventListener("beforeunload", listener);
+    window.addEventListener("pagehide", hide);
+    window.addEventListener("pageshow", show);
+    return () => {
+      window.removeEventListener("pagehide", hide);
+      window.removeEventListener("pageshow", show);
+    };
   }, [isUnloading]);
 
   // Handle the adapter's connect event.
