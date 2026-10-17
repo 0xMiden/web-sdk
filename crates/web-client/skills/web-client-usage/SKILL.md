@@ -542,10 +542,35 @@ What happens if you skip it:
   naming the component.
 - A custom auth procedure that reads conversion info: the transaction aborts in
   the VM with `ERR_FEE_CONVERSION_INFO_MISSING`. Attach the commitment yourself
-  with `TransactionRequestBuilder.withAuthArg` plus `extendAdviceMap`.
+  with `TransactionRequestBuilder.withAuthArg` plus `extendAdviceMap`, or on a
+  finished request with `request.withAuthArgs(preimage)`.
 
 `withAuthArg` and `withFeeConversionSalt` are mutually exclusive - each setter
 clears the other, so whichever is called last wins. Never call either on a builder from `feeAwareTransactionRequestBuilder` for a multisig: that builder already carries the three-word auth args, and either setter discards them, so the transaction aborts in the auth procedure. Pass `feeConversionSalt` to `feeAwareTransactionRequestBuilder` instead - and build a fresh `Word` for every call, because the parameter is moved across the WASM boundary and a spent handle arrives as "no salt given".
+
+A request you did not build, such as a finished one a dApp hands to a wallet,
+cannot go back through the builder. Add the multisig auth args to it instead:
+
+```typescript
+const request = await client.withFeeAwareAuth(dappRequest, multisig);
+await client.transactions.submit(multisig, request);
+```
+
+`withFeeAwareAuth` returns a copy with the auth args the builder would set and
+takes the builder's `options`. Any other account's request comes back
+unchanged, auth argument and all; for a multisig it refuses a request that
+already has an auth argument (`AUTH_ALREADY_SET`). The copy does not declare
+the bound block among its block numbers: it executes at the tip, but a
+co-signer cannot read that block from `request.blockNumbers()`, so it syncs
+before previewing the copy.
+
+To set auth args you build yourself on a finished request, for example for a
+custom auth procedure, use `request.withAuthArgs(preimage)`. It sets the auth
+argument to the Poseidon2 hash of `preimage`, puts `preimage` in the advice map
+under it, and replaces an existing auth argument and a declared salt without a
+check. In the browser build it consumes the `Felt`s it is given: read what you
+need from them first and pass fresh ones to another call, because a spent
+`Felt` fails with `null pointer passed to rust`.
 
 ## Transactions
 
@@ -899,8 +924,9 @@ The result is `{ blockNumber }` only - the Rust V1 batch API returns no
 per-transaction ids, so `waitForConfirmation` polls local sync height until it
 reaches that block rather than watching transaction status. A
 `custom` operation carries a request you built, so the fee rules above apply to
-it: use `client.feeAwareTransactionRequestBuilder(account)`. The V1 batch API
-has no per-call prover override.
+it: use `client.feeAwareTransactionRequestBuilder(account)`, or
+`client.withFeeAwareAuth(request, account)` for a finished request you did not
+build. The V1 batch API has no per-call prover override.
 
 ### Preview (dry run)
 
@@ -1291,7 +1317,9 @@ while (true) {
 3. **Building a request from a bare `TransactionRequestBuilder`.** Use
    `client.feeAwareTransactionRequestBuilder(account)` for anything you hand to
    `submit` / `executeRequest` / `submitBatch` / a `custom` preview, or a
-   multisig account fails with `FeeConversionInfoRequired`.
+   multisig account fails with `FeeConversionInfoRequired`. A finished request
+   you did not build gets the same auth args from
+   `client.withFeeAwareAuth(request, account)`.
 4. **`notes.sendPrivate()` without `inclusionProof`.** It throws. For your own
    output notes, wait until the transaction commits and call
    `notes.sendPrivateOutput({ noteId, to })`, which reads the stored proof.

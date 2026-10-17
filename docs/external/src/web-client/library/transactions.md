@@ -219,11 +219,11 @@ On a chain that charges nothing, a request for an account that is not a multisig
 
 ### The convenience constructors handle it
 
-`newSendTransactionRequest`, `newMintTransactionRequest`, `newConsumeTransactionRequest`, `newSwapTransactionRequest`, `newB2AggTransactionRequest`, `newPswapCreateTransactionRequest`, `newPswapConsumeTransactionRequest` and `newPswapCancelTransactionRequest` declare a salt themselves where the executing account needs one. Each returns a finished `TransactionRequest` with no way to declare one afterwards, so there would otherwise be no way for a multisig caller to pay the fee at all.
+`newSendTransactionRequest`, `newMintTransactionRequest`, `newConsumeTransactionRequest`, `newSwapTransactionRequest`, `newB2AggTransactionRequest`, `newPswapCreateTransactionRequest`, `newPswapConsumeTransactionRequest` and `newPswapCancelTransactionRequest` declare a salt themselves where the executing account needs one. Each returns a finished `TransactionRequest`, which takes no salt declaration afterwards, so they declare it while they build. A finished request from anywhere else gets the multisig auth args from `withFeeAwareAuth`; see [Executing a request someone else built](#executing-a-request-someone-else-built).
 
-The `client.transactions` operations that build their own request — `send`, `mint`, `consume`, `consumeAll`, `swap`, `bridge`, `createNetworkNote`, `execute`, `pswapCreate`, `pswapConsume`, `pswapCancel`, and the named operations of `batch` and `preview` — declare it too. The ones that take a finished request **from you** never do: `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview`. Those are the paths the next section is for.
+The `client.transactions` operations that build their own request - `send`, `mint`, `consume`, `consumeAll`, `swap`, `bridge`, `createNetworkNote`, `execute`, `pswapCreate`, `pswapConsume`, `pswapCancel`, and the named operations of `batch` and `preview` - declare it too. The ones that take a finished request **from you** never do: `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview`. Those are the paths the next two sections are for.
 
-`submitBatch` is worth calling out because a batch proves each transaction as it is pushed. A multisig request that declares no salt is rejected by miden-client during preparation — after the proofs of everything ahead of it in the batch have already been paid for. Build multisig requests from `feeAwareTransactionRequestBuilder` before batching them.
+`submitBatch` is worth calling out because a batch proves each transaction as it is pushed. A multisig request that declares no salt is rejected by miden-client during preparation - after the proofs of everything ahead of it in the batch have already been paid for. Build multisig requests from `feeAwareTransactionRequestBuilder`, or pass a finished one through `withFeeAwareAuth`, before batching them.
 
 ### Assembling a request yourself
 
@@ -270,11 +270,11 @@ const request = await client.withFeeAwareAuth(dappRequest, multisig);
 await client.transactions.submit(multisig, request);
 ```
 
-`withFeeAwareAuth` returns a copy of the request with the same auth argument and advice-map preimage that `feeAwareTransactionRequestBuilder` declares. The auth args replace a declared fee conversion salt, and every other field stays the same. For an account that is not a multisig the request comes back unchanged. It takes the same `options` as the builder (`approvalExpirationDelta`, `feeConversionSalt`, `boundBlockNum`). When `feeConversionSalt` is omitted, it uses the salt that the request declares, or draws a fresh one if the request declares none.
+`withFeeAwareAuth` returns a copy of the request with the same auth argument and advice-map preimage that `feeAwareTransactionRequestBuilder` declares. The auth args replace a declared fee conversion salt, and every other field stays the same. For an account that is not a multisig the request comes back unchanged, auth argument and all. It takes the same `options` as the builder (`approvalExpirationDelta`, `feeConversionSalt`, `boundBlockNum`). When `feeConversionSalt` is omitted, it uses the salt that the request declares, or draws a fresh one if the request declares none.
 
-The copy does not declare the bound block as a block number. miden-client adds the bound block when it executes the request, so the request executes at the chain tip with no anchor. An anchor from `chainAnchorForRequest` does not track the bound block, so do not execute the copy at such an anchor.
+The copy does not declare the bound block as a block number. miden-client adds the bound block when it executes the request, so the request executes at the chain tip with no anchor. An anchor from `chainAnchorForRequest` does not track the bound block, so do not execute the copy at such an anchor. A co-signer cannot read the bound block from `request.blockNumbers()` either, so the height check under [Multisig Proposals](#multisig-proposals-bind-a-block-execute-at-the-tip) does not apply to the copy: sync before previewing it.
 
-It refuses a request that already has an auth argument, with the error `code` `AUTH_ALREADY_SET` (on Node.js the code prefixes the message). The author of the request owns that argument, so it is not replaced.
+For a multisig it refuses a request that already has an auth argument, with the error `code` `AUTH_ALREADY_SET` (on Node.js the code prefixes the message). The author of the request owns that argument, so it is not replaced.
 
 #### Setting your own auth args
 
@@ -302,7 +302,7 @@ One request-building path the SDK cannot declare a salt on: `client.pswap.cancel
 
 ## Multisig Proposals: Bind a Block, Execute at the Tip
 
-Since protocol 0.17 a multisig proposal does not need a `ChainAnchor`. The multisig auth args name a **bound block**, and the transaction summary binds that block rather than the reference block the transaction executes at. A proposal can therefore be verified and submitted at whatever block is current, provided the transaction can authenticate the bound block. `withBlockNumbers([boundBlock])` adds it to the transaction's partial blockchain, and `feeAwareTransactionRequestBuilder` does that for you when it builds a multisig request. Each party's client must first have synced to at least the bound block (the largest of `request.blockNumbers()`, by default the proposer's sync height when it built the request); a client below it fails with `requested block N is after transaction reference block M` until it syncs.
+Since protocol 0.17 a multisig proposal does not need a `ChainAnchor`. The multisig auth args name a **bound block**, and the transaction summary binds that block rather than the reference block the transaction executes at. A proposal can therefore be verified and submitted at whatever block is current, provided the transaction can authenticate the bound block, and miden-client adds the bound block of multisig auth args to the transaction's partial blockchain when it executes the request. `feeAwareTransactionRequestBuilder` also declares it with `withBlockNumbers`, which only `captureAnchor` and the height check below read. Each party's client must first have synced to at least the bound block (the largest of `request.blockNumbers()`, by default the proposer's sync height when it built the request); a client below it fails with `requested block N is after transaction reference block M` until it syncs. A request from `withFeeAwareAuth` does not declare the bound block, so sync before previewing it.
 
 Use this flow for multisig. Re-executing at an anchor breaks down twice as a proposal ages:
 
@@ -350,7 +350,7 @@ await client.transactions.submit(multisig, proposedRequest);
 Notes:
 
 - **The request still travels.** The salt in the multisig auth args is drawn fresh on every build and bound into the summary, so a co-signer must re-derive from the proposer's request bytes, exactly as in the anchored flow below.
-- **Confirm the bound block is real.** For a multisig, `summary.blockCommitment()` is the bound block's commitment. Fetch that block's header from a node you trust (`RpcClient.getBlockHeaderByNumber`, with the number from `request.blockNumbers()`) and compare commitments.
+- **Confirm the bound block is real.** For a multisig, `summary.blockCommitment()` is the bound block's commitment. Fetch that block's header from a node you trust (`RpcClient.getBlockHeaderByNumber`, with the number from the builder's `request.blockNumbers()`) and compare commitments.
 - **Approvals can expire.** `approvalExpirationDelta` on `feeAwareTransactionRequestBuilder` counts from the bound block, and the multisig rejects execution at or after that reference block. Omitted, the approval does not expire.
 - **A match still does not prove agreement on account state.** Everything under "Notes on anchors" about what the summary covers, and what it does not, applies unchanged.
 

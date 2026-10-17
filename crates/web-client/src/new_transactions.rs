@@ -640,12 +640,13 @@ impl WebClient {
     /// method returns an error with code `TRANSACTION_ALREADY_AUTHORIZED` — submit the
     /// transaction with `execute` instead.
     ///
-    /// Execution uses the current sync height. For a multisig request built by
-    /// `feeAwareTransactionRequestBuilder` that reproduces the proposal's summary at any later
-    /// tip, because the summary binds the request's bound block rather than the reference block.
-    /// The client must have synced to at least that block, the largest of the request's
-    /// `blockNumbers()`; below it execution fails with "requested block N is after transaction
-    /// reference block M" until the client syncs.
+    /// Execution uses the current sync height. For a multisig request from
+    /// `feeAwareTransactionRequestBuilder` or `withFeeAwareAuth` that reproduces the proposal's
+    /// summary at any later tip, because the summary binds the request's bound block rather than
+    /// the reference block. The client must have synced to at least that block: for a builder's
+    /// request the largest of its `blockNumbers()`, while a `withFeeAwareAuth` copy does not
+    /// declare it, so sync before executing the copy. Below it execution fails with "requested
+    /// block N is after transaction reference block M" until the client syncs.
     ///
     /// # Errors
     /// - If the transaction executes successfully (error code `TRANSACTION_ALREADY_AUTHORIZED`).
@@ -867,15 +868,17 @@ impl WebClient {
     /// either can never derive the same one. A co-signer who has the proposer's serialized
     /// request does not need these - it carries the auth argument and its advice-map preimage.
     ///
-    /// For a multisig the builder also declares the bound block through `withBlockNumbers`, so
-    /// the request executes at the current chain tip with no anchor: the summary stays bound to
-    /// the bound block while foreign accounts, the fee faucet among them, load at the tip. It
+    /// For a multisig the request executes at the current chain tip with no anchor: miden-client
+    /// tracks the bound block when it executes the request, and the summary stays bound to the
+    /// bound block while foreign accounts, the fee faucet among them, load at the tip. It
     /// therefore still executes after the node has pruned the bound block's account state (about
     /// 50 blocks), and `executeForSummary` without an anchor reproduces the proposal's summary
-    /// at the tip. Every party runs it once its client has synced to at least the bound block,
-    /// which by default is this client's sync height when the builder runs: a client below it
-    /// fails at execution with "requested block N is after transaction reference block M" until
-    /// it syncs, whether the block was pinned or defaulted.
+    /// at the tip. The builder also declares the bound block through `withBlockNumbers`, which
+    /// only `chainAnchorForRequest` and a party's check of its sync height read. Every party runs
+    /// it once its client has synced to at least the bound block, which by default is this
+    /// client's sync height when the builder runs: a client below it fails at execution with
+    /// "requested block N is after transaction reference block M" until it syncs, whether the
+    /// block was pinned or defaulted.
     #[js_export(js_name = "feeAwareTransactionRequestBuilder")]
     pub async fn fee_aware_transaction_request_builder(
         &self,
@@ -904,12 +907,12 @@ impl WebClient {
     /// to a wallet, and the executing account is a multisig. miden-client derives multisig auth
     /// args only from a declared fee conversion salt, so a request without one fails with
     /// `FeeConversionInfoRequired`. This sets the same auth args that
-    /// `feeAwareTransactionRequestBuilder` declares, through `TransactionRequest.withAuthArgs`: the
-    /// auth argument and its advice-map preimage. The auth args replace the declared fee
+    /// `feeAwareTransactionRequestBuilder` declares, the way `TransactionRequest.withAuthArgs`
+    /// does: the auth argument and its advice-map preimage. The auth args replace the declared fee
     /// conversion salt. Every other field of the request stays the same.
     ///
-    /// For every other account this returns the request unchanged, because miden-client commits
-    /// the fee conversion info for those accounts itself.
+    /// For every other account this returns the request unchanged, auth argument and all, because
+    /// miden-client commits the fee conversion info for those accounts itself.
     ///
     /// The three options are the same as those of `feeAwareTransactionRequestBuilder`, with the
     /// same defaults, and they are ignored for an account that is not a multisig. One difference:
@@ -918,12 +921,13 @@ impl WebClient {
     ///
     /// The request does not declare the bound block as a block number. miden-client adds it when
     /// it executes the request, so the request executes at the chain tip with no anchor. An anchor
-    /// from `chainAnchorForRequest` does not track the bound block.
+    /// from `chainAnchorForRequest` does not track the bound block, and a co-signer cannot read it
+    /// from `blockNumbers()` to check its sync height, so it syncs before previewing the request.
     ///
     /// # Errors
-    /// - `AUTH_ALREADY_SET` if the request already has an auth argument that commits anything. The
-    ///   author of the request owns that argument, so this does not replace it. `withAuthArgs`
-    ///   replaces it without this check.
+    /// - `AUTH_ALREADY_SET` if the account is a multisig and the request already has an auth
+    ///   argument that commits anything. The author of the request owns that argument, so this does
+    ///   not replace it. `withAuthArgs` replaces it without this check.
     /// - Every error of `feeAwareTransactionRequestBuilder`, such as an approval expiration delta
     ///   of zero.
     #[js_export(js_name = "withFeeAwareAuth")]

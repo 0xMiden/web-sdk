@@ -505,9 +505,10 @@ export interface AnchoredOptions {
    * whose sync height has since advanced.
    *
    * A multisig request built by
-   * {@link MidenClient.feeAwareTransactionRequestBuilder} does not need one:
-   * its summary binds the block its auth args name, the request declares that
-   * block through `withBlockNumbers`, and so it executes and reproduces its
+   * {@link MidenClient.feeAwareTransactionRequestBuilder}, or given its auth
+   * args by {@link MidenClient.withFeeAwareAuth}, does not need one: its
+   * summary binds the block its auth args name, and miden-client tracks that
+   * block when it executes the request, so it executes and reproduces its
    * summary at the current tip. That keeps working after the node prunes the
    * bound block's account state, which an anchor at that block does not. The
    * executing client must have synced to at least the bound block first.
@@ -1344,7 +1345,9 @@ export interface TransactionsResource {
    * {@link MidenClient.feeAwareTransactionRequestBuilder} that reproduces the
    * proposal's summary at any later tip, so a co-signer can verify it without
    * the proposer's anchor once its client has synced to at least the bound
-   * block (the largest of `request.blockNumbers()`).
+   * block (the largest of `request.blockNumbers()`). A request from
+   * {@link MidenClient.withFeeAwareAuth} does not declare the bound block, so
+   * that check cannot read it: sync before previewing such a request.
    *
    * @param options - Preview options discriminated by `operation` field.
    */
@@ -1359,8 +1362,10 @@ export interface TransactionsResource {
    * and commits that itself, so a request from `new TransactionRequestBuilder()`
    * pays normally — except against a multisig account, which needs a fee
    * conversion salt declared. Build those from
-   * {@link MidenClient.feeAwareTransactionRequestBuilder}. Raises the same fee
-   * errors {@link executeRequest} does.
+   * {@link MidenClient.feeAwareTransactionRequestBuilder}, or add the auth
+   * args to a finished request you did not build with
+   * {@link MidenClient.withFeeAwareAuth}. Raises the same fee errors
+   * {@link executeRequest} does.
    *
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
@@ -1427,19 +1432,24 @@ export interface TransactionsResource {
    * and commits that itself, so a request from `new TransactionRequestBuilder()`
    * pays normally — except against a multisig account, which needs a fee
    * conversion salt declared. Build those from
-   * {@link MidenClient.feeAwareTransactionRequestBuilder}.
+   * {@link MidenClient.feeAwareTransactionRequestBuilder}, or add the auth
+   * args to a finished request you did not build with
+   * {@link MidenClient.withFeeAwareAuth}.
    *
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
    * @param options - Pass `anchor` to execute against a pinned reference block
    *   instead of the current sync height. Leave it out for a multisig request
-   *   from {@link MidenClient.feeAwareTransactionRequestBuilder}, which executes
-   *   at the tip once this client has synced to its bound block.
+   *   from {@link MidenClient.feeAwareTransactionRequestBuilder} or
+   *   {@link MidenClient.withFeeAwareAuth}, which executes at the tip once this
+   *   client has synced to its bound block.
    * @returns A handle to the executed transaction, ready to prove.
    * @throws `FeeConversionInfoRequired`, naming the auth component, when the
    *   executing account is a multisig and the request declares no fee
    *   conversion salt. Multisig accounts reuse that salt as their summary's
    *   replay guard, so miden-client will not invent one.
+   *   {@link MidenClient.withFeeAwareAuth} adds the auth args to such a
+   *   request.
    * @throws `FeeConversionInfoUnsupported`, naming the auth component, when the
    *   request declares a fee conversion salt the account's auth component never
    *   reads.
@@ -1496,7 +1506,8 @@ export interface TransactionsResource {
    * `FeeConversionInfoRequired`. Note that a batch proves each transaction as it
    * is pushed, so a rejection discovered mid-push has already cost the proofs
    * ahead of it — build multisig requests from
-   * {@link MidenClient.feeAwareTransactionRequestBuilder}.
+   * {@link MidenClient.feeAwareTransactionRequestBuilder}, or pass a finished
+   * one through {@link MidenClient.withFeeAwareAuth} before batching it.
    *
    * The account's code is read once for the whole batch, not once per request,
    * since a batch is single-account by contract.
@@ -2059,13 +2070,15 @@ export declare class MidenClient {
    *   does not recognise the component and commits nothing, so the transaction
    *   aborts in the VM with `ERR_FEE_CONVERSION_INFO_MISSING`. Attach the
    *   commitment yourself with `TransactionRequestBuilder.withAuthArg` plus
-   *   `extendAdviceMap`.
+   *   `extendAdviceMap`, or on a finished request with
+   *   `request.withAuthArgs(preimage)`.
    *
    * The `new*TransactionRequest` constructors declare it, and so does every
    * `client.transactions` operation that builds its own request — but the ones
    * that take a request from you (`submit`, `executeRequest`, `submitBatch`,
    * and the `custom` operation of `batch` / `preview`) never do, so those are
-   * exactly the paths this method exists for.
+   * exactly the paths this method exists for. For a finished request you did
+   * not build, {@link MidenClient.withFeeAwareAuth} adds the same auth args.
    *
    * `account` is the account that **executes** the request — the one whose
    * auth procedure pays the fee — not the recipient or a note's sender.
@@ -2077,13 +2090,15 @@ export declare class MidenClient {
    * multisig auth procedure resolves its auth args whatever the chain charges,
    * so a multisig gets them on a fee-free chain too.
    *
-   * For a multisig the builder also declares the block the summary binds
-   * through `withBlockNumbers`, so the request executes at the current chain
-   * tip with no anchor. The summary stays bound to that block while foreign
-   * accounts, the fee faucet among them, load at the tip: the request still
-   * executes after the node has pruned the bound block's account state (about
-   * 50 blocks), and {@link TransactionsResource.preview} without an `anchor`
-   * reproduces the proposal's summary at the tip.
+   * For a multisig the request executes at the current chain tip with no
+   * anchor: miden-client tracks the block the summary binds when it executes
+   * the request. The summary stays bound to that block while foreign accounts,
+   * the fee faucet among them, load at the tip: the request still executes
+   * after the node has pruned the bound block's account state (about 50
+   * blocks), and {@link TransactionsResource.preview} without an `anchor`
+   * reproduces the proposal's summary at the tip. The builder also declares
+   * the bound block through `withBlockNumbers`, which only
+   * {@link TransactionsResource.captureAnchor} and the height check below read.
    * Each party's client must first have synced to at least that bound block,
    * the largest of `request.blockNumbers()` and by default the proposer's sync
    * height when it built the request; below it execution fails with
@@ -2139,8 +2154,9 @@ export declare class MidenClient {
    * advice-map preimage. The auth args replace a declared fee conversion salt. Every other field of the request stays the
    * same.
    *
-   * For every other account the request comes back unchanged, because
-   * miden-client commits the fee conversion info for those accounts itself.
+   * For every other account the request comes back unchanged, auth argument
+   * and all, because miden-client commits the fee conversion info for those
+   * accounts itself.
    *
    * When `options.feeConversionSalt` is omitted, the auth args use the salt
    * that the request declares, or a fresh one if it declares none.
@@ -2148,7 +2164,9 @@ export declare class MidenClient {
    * The copy does not declare the bound block as a block number. miden-client
    * adds it when it executes the request, so the request executes at the chain
    * tip with no anchor. An anchor from `chainAnchorForRequest` does not track
-   * the bound block.
+   * the bound block, and a co-signer cannot read it from
+   * `request.blockNumbers()` to check its sync height, so it syncs before
+   * previewing the copy.
    *
    * The request passed in is not consumed and not changed.
    *
@@ -2158,11 +2176,12 @@ export declare class MidenClient {
    *   {@link MidenClient.feeAwareTransactionRequestBuilder}; every field is
    *   defaulted when omitted and ignored for an account that is not a
    *   multisig.
-   * @throws An error with `code` `"AUTH_ALREADY_SET"` if the request already
-   *   has an auth argument that commits anything: its author owns that
-   *   argument, so it is not replaced (`TransactionRequest.withAuthArgs`
-   *   replaces it without this check). On Node.js the code prefixes the
-   *   message (`"AUTH_ALREADY_SET: ..."`) instead.
+   * @throws An error with `code` `"AUTH_ALREADY_SET"` if the account is a
+   *   multisig and the request already has an auth argument that commits
+   *   anything: its author owns that argument, so it is not replaced
+   *   (`TransactionRequest.withAuthArgs` replaces it without this check). On
+   *   Node.js the code prefixes the message (`"AUTH_ALREADY_SET: ..."`)
+   *   instead.
    *
    * @example
    * ```js
