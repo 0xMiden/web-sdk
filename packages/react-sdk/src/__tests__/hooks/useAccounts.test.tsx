@@ -156,6 +156,66 @@ describe("useAccounts", () => {
 
       expect(mockClient.getAccounts).not.toHaveBeenCalled();
     });
+
+    it("discards a previous client's result after the account cache is reset", async () => {
+      let resolvePrevious: (value: any[]) => void;
+      let resolveCurrent: (value: any[]) => void;
+      const previousResult = new Promise<any[]>((resolve) => {
+        resolvePrevious = resolve;
+      });
+      const currentResult = new Promise<any[]>((resolve) => {
+        resolveCurrent = resolve;
+      });
+      const previousAccounts = [createMockAccountHeader("0x1000000000000001")];
+      const currentAccounts = [createMockAccountHeader("0x1000000000000002")];
+      const previousClient = createMockWebClient({
+        getAccounts: vi.fn().mockReturnValue(previousResult),
+      });
+      const currentClient = createMockWebClient({
+        getAccounts: vi.fn().mockReturnValue(currentResult),
+      });
+      let miden = { client: previousClient, isReady: true };
+
+      mockUseMiden.mockImplementation(() => miden);
+      act(() => {
+        useMidenStore.getState().setClient(previousClient as any);
+      });
+
+      const { result, rerender } = renderHook(() => useAccounts());
+
+      await waitFor(() => {
+        expect(previousClient.getAccounts).toHaveBeenCalledTimes(1);
+        expect(result.current.isLoading).toBe(true);
+      });
+
+      act(() => {
+        miden = { client: currentClient, isReady: true };
+        useMidenStore.getState().resetInMemoryState();
+        useMidenStore.getState().setClient(currentClient as any);
+        rerender();
+      });
+
+      await waitFor(() => {
+        expect(currentClient.getAccounts).toHaveBeenCalledTimes(1);
+        expect(result.current.isLoading).toBe(true);
+      });
+
+      await act(async () => {
+        resolvePrevious!(previousAccounts);
+        await previousResult;
+      });
+
+      expect(result.current.accounts).toEqual([]);
+      expect(result.current.isLoading).toBe(true);
+
+      await act(async () => {
+        resolveCurrent!(currentAccounts);
+        await currentResult;
+      });
+
+      expect(result.current.accounts).toEqual(currentAccounts);
+      expect(result.current.isLoading).toBe(false);
+    });
   });
 
   describe("loading state", () => {

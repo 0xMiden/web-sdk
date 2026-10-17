@@ -37,6 +37,7 @@ describe("MidenStore", () => {
       expect(state.accountDetails.size).toBe(0);
       expect(state.notes).toEqual([]);
       expect(state.consumableNotes).toEqual([]);
+      expect(state.cacheGeneration).toEqual(expect.any(Number));
 
       expect(state.isLoadingAccounts).toBe(false);
       expect(state.isLoadingNotes).toBe(false);
@@ -244,6 +245,20 @@ describe("MidenStore", () => {
   });
 
   describe("reset", () => {
+    it("advances the cache generation for every reset", () => {
+      const initialGeneration = useMidenStore.getState().cacheGeneration;
+
+      useMidenStore.getState().resetInMemoryState();
+      expect(useMidenStore.getState().cacheGeneration).toBe(
+        initialGeneration + 1
+      );
+
+      useMidenStore.getState().reset();
+      expect(useMidenStore.getState().cacheGeneration).toBe(
+        initialGeneration + 2
+      );
+    });
+
     it("should reset all state to initial values", () => {
       // Set some state
       useMidenStore.getState().setClient(createMockWebClient() as any);

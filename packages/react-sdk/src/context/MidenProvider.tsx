@@ -127,11 +127,15 @@ export function MidenProvider({
 
     const store = useMidenStore.getState();
     if (store.sync.isSyncing) return;
+    const cacheGeneration = store.cacheGeneration;
+    const isStale = () =>
+      useMidenStore.getState().cacheGeneration !== cacheGeneration;
 
     setSyncState({ isSyncing: true, error: null });
 
     try {
       const summary = await client.syncState();
+      if (isStale()) return;
       const syncHeight = summary.blockNum();
 
       setSyncState({
@@ -143,8 +147,10 @@ export function MidenProvider({
 
       // Trigger account and note refresh after sync
       const accounts = await client.getAccounts();
+      if (isStale()) return;
       useMidenStore.getState().setAccounts(accounts);
     } catch (error) {
+      if (isStale()) return;
       setSyncState({
         isSyncing: false,
         error: error instanceof Error ? error : new Error(String(error)),
@@ -406,8 +412,12 @@ export function MidenProvider({
 
     // The WebClient exposes onStateChanged when BroadcastChannel is available.
     const unsubscribe = client.onStateChanged?.(async () => {
+      const cacheGeneration = useMidenStore.getState().cacheGeneration;
       try {
         const accounts = await client.getAccounts();
+        if (useMidenStore.getState().cacheGeneration !== cacheGeneration) {
+          return;
+        }
         useMidenStore.getState().setAccounts(accounts);
         setSyncState({ lastSyncTime: Date.now() });
       } catch {

@@ -35,14 +35,22 @@ export function useAccounts(): AccountsResult {
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
 
+    const cacheGeneration = useMidenStore.getState().cacheGeneration;
+    const isStale = () =>
+      useMidenStore.getState().cacheGeneration !== cacheGeneration;
+
     setLoadingAccounts(true);
     try {
       const fetchedAccounts = await client.getAccounts();
+      if (isStale()) return;
       setAccounts(fetchedAccounts);
     } catch (error) {
+      if (isStale()) return;
       console.error("Failed to fetch accounts:", error);
     } finally {
-      setLoadingAccounts(false);
+      if (!isStale()) {
+        setLoadingAccounts(false);
+      }
     }
   }, [client, isReady, setAccounts, setLoadingAccounts]);
 
