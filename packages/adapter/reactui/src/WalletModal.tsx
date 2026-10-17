@@ -9,7 +9,10 @@ import {
   WalletReadyState,
 } from "@miden-sdk/miden-wallet-adapter-base";
 import { useWallet, Wallet } from "@miden-sdk/miden-wallet-adapter-react";
-import { MidenWalletName } from "@miden-sdk/miden-wallet-adapter-miden";
+import {
+  MidenWalletName,
+  type MidenWalletAdapter,
+} from "@miden-sdk/miden-wallet-adapter-miden";
 import { useWalletModal } from "./useWalletModal";
 import { WalletListItem } from "./WalletListItem";
 import { DiscoverMidenMessage } from "./DiscoverMidenMessage";
@@ -98,23 +101,15 @@ export const WalletModal: FC<WalletModalProps> = ({
     [select, handleClose]
   );
 
-  const handleLoadableWalletClick = useCallback(
+  const handleOpenInBreadClick = useCallback(
     (event: MouseEvent, { adapter }: Wallet) => {
-      // Connecting a Loadable wallet hands off to its app, which the browser
-      // only allows from inside the tap, so it can't wait for the effect that
-      // select() would drive.
-      adapter
-        .connect(
-          privateDataPermission || PrivateDataPermission.UponRequest,
-          network || WalletAdapterNetwork.Testnet,
-          allowedPrivateData ?? AllowedPrivateData.None
-        )
-        .catch((e) => {
-          console.log({ e });
-        });
+      // The browser lets a page open an app only from inside the tap, so the
+      // handoff can't wait for the effect that select() drives.
+      select(adapter.name);
+      (adapter as MidenWalletAdapter).openInBread();
       handleClose(event);
     },
-    [privateDataPermission, network, allowedPrivateData, handleClose]
+    [select, handleClose]
   );
 
   const handleTabKey = useCallback(
@@ -252,7 +247,7 @@ export const WalletModal: FC<WalletModalProps> = ({
                           key={wallet.adapter.name}
                           handleClick={(event) =>
                             opensInBread(wallet)
-                              ? handleLoadableWalletClick(event, wallet)
+                              ? handleOpenInBreadClick(event, wallet)
                               : handleWalletClick(event, wallet.adapter.name)
                           }
                           wallet={wallet}
@@ -271,7 +266,7 @@ export const WalletModal: FC<WalletModalProps> = ({
                       type="button"
                       className="wallet-adapter-modal-middle-button"
                       onClick={(event) =>
-                        handleLoadableWalletClick(event, getStartedWallet)
+                        handleOpenInBreadClick(event, getStartedWallet)
                       }
                     >
                       Open in Bread

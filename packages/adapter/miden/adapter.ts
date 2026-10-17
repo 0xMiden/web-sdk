@@ -75,6 +75,7 @@ export interface MidenWallet extends EventEmitter<MidenWalletEvents> {
 export interface MidenWindow extends Window {
   midenWallet?: MidenWallet;
   miden?: MidenWallet;
+  bread?: unknown;
 }
 
 declare const window: MidenWindow;
@@ -137,16 +138,20 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
     this._privateDataPermission = PrivateDataPermission.UponRequest;
 
     if (this._readyState !== WalletReadyState.Unsupported) {
-      if (isMobileBrowser()) this._readyState = WalletReadyState.Loadable;
-      scopePollingDetectionStrategy(() => {
-        if (window?.midenWallet || window?.miden) {
-          this._readyState = WalletReadyState.Installed;
-          this.emit("readyStateChange", this._readyState);
-          return true;
-        }
-        return false;
-      });
+      // Bread's own browser defines window.bread before any page script runs
+      // and injects the wallet later, so a page there waits for the wallet.
+      if (isMobileBrowser() && !window.bread)
+        this._readyState = WalletReadyState.Loadable;
+      scopePollingDetectionStrategy(() => this.detectWallet());
     }
+  }
+
+  private detectWallet(): boolean {
+    if (this._readyState === WalletReadyState.Installed) return true;
+    if (!window.midenWallet && !window.miden) return false;
+    this._readyState = WalletReadyState.Installed;
+    this.emit("readyStateChange", this._readyState);
+    return true;
   }
 
   get address() {
@@ -404,7 +409,16 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
     }
   }
 
-  private openInBread(): void {
+  /**
+   * Opens the current page in the Bread app, from a tap handler while
+   * `readyState` is `Loadable`. If the wallet was injected since the last
+   * poll, moves to `Installed` and emits `readyStateChange` instead.
+   */
+  openInBread(): void {
+    if (!this.detectWallet()) this.handOffToBread();
+  }
+
+  private handOffToBread(): void {
     // iOS and Android hand the link to Bread only for a navigation the user's
     // tap started: this must run before connect() awaits anything, and is
     // skipped without an active tap (autoConnect on load would just bounce to
@@ -440,8 +454,11 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
       // intended trade-off — a locked wallet genuinely needs to be unlocked
       // to hand back the account.)
       if (this.connecting) return;
-      if (this._readyState === WalletReadyState.Loadable) {
-        this.openInBread();
+      if (
+        this._readyState === WalletReadyState.Loadable &&
+        !this.detectWallet()
+      ) {
+        this.handOffToBread();
         return;
       }
       if (this._readyState !== WalletReadyState.Installed)

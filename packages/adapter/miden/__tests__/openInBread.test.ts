@@ -244,6 +244,14 @@ describe("Open in Bread", () => {
   });
 
   describe("openInBread", () => {
+    it("navigates to the Open in Bread link from a tap", () => {
+      stubBrowser(IPHONE_UA, 5);
+      const adapter = new MidenWalletAdapter();
+
+      adapter.openInBread();
+      expect(location.assign).toHaveBeenCalledWith(getBreadOpenLink(PAGE_URL));
+    });
+
     it("moves to Installed instead of navigating when the wallet was injected after the last poll", () => {
       stubBrowser(IPHONE_UA, 5);
       const adapter = new MidenWalletAdapter();
@@ -257,6 +265,9 @@ describe("Open in Bread", () => {
       expect(onReadyStateChange).toHaveBeenCalledWith(
         WalletReadyState.Installed
       );
+
+      vi.advanceTimersByTime(1000);
+      expect(onReadyStateChange).toHaveBeenCalledTimes(1);
     });
   });
 });
