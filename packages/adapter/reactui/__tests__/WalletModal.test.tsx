@@ -1,18 +1,13 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  AllowedPrivateData,
-  PrivateDataPermission,
-  WalletAdapterNetwork,
-  WalletReadyState,
-} from "@miden-sdk/miden-wallet-adapter-base";
+import { WalletReadyState } from "@miden-sdk/miden-wallet-adapter-base";
 
 const walletContext = vi.hoisted(() => ({
   wallets: [] as unknown[],
-  wallet: null,
+  wallet: null as unknown,
   select: vi.fn(),
-  connect: vi.fn(),
+  connect: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@miden-sdk/miden-wallet-adapter-react", () => ({
@@ -35,6 +30,7 @@ function makeWallet(name: string, readyState: WalletReadyState) {
       url: `https://wallets.example/${encodeURIComponent(name)}`,
       icon: "data:image/svg+xml;base64,",
       connect: vi.fn().mockResolvedValue(undefined),
+      openInBread: vi.fn(),
     },
     readyState,
   };
@@ -78,9 +74,10 @@ describe("WalletModal", () => {
     container.remove();
     vi.useRealTimers();
     vi.clearAllMocks();
+    walletContext.wallet = null;
   });
 
-  it("opens a Loadable Bread wallet from inside the tap", () => {
+  it("selects a Loadable Bread wallet and hands it off from inside the tap", () => {
     const bread = makeWallet("Bread Wallet", WalletReadyState.Loadable);
     renderModal([bread]);
 
@@ -94,13 +91,10 @@ describe("WalletModal", () => {
 
     act(() => {
       button!.click();
-      expect(bread.adapter.connect).toHaveBeenCalledWith(
-        PrivateDataPermission.UponRequest,
-        WalletAdapterNetwork.Testnet,
-        AllowedPrivateData.None
-      );
+      expect(walletContext.select).toHaveBeenCalledWith("Bread Wallet");
+      expect(bread.adapter.openInBread).toHaveBeenCalledTimes(1);
     });
-    expect(walletContext.select).not.toHaveBeenCalled();
+    expect(bread.adapter.connect).not.toHaveBeenCalled();
     expect(walletContext.connect).not.toHaveBeenCalled();
 
     act(() => {
@@ -109,22 +103,61 @@ describe("WalletModal", () => {
     expect(setVisible).toHaveBeenCalledWith(false);
   });
 
-  it("connects a Loadable list entry from inside the tap and still selects installed ones", () => {
+  it("hands off a Loadable Bread entry from inside the tap and still selects installed ones", () => {
     const other = makeWallet("Other Wallet", WalletReadyState.Installed);
     const bread = makeWallet("Bread Wallet", WalletReadyState.Loadable);
     renderModal([other, bread]);
 
     act(() => {
       listItem("Bread Wallet")!.click();
-      expect(bread.adapter.connect).toHaveBeenCalledTimes(1);
+      expect(walletContext.select).toHaveBeenCalledWith("Bread Wallet");
+      expect(bread.adapter.openInBread).toHaveBeenCalledTimes(1);
     });
-    expect(walletContext.select).not.toHaveBeenCalled();
+    expect(bread.adapter.connect).not.toHaveBeenCalled();
 
     act(() => {
       listItem("Other Wallet")!.click();
     });
     expect(walletContext.select).toHaveBeenCalledWith("Other Wallet");
     expect(other.adapter.connect).not.toHaveBeenCalled();
+  });
+
+  it("selects a Loadable wallet that is not Bread", () => {
+    const installed = makeWallet(
+      "Installed Wallet",
+      WalletReadyState.Installed
+    );
+    const other = makeWallet("Other Wallet", WalletReadyState.Loadable);
+    renderModal([installed, other]);
+
+    act(() => {
+      listItem("Other Wallet")!.click();
+    });
+    expect(walletContext.select).toHaveBeenCalledWith("Other Wallet");
+    expect(other.adapter.connect).not.toHaveBeenCalled();
+    expect(other.adapter.openInBread).not.toHaveBeenCalled();
+  });
+
+  it("shows the store badge for a Loadable wallet that is not Bread", () => {
+    const other = makeWallet("Other Wallet", WalletReadyState.Loadable);
+    renderModal([other]);
+
+    expect(
+      document
+        .querySelector(".wallet-adapter-modal-chrome-badge")
+        ?.getAttribute("href")
+    ).toBe(other.adapter.url);
+    expect(
+      document.querySelector(".wallet-adapter-modal-middle-button")
+    ).toBeNull();
+  });
+
+  it("connects nothing when it opens with a Loadable Bread selected", () => {
+    const bread = makeWallet("Bread Wallet", WalletReadyState.Loadable);
+    walletContext.wallet = bread;
+    renderModal([bread]);
+
+    expect(walletContext.connect).not.toHaveBeenCalled();
   });
 
   it("keeps the Chrome Web Store badge when the wallet is not detected", () => {

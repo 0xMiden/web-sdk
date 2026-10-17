@@ -127,3 +127,27 @@ describe("connect re-drive when already connected (useWallet, 0xMiden/wallet#470
     expect(stubAdapter.connect).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("autoConnect (useWallet)", () => {
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+  });
+
+  it("does not connect a stored Loadable wallet on mount", async () => {
+    const stubAdapter = new StubAdapter();
+    stubAdapter.readyState = WalletReadyState.Loadable;
+    localStorage.setItem("walletName", JSON.stringify(stubAdapter.name));
+
+    renderHook(() => useWallet(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <WalletProvider wallets={[stubAdapter]} autoConnect>
+          {children}
+        </WalletProvider>
+      ),
+    });
+    await act(async () => {});
+
+    expect(stubAdapter.connect).not.toHaveBeenCalled();
+  });
+});
