@@ -133,17 +133,7 @@ impl TransactionRequest {
     #[js_export(js_name = "withAuthArgs")]
     pub fn with_auth_args(&self, preimage: Vec<Felt>) -> TransactionRequest {
         let preimage = AuthArgsPreimage(preimage.into_iter().map(NativeFelt::from).collect());
-        self.with_native_auth_args(&preimage)
-    }
-}
-
-impl TransactionRequest {
-    /// `withAuthArgs` for auth args that are already a native `SequentialCommit` value.
-    pub(crate) fn with_native_auth_args<A: SequentialCommit<Commitment = NativeWord>>(
-        &self,
-        auth_args: &A,
-    ) -> TransactionRequest {
-        self.0.clone().with_auth_args(auth_args).into()
+        self.0.clone().with_auth_args(&preimage).into()
     }
 }
 

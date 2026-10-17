@@ -941,20 +941,13 @@ impl WebClient {
         })?;
 
         let native_request = NativeTransactionRequest::from(request);
-        let overrides = MultisigAuthOverrides {
-            approval_expiration_delta,
-            salt: fee_conversion_salt
-                .as_ref()
-                .map(NativeWord::from)
-                .or(native_request.fee_conversion_salt()),
-            bound_block_num: bound_block_num.map(BlockNumber::from),
-        };
-        let Some(auth_args) = multisig_auth_args_for(client, account_id.into(), overrides).await?
-        else {
+        if !requires_caller_chosen_salt(client, account_id.into()).await? {
             return Ok(native_request.into());
-        };
+        }
 
-        // `withAuthArgs` replaces the auth argument, so the refusal happens here.
+        // `with_auth_args` replaces the auth argument, so the refusal happens here. It comes
+        // before the auth args are built, because building them can draw the salt from the
+        // client RNG, and a refused call must leave that stream as it was.
         if native_request.has_auth_arg() {
             return Err(from_str_err_with_code(
                 "failed to add the fee-aware auth args to the request: the request already has \
@@ -963,7 +956,16 @@ impl WebClient {
             ));
         }
 
-        Ok(request.with_native_auth_args(&auth_args))
+        let overrides = MultisigAuthOverrides {
+            approval_expiration_delta,
+            salt: fee_conversion_salt
+                .as_ref()
+                .map(NativeWord::from)
+                .or(native_request.fee_conversion_salt()),
+            bound_block_num: bound_block_num.map(BlockNumber::from),
+        };
+        let auth_args = multisig_auth_args(client, overrides).await?;
+        Ok(native_request.with_auth_args(&auth_args).into())
     }
 }
 
@@ -1172,9 +1174,9 @@ async fn fee_aware_builder_with(
     Ok(builder.auth_args(&auth_args).block_numbers([bound_block_num]))
 }
 
-/// The multisig auth args that `executing_account_id` needs in a request, or `None` when it is not
-/// a multisig. `fee_aware_builder_with` sets them on a new builder and `withFeeAwareAuth` sets them
-/// on a finished request, so both attach the same values.
+/// The multisig auth args that `executing_account_id` needs in a new request, or `None` when it is
+/// not a multisig. `withFeeAwareAuth` runs the same two steps with its `AUTH_ALREADY_SET` refusal
+/// between them, so both attach the same values.
 ///
 /// miden-client also derives multisig auth args from a declared fee conversion salt, but it binds
 /// them to the reference block of the execution and sets no approval expiration. The SDK builds
@@ -1197,10 +1199,12 @@ async fn multisig_auth_args_for(
 /// caller's salt and the chain's fee conversion info.
 ///
 /// The bound block is what the approvers sign over, and the kernel requires it at or before the
-/// transaction's reference block and tracked by its partial blockchain. The caller declares it
-/// through the request's block numbers, so the request executes at the bound block or any later
-/// tip, and an anchor captured for it at any such height tracks it too. A client whose sync height
-/// is still below the bound block cannot execute it yet.
+/// transaction's reference block and tracked by its partial blockchain. miden-client tracks it
+/// when it executes the request, so the request executes at the bound block or any later tip.
+/// Only `feeAwareTransactionRequestBuilder` also declares it through the request's block numbers,
+/// which is what lets an anchor captured for the request track it; a `withFeeAwareAuth` copy does
+/// not declare it. A client whose sync height is still below the bound block cannot execute it
+/// yet.
 ///
 /// The approval does not expire unless `approval_expiration_delta` asks for one.
 async fn multisig_auth_args(
