@@ -415,9 +415,11 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
   /**
    * Opens the current page in the Bread app, from a tap handler while
    * `readyState` is `Loadable`. If the wallet was injected since the last
-   * poll, moves to `Installed` and emits `readyStateChange` instead.
+   * poll, moves to `Installed` and emits `readyStateChange` instead. In any
+   * other state it does nothing.
    */
   openInBread(): void {
+    if (this._readyState !== WalletReadyState.Loadable) return;
     if (!this.detectWallet()) this.handOffToBread();
   }
 

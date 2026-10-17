@@ -143,10 +143,10 @@ of navigating, `connect()` then connecting. `adapter.url` is the link while
 hands the link to the app only for a navigation the user's tap started, so
 call `openInBread()` synchronously from the click handler, with no `await`
 before it. Without an active tap it does nothing, and calls within a second
-of a handoff do not navigate again. The reactui modal shows an "Open in
-Bread" button for this state that selects Bread and calls `openInBread()`
-from inside the tap; opening the modal with a `Loadable` Bread selected
-connects nothing.
+of a handoff do not navigate again. In any other state `openInBread()` does
+nothing. The reactui modal shows an "Open in Bread" button for the `Loadable`
+state that selects Bread and calls `openInBread()` from inside the tap;
+opening the modal with a `Loadable` Bread selected connects nothing.
 
 `autoConnect` is off by default. When on, it connects as soon as a stored
 wallet resolves to an `Installed` adapter, and clears the stored name if that
