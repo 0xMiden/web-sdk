@@ -35,9 +35,15 @@ export function useAccounts(): AccountsResult {
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
 
-    const cacheGeneration = useMidenStore.getState().cacheGeneration;
-    const isStale = () =>
-      useMidenStore.getState().cacheGeneration !== cacheGeneration;
+    const currentStore = useMidenStore.getState();
+    if (currentStore.client !== client) return;
+    const cacheGeneration = currentStore.cacheGeneration;
+    const isStale = () => {
+      const store = useMidenStore.getState();
+      return (
+        store.cacheGeneration !== cacheGeneration || store.client !== client
+      );
+    };
 
     setLoadingAccounts(true);
     try {

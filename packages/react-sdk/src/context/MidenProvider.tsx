@@ -126,10 +126,15 @@ export function MidenProvider({
     if (!client || !isReady) return;
 
     const store = useMidenStore.getState();
-    if (store.sync.isSyncing) return;
+    if (store.sync.isSyncing || store.client !== client) return;
     const cacheGeneration = store.cacheGeneration;
-    const isStale = () =>
-      useMidenStore.getState().cacheGeneration !== cacheGeneration;
+    const isStale = () => {
+      const currentStore = useMidenStore.getState();
+      return (
+        currentStore.cacheGeneration !== cacheGeneration ||
+        currentStore.client !== client
+      );
+    };
 
     setSyncState({ isSyncing: true, error: null });
 
@@ -412,13 +417,19 @@ export function MidenProvider({
 
     // The WebClient exposes onStateChanged when BroadcastChannel is available.
     const unsubscribe = client.onStateChanged?.(async () => {
-      const cacheGeneration = useMidenStore.getState().cacheGeneration;
+      const currentStore = useMidenStore.getState();
+      if (currentStore.client !== client) return;
+      const cacheGeneration = currentStore.cacheGeneration;
       try {
         const accounts = await client.getAccounts();
-        if (useMidenStore.getState().cacheGeneration !== cacheGeneration) {
+        const store = useMidenStore.getState();
+        if (
+          store.cacheGeneration !== cacheGeneration ||
+          store.client !== client
+        ) {
           return;
         }
-        useMidenStore.getState().setAccounts(accounts);
+        store.setAccounts(accounts);
         setSyncState({ lastSyncTime: Date.now() });
       } catch {
         // Non-fatal — next explicit sync will catch up.
