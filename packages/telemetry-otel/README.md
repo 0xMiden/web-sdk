@@ -67,7 +67,7 @@ afterwards:
 | | |
 |---|---|
 | span name | `miden.<op>`, e.g. `miden.proveTransaction` |
-| `miden.duration_ms` | wall time the caller waited |
+| `miden.duration_ms` | the observation's `durationMs`: from the call's turn on its client's queue until it settled |
 | `miden.outcome` | `"ok"` or `"error"` |
 | status | `ERROR` (code `2`) on failure; left `UNSET` on success |
 

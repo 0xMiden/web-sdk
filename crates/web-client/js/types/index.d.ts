@@ -12,6 +12,7 @@ export { AuthScheme } from "./api-types";
 import type {
   Account,
   AccountStorageMode,
+  AuthSecretKey,
   WebClient as WasmWebClientBase,
   SyncSummary,
 } from "./crates/miden_client_web";
@@ -205,6 +206,14 @@ export declare class WasmWebClient extends WasmWebClientBase {
     init_seed: Uint8Array,
     auth_scheme: AuthSchemeType | number
   ): Promise<Account>;
+  // The wrapper runs a creation's pre-sync itself, under the store lock and
+  // only on a store still at genesis, and always skips the creation's own, so
+  // none of the four creations takes the generated trailing `skip_pre_sync`.
+  newAccount(account: Account, overwrite: boolean): Promise<void>;
+  newAccountWithSecretKey(
+    account: Account,
+    secret_key: AuthSecretKey
+  ): Promise<void>;
 
   syncState(): Promise<SyncSummary>;
   syncChain(): Promise<SyncSummary>;
@@ -218,12 +227,14 @@ export declare class WasmWebClient extends WasmWebClientBase {
    * same store.
    *
    * A call already queued or running that executes against the main-realm
-   * wasm client still finishes. A call that needs the worker, whether in
-   * flight, waiting for the worker to be ready or still queued behind
-   * terminate(), rejects with "WebClient terminated". Every wasm call made
-   * after terminate() fails with it too: a synchronous member or an accessor
-   * throws, every other member rejects. The release waits until all of these
-   * calls have settled. Calling it again is harmless.
+   * wasm client still finishes, one that waits for the store lock first
+   * included (the `frontend-pitfalls` skill lists those calls). A call that
+   * needs the worker, whether in flight, waiting for the worker to be ready
+   * or still queued behind terminate(), rejects with "WebClient terminated".
+   * Every wasm call made after terminate() fails with it too: a synchronous
+   * member or an accessor throws, every other member rejects. The release
+   * waits until all of these calls have settled. Calling it again is
+   * harmless.
    *
    * The release and the rejections are browser-only: on the Node.js binding
    * WasmWebClient.terminate() is a no-op.

@@ -144,32 +144,56 @@ test.describe("Sync Lock Tests", () => {
   });
 
   test.describe("Multiple Clients Same Store", () => {
-    test("concurrent syncs from two clients on same store are coalesced", async ({
+    test("concurrent syncs from two clients on one store each run their own sync, serialized by the lock", async ({
       page,
     }) => {
       const result = await page.evaluate(async () => {
-        // Create two clients pointing to the same store
+        const lockName = `miden-sync-${window.storeName}`;
         const client1 = window.client;
         const client2 = await window.helpers.createClient(window.storeName);
 
-        // Fire concurrent syncs from both clients
-        const syncPromises = [client1.syncState(), client2.syncState()];
-
-        const results = await Promise.all(syncPromises);
-        const blockNums = results.map((r) => r.blockNum());
-
-        return {
-          blockNum1: blockNums[0],
-          blockNum2: blockNums[1],
-          allSame: blockNums.every((n) => n === blockNums[0]),
+        // Count the store lock's grants and how many of them run at once.
+        const locks = navigator.locks;
+        const request = locks.request;
+        let grants = 0;
+        let running = 0;
+        let maxRunning = 0;
+        locks.request = (name, ...rest) => {
+          const fn = rest.pop();
+          if (name !== lockName) return request.call(locks, name, ...rest, fn);
+          return request.call(locks, name, ...rest, async (lock) => {
+            grants++;
+            running++;
+            maxRunning = Math.max(maxRunning, running);
+            try {
+              return await fn(lock);
+            } finally {
+              running--;
+            }
+          });
         };
+        try {
+          const results = await Promise.all([
+            client1.syncState(),
+            client2.syncState(),
+          ]);
+          return {
+            blockNums: results.map((r) => r.blockNum()),
+            grants,
+            maxRunning,
+          };
+        } finally {
+          delete locks.request;
+        }
       });
 
-      expect(typeof result.blockNum1).toBe("number");
-      expect(typeof result.blockNum2).toBe("number");
-      // Both syncs should complete with valid block numbers
-      expect(result.blockNum1).toBeGreaterThanOrEqual(0);
-      expect(result.blockNum2).toBeGreaterThanOrEqual(0);
+      expect(typeof result.blockNums[0]).toBe("number");
+      expect(typeof result.blockNums[1]).toBe("number");
+      expect(result.blockNums[0]).toBeGreaterThanOrEqual(0);
+      expect(result.blockNums[1]).toBeGreaterThanOrEqual(0);
+      // One run per client, never two at once.
+      expect(result.grants).toBe(2);
+      expect(result.maxRunning).toBe(1);
     });
 
     test("many concurrent syncs from multiple clients all succeed", async ({
@@ -258,6 +282,58 @@ test.describe("Sync Lock Tests", () => {
       expect(result.accountCount).toBe(0);
       expect(result.blockNum).toBeGreaterThanOrEqual(0);
       expect(result.openConnectionWarnings).toEqual([]);
+    });
+  });
+
+  test.describe("Store Lock Key", () => {
+    test("a client that omits storeName locks the store it opens, named as resolveStoreName names it", async ({
+      page,
+    }) => {
+      const result = await page.evaluate(async () => {
+        const derived = window.resolveStoreName(window.rpcUrl, undefined);
+        const client = await window.WasmWebClient.createClient(
+          window.rpcUrl,
+          undefined,
+          undefined,
+          undefined, // storeName, omitted
+          undefined, // logLevel
+          false, // useWorker
+          undefined, // observability
+          window.feeFaucetId
+        );
+        const opened = await client.storeIdentifier();
+
+        const locks = navigator.locks;
+        const request = locks.request;
+        const lockNames = [];
+        locks.request = (name, ...rest) => {
+          lockNames.push(name);
+          return request.call(locks, name, ...rest);
+        };
+        try {
+          await client.syncState();
+        } finally {
+          delete locks.request;
+          client.terminate();
+        }
+
+        return {
+          derived,
+          opened,
+          lockNames,
+          named: window.resolveStoreName(window.rpcUrl, "named-store"),
+          testnet: window.resolveStoreName("https://rpc.testnet.miden.io"),
+          defaulted: window.resolveStoreName(undefined, undefined),
+          devnet: window.resolveStoreName("https://rpc.devnet.miden.io"),
+        };
+      });
+
+      expect(result.derived).toMatch(/^MidenClientDB_/);
+      expect(result.opened).toBe(result.derived);
+      expect(result.lockNames).toEqual([`miden-sync-${result.derived}`]);
+      expect(result.named).toBe("named-store");
+      expect(result.defaulted).toBe(result.testnet);
+      expect(result.devnet).not.toBe(result.testnet);
     });
   });
 
@@ -372,38 +448,97 @@ test.describe("Sync Lock Tests", () => {
       expect(result.hasRequest).toBe(true);
     });
 
-    test("sync operations use Web Locks when available", async ({ page }) => {
+    test("a note import on a second client waits on the store lock while another holder has it", async ({
+      page,
+    }) => {
       const result = await page.evaluate(async () => {
-        const client = window.client;
+        const lockName = `miden-sync-${window.storeName}`;
+        const wallet = await window.client.newWallet(
+          window.AccountStorageMode.private(),
+          window.AuthScheme.AuthRpoFalcon512
+        );
+        const faucet = await window.client.newFaucet(
+          window.AccountStorageMode.private(),
+          false,
+          "LCK",
+          "LCK",
+          8,
+          BigInt(10000000),
+          window.AuthScheme.AuthRpoFalcon512
+        );
+        const note = window.Note.createP2IDNote(
+          wallet.id(),
+          wallet.id(),
+          new window.NoteAssets([
+            new window.FungibleAsset(faucet.id(), BigInt(1)),
+          ]),
+          window.NoteType.Private,
+          new window.NoteAttachment()
+        );
+        const noteFile = window.NoteFile.fromOutputNote(
+          window.OutputNote.full(note)
+        );
+        const second = await window.MidenClient.create({
+          rpcUrl: window.rpcUrl,
+          storeName: window.storeName,
+          feeFaucetId: window.feeFaucetId,
+        });
 
-        // Check for held locks before sync
-        const locksBefore = await navigator.locks.query();
-        const heldBefore = locksBefore.held?.length || 0;
+        // A real sync cannot be paused, so the page holds the store lock
+        // itself, as another client's sync or another tab would.
+        let releaseHolder;
+        let granted;
+        const holding = new Promise((resolve) => (granted = resolve));
+        const holder = navigator.locks.request(lockName, () => {
+          granted();
+          return new Promise((resolve) => (releaseHolder = resolve));
+        });
+        await holding;
 
-        // Start a sync but don't await it yet
-        const syncPromise = client.syncState();
+        let settledWhileHeld = false;
+        const imported = second.notes.import(noteFile).then(
+          () => {
+            settledWhileHeld = true;
+            return "ok";
+          },
+          (error) => {
+            settledWhileHeld = true;
+            return `error: ${error?.message ?? error}`;
+          }
+        );
+        // The import requests the lock when its turn on its client's queue
+        // starts, so poll until the request shows up.
+        let pendingOnLock = false;
+        for (let i = 0; i < 100 && !pendingOnLock; i++) {
+          const { pending } = await navigator.locks.query();
+          pendingOnLock = pending.some((lock) => lock.name === lockName);
+          if (!pendingOnLock) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+        }
+        const importSettledWhileHeld = settledWhileHeld;
 
-        // Immediately check for locks (sync should be holding the lock)
-        const locksDuring = await navigator.locks.query();
-        const heldDuring = locksDuring.held?.length || 0;
-
-        // Complete the sync
-        await syncPromise;
-
-        // Check for locks after sync
-        const locksAfter = await navigator.locks.query();
-        const heldAfter = locksAfter.held?.length || 0;
+        releaseHolder();
+        await holder;
+        const importOutcome = await imported;
+        const later = await second.sync();
+        const laterOnFirst = await window.client.syncState();
+        second.terminate();
 
         return {
-          heldBefore,
-          heldDuring,
-          heldAfter,
-          // Lock may be quickly acquired and released, so we just check the API works
-          apiWorks: true,
+          pendingOnLock,
+          importSettledWhileHeld,
+          importOutcome,
+          laterBlockNum: later.blockNum(),
+          laterOnFirstBlockNum: laterOnFirst.blockNum(),
         };
       });
 
-      expect(result.apiWorks).toBe(true);
+      expect(result.pendingOnLock).toBe(true);
+      expect(result.importSettledWhileHeld).toBe(false);
+      expect(result.importOutcome).toBe("ok");
+      expect(result.laterBlockNum).toBeGreaterThanOrEqual(0);
+      expect(result.laterOnFirstBlockNum).toBeGreaterThanOrEqual(0);
     });
   });
 });
