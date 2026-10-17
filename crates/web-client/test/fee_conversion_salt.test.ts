@@ -225,12 +225,18 @@ test.describe("auth args on a finished request", () => {
           .build()
           .serialize()
       );
+      // `withAuthArgs` takes the Felts by value, so the browser build consumes
+      // them. Read every value compared below before the call.
+      const expected = {
+        expectedAuthArg: commitment.toHex(),
+        expectedPreimage: preimage.map((felt) => felt.asInt().toString()),
+        expectedSalt: salt.toHex(),
+      };
       const withArgs = original.withAuthArgs(preimage);
       const restored = sdk.TransactionRequest.deserialize(withArgs.serialize());
 
       return {
-        expectedAuthArg: commitment.toHex(),
-        expectedPreimage: preimage.map((felt) => felt.asInt().toString()),
+        ...expected,
         authArg: withArgs.authArg()?.toHex() ?? null,
         storedPreimage: (
           withArgs.adviceMap().get(withArgs.authArg()) ?? []
@@ -239,7 +245,6 @@ test.describe("auth args on a finished request", () => {
         blockNumbers: Array.from(withArgs.blockNumbers()),
         originalAuthArg: original.authArg()?.toHex() ?? null,
         originalSalt: original.feeConversionSalt()?.toHex() ?? null,
-        expectedSalt: salt.toHex(),
         restoredAuthArg: restored.authArg()?.toHex() ?? null,
       };
     });
@@ -372,6 +377,156 @@ test.describe("auth args on a finished request", () => {
         result.message.startsWith("AUTH_ALREADY_SET")
     ).toBe(true);
     expect(result.message).not.toMatch(/ {2,}/);
+  });
+
+  test("withFeeAwareAuth takes approvalExpirationDelta and refuses zero like the builder", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { multisigAccountId } =
+        await helpers.setupMultisigWithConsumableNote();
+      // A fresh Word per call: the salt parameter is owned and moved across
+      // the WASM boundary.
+      const salt = () => new sdk.Word(sdk.u64Array([5, 6, 7, 8]));
+      const dappRequest = () =>
+        sdk.TransactionRequest.deserialize(
+          new sdk.TransactionRequestBuilder().build().serialize()
+        );
+      // Positional, as above, with the salt and the bound block pinned.
+      const finishedAuthArg = async (delta) =>
+        (
+          await client.withFeeAwareAuth(
+            dappRequest(),
+            multisigAccountId,
+            delta,
+            salt(),
+            1
+          )
+        )
+          .authArg()
+          ?.toHex();
+      const builderAuthArg = async (delta) =>
+        (
+          await client.feeAwareTransactionRequestBuilder(
+            multisigAccountId,
+            delta,
+            salt(),
+            1
+          )
+        )
+          .build()
+          .authArg()
+          ?.toHex();
+      const errorOf = async (call) => {
+        try {
+          await call();
+          return null;
+        } catch (err) {
+          return String(err?.message ?? err);
+        }
+      };
+
+      return {
+        withExpiry: await finishedAuthArg(100),
+        withExpiryExpected: await builderAuthArg(100),
+        withoutExpiry: await finishedAuthArg(undefined),
+        zeroError: await errorOf(() => finishedAuthArg(0)),
+        builderZeroError: await errorOf(() => builderAuthArg(0)),
+      };
+    });
+
+    // The delta reaches the auth args: the builder's auth arg for the same
+    // delta, salt and bound block, and not the one without a delta.
+    expect(result.withExpiry).toBeTruthy();
+    expect(result.withExpiry).toBe(result.withExpiryExpected);
+    expect(result.withoutExpiry).toBeTruthy();
+    expect(result.withExpiry).not.toBe(result.withoutExpiry);
+    // Zero is refused with the builder's error, not read as "never".
+    expect(result.zeroError).toContain("approvalExpirationDelta");
+    expect(result.zeroError).toBe(result.builderZeroError);
+  });
+
+  test("a refused withFeeAwareAuth draws nothing from the client RNG", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk, helpers }) => {
+      // Two clients with the same seed draw the same salts, so a draw that
+      // only one of them makes shows as a difference in the next salt. Mock
+      // clients in one browser page share a store, so each client gets its
+      // own multisig.
+      const addMultisig = async (midenClient) => {
+        const seed = new Uint8Array(32);
+        crypto.getRandomValues(seed);
+        const approvers = [
+          sdk.AuthSecretKey.rpoFalconWithRNG(),
+          sdk.AuthSecretKey.rpoFalconWithRNG(),
+        ];
+        const multisigComponent = sdk.createAuthFalcon512RpoMultisig(
+          new sdk.AuthFalcon512RpoMultisigConfig(
+            approvers.map((key) => key.publicKey().toCommitment()),
+            2
+          )
+        );
+        const { account } = new sdk.AccountBuilder(seed)
+          .storageMode(sdk.AccountStorageMode.private())
+          .withAuthComponent(multisigComponent)
+          .withBasicWalletComponent()
+          .build();
+        const accountId = account.id();
+        await midenClient.accounts.insert({ account });
+        return accountId;
+      };
+      // With the bound block pinned, the auth arg differs only by the salt
+      // the builder draws for it.
+      const nextAuthArg = async (midenClient, multisig) =>
+        (
+          await midenClient.feeAwareTransactionRequestBuilder(multisig, {
+            boundBlockNum: 1,
+          })
+        )
+          .build()
+          .authArg()
+          .toHex();
+
+      const refusing = await helpers.createMidenMockClient({
+        seed: "withFeeAwareAuth refusal",
+      });
+      const control = await helpers.createMidenMockClient({
+        seed: "withFeeAwareAuth refusal",
+      });
+      const refusingMultisig = await addMultisig(refusing);
+      const controlMultisig = await addMultisig(control);
+
+      // An auth arg and no salt option: building the auth args before the
+      // refusal would draw a salt.
+      const request = new sdk.TransactionRequestBuilder()
+        .withAuthArg(new sdk.Word(sdk.u64Array([5, 6, 7, 8])))
+        .build();
+      let refusal = null;
+      try {
+        await refusing.withFeeAwareAuth(request, refusingMultisig);
+      } catch (error) {
+        refusal = {
+          code: error.code ?? null,
+          message: String(error.message ?? error),
+        };
+      }
+
+      return {
+        refusal,
+        afterRefusal: await nextAuthArg(refusing, refusingMultisig),
+        control: await nextAuthArg(control, controlMultisig),
+        controlNext: await nextAuthArg(control, controlMultisig),
+      };
+    });
+
+    expect(
+      result.refusal?.code === "AUTH_ALREADY_SET" ||
+        result.refusal?.message.startsWith("AUTH_ALREADY_SET")
+    ).toBe(true);
+    // Each build draws a fresh salt, so equal auth args are the same draw.
+    expect(result.controlNext).not.toBe(result.control);
+    expect(result.afterRefusal).toBe(result.control);
   });
 
   test("a multisig executes a dApp request without a salt after withFeeAwareAuth", async ({
