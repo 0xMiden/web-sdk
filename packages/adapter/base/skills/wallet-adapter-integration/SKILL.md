@@ -131,7 +131,8 @@ extension's store listing) and throws `WalletNotReadyError`.
 
 While `Loadable`, `MidenWalletAdapter.openInBread()` navigates the current tab
 to `getBreadOpenLink()`, which is `BREAD_OPEN_LINK_BASE` with the page URL
-percent-encoded in `url`. The Bread app claims that link on iOS and Android
+percent-encoded in the fragment, `#url=`, so it never reaches a server. The
+Bread app claims that link on iOS and Android
 and opens the page in its own browser, where the adapter starts at
 `NotDetected`, the wallet is injected and the dApp connects as usual; without
 the app, a web page loads instead. `connect()` hands off the same way while

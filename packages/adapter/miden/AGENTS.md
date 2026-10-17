@@ -60,7 +60,8 @@ detection. Under SSR, construct adapters in a browser-only module.
 
 **While `Loadable`, `openInBread()` opens the page in Bread.** It navigates
 the current tab to `getBreadOpenLink()`: `BREAD_OPEN_LINK_BASE` with the page
-URL percent-encoded in `url`. The Bread app claims that link on iOS and
+URL percent-encoded in the fragment, `#url=`, which browsers never send to a
+server. The Bread app claims that link on iOS and
 Android and opens the page in its own browser, where the wallet is injected
 and a normal connect follows. Without the app, a web page loads instead.
 `connect()` hands off the same way while `Loadable`, and its promise resolves

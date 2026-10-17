@@ -91,11 +91,12 @@ export const BREAD_OPEN_LINK_BASE = "https://bread.miden.xyz/open";
 /**
  * Link that opens `pageUrl` in the Bread app. The app claims it as an iOS
  * universal link and Android app link; without the app it loads a web page.
+ * The page URL travels in the fragment, which browsers never send to a server.
  */
 export function getBreadOpenLink(
   pageUrl: string = window.location.href
 ): string {
-  return `${BREAD_OPEN_LINK_BASE}?url=${encodeURIComponent(pageUrl)}`;
+  return `${BREAD_OPEN_LINK_BASE}#url=${encodeURIComponent(pageUrl)}`;
 }
 
 const BREAD_EXTENSION_URL =
