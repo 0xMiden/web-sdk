@@ -5,7 +5,7 @@
 ### Enhancements
 
 * [FEATURE][web] Add the multisig auth args to a request that another party built with `client.withFeeAwareAuth(request, account, options?)`. It returns a copy of the request with the same auth argument and advice-map preimage that `feeAwareTransactionRequestBuilder` declares, and keeps every other field; for any other account it returns the request unchanged. It takes the same `options`, uses the salt that the request declares when `feeConversionSalt` is omitted, and refuses a request that already has an auth argument (`AUTH_ALREADY_SET`). A wallet can now execute a dApp's request that declares no salt from a multisig account without rebuilding it ([#477](https://github.com/0xMiden/web-sdk/pull/477), [rust-sdk#2708](https://github.com/0xMiden/rust-sdk/pull/2708)).
-* [FEATURE][web] Set auth args on a finished request with `request.withAuthArgs(preimage: Felt[])`, which mirrors miden-client's `TransactionRequest::with_auth_args`. It returns a copy whose auth argument is the Poseidon2 hash of `preimage`, with `preimage` in the advice map, and replaces an existing auth argument and a declared fee conversion salt ([#477](https://github.com/0xMiden/web-sdk/pull/477)).
+* [FEATURE][web] Set auth args on a finished request with `request.withAuthArgs(preimage: Felt[])`, which mirrors miden-client's `TransactionRequest::with_auth_args`. It returns a copy whose auth argument is the Poseidon2 hash of `preimage`, with `preimage` in the advice map, and replaces an existing auth argument and a declared fee conversion salt. In the browser build it consumes the `Felt`s it is given, so pass fresh ones to another call ([#477](https://github.com/0xMiden/web-sdk/pull/477)).
 
 ### Fixes
 

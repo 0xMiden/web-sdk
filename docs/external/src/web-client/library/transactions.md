@@ -287,6 +287,8 @@ const request = finishedRequest.withAuthArgs(preimage);
 
 It returns a copy whose auth argument is the Poseidon2 hash of `preimage`, with `preimage` in the advice map under that hash, so the auth argument and its preimage always agree. It replaces an existing auth argument and a declared fee conversion salt without a check, and every other field stays the same.
 
+The `Felt`s in `preimage` are consumed by the call in the browser build: they are moved across the WASM boundary, so read what you need from them before the call and pass fresh ones to another call. A spent `Felt` fails with `null pointer passed to rust`.
+
 ### Custom auth procedures
 
 miden-client only commits conversion info for auth components it recognises. If you have written your own, which way out applies depends on the procedure:

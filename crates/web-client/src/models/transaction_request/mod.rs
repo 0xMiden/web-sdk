@@ -130,6 +130,10 @@ impl TransactionRequest {
     /// request stays the same. miden-client tracks the bound block of multisig auth args when it
     /// executes the request. The request does not declare that block as a block number, so an
     /// anchor from `chainAnchorForRequest` does not track it.
+    ///
+    /// The `Felt`s are consumed by the call in the browser build: they are moved across the WASM
+    /// boundary, so read what you need from them before the call and pass fresh ones to another
+    /// call. A spent `Felt` fails with "null pointer passed to rust".
     #[js_export(js_name = "withAuthArgs")]
     pub fn with_auth_args(&self, preimage: Vec<Felt>) -> TransactionRequest {
         let preimage = AuthArgsPreimage(preimage.into_iter().map(NativeFelt::from).collect());
