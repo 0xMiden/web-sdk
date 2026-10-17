@@ -58,7 +58,11 @@ network and permissions on `WalletProvider` or `MidenFiSignerProvider`.
 **The modal connects on its own.** `WalletModal` fires `connect()` from a
 layout effect whenever a wallet is selected, so opening it with a selection
 already stored starts a handshake immediately, and selecting an entry connects
-rather than just recording a choice.
+rather than just recording a choice. A `Loadable` wallet is the exception. In
+a phone browser the modal shows an "Open in Bread" button in place of the
+Chrome Web Store badge, and tapping it, or a `Loadable` entry in the list,
+calls that adapter's `connect()` inside the tap without selecting it, because
+the handoff to the Bread app only works from a tap.
 
 **`WalletModalProvider` mounts the modal only while visible.** Open it with
 `useWalletModal().setVisible(true)`. While open, page scroll is locked, Escape

@@ -1,7 +1,7 @@
 # @miden-sdk/miden-wallet-adapter-miden - Agent Guide
 
-**Audience: AI coding agents** connecting an app to the Bread wallet browser
-extension.
+**Audience: AI coding agents** connecting an app to the Bread wallet: the
+browser extension on desktop, or the Bread app from a phone browser.
 
 This file ships inside the published package, so the copy at
 `node_modules/@miden-sdk/miden-wallet-adapter-miden/AGENTS.md` matches the
@@ -18,8 +18,9 @@ resolves with no extra install.
 ## What this package is
 
 One concrete adapter, `MidenWalletAdapter`, plus the `MidenWallet` interface
-it expects the extension to inject and a conformance suite for checking a
-provider against that interface.
+it expects the extension to inject, `BREAD_OPEN_LINK_BASE` and
+`getBreadOpenLink()` for handing a page to the Bread app, and a conformance
+suite for checking a provider against that interface.
 
 ```ts
 import { MidenWalletAdapter } from "@miden-sdk/miden-wallet-adapter-miden";
@@ -30,8 +31,10 @@ export const wallets = [new MidenWalletAdapter({ appName: "My dApp" })];
 ```
 
 `MidenWalletName` is the branded name (`"Bread Wallet"`) the React providers
-and the wallet modal select on. `adapter.url` is the extension's Chrome Web
-Store listing, which the providers open on a connect without it installed.
+and the wallet modal select on. On desktop, `adapter.url` is the extension's
+Chrome Web Store listing, which the providers open on a connect without it
+installed. In a phone browser it is the Open in Bread link for the current
+page, `getBreadOpenLink()`.
 
 ## How detection works
 
@@ -41,11 +44,28 @@ Detection runs immediately, once a second, on `DOMContentLoaded` and on
 before the extension injects starts at `NotDetected` and flips to `Installed`
 about a second later: render from `readyState`, not from a check at mount.
 
+In a phone browser with nothing injected, the adapter starts at `Loadable`
+instead. That covers an iPhone, iPad or iPod user agent, a Mac user agent with
+more than one touch point (iPadOS asks for desktop sites by default) and an
+Android one. Detection keeps running, so inside the Bread app's own browser,
+where the wallet is injected, it still moves to `Installed`.
+
 An adapter constructed where `window` or `document` is undefined is
 `Unsupported` **permanently** - the constructor decides once and never starts
 detection. Under SSR, construct adapters in a browser-only module.
 
 ## Behavior specific to this adapter
+
+**In a phone browser, `connect()` opens the page in Bread.** While `Loadable`,
+it navigates the current tab to `getBreadOpenLink()`: `BREAD_OPEN_LINK_BASE`
+with the page URL percent-encoded in `url`. The Bread app claims that link on
+iOS and Android and opens the page in its own browser, where the wallet is
+injected and a normal connect follows. Without the app, a web page loads
+instead. The promise resolves without connecting or throwing. The OS hands
+the link to the app only for a navigation the user's tap started, so call
+`connect()` synchronously from the click handler, with no `await` before it.
+Without an active tap, such as an `autoConnect` on page load, it does nothing,
+and a second call within a second of a handoff is ignored.
 
 **A resolved request with no transaction id is a failure.** The wallet reports
 success as soon as it accepts a transaction into its queue. If it hands back

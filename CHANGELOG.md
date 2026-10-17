@@ -2,6 +2,10 @@
 
 ## 0.17.4 (TBD)
 
+### Enhancements
+
+* [FEATURE][adapter] A dApp opened in a phone browser can now hand off to the Bread app instead of sending the user to the Chrome Web Store. On iOS, iPadOS and Android with no wallet injected, `MidenWalletAdapter` starts at `Loadable` instead of `NotDetected`, and `connect()` called from a tap navigates the tab to the Open in Bread link for the page, which Bread opens in its own browser where the wallet is injected, or which loads a web page when the app is not installed. `connect()` resolves without connecting or throwing, does nothing outside a tap so `autoConnect` never redirects on page load, and navigates once per tap. On a phone `adapter.url` is that link; the new `BREAD_OPEN_LINK_BASE` and `getBreadOpenLink(pageUrl?)` exports build it. The adapter still moves to `Installed` when the wallet injects, and desktop behavior is unchanged. The reactui wallet modal shows an "Open in Bread" button in place of the Chrome Web Store badge in that state and connects from inside the tap ([wallet-adapter#82](https://github.com/0xMiden/wallet-adapter/issues/82)).
+
 ### Fixes
 
 * [FIX][web] The Node.js SDK now runs on Alpine and other musl Linux distributions. Releases publish a new `@miden-sdk/node-linux-x64-musl` native package alongside `@miden-sdk/node-linux-x64-gnu`, and the loader picks between the two by the runtime C library, so a musl-based container (a common ECS or Docker base image) no longer fails at import with `Miden napi module not found`. Both Linux packages declare a `libc` field, so npm and pnpm install only the matching one. With npm, an install for Linux from another OS (`npm install --os=linux --cpu=x64`, as when bundling on macOS) must now also pass `--libc=glibc`, or `--libc=musl` for an Alpine target, or npm skips both Linux packages ([#234](https://github.com/0xMiden/web-sdk/pull/234)).
