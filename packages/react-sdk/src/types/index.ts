@@ -601,9 +601,12 @@ export interface ExecuteTransactionOptions {
   /**
    * Execute against a pinned reference block instead of the current sync
    * height, so a summary signed at that block reproduces exactly. Capture one
-   * with {@link useChainAnchor}. Leave it out for a multisig request built by
-   * `feeAwareTransactionRequestBuilder`, which executes at the tip once the
-   * client has synced to its bound block.
+   * with {@link useChainAnchor}. Leave it out for a multisig request from
+   * `feeAwareTransactionRequestBuilder`, which declares its bound block and
+   * executes at the tip once the client has synced to it. A `withFeeAwareAuth`
+   * copy takes no anchor either, but declares no bound block: sync before
+   * executing it. An anchor captured for that copy does not track the bound
+   * block.
    */
   anchor?: ChainAnchor;
 }
@@ -626,8 +629,11 @@ export interface PreviewTransactionOptions {
    * Derive the summary at a pinned reference block. Required when verifying a
    * summary that binds the reference block commitment, since deriving it at the
    * local sync height produces a different summary. Leave it out for a multisig
-   * request built by `feeAwareTransactionRequestBuilder`, which previews at the
-   * tip once the client has synced to its bound block.
+   * request from `feeAwareTransactionRequestBuilder`, which declares its bound
+   * block and previews at the tip once the client has synced to it. A
+   * `withFeeAwareAuth` copy takes no anchor either, but declares no bound block:
+   * sync before previewing it. An anchor captured for that copy does not track
+   * the bound block.
    */
   anchor?: ChainAnchor;
 }
