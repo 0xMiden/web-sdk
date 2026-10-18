@@ -10,7 +10,7 @@ import {
 } from "react";
 import { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk";
 import { useMidenStore } from "../store/MidenStore";
-import { captureAccountReadGuard } from "../store/accountReadGuard";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import type { MidenConfig } from "../types";
 import { DEFAULTS } from "../types";
 import { AsyncLock } from "../utils/asyncLock";
@@ -126,7 +126,7 @@ export function MidenProvider({
   const sync = useCallback(async () => {
     if (!client || !isReady) return;
 
-    const isCurrent = captureAccountReadGuard(client);
+    const isCurrent = captureClientReadGuard(client);
     if (useMidenStore.getState().sync.isSyncing || !isCurrent()) return;
 
     setSyncState({ isSyncing: true, error: null });
@@ -411,7 +411,7 @@ export function MidenProvider({
 
     // The WebClient exposes onStateChanged when BroadcastChannel is available.
     const unsubscribe = client.onStateChanged?.(async () => {
-      const isCurrent = captureAccountReadGuard(client);
+      const isCurrent = captureClientReadGuard(client);
       if (!isCurrent()) return;
       try {
         const accounts = await client.getAccounts();

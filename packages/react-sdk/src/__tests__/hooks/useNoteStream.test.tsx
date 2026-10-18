@@ -113,7 +113,7 @@ describe("useNoteStream", () => {
         expect(result.current.notes.map((note) => note.id)).toEqual([
           "0xretained",
         ]);
-        expect(result.current.isLoading).toBe(false);
+        expect(result.current.isLoading).toBe(true);
         expect(result.current.error).toBeNull();
 
         await act(async () => {
@@ -186,13 +186,14 @@ describe("useNoteStream", () => {
 
         expect(result.current.error).toBeNull();
         expect(useMidenStore.getState()).toBe(retainedState);
-        expect(result.current.isLoading).toBe(false);
+        expect(result.current.isLoading).toBe(true);
 
         await act(async () => {
           rejectCurrent("Current note read failed");
           await currentRead.catch(() => {});
         });
         expect(result.current.error?.message).toBe("Current note read failed");
+        expect(result.current.isLoading).toBe(false);
 
         act(() => {
           useMidenStore.getState().setSyncState({ lastSyncTime: 2 });

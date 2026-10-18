@@ -6,6 +6,7 @@ import {
   useSyncStateStore,
   useNoteFirstSeenStore,
 } from "../store/MidenStore";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import { NoteFilter } from "@miden-sdk/miden-sdk";
 import type { InputNoteRecord } from "@miden-sdk/miden-sdk";
 import type {
@@ -88,6 +89,9 @@ export function useNoteStream(
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
 
+    const isCurrent = captureClientReadGuard(client);
+    if (!isCurrent()) return;
+
     setIsLoading(true);
     setError(null);
 
@@ -95,8 +99,10 @@ export function useNoteStream(
       const filterType = getNoteFilterType(status);
       const filter = new NoteFilter(filterType);
       const fetched = await client.getInputNotes(filter);
+      if (!isCurrent()) return;
       setNotesIfChanged(fetched);
     } catch (err) {
+      if (!isCurrent()) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
       setIsLoading(false);
