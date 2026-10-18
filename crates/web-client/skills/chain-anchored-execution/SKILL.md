@@ -1,6 +1,6 @@
 ---
 name: chain-anchored-execution
-description: Rules for multi-party signing flows. Multisig proposals (0.17+) bind a block in their auth args and execute at the tip with withBlockNumbers, never at an anchor; ChainAnchor pins execution to a specific block for flows whose summary binds the reference block, such as single-signature offline co-signing. Use when writing or reviewing multisig proposal, co-signing or submission code, when a multisig proposal fails with `block N has been pruned`, `failed to lookup value in Merkle store` or `requested block N is after transaction reference block M`, or when writing or reviewing code that calls captureAnchor, preview, executeRequest or submit with an anchor, builds a request that travels between parties with withExplicitInputNote or withForeignAccounts, uses useChainAnchor or usePreview, or when debugging summary commitments that never match between co-signers, INVALID_CHAIN_ANCHOR, OPERATION_BUSY, STALE_CLIENT, TRANSACTION_ALREADY_AUTHORIZED or FeeConversionInfoRequired.
+description: Rules for multi-party signing flows. Multisig proposals (0.17+) bind a block in their auth args and execute at the tip, never at an anchor; ChainAnchor pins execution to a specific block for flows whose summary binds the reference block, such as single-signature offline co-signing. Use when writing or reviewing multisig proposal, co-signing or submission code, when a wallet executes a finished request from a multisig with withFeeAwareAuth, when a multisig proposal fails with `block N has been pruned` or `requested block N is after transaction reference block M`, or when writing or reviewing code that calls captureAnchor, preview, executeRequest or submit with an anchor, builds a request that travels between parties with withExplicitInputNote or withForeignAccounts, uses useChainAnchor or usePreview, or when debugging summary commitments that never match between co-signers, INVALID_CHAIN_ANCHOR, OPERATION_BUSY, STALE_CLIENT, TRANSACTION_ALREADY_AUTHORIZED, AUTH_ALREADY_SET or FeeConversionInfoRequired.
 ---
 
 # Chain-Anchored Execution
@@ -9,7 +9,9 @@ description: Rules for multi-party signing flows. Multisig proposals (0.17+) bin
 and in every release since. `withExplicitInputNote` (R3) and foreign-account
 prefetching, removed again in `0.17.0` (R4), arrived in `0.16.1`.
 `withBlockNumbers` and tip execution of multisig proposals (§1, R0) arrived in
-`0.17.0-rc.4`.
+`0.17.0-rc.4`. `withFeeAwareAuth`, `TransactionRequest.withAuthArgs`, and tip
+execution of a multisig request that does not declare its bound block arrived in
+`0.17.4`.
 This skill ships inside the package, so if you are reading it from
 `node_modules/@miden-sdk/miden-sdk/skills/`, the installed version has these
 surfaces. If a symbol is missing anyway, you are on a build older than the release
@@ -45,16 +47,22 @@ authenticate once it is in the transaction's partial blockchain.
 ### R0 - A multisig proposal executes at the tip, never at an anchor
 
 Build the request with `client.feeAwareTransactionRequestBuilder(account)`. For a
-multisig it binds the current sync height as the bound block and adds that block with
-`withBlockNumbers`, so the proposer, every co-signer and the executor can call
-`preview` / `submit` **without** `anchor`, each at its own tip, and derive the same
-summary. Each party's client must first have synced to at least the bound block (the
+multisig it binds the current sync height as the bound block in its auth args, and
+miden-client tracks that block when it executes the request, so the proposer, every
+co-signer and the executor can call `preview` / `submit` **without** `anchor`, each at
+its own tip, and derive the same summary. The builder also adds the bound block with
+`withBlockNumbers`; only `captureAnchor` and the height check below read that
+declaration. Each party's client must first have synced to at least the bound block (the
 largest of `request.blockNumbers()`, by default the proposer's sync height when it
 built the request). A client below it fails with `requested block N is after
-transaction reference block M` until it syncs. A request built any other way must
-call `withBlockNumbers([boundBlock])` itself, or tip execution fails in the VM with
-`failed to lookup value in Merkle store`, because the auth procedure cannot read the
-bound block from the transaction's partial blockchain.
+transaction reference block M` until it syncs.
+
+A finished request that another party built, such as a dApp's request handed to a
+wallet, gets the same auth args from `await client.withFeeAwareAuth(request, account)`.
+The copy does not declare the bound block, so `request.blockNumbers()` cannot drive the
+height check: sync before previewing it, and sync again on `requested block N is after
+transaction reference block M`. For a multisig it refuses a request that already has an
+auth argument (`AUTH_ALREADY_SET`); any other account's request comes back unchanged.
 
 Why not an anchor: a node keeps account state for only 50 blocks, and every
 fee-paying transaction loads the chain's fee faucet as a foreign account. Re-executing
@@ -67,7 +75,7 @@ proposer's anchor is obsolete.
 R1 and R2's request transport still apply: co-signers must re-derive from the
 proposer's request bytes, because the salt in the auth args is drawn fresh per build.
 Check the bound block is real by comparing `summary.blockCommitment()` with the header a
-trusted node returns for the number in `request.blockNumbers()`.
+trusted node returns for the number in the builder's `request.blockNumbers()`.
 
 ---
 
@@ -259,14 +267,14 @@ Map an observed symptom to its cause before proposing a fix.
 | --- | --- |
 | Co-signer's summary never matches the proposer's | For a summary that binds the reference block: anchor not passed to `preview` (R2). For any flow: the request was re-resolved instead of transported (R1, R2). A multisig proposal takes no anchor (R0) |
 | Co-signers' summaries differ and every other check passes | The request used `withInputNotes`, so each client chose the consumption mode from its own store. Rebuild with `withExplicitInputNote` (R3) |
-| `FeeConversionInfoRequired` naming the auth component | The executing account is a multisig and the request declares no fee conversion salt. Build it from `await client.feeAwareTransactionRequestBuilder(account)` rather than a bare `TransactionRequestBuilder` |
-| `FeeConversionInfoUnsupported` naming the auth component | A salt was declared against an auth component that never reads it. Drop the salt, or use `withAuthArg` plus `extendAdviceMap` |
-| `ERR_FEE_CONVERSION_INFO_MISSING` aborting in the VM | A custom auth procedure reads conversion info that nothing committed. Attach it yourself with `withAuthArg` |
+| `FeeConversionInfoRequired` naming the auth component | The executing account is a multisig and the request declares no fee conversion salt. Build it from `await client.feeAwareTransactionRequestBuilder(account)` rather than a bare `TransactionRequestBuilder`, or add the auth args to a finished request you did not build with `await client.withFeeAwareAuth(request, account)` (R0) |
+| `FeeConversionInfoUnsupported` naming the auth component | A salt was declared against an auth component that never reads it. Drop the salt, or use `withAuthArg` plus `extendAdviceMap`, or `request.withAuthArgs(preimage)` on a finished request |
+| `ERR_FEE_CONVERSION_INFO_MISSING` aborting in the VM | A custom auth procedure reads conversion info that nothing committed. Attach it yourself with `withAuthArg`, or `request.withAuthArgs(preimage)` on a finished request |
+| `AUTH_ALREADY_SET` from `withFeeAwareAuth` | The executing account is a multisig and the request already carries an auth argument. Its author owns that argument, so `withFeeAwareAuth` does not replace it (R0) |
 | `preview` fails to find the account on the co-signer | Verification runs a real execution, so the account must already be in that participant's store. `accounts.getOrImport` for a public account; a private one needs its state transferred out of band (R2) |
 | Anchored execution fails naming a foreign account and a block | The anchor is older than the node's account-history window. Capture it closer to execution and re-capture an aged one (R4). For a multisig, stop anchoring and execute at the tip (R0) |
 | A multisig proposal fails with `block N has been pruned`, often naming the fee faucet | It is being re-executed at an anchor. Execute at the tip instead (R0) |
 | `requested block N is after transaction reference block M` | A multisig proposal previewed or submitted at the tip on a client whose sync height M is still below its bound block N. Sync, then retry (R0) |
-| `failed to lookup value in Merkle store` from a multisig proposal at the tip | The request does not declare its bound block in `withBlockNumbers`, so the auth procedure cannot read it. Build it with `feeAwareTransactionRequestBuilder`, or add the block yourself (R0) |
 | `INVALID_CHAIN_ANCHOR` | A sync landed mid-capture and left the anchor inconsistent. **Retry**, since this is transient rather than a bug to work around |
 | `OPERATION_BUSY` | A capture or preview is already running. Await the previous one |
 | `STALE_CLIENT` | The client was swapped mid-call. Recapture on the new chain |
@@ -276,10 +284,10 @@ Map an observed symptom to its cause before proposing a fix.
 | Execution fails deep in the executor after a network switch | An anchor was carried across a client/chain swap. Anchors are chain-bound |
 
 **Node.js note:** codes originating in the client (`INVALID_CHAIN_ANCHOR`,
-`TRANSACTION_ALREADY_AUTHORIZED`) **prefix the message** instead of appearing as a
-property, because the napi bindings cannot attach one. Codes originating in the React
-package (`OPERATION_BUSY`, `STALE_CLIENT`) are always properties. Write error handling
-that tolerates both shapes.
+`TRANSACTION_ALREADY_AUTHORIZED`, `AUTH_ALREADY_SET`) **prefix the message** instead of
+appearing as a property, because the napi bindings cannot attach one. Codes originating
+in the React package (`OPERATION_BUSY`, `STALE_CLIENT`) are always properties. Write
+error handling that tolerates both shapes.
 
 ---
 
@@ -343,6 +351,12 @@ TransactionRequestBuilder()`: for an account that is not a multisig the builder
 comes back untouched. A zero base fee is not a second condition: since 0.17 a
 multisig resolves its auth args whatever the chain charges.
 
+`client.withFeeAwareAuth(request, account, options?)` returns a copy of a finished
+request with the auth args that builder would set, and returns any other account's
+request unchanged. The copy does not declare the bound block (R0).
+`request.withAuthArgs(preimage)` sets auth args you build yourself on a finished
+request; in the browser build it consumes the `Felt`s it is given.
+
 ### `ChainAnchor`
 
 | Member | Returns | Purpose |
@@ -370,7 +384,7 @@ multisig resolves its auth args whatever the chain charges.
 
 ```ts
 new TransactionRequestBuilder()
-  .withBlockNumbers([boundBlock])            // blocks the tx must authenticate; lets a multisig run at the tip (R0)
+  .withBlockNumbers([boundBlock])            // blocks the tx must authenticate; captureAnchor tracks them (R0)
   .withExplicitInputNote(inputNote, args?)   // pins authenticated vs unauthenticated
   .withForeignAccounts([foreignAccount])     // declared foreign accounts, read at the reference block
 
@@ -486,9 +500,9 @@ interaction executes the request whose summary you just displayed.
 Before considering anchor-related work complete, confirm each of these:
 
 - [ ] The flow genuinely needs an anchor (§1). If not, `anchor` is absent everywhere.
-- [ ] A multisig proposal is built with `feeAwareTransactionRequestBuilder` (or carries
-      its bound block in `withBlockNumbers`) and is previewed and submitted without an
-      anchor (R0).
+- [ ] A multisig proposal is built with `feeAwareTransactionRequestBuilder` (or, as a
+      finished request, gets its auth args from `withFeeAwareAuth`) and is previewed
+      and submitted without an anchor (R0).
 - [ ] Every `preview` / `executeRequest` / `submit` uses the request the anchor was
       captured for, not a re-resolved one (R1).
 - [ ] In React, the handler that captures passes the request it resolved itself, not
@@ -496,7 +510,8 @@ Before considering anchor-related work complete, confirm each of these:
 - [ ] The verifying side passes the proposer's anchor **and** the proposer's request
       bytes, and already tracks the account (R2).
 - [ ] Multisig requests are built from `feeAwareTransactionRequestBuilder(account)`,
-      not a bare `TransactionRequestBuilder` (§3).
+      not a bare `TransactionRequestBuilder`, and a finished one you did not build
+      passes through `withFeeAwareAuth` (§3).
 - [ ] Any request that travels pins its input-note modes with `withExplicitInputNote`
       (R3).
 - [ ] Foreign-account inputs are fetched at `anchor.blockNum()` and no sync happens

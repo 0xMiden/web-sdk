@@ -60,9 +60,10 @@ export {
 //   - An entry that awaits while holding the borrow can be polled concurrently
 //     with any other call and panics with `already borrowed: BorrowMutError`.
 //     The methods that read the store while holding the borrow — the eight
-//     request constructors and `feeAwareTransactionRequestBuilder`, which read
-//     the chain's fee parameters, and `buildPswapCancelByOrder`, which reads the
-//     order's lineage — are write methods for this reason.
+//     request constructors, `feeAwareTransactionRequestBuilder` and
+//     `withFeeAwareAuth`, which read the chain's fee parameters, and
+//     `buildPswapCancelByOrder`, which reads the order's lineage — are write
+//     methods for this reason.
 //   - An entry that takes the borrow only *synchronously* is still unsafe,
 //     because a serialized method holding the borrow across an await yields to
 //     the event loop with it outstanding. A raw call landing in that window
@@ -128,6 +129,7 @@ const WRITE_METHODS = new Set([
   "setSetting",
   "submitNewTransactionBatch",
   "submitProvenTransaction",
+  "withFeeAwareAuth",
 ]);
 
 const READ_METHODS = new Set([

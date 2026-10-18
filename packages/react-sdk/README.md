@@ -1355,16 +1355,21 @@ cannot be resent from this client.
 flows whose summary binds that block, such as single-signature co-signing.
 
 **Multisig proposals need no anchor.** Since protocol 0.17 a multisig summary
-binds a bound block named in its auth args. Build the request with
-`client.feeAwareTransactionRequestBuilder(accountId)`, which declares that
+binds a bound block named in its auth args, and miden-client tracks that block
+when it executes the request. Build the request with
+`client.feeAwareTransactionRequestBuilder(accountId)`, which also declares that
 block with `withBlockNumbers`, ship the request bytes, and let every party
 preview and execute at its own tip once its client has synced to at least the
 bound block (the largest of `request.blockNumbers()`); below it the call fails
 with `requested block N is after transaction reference block M`. `usePreview`
 does not sync, and `useTransaction` syncs through the provider's `sync()`, which
 returns early while another sync runs, so sync and then check the height before
-verifying or executing. Re-executing an older multisig proposal at an anchor
-fails once the node prunes that block's account state (50 blocks).
+verifying or executing. A finished request that another party built gets its
+multisig auth args from `client.withFeeAwareAuth(request, accountId)`; that
+copy does not declare the bound block, so the height check below cannot read
+it, and a co-signer syncs before previewing it. Re-executing an older multisig
+proposal at an anchor fails once the node prunes that block's account state
+(50 blocks).
 
 ```tsx
 import { useMiden, usePreview } from '@miden-sdk/react';
