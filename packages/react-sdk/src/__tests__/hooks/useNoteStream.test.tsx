@@ -227,6 +227,58 @@ describe("useNoteStream", () => {
   });
 
   describe("note fetching", () => {
+    it("ignores an older same-client rejection after the latest read succeeds", async () => {
+      const currentNotes = [createStreamableNote("0xcurrent")];
+      let rejectPrevious!: (error: Error) => void;
+      let resolveCurrent!: (notes: typeof currentNotes) => void;
+      const previousRead = new Promise<typeof currentNotes>((_, reject) => {
+        rejectPrevious = reject;
+      });
+      const currentRead = new Promise<typeof currentNotes>((resolve) => {
+        resolveCurrent = resolve;
+      });
+      const mockClient = createMockWebClient({
+        getInputNotes: vi
+          .fn()
+          .mockReturnValueOnce(previousRead)
+          .mockReturnValue(currentRead),
+      });
+      useMidenStore.getState().setClient(mockClient as any);
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      const { result } = renderHook(() => useNoteStream());
+      expect(mockClient.getInputNotes).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        useMidenStore.getState().setSyncState({ lastSyncTime: 1 });
+      });
+      expect(mockClient.getInputNotes).toHaveBeenCalledTimes(2);
+      expect(result.current.isLoading).toBe(true);
+
+      await act(async () => {
+        resolveCurrent(currentNotes);
+        await currentRead;
+      });
+
+      expect(result.current.notes.map((note) => note.id)).toEqual([
+        "0xcurrent",
+      ]);
+      expect(result.current.error).toBeNull();
+      expect(result.current.isLoading).toBe(false);
+      const retainedState = useMidenStore.getState();
+
+      await act(async () => {
+        rejectPrevious(new Error("Older note read failed"));
+        await previousRead.catch(() => {});
+      });
+
+      expect(result.current.error).toBeNull();
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.notes.map((note) => note.id)).toEqual([
+        "0xcurrent",
+      ]);
+      expect(useMidenStore.getState()).toBe(retainedState);
+    });
+
     it("should fetch and build StreamedNote objects", async () => {
       const noteRecords = [createStreamableNote("0xnote1", "0xsenderA", 50n)];
 

@@ -58,6 +58,7 @@ export function useNoteStream(
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const latestRequestRef = useRef(0);
   const handledIdsRef = useRef<Set<string>>(new Set());
   const [handledVersion, setHandledVersion] = useState(0);
 
@@ -92,6 +93,7 @@ export function useNoteStream(
     const isCurrent = captureClientReadGuard(client);
     if (!isCurrent()) return;
 
+    const request = ++latestRequestRef.current;
     setIsLoading(true);
     setError(null);
 
@@ -105,7 +107,7 @@ export function useNoteStream(
       if (!isCurrent()) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      setIsLoading(false);
+      if (latestRequestRef.current === request) setIsLoading(false);
     }
   }, [client, isReady, status, setNotesIfChanged]);
 

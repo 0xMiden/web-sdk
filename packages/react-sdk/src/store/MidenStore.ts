@@ -113,8 +113,8 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
       isReady: client !== null,
       isInitializing: false,
       initError: null,
-      // A replaced client's account-list, sync and note reads publish nothing,
-      // so the flags they set end with it.
+      // A replaced client's account-list, account-detail, sync and note reads
+      // publish nothing, so its shared loading and syncing flags end with it.
       ...(state.client === client
         ? {}
         : {

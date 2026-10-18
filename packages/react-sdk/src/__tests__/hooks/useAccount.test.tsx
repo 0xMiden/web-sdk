@@ -442,6 +442,55 @@ describe("useAccount", () => {
   });
 
   describe("refetch", () => {
+    it("ignores an older same-client rejection after the latest read succeeds", async () => {
+      const accountId = "0x1234567890abcdef";
+      const currentAccount = createMockAccount();
+      let rejectPrevious!: (error: Error) => void;
+      let resolveCurrent!: (account: typeof currentAccount) => void;
+      const previousRead = new Promise<typeof currentAccount>((_, reject) => {
+        rejectPrevious = reject;
+      });
+      const currentRead = new Promise<typeof currentAccount>((resolve) => {
+        resolveCurrent = resolve;
+      });
+      const mockClient = createMockWebClient({
+        getAccount: vi
+          .fn()
+          .mockReturnValueOnce(previousRead)
+          .mockReturnValue(currentRead),
+      });
+      useMidenStore.getState().setClient(mockClient as any);
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      const { result } = renderHook(() => useAccount(accountId));
+      expect(mockClient.getAccount).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        result.current.refetch();
+      });
+      expect(mockClient.getAccount).toHaveBeenCalledTimes(2);
+      expect(result.current.isLoading).toBe(true);
+
+      await act(async () => {
+        resolveCurrent(currentAccount);
+        await currentRead;
+      });
+
+      expect(result.current.account).toBe(currentAccount);
+      expect(result.current.error).toBeNull();
+      expect(result.current.isLoading).toBe(false);
+      const retainedState = useMidenStore.getState();
+
+      await act(async () => {
+        rejectPrevious(new Error("Older account read failed"));
+        await previousRead.catch(() => {});
+      });
+
+      expect(result.current.error).toBeNull();
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.account).toBe(currentAccount);
+      expect(useMidenStore.getState()).toBe(retainedState);
+    });
+
     it("should refetch account data", async () => {
       const accountId = "0x1234567890abcdef";
       const mockAccount1 = createMockAccount();
