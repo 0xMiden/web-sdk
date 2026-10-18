@@ -108,12 +108,20 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
   ...freshState(),
 
   setClient: (client) =>
-    set({
+    set((state) => ({
       client,
       isReady: client !== null,
       isInitializing: false,
       initError: null,
-    }),
+      // A replaced client's reads publish nothing, so the flags they set end with it.
+      ...(state.client === client
+        ? {}
+        : {
+            isLoadingAccounts: false,
+            isLoadingNotes: false,
+            sync: { ...state.sync, isSyncing: false },
+          }),
+    })),
 
   setInitializing: (isInitializing) => set({ isInitializing }),
 

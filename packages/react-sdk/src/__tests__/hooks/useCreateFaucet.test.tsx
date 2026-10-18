@@ -243,6 +243,7 @@ describe("useCreateFaucet", () => {
         newFaucet: vi.fn().mockResolvedValue(mockFaucet),
         getAccounts: vi.fn().mockResolvedValue(mockAccounts),
       });
+      useMidenStore.getState().setClient(mockClient as any);
 
       mockUseMiden.mockReturnValue({
         client: mockClient,

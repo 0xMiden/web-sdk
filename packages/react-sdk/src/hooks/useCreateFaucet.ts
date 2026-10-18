@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import { useMidenStore } from "../store/MidenStore";
+import { captureAccountReadGuard } from "../store/accountReadGuard";
 import { AccountStorageMode } from "@miden-sdk/miden-sdk";
 import type { Account } from "@miden-sdk/miden-sdk";
 import type { CreateFaucetOptions } from "../types";
@@ -84,8 +85,11 @@ export function useCreateFaucet(): UseCreateFaucetResult {
             BigInt(options.maxSupply),
             authScheme
           );
+          const isCurrent = captureAccountReadGuard(client);
           const accounts = await client.getAccounts();
-          setAccounts(accounts);
+          if (isCurrent()) {
+            setAccounts(accounts);
+          }
           return createdFaucet;
         });
 

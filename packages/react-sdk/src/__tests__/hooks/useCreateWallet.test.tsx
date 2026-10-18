@@ -212,6 +212,7 @@ describe("useCreateWallet", () => {
         newWallet: vi.fn().mockResolvedValue(mockWallet),
         getAccounts: vi.fn().mockResolvedValue(mockAccounts),
       });
+      useMidenStore.getState().setClient(mockClient as any);
 
       mockUseMiden.mockReturnValue({
         client: mockClient,
