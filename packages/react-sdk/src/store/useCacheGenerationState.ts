@@ -10,7 +10,11 @@ export function useCacheGenerationState<T>(initialValue: T) {
     cacheGeneration,
   }));
   const setValue = useCallback((value: T, cacheGeneration: number) => {
-    setState({ value, cacheGeneration });
+    setState((state) =>
+      state.value === value && state.cacheGeneration === cacheGeneration
+        ? state
+        : { value, cacheGeneration }
+    );
   }, []);
 
   return [
