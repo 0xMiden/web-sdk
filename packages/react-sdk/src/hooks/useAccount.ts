@@ -77,7 +77,7 @@ export function useAccount(accountId: AccountRef | undefined): AccountResult {
         setAccountDetails(accountIdStr, fetchedAccount);
       }
     } catch (err) {
-      if (!isCurrent()) return;
+      if (!isCurrent() || latestRequestRef.current !== request) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
       if (latestRequestRef.current === request) setIsLoading(false);
