@@ -100,6 +100,74 @@ describe("useAccounts", () => {
   });
 
   describe("refetch", () => {
+    it.each(["resolve", "reject"])(
+      "releases loading on a client replacement without reset when the old refetch will %s",
+      async (outcome) => {
+        const previousAccounts = [
+          createMockAccountHeader("0x1000000000000001"),
+        ];
+        const currentAccounts = [createMockAccountHeader("0x1000000000000002")];
+        const refreshedAccounts = [
+          createMockAccountHeader("0x1000000000000003"),
+        ];
+        let resolveAccounts!: (accounts: typeof previousAccounts) => void;
+        let rejectAccounts!: (error: Error) => void;
+        const pendingAccounts = new Promise<typeof previousAccounts>(
+          (resolve, reject) => {
+            resolveAccounts = resolve;
+            rejectAccounts = reject;
+          }
+        );
+        const previousClient = createMockWebClient({
+          getAccounts: vi.fn().mockReturnValue(pendingAccounts),
+        });
+        const currentClient = createMockWebClient({
+          getAccounts: vi.fn().mockResolvedValue(refreshedAccounts),
+        });
+        mockUseMiden.mockReturnValue({ client: previousClient, isReady: true });
+        useMidenStore.getState().setClient(previousClient as any);
+        useMidenStore.getState().setAccounts(previousAccounts as any);
+
+        const { result, rerender } = renderHook(() => useAccounts());
+        let refetch!: Promise<void>;
+        act(() => {
+          refetch = result.current.refetch();
+        });
+        expect(result.current.isLoading).toBe(true);
+
+        act(() => {
+          mockUseMiden.mockReturnValue({
+            client: currentClient,
+            isReady: true,
+          });
+          useMidenStore.getState().setClient(currentClient as any);
+          useMidenStore.getState().setAccounts(currentAccounts as any);
+          rerender();
+        });
+
+        expect(result.current.isLoading).toBe(false);
+        const afterReplacement = useMidenStore.getState();
+        await act(async () => {
+          if (outcome === "resolve") {
+            resolveAccounts(previousAccounts);
+          } else {
+            rejectAccounts(new Error("previous client failed"));
+          }
+          await refetch;
+        });
+
+        expect(useMidenStore.getState()).toBe(afterReplacement);
+        expect(result.current.accounts).toBe(currentAccounts);
+        expect(result.current.isLoading).toBe(false);
+
+        await act(async () => {
+          await result.current.refetch();
+        });
+        expect(result.current.accounts).toBe(refreshedAccounts);
+        expect(result.current.isLoading).toBe(false);
+      }
+    );
+
     it("should refetch accounts when called", async () => {
       const mockAccounts = [createMockAccountHeader("0x1000000000000001")];
       const updatedAccounts = [

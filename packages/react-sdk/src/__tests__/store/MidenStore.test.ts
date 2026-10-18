@@ -56,6 +56,45 @@ describe("MidenStore", () => {
       expect(state.isInitializing).toBe(false);
       expect(state.initError).toBeNull();
     });
+
+    it.each(["another client", "null"])(
+      "releases only the replaced client's in-flight flags when set to %s",
+      (replacement) => {
+        const previousClient = createMockWebClient();
+        const currentClient =
+          replacement === "null" ? null : createMockWebClient();
+        const store = useMidenStore.getState();
+        store.setClient(previousClient as any);
+        store.setAccounts([createMockAccountHeader()] as any);
+        store.setLoadingAccounts(true);
+        store.setLoadingNotes(true);
+        store.setSyncPaused(true);
+        store.setSyncState({
+          isSyncing: true,
+          syncHeight: 123,
+          lastSyncTime: 456,
+          error: new Error("previous sync error"),
+        });
+        const inFlight = useMidenStore.getState();
+
+        store.setClient(previousClient as any);
+        expect(useMidenStore.getState()).toEqual(inFlight);
+        expect(useMidenStore.getState().sync).toBe(inFlight.sync);
+
+        store.setClient(currentClient as any);
+
+        const current = useMidenStore.getState();
+        expect(current.isLoadingAccounts).toBe(false);
+        expect(current.isLoadingNotes).toBe(false);
+        expect(current.sync).toEqual({ ...inFlight.sync, isSyncing: false });
+        expect(current.sync.error).toBe(inFlight.sync.error);
+        expect(current.accounts).toBe(inFlight.accounts);
+        expect(current.cacheGeneration).toBe(inFlight.cacheGeneration);
+        expect(current.syncPaused).toBe(true);
+        expect(current.client).toBe(currentClient);
+        expect(current.isReady).toBe(currentClient !== null);
+      }
+    );
   });
 
   describe("setInitializing", () => {
