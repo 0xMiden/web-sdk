@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import {
   useMidenStore,
@@ -76,6 +76,7 @@ export function useNotes(options?: NotesFilter): NotesResult {
   const { lastSyncTime } = useSyncStateStore();
 
   const [error, setError] = useState<Error | null>(null);
+  const latestRequestRef = useRef(0);
 
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
@@ -83,6 +84,7 @@ export function useNotes(options?: NotesFilter): NotesResult {
     const isCurrent = captureClientReadGuard(client);
     if (!isCurrent()) return;
 
+    const request = ++latestRequestRef.current;
     setLoadingNotes(true);
     setError(null);
 
@@ -113,7 +115,7 @@ export function useNotes(options?: NotesFilter): NotesResult {
       setNotesIfChanged(fetchedNotes);
       setConsumableNotesIfChanged(fetchedConsumable);
     } catch (err) {
-      if (!isCurrent()) return;
+      if (!isCurrent() || latestRequestRef.current !== request) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
       if (isCurrent()) {
