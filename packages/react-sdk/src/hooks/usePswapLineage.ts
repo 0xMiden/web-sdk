@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PswapLineageRecord } from "@miden-sdk/miden-sdk";
 import { useMiden } from "../context/MidenProvider";
-import { useSyncStateStore } from "../store/MidenStore";
+import { useMidenStore, useSyncStateStore } from "../store/MidenStore";
+import { useCacheGenerationState } from "../store/useCacheGenerationState";
 import type { PswapLineageResult } from "../types";
 
 /**
@@ -30,9 +31,10 @@ export function usePswapLineage(
   const { client, isReady } = useMiden();
   const { lastSyncTime } = useSyncStateStore();
 
-  const [lineage, setLineage] = useState<PswapLineageRecord | null>(null);
+  const [lineage, setLineage] =
+    useCacheGenerationState<PswapLineageRecord | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
+  const [error, setError] = useCacheGenerationState<Error | null>(null);
 
   const orderIdStr = orderId == null ? null : String(orderId);
 
@@ -43,16 +45,21 @@ export function usePswapLineage(
   const refetch = useCallback(async () => {
     if (!client || !isReady || orderIdStr == null) return;
 
+    const { cacheGeneration } = useMidenStore.getState();
     const gen = ++fetchGenRef.current;
     setIsLoading(true);
-    setError(null);
+    setError(null, cacheGeneration);
 
     try {
       const fetched = await client.getPswapLineage(orderIdStr);
-      if (gen === fetchGenRef.current) setLineage(fetched ?? null);
+      if (gen === fetchGenRef.current)
+        setLineage(fetched ?? null, cacheGeneration);
     } catch (err) {
       if (gen === fetchGenRef.current)
-        setError(err instanceof Error ? err : new Error(String(err)));
+        setError(
+          err instanceof Error ? err : new Error(String(err)),
+          cacheGeneration
+        );
     } finally {
       if (gen === fetchGenRef.current) setIsLoading(false);
     }
