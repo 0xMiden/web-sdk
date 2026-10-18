@@ -23,6 +23,171 @@ beforeEach(() => {
 });
 
 describe("useAccount", () => {
+  describe.each(["reset", "replace", "reset and replace"] as const)(
+    "%s during a read",
+    (change) => {
+      it("discards stale account details and still publishes a current read", async () => {
+        const accountId = "0x1234567890abcdef";
+        const staleAccount = createMockAccount();
+        const currentAccount = createMockAccount();
+        let resolvePrevious!: (account: typeof staleAccount) => void;
+        let resolveCurrent!: (account: typeof currentAccount) => void;
+        const previousRead = new Promise<typeof staleAccount>((resolve) => {
+          resolvePrevious = resolve;
+        });
+        const currentRead = new Promise<typeof currentAccount>((resolve) => {
+          resolveCurrent = resolve;
+        });
+        const previousClient = createMockWebClient({
+          getAccount: vi
+            .fn()
+            .mockReturnValueOnce(previousRead)
+            .mockReturnValue(currentRead),
+        });
+        const currentClient =
+          change === "reset"
+            ? previousClient
+            : createMockWebClient({
+                getAccount: vi.fn().mockReturnValue(currentRead),
+              });
+        useMidenStore.getState().setClient(previousClient as any);
+        mockUseMiden.mockReturnValue({ client: previousClient, isReady: true });
+        const { result, rerender } = renderHook(() => useAccount(accountId));
+        expect(previousClient.getAccount).toHaveBeenCalledTimes(1);
+
+        act(() => {
+          if (change !== "replace") {
+            useMidenStore.getState().resetInMemoryState();
+          }
+          useMidenStore.getState().setClient(currentClient as any);
+          if (change === "reset") {
+            useMidenStore.getState().setSyncState({ lastSyncTime: 1 });
+          }
+          mockUseMiden.mockReturnValue({
+            client: currentClient,
+            isReady: true,
+          });
+          rerender();
+        });
+        expect(currentClient.getAccount).toHaveBeenCalledTimes(
+          change === "reset" ? 2 : 1
+        );
+        expect(result.current.isLoading).toBe(true);
+        const retainedState = useMidenStore.getState();
+
+        await act(async () => {
+          resolvePrevious(staleAccount);
+          await previousRead;
+        });
+
+        expect(useMidenStore.getState().accountDetails.has(accountId)).toBe(
+          false
+        );
+        expect(useMidenStore.getState()).toBe(retainedState);
+        expect(result.current.account).toBeNull();
+        expect(result.current.assets).toEqual([]);
+        expect(result.current.error).toBeNull();
+        expect(result.current.isLoading).toBe(true);
+
+        await act(async () => {
+          resolveCurrent(currentAccount);
+          await currentRead;
+        });
+
+        expect(useMidenStore.getState().accountDetails.get(accountId)).toBe(
+          currentAccount
+        );
+        expect(result.current.account).toBe(currentAccount);
+        expect(result.current.error).toBeNull();
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      it("discards a stale error while retaining current errors and account details", async () => {
+        const accountId = "0x1234567890abcdef";
+        const currentAccount = createMockAccount();
+        let rejectPrevious!: (error: Error) => void;
+        let rejectCurrent!: (error: string) => void;
+        const previousRead = new Promise<typeof currentAccount>((_, reject) => {
+          rejectPrevious = reject;
+        });
+        const currentRead = new Promise<typeof currentAccount>((_, reject) => {
+          rejectCurrent = reject;
+        });
+        const previousClient = createMockWebClient({
+          getAccount: vi
+            .fn()
+            .mockReturnValueOnce(previousRead)
+            .mockReturnValueOnce(currentRead)
+            .mockResolvedValue(currentAccount),
+        });
+        const currentClient =
+          change === "reset"
+            ? previousClient
+            : createMockWebClient({
+                getAccount: vi
+                  .fn()
+                  .mockReturnValueOnce(currentRead)
+                  .mockResolvedValue(currentAccount),
+              });
+        useMidenStore.getState().setClient(previousClient as any);
+        mockUseMiden.mockReturnValue({ client: previousClient, isReady: true });
+        const { result, rerender } = renderHook(() => useAccount(accountId));
+        expect(previousClient.getAccount).toHaveBeenCalledTimes(1);
+
+        act(() => {
+          if (change !== "replace") {
+            useMidenStore.getState().resetInMemoryState();
+          }
+          useMidenStore.getState().setClient(currentClient as any);
+          if (change === "reset") {
+            useMidenStore.getState().setSyncState({ lastSyncTime: 1 });
+          }
+          mockUseMiden.mockReturnValue({
+            client: currentClient,
+            isReady: true,
+          });
+          rerender();
+        });
+        expect(currentClient.getAccount).toHaveBeenCalledTimes(
+          change === "reset" ? 2 : 1
+        );
+        expect(result.current.isLoading).toBe(true);
+        const retainedState = useMidenStore.getState();
+
+        await act(async () => {
+          rejectPrevious(new Error("Stale account read failed"));
+          await previousRead.catch(() => {});
+        });
+
+        expect(result.current.error).toBeNull();
+        expect(useMidenStore.getState()).toBe(retainedState);
+        expect(result.current.account).toBeNull();
+        expect(result.current.assets).toEqual([]);
+        expect(result.current.isLoading).toBe(true);
+
+        await act(async () => {
+          rejectCurrent("Current account read failed");
+          await currentRead.catch(() => {});
+        });
+        expect(result.current.error?.message).toBe(
+          "Current account read failed"
+        );
+        expect(result.current.isLoading).toBe(false);
+
+        await act(async () => {
+          await result.current.refetch();
+        });
+
+        expect(useMidenStore.getState().accountDetails.get(accountId)).toBe(
+          currentAccount
+        );
+        expect(result.current.account).toBe(currentAccount);
+        expect(result.current.error).toBeNull();
+        expect(result.current.isLoading).toBe(false);
+      });
+    }
+  );
+
   describe("initial state", () => {
     it("should return null account when no id provided", () => {
       mockUseMiden.mockReturnValue({
@@ -277,6 +442,55 @@ describe("useAccount", () => {
   });
 
   describe("refetch", () => {
+    it("ignores an older same-client rejection after the latest read succeeds", async () => {
+      const accountId = "0x1234567890abcdef";
+      const currentAccount = createMockAccount();
+      let rejectPrevious!: (error: Error) => void;
+      let resolveCurrent!: (account: typeof currentAccount) => void;
+      const previousRead = new Promise<typeof currentAccount>((_, reject) => {
+        rejectPrevious = reject;
+      });
+      const currentRead = new Promise<typeof currentAccount>((resolve) => {
+        resolveCurrent = resolve;
+      });
+      const mockClient = createMockWebClient({
+        getAccount: vi
+          .fn()
+          .mockReturnValueOnce(previousRead)
+          .mockReturnValue(currentRead),
+      });
+      useMidenStore.getState().setClient(mockClient as any);
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      const { result } = renderHook(() => useAccount(accountId));
+      expect(mockClient.getAccount).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        result.current.refetch();
+      });
+      expect(mockClient.getAccount).toHaveBeenCalledTimes(2);
+      expect(result.current.isLoading).toBe(true);
+
+      await act(async () => {
+        resolveCurrent(currentAccount);
+        await currentRead;
+      });
+
+      expect(result.current.account).toBe(currentAccount);
+      expect(result.current.error).toBeNull();
+      expect(result.current.isLoading).toBe(false);
+      const retainedState = useMidenStore.getState();
+
+      await act(async () => {
+        rejectPrevious(new Error("Older account read failed"));
+        await previousRead.catch(() => {});
+      });
+
+      expect(result.current.error).toBeNull();
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.account).toBe(currentAccount);
+      expect(useMidenStore.getState()).toBe(retainedState);
+    });
+
     it("should refetch account data", async () => {
       const accountId = "0x1234567890abcdef";
       const mockAccount1 = createMockAccount();
@@ -422,20 +636,50 @@ describe("useAccount", () => {
       });
     });
 
-    it("captures a non-Error rejection from getAccount and wraps it in a new Error", async () => {
-      const mockClient = createMockWebClient({
+    it("ignores a stale non-Error rejection while wrapping the current rejection", async () => {
+      let rejectPrevious!: (error: string) => void;
+      const previousRead = new Promise<null>((_, reject) => {
+        rejectPrevious = reject;
+      });
+      const previousClient = createMockWebClient({
+        getAccount: vi.fn().mockReturnValue(previousRead),
+      });
+      const currentClient = createMockWebClient({
         getAccount: vi.fn().mockRejectedValue("account-string-fail"),
       });
+      useMidenStore.getState().setClient(previousClient as any);
       mockUseMiden.mockReturnValue({
-        client: mockClient,
+        client: previousClient,
         isReady: true,
       });
 
-      const { result } = renderHook(() => useAccount("0xacc"));
+      const { result, rerender } = renderHook(() => useAccount("0xacc"));
+      expect(previousClient.getAccount).toHaveBeenCalledTimes(1);
+      expect(result.current.isLoading).toBe(true);
+
+      act(() => {
+        useMidenStore.getState().resetInMemoryState();
+        useMidenStore.getState().setClient(currentClient as any);
+        mockUseMiden.mockReturnValue({ client: currentClient, isReady: true });
+        rerender();
+      });
       await waitFor(() => {
         expect(result.current.error).toBeInstanceOf(Error);
         expect(result.current.error?.message).toBe("account-string-fail");
+        expect(result.current.isLoading).toBe(false);
       });
+      const currentError = result.current.error;
+      const retainedState = useMidenStore.getState();
+
+      await act(async () => {
+        rejectPrevious("stale-account-string-fail");
+        await previousRead.catch(() => {});
+      });
+
+      expect(result.current.error).toBe(currentError);
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.account).toBeNull();
+      expect(useMidenStore.getState()).toBe(retainedState);
     });
   });
 });

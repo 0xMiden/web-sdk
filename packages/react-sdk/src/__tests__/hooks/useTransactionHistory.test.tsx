@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { useTransactionHistory } from "../../hooks/useTransactionHistory";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
@@ -33,11 +33,201 @@ const createRecord = (
 });
 
 describe("useTransactionHistory", () => {
+  it("hides loaded records and errors on the first render after a cache reset", async () => {
+    const record = createRecord("0xaaa");
+    const readError = new Error("Transaction-history read failed");
+    const mockClient = createMockWebClient({
+      getTransactions: vi
+        .fn()
+        .mockResolvedValueOnce([record])
+        .mockRejectedValueOnce(readError),
+    });
+    useMidenStore.getState().setClient(mockClient as any);
+    mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+    const renders: ReturnType<typeof useTransactionHistory>[] = [];
+    const { result } = renderHook(() => {
+      const history = useTransactionHistory({ id: "0xaaa" });
+      renders.push(history);
+      return history;
+    });
+
+    await waitFor(() => expect(result.current.records).toEqual([record]));
+
+    await act(async () => {
+      await result.current.refetch();
+    });
+    expect(result.current.records).toEqual([record]);
+    expect(result.current.error).toBe(readError);
+
+    const firstResetRender = renders.length;
+    act(() => {
+      useMidenStore.getState().resetInMemoryState();
+    });
+
+    expect(renders[firstResetRender]?.records).toEqual([]);
+    expect(renders[firstResetRender]?.record).toBeNull();
+    expect(renders[firstResetRender]?.status).toBeNull();
+    expect(renders[firstResetRender]?.error).toBeNull();
+    expect(result.current.records).toEqual([]);
+    expect(result.current.error).toBeNull();
+  });
+
+  it("ignores an old client's records after a reset and replacement read succeeds", async () => {
+    const previousRecord = createRecord("0xaaa");
+    const currentRecord = createRecord("0xbbb");
+    let resolvePrevious!: (records: Array<typeof previousRecord>) => void;
+    let resolveCurrent!: (records: Array<typeof currentRecord>) => void;
+    const previousRead = new Promise<Array<typeof previousRecord>>(
+      (resolve) => {
+        resolvePrevious = resolve;
+      }
+    );
+    const currentRead = new Promise<Array<typeof currentRecord>>((resolve) => {
+      resolveCurrent = resolve;
+    });
+    const previousClient = createMockWebClient({
+      getTransactions: vi.fn().mockReturnValue(previousRead),
+    });
+    const currentClient = createMockWebClient({
+      getTransactions: vi.fn().mockReturnValue(currentRead),
+    });
+    useMidenStore.getState().setClient(previousClient as any);
+    mockUseMiden.mockReturnValue({ client: previousClient, isReady: true });
+    const { result, rerender } = renderHook(() => useTransactionHistory());
+    expect(previousClient.getTransactions).toHaveBeenCalledTimes(1);
+    expect(result.current.isLoading).toBe(true);
+
+    act(() => {
+      useMidenStore.getState().resetInMemoryState();
+      useMidenStore.getState().setClient(currentClient as any);
+      mockUseMiden.mockReturnValue({ client: currentClient, isReady: true });
+      rerender();
+    });
+    expect(currentClient.getTransactions).toHaveBeenCalledTimes(1);
+    expect(result.current.isLoading).toBe(true);
+
+    await act(async () => {
+      resolveCurrent([currentRecord]);
+      await currentRead;
+    });
+
+    expect(result.current.records).toEqual([currentRecord]);
+    expect(result.current.error).toBeNull();
+    expect(result.current.isLoading).toBe(false);
+
+    await act(async () => {
+      resolvePrevious([previousRecord]);
+      await previousRead;
+    });
+
+    expect(result.current.records).toEqual([currentRecord]);
+    expect(result.current.error).toBeNull();
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it("ignores an older same-client rejection after the latest read succeeds", async () => {
+    const currentRecord = createRecord("0xbbb");
+    let rejectPrevious!: (error: Error) => void;
+    let resolveCurrent!: (records: Array<typeof currentRecord>) => void;
+    const previousRead = new Promise<Array<typeof currentRecord>>(
+      (_, reject) => {
+        rejectPrevious = reject;
+      }
+    );
+    const currentRead = new Promise<Array<typeof currentRecord>>((resolve) => {
+      resolveCurrent = resolve;
+    });
+    const mockClient = createMockWebClient({
+      getTransactions: vi
+        .fn()
+        .mockReturnValueOnce(previousRead)
+        .mockReturnValueOnce(currentRead),
+    });
+    useMidenStore.getState().setClient(mockClient as any);
+    mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+    const { result } = renderHook(() => useTransactionHistory());
+    expect(mockClient.getTransactions).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      result.current.refetch();
+    });
+    expect(mockClient.getTransactions).toHaveBeenCalledTimes(2);
+    expect(result.current.isLoading).toBe(true);
+
+    await act(async () => {
+      resolveCurrent([currentRecord]);
+      await currentRead;
+    });
+
+    expect(result.current.records).toEqual([currentRecord]);
+    expect(result.current.error).toBeNull();
+    expect(result.current.isLoading).toBe(false);
+
+    await act(async () => {
+      rejectPrevious(new Error("Older transaction-history read failed"));
+      await previousRead.catch(() => {});
+    });
+
+    expect(result.current.error).toBeNull();
+    expect(result.current.records).toEqual([currentRecord]);
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it("keeps the latest records when an older same-client read resolves last", async () => {
+    const previousRecord = createRecord("0xaaa");
+    const currentRecord = createRecord("0xbbb");
+    let resolvePrevious!: (records: Array<typeof previousRecord>) => void;
+    let resolveCurrent!: (records: Array<typeof currentRecord>) => void;
+    const previousRead = new Promise<Array<typeof previousRecord>>(
+      (resolve) => {
+        resolvePrevious = resolve;
+      }
+    );
+    const currentRead = new Promise<Array<typeof currentRecord>>((resolve) => {
+      resolveCurrent = resolve;
+    });
+    const mockClient = createMockWebClient({
+      getTransactions: vi
+        .fn()
+        .mockReturnValueOnce(previousRead)
+        .mockReturnValueOnce(currentRead),
+    });
+    useMidenStore.getState().setClient(mockClient as any);
+    mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+    const { result } = renderHook(() => useTransactionHistory());
+    expect(mockClient.getTransactions).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      result.current.refetch();
+    });
+    expect(mockClient.getTransactions).toHaveBeenCalledTimes(2);
+    expect(result.current.isLoading).toBe(true);
+
+    await act(async () => {
+      resolveCurrent([currentRecord]);
+      await currentRead;
+    });
+
+    expect(result.current.records).toEqual([currentRecord]);
+    expect(result.current.error).toBeNull();
+    expect(result.current.isLoading).toBe(false);
+
+    await act(async () => {
+      resolvePrevious([previousRecord]);
+      await previousRead;
+    });
+
+    expect(result.current.records).toEqual([currentRecord]);
+    expect(result.current.error).toBeNull();
+    expect(result.current.isLoading).toBe(false);
+  });
+
   it("fetches all transactions by default", async () => {
     const record = createRecord("0xabc");
     const mockClient = createMockWebClient({
       getTransactions: vi.fn().mockResolvedValue([record]),
     });
+    useMidenStore.getState().setClient(mockClient as any);
 
     mockUseMiden.mockReturnValue({
       client: mockClient,
@@ -57,6 +247,7 @@ describe("useTransactionHistory", () => {
     const mockClient = createMockWebClient({
       getTransactions: vi.fn().mockResolvedValue([record]),
     });
+    useMidenStore.getState().setClient(mockClient as any);
 
     mockUseMiden.mockReturnValue({
       client: mockClient,
@@ -79,6 +270,7 @@ describe("useTransactionHistory", () => {
     const mockClient = createMockWebClient({
       getTransactions: vi.fn().mockResolvedValue([recordA, recordB]),
     });
+    useMidenStore.getState().setClient(mockClient as any);
 
     mockUseMiden.mockReturnValue({
       client: mockClient,

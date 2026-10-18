@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import { useMidenStore } from "../store/MidenStore";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import { AccountFile } from "@miden-sdk/miden-sdk";
 import type {
   Account,
@@ -78,6 +79,7 @@ export function useImportAccount(): UseImportAccountResult {
       try {
         type AccountHeaders = Awaited<ReturnType<WebClient["getAccounts"]>>;
         let accountsAfter: AccountHeaders | null = null;
+        let isAccountsAfterCurrent: (() => boolean) | null = null;
 
         const imported = await (async (): Promise<Account> => {
           switch (options.type) {
@@ -110,6 +112,7 @@ export function useImportAccount(): UseImportAccountResult {
                 }
               }
 
+              isAccountsAfterCurrent = captureClientReadGuard(client);
               accountsAfter = await client.getAccounts();
 
               if (accountFromFile) {
@@ -165,8 +168,12 @@ export function useImportAccount(): UseImportAccountResult {
         })();
 
         ensureAccountBech32(imported);
+        const isCurrent =
+          isAccountsAfterCurrent ?? captureClientReadGuard(client);
         const accounts = accountsAfter ?? (await client.getAccounts());
-        setAccounts(accounts);
+        if (isCurrent()) {
+          setAccounts(accounts);
+        }
         setAccount(imported);
 
         return imported;
