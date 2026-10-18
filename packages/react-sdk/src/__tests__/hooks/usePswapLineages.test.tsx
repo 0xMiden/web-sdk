@@ -20,6 +20,43 @@ beforeEach(() => {
 });
 
 describe("usePswapLineages", () => {
+  it("hides loaded lineages and errors on the first render after a cache reset", async () => {
+    const record = createMockPswapLineageRecord("7");
+    const readError = new Error("Lineages read failed");
+    const mockClient = createMockWebClient({
+      getPswapLineages: vi
+        .fn()
+        .mockResolvedValueOnce([record])
+        .mockRejectedValueOnce(readError),
+    });
+    useMidenStore.getState().setClient(mockClient as any);
+    mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+    const renders: ReturnType<typeof usePswapLineages>[] = [];
+    const { result } = renderHook(() => {
+      const lineages = usePswapLineages();
+      renders.push(lineages);
+      return lineages;
+    });
+
+    await waitFor(() => expect(result.current.lineages).toEqual([record]));
+
+    await act(async () => {
+      await result.current.refetch();
+    });
+    expect(result.current.lineages).toEqual([record]);
+    expect(result.current.error).toBe(readError);
+
+    const firstResetRender = renders.length;
+    act(() => {
+      useMidenStore.getState().resetInMemoryState();
+    });
+
+    expect(renders[firstResetRender]?.lineages).toEqual([]);
+    expect(renders[firstResetRender]?.error).toBeNull();
+    expect(result.current.lineages).toEqual([]);
+    expect(result.current.error).toBeNull();
+  });
+
   it("returns the empty initial state when the client is not ready", () => {
     mockUseMiden.mockReturnValue({ client: null, isReady: false });
 

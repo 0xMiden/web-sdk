@@ -33,6 +33,45 @@ const createRecord = (
 });
 
 describe("useTransactionHistory", () => {
+  it("hides loaded records and errors on the first render after a cache reset", async () => {
+    const record = createRecord("0xaaa");
+    const readError = new Error("Transaction-history read failed");
+    const mockClient = createMockWebClient({
+      getTransactions: vi
+        .fn()
+        .mockResolvedValueOnce([record])
+        .mockRejectedValueOnce(readError),
+    });
+    useMidenStore.getState().setClient(mockClient as any);
+    mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+    const renders: ReturnType<typeof useTransactionHistory>[] = [];
+    const { result } = renderHook(() => {
+      const history = useTransactionHistory({ id: "0xaaa" });
+      renders.push(history);
+      return history;
+    });
+
+    await waitFor(() => expect(result.current.records).toEqual([record]));
+
+    await act(async () => {
+      await result.current.refetch();
+    });
+    expect(result.current.records).toEqual([record]);
+    expect(result.current.error).toBe(readError);
+
+    const firstResetRender = renders.length;
+    act(() => {
+      useMidenStore.getState().resetInMemoryState();
+    });
+
+    expect(renders[firstResetRender]?.records).toEqual([]);
+    expect(renders[firstResetRender]?.record).toBeNull();
+    expect(renders[firstResetRender]?.status).toBeNull();
+    expect(renders[firstResetRender]?.error).toBeNull();
+    expect(result.current.records).toEqual([]);
+    expect(result.current.error).toBeNull();
+  });
+
   it("ignores an old client's records after a reset and replacement read succeeds", async () => {
     const previousRecord = createRecord("0xaaa");
     const currentRecord = createRecord("0xbbb");
