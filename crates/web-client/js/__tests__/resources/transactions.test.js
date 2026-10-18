@@ -130,6 +130,8 @@ function makeWasm(overrides = {}) {
     },
     NoteAssets: vi.fn().mockReturnValue("noteAssets"),
     FungibleAsset: vi.fn().mockReturnValue("fungibleAsset"),
+    NonFungibleAsset: MockNonFungibleAsset,
+    VaultAsset: class {},
     NoteAttachment: vi.fn().mockImplementation((v) => ({ attachment: v })),
     NoteArray: vi.fn().mockImplementation(makeNoteArray),
     NoteAndArgs: vi.fn().mockImplementation((note, args) => ({ note, args })),
@@ -221,6 +223,15 @@ function makeInner(overrides = {}) {
     applyTransaction: vi.fn().mockResolvedValue(undefined),
     newSendTransactionRequest: vi.fn().mockResolvedValue("sendRequest"),
     newMintTransactionRequest: vi.fn().mockResolvedValue("mintRequest"),
+    newMintNonFungibleTransactionRequest: vi
+      .fn()
+      .mockResolvedValue("mintNftRequest"),
+    newSendNonFungibleAssetTransactionRequest: vi
+      .fn()
+      .mockResolvedValue("sendAssetRequest"),
+    newBurnNonFungibleAssetTransactionRequest: vi
+      .fn()
+      .mockResolvedValue("burnAssetRequest"),
     newB2AggTransactionRequest: vi.fn().mockResolvedValue("b2aggRequest"),
     newConsumeTransactionRequest: vi.fn().mockResolvedValue("consumeRequest"),
     // Keep the builder the resource actually used, so a test can assert what was
@@ -265,6 +276,18 @@ function makeClient(overrides = {}) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+// Stands in for the WASM NonFungibleAsset class.
+class MockNonFungibleAsset {
+  constructor(faucetHex) {
+    this.intoWord = vi.fn(() => "valueWord");
+    this.faucetId = vi.fn(() => ({ toString: () => faucetHex }));
+  }
+}
+
+function makeNft(faucetHex = "0xnftfaucet") {
+  return new MockNonFungibleAsset(faucetHex);
+}
 
 function makeResource(
   innerOverrides = {},
@@ -354,6 +377,48 @@ describe("TransactionsResource", () => {
         expect.anything(),
         callProver
       );
+    });
+  });
+
+  describe("sendNonFungible", () => {
+    it("builds a send-asset request with the asset", async () => {
+      const { resource, inner } = makeResource();
+      const nft = makeNft();
+      await resource.sendNonFungible({
+        account: "0xsender",
+        to: "0xrecipient",
+        nonFungibleAsset: nft,
+        reclaimAfter: 10,
+      });
+      expect(inner.newSendTransactionRequest).not.toHaveBeenCalled();
+      expect(
+        inner.newSendNonFungibleAssetTransactionRequest
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xsender" }),
+        expect.objectContaining({ hex: "0xrecipient" }),
+        nft,
+        "Public",
+        10,
+        undefined
+      );
+      expect(inner.executeTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        "sendAssetRequest"
+      );
+    });
+
+    it("puts the asset in the returned P2ID note", async () => {
+      const { resource, wasm } = makeResource();
+      const nft = makeNft();
+      const result = await resource.sendNonFungible({
+        account: "0xsender",
+        to: "0xrecipient",
+        nonFungibleAsset: nft,
+        returnNote: true,
+      });
+      expect(wasm.FungibleAsset).not.toHaveBeenCalled();
+      expect(wasm.NoteAssets).toHaveBeenCalledWith([nft]);
+      expect(result.note).toBe("p2idNote");
     });
   });
 
@@ -541,6 +606,19 @@ describe("TransactionsResource", () => {
       expect(wasm.NoteAssets).toHaveBeenCalledWith([expect.anything()]);
     });
 
+    it("passes a non-fungible asset through to NoteAssets", async () => {
+      const { resource, wasm } = makeResource();
+      const nft = makeNft();
+      await resource.createNetworkNote({
+        account: "0xsender",
+        target: "0xtarget",
+        script: "s",
+        assets: [nft, { token: "0xtoken", amount: 5 }],
+      });
+      expect(wasm.NoteAssets).toHaveBeenCalledWith([nft, expect.anything()]);
+      expect(wasm.FungibleAsset).toHaveBeenCalledTimes(1);
+    });
+
     it("uses a pre-built NetworkAccountTarget directly without reconstructing it", async () => {
       const { resource, wasm } = makeResource();
       const preBuilt = Object.create(wasm.NetworkAccountTarget.prototype);
@@ -600,6 +678,119 @@ describe("TransactionsResource", () => {
       expect(inner.newMintTransactionRequest).toHaveBeenCalled();
       expect(inner.executeTransaction).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
+    });
+  });
+
+  describe("mintNonFungible", () => {
+    it("builds a non-fungible mint request from `nonFungibleAsset`", async () => {
+      const { resource, inner } = makeResource();
+      const nft = makeNft("0xfaucet");
+      await resource.mintNonFungible({
+        account: "0xfaucet",
+        to: "0xrecipient",
+        nonFungibleAsset: nft,
+      });
+      expect(inner.newMintTransactionRequest).not.toHaveBeenCalled();
+      expect(inner.newMintNonFungibleTransactionRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xrecipient" }),
+        nft,
+        "Public"
+      );
+      expect(inner.executeTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xfaucet" }),
+        "mintNftRequest"
+      );
+    });
+
+    it("rejects an asset issued by another faucet", async () => {
+      const { resource, inner } = makeResource();
+      await expect(
+        resource.mintNonFungible({
+          account: "0xfaucet",
+          to: "0xrecipient",
+          nonFungibleAsset: makeNft("0xother"),
+        })
+      ).rejects.toThrow("must be issued by the minting faucet");
+      expect(inner.newMintNonFungibleTransactionRequest).not.toHaveBeenCalled();
+    });
+
+    it("previews and batches the non-fungible send and mint operations", async () => {
+      const { resource, inner } = makeResource();
+      inner.submitNewTransactionBatch = vi.fn().mockResolvedValue(1);
+      const nft = makeNft("0xfaucet");
+      const send = {
+        account: "0xsender",
+        to: "0xrecipient",
+        nonFungibleAsset: nft,
+      };
+      const mint = {
+        account: "0xfaucet",
+        to: "0xrecipient",
+        nonFungibleAsset: nft,
+      };
+      await resource.preview({ operation: "sendNonFungible", ...send });
+      await resource.preview({ operation: "mintNonFungible", ...mint });
+      await resource.batch({
+        operations: [
+          { kind: "sendNonFungible", ...send },
+          { kind: "mintNonFungible", ...mint },
+        ],
+      });
+      expect(
+        inner.newSendNonFungibleAssetTransactionRequest
+      ).toHaveBeenCalledTimes(2);
+      expect(inner.newMintNonFungibleTransactionRequest).toHaveBeenCalledTimes(
+        2
+      );
+    });
+  });
+
+  describe("missing nonFungibleAsset", () => {
+    it.each([
+      ["sendNonFungible", { account: "0xsender", to: "0xrecipient" }],
+      ["mintNonFungible", { account: "0xfaucet", to: "0xrecipient" }],
+      ["burnNonFungible", { account: "0xholder" }],
+    ])("%s names the missing option", async (method, opts) => {
+      const { resource, inner } = makeResource();
+      await expect(resource[method](opts)).rejects.toThrow(
+        `${method} requires \`nonFungibleAsset\`.`
+      );
+      await expect(
+        resource.preview({ operation: method, ...opts })
+      ).rejects.toThrow(`${method} requires \`nonFungibleAsset\`.`);
+      expect(inner.executeTransaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("burnNonFungible", () => {
+    it("builds a burn request from the holding account and submits it", async () => {
+      const { resource, inner } = makeResource();
+      const nft = makeNft();
+      const result = await resource.burnNonFungible({
+        account: "0xholder",
+        nonFungibleAsset: nft,
+      });
+      expect(
+        inner.newBurnNonFungibleAssetTransactionRequest
+      ).toHaveBeenCalledWith(expect.objectContaining({ hex: "0xholder" }), nft);
+      expect(inner.executeTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xholder" }),
+        "burnAssetRequest"
+      );
+      expect(result.txId).toBeDefined();
+    });
+
+    it("previews and batches the burnNonFungible operation", async () => {
+      const { resource, inner } = makeResource();
+      inner.submitNewTransactionBatch = vi.fn().mockResolvedValue(1);
+      const burn = { account: "0xholder", nonFungibleAsset: makeNft() };
+      await resource.preview({ operation: "burnNonFungible", ...burn });
+      await resource.batch({
+        operations: [{ kind: "burnNonFungible", ...burn }],
+      });
+      expect(
+        inner.newBurnNonFungibleAssetTransactionRequest
+      ).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -1385,8 +1576,11 @@ describe("TransactionsResource", () => {
     // would execute at the tip while the caller believed it was pinned.
     const OPTS_METHODS = [
       "send",
+      "sendNonFungible",
       "createNetworkNote",
       "mint",
+      "mintNonFungible",
+      "burnNonFungible",
       "bridge",
       "consume",
       "consumeAll",

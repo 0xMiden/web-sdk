@@ -5,12 +5,12 @@ import {
   hashSeed,
 } from "../utils.js";
 
-// Legacy numeric 0/1 and "NonFungibleFaucet" are still accepted; non-fungible
-// requests reach the Rust rejection.
+// Legacy numeric 0 and 1 select a fungible and a non-fungible faucet.
 const FAUCET_TYPES = new Set(["FungibleFaucet", "NonFungibleFaucet", 0, 1]);
 const CONTRACT_TYPES = new Set(["ImmutableContract", "MutableContract"]);
 const FAUCET_FIELDS = ["name", "symbol", "decimals", "maxSupply"];
-const REQUIRED_FAUCET_FIELDS = ["symbol", "decimals", "maxSupply"];
+const REQUIRED_FUNGIBLE_FAUCET_FIELDS = ["symbol", "decimals", "maxSupply"];
+const REQUIRED_NON_FUNGIBLE_FAUCET_FIELDS = ["symbol"];
 
 function display(value) {
   try {
@@ -22,7 +22,7 @@ function display(value) {
 
 function selectorError(problem) {
   return new TypeError(
-    `accounts.create(): ${problem} Pass type: FaucetType.FungibleFaucet for a faucet, omit type for a wallet, or pass components for a contract.`
+    `accounts.create(): ${problem} Pass type: FaucetType.FungibleFaucet or FaucetType.NonFungibleFaucet for a faucet, omit type for a wallet, or pass components for a contract.`
   );
 }
 
@@ -41,12 +41,14 @@ export class AccountsResource {
    * Create a wallet by default, a faucet via `FaucetType`, or a contract via
    * `components`. Visibility is selected separately with `storage`.
    *
-   * The legacy 0, 1 and "NonFungibleFaucet" still select a faucet; 0 and 1 are
-   * also AccountType.Private/Public, so a visibility value passed as `type` is
-   * read as a faucet selector. Throws a TypeError naming `FaucetType`, before
-   * creating anything, for an unrecognised `type`, for faucet fields (`name`,
-   * `symbol`, `decimals`, `maxSupply`) without a faucet type, for `components`
-   * on a faucet, and for a faucet missing `symbol`, `decimals` or `maxSupply`.
+   * The legacy 0 and 1 still select a faucet (0 fungible, 1 non-fungible); 0
+   * and 1 are also AccountType.Private/Public, so a visibility value passed as
+   * `type` is read as a faucet selector. Throws a TypeError naming `FaucetType`,
+   * before creating anything, for an unrecognised `type`, for faucet fields
+   * (`name`, `symbol`, `decimals`, `maxSupply`) without a faucet type, for
+   * `components` on a faucet, for a faucet missing `symbol` (or `decimals` or
+   * `maxSupply` when fungible), and for a non-fungible faucet given `decimals`
+   * or `maxSupply`.
    */
   async create(opts) {
     this.#client.assertNotTerminated();
@@ -58,16 +60,31 @@ export class AccountsResource {
       if (opts.components !== undefined) {
         throw selectorError("a faucet request cannot carry components.");
       }
-      const missing = REQUIRED_FAUCET_FIELDS.filter(
-        (field) => opts[field] === undefined
-      );
+      const nonFungible = type === 1 || type === "NonFungibleFaucet";
+      if (nonFungible) {
+        const extra = REQUIRED_FUNGIBLE_FAUCET_FIELDS.filter(
+          (field) =>
+            !REQUIRED_NON_FUNGIBLE_FAUCET_FIELDS.includes(field) &&
+            opts[field] !== undefined
+        );
+        if (extra.length > 0) {
+          throw selectorError(
+            `${extra.join(", ")} only apply to fungible faucets.`
+          );
+        }
+      }
+      const missing = (
+        nonFungible
+          ? REQUIRED_NON_FUNGIBLE_FAUCET_FIELDS
+          : REQUIRED_FUNGIBLE_FAUCET_FIELDS
+      ).filter((field) => opts[field] === undefined);
       if (missing.length > 0) {
         throw selectorError(`a faucet request needs ${missing.join(", ")}.`);
       }
       const storageMode = resolveStorageMode(opts.storage ?? "public", wasm);
       const authScheme = resolveAuthScheme(opts.auth, wasm);
       const name = opts.name ?? opts.symbol;
-      if (type === 1 || type === "NonFungibleFaucet") {
+      if (nonFungible) {
         return await this.#inner.newNonFungibleFaucet(
           storageMode,
           name,

@@ -88,12 +88,12 @@ with it, and free the object wrappers the skills call out individually.
 
 **Account visibility and faucet kind are separate.** Use native
 `AccountType.Private` / `AccountType.Public` with `AccountBuilder.accountType()`.
-Use `FaucetType.FungibleFaucet` for `accounts.create({ type })`, and `storage`
-for visibility. Older `AccountType.FungibleFaucet` references must migrate to
+Use `FaucetType.FungibleFaucet` or `FaucetType.NonFungibleFaucet` for
+`accounts.create({ type })`, and `storage` for visibility. Older `AccountType.FungibleFaucet` references must migrate to
 `FaucetType.FungibleFaucet`; `create()` throws a `TypeError` for an unrecognised
 `type` rather than creating a wallet. The legacy `0` / `1` are still faucet
-selectors and equal `AccountType.Private` / `Public`, so never pass a visibility
-value as `type`.
+selectors (fungible / non-fungible) and equal `AccountType.Private` / `Public`,
+so never pass a visibility value as `type`.
 
 ## Read non-fungible assets
 
@@ -136,7 +136,7 @@ For registry publishing, use `Note.withAttachments()` with a single name asset,
 public metadata, the registry's approved script and inputs, and
 `[new NetworkAccountTarget(registryId).toAttachment()]`. The registry account
 must be public. A tag alone does not make a network note. Consume the returned P2ID note to put
-the asset back in the vault. The amount-based `send` helper remains fungible-only.
+the asset back in the vault.
 
 ## Going deeper
 

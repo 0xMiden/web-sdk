@@ -106,7 +106,10 @@ for (const entry of ["./eager.js", "./index.js"]) {
       }, entry);
       expect(result.accepted).toEqual([0, 1]);
       expect(result.native).toBe(true);
-      expect(result.faucetType).toEqual({ FungibleFaucet: "FungibleFaucet" });
+      expect(result.faucetType).toEqual({
+        FungibleFaucet: "FungibleFaucet",
+        NonFungibleFaucet: "NonFungibleFaucet",
+      });
     }
   );
 }

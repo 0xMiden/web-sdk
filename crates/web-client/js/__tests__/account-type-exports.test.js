@@ -43,8 +43,10 @@ describe.each([
   });
 
   it("exports an immutable string faucet selector distinct from AccountType", () => {
-    expect(sdk.FaucetType).toEqual({ FungibleFaucet: "FungibleFaucet" });
-    expect(sdk.FaucetType.NonFungibleFaucet).toBeUndefined();
+    expect(sdk.FaucetType).toEqual({
+      FungibleFaucet: "FungibleFaucet",
+      NonFungibleFaucet: "NonFungibleFaucet",
+    });
     expect(Object.isFrozen(sdk.FaucetType)).toBe(true);
   });
 

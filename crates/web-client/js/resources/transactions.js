@@ -8,7 +8,10 @@ import {
 /** Preview operations that build their own request, and so cannot be anchored. */
 export const PREVIEW_BUILT_IN_OPERATIONS = new Set([
   "send",
+  "sendNonFungible",
   "mint",
+  "mintNonFungible",
+  "burnNonFungible",
   "bridge",
   "consume",
   "swap",
@@ -16,6 +19,34 @@ export const PREVIEW_BUILT_IN_OPERATIONS = new Set([
   "pswapConsume",
   "pswapCancel",
 ]);
+
+/**
+ * True for a WASM asset object (`NonFungibleAsset`, `FungibleAsset` or
+ * `VaultAsset`), false for a fungible `{ token, amount }`.
+ */
+function isAssetObject(asset, wasm) {
+  return (
+    asset instanceof wasm.NonFungibleAsset ||
+    asset instanceof wasm.FungibleAsset ||
+    asset instanceof wasm.VaultAsset
+  );
+}
+
+/** Throws a clear error when a non-fungible operation is missing its asset. */
+function requireNonFungibleAsset(opts, operation) {
+  if (opts?.nonFungibleAsset == null) {
+    throw new Error(`${operation} requires \`nonFungibleAsset\`.`);
+  }
+}
+
+/** Converts `{ token, amount }` or a WASM asset object into a WASM asset. */
+function toWasmAsset(asset, wasm) {
+  if (isAssetObject(asset, wasm)) return asset;
+  return new wasm.FungibleAsset(
+    resolveAccountRef(asset.token, wasm),
+    BigInt(asset.amount)
+  );
+}
 
 /**
  * Reject an `anchor` that is present but falsy — except `undefined`, which is
@@ -107,6 +138,21 @@ export class TransactionsResource {
 
   async send(opts) {
     rejectUnexpectedAnchor(opts, "send", "submit()");
+    return this.#sendP2ID(opts, false);
+  }
+
+  /**
+   * Sends one non-fungible asset in a P2ID note (P2IDE with `reclaimAfter` /
+   * `timelockUntil`). Takes the same options as `send`, with
+   * `nonFungibleAsset` in place of `token` and `amount`.
+   */
+  async sendNonFungible(opts) {
+    rejectUnexpectedAnchor(opts, "sendNonFungible", "submit()");
+    requireNonFungibleAsset(opts, "sendNonFungible");
+    return this.#sendP2ID(opts, true);
+  }
+
+  async #sendP2ID(opts, nonFungible) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
@@ -121,15 +167,18 @@ export class TransactionsResource {
 
       const senderId = resolveAccountRef(opts.account, wasm);
       const receiverId = resolveAccountRef(opts.to, wasm);
-      const faucetId = resolveAccountRef(opts.token, wasm);
       const noteType = resolveNoteType(opts.type, wasm);
+      const asset = nonFungible
+        ? opts.nonFungibleAsset
+        : new wasm.FungibleAsset(
+            resolveAccountRef(opts.token, wasm),
+            BigInt(opts.amount)
+          );
 
       const note = wasm.Note.createP2IDNote(
         senderId,
         receiverId,
-        new wasm.NoteAssets([
-          new wasm.FungibleAsset(faucetId, BigInt(opts.amount)),
-        ]),
+        new wasm.NoteAssets([asset]),
         noteType,
         new wasm.NoteAttachment()
       );
@@ -156,7 +205,9 @@ export class TransactionsResource {
     }
 
     // Default path — note built in WASM with optional reclaim/timelock
-    const { accountId, request } = await this.#buildSendRequest(opts, wasm);
+    const { accountId, request } = nonFungible
+      ? await this.#buildSendNonFungibleRequest(opts, wasm)
+      : await this.#buildSendRequest(opts, wasm);
     const { txId, result } = await this.#submitOrSubmitWithProver(
       accountId,
       request,
@@ -198,12 +249,8 @@ export class TransactionsResource {
 
     const noteAssets = opts.assets
       ? new wasm.NoteAssets(
-          (Array.isArray(opts.assets) ? opts.assets : [opts.assets]).map(
-            (a) =>
-              new wasm.FungibleAsset(
-                resolveAccountRef(a.token, wasm),
-                BigInt(a.amount)
-              )
+          (Array.isArray(opts.assets) ? opts.assets : [opts.assets]).map((a) =>
+            toWasmAsset(a, wasm)
           )
         )
       : new wasm.NoteAssets();
@@ -284,9 +331,53 @@ export class TransactionsResource {
 
   async mint(opts) {
     rejectUnexpectedAnchor(opts, "mint", "submit()");
+    return this.#mint(opts, false);
+  }
+
+  /**
+   * Mints one non-fungible asset from a non-fungible faucet. Takes the same
+   * options as `mint`, with `nonFungibleAsset` (issued by `account`) in place
+   * of `amount`.
+   */
+  async mintNonFungible(opts) {
+    rejectUnexpectedAnchor(opts, "mintNonFungible", "submit()");
+    return this.#mint(opts, true);
+  }
+
+  async #mint(opts, nonFungible) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
-    const { accountId, request } = await this.#buildMintRequest(opts, wasm);
+    const { accountId, request } = nonFungible
+      ? await this.#buildMintNonFungibleRequest(opts, wasm)
+      : await this.#buildMintRequest(opts, wasm);
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      accountId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, result };
+  }
+
+  /**
+   * Sends one non-fungible asset back to its faucet in a public BURN note. The
+   * asset is burned when the faucet that issued it consumes the note. A BURN
+   * note for a public faucet is a network note, so a public faucet must be a
+   * network account.
+   */
+  async burnNonFungible(opts) {
+    rejectUnexpectedAnchor(opts, "burnNonFungible", "submit()");
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const { accountId, request } = await this.#buildBurnNonFungibleRequest(
+      opts,
+      wasm
+    );
 
     const { txId, result } = await this.#submitOrSubmitWithProver(
       accountId,
@@ -531,8 +622,29 @@ export class TransactionsResource {
         ({ accountId, request } = await this.#buildSendRequest(opts, wasm));
         break;
       }
+      case "sendNonFungible": {
+        ({ accountId, request } = await this.#buildSendNonFungibleRequest(
+          opts,
+          wasm
+        ));
+        break;
+      }
       case "mint": {
         ({ accountId, request } = await this.#buildMintRequest(opts, wasm));
+        break;
+      }
+      case "mintNonFungible": {
+        ({ accountId, request } = await this.#buildMintNonFungibleRequest(
+          opts,
+          wasm
+        ));
+        break;
+      }
+      case "burnNonFungible": {
+        ({ accountId, request } = await this.#buildBurnNonFungibleRequest(
+          opts,
+          wasm
+        ));
         break;
       }
       case "bridge": {
@@ -646,8 +758,17 @@ export class TransactionsResource {
         case "send":
           built = await this.#buildSendRequest(op, wasm);
           break;
+        case "sendNonFungible":
+          built = await this.#buildSendNonFungibleRequest(op, wasm);
+          break;
         case "mint":
           built = await this.#buildMintRequest(op, wasm);
+          break;
+        case "mintNonFungible":
+          built = await this.#buildMintNonFungibleRequest(op, wasm);
+          break;
+        case "burnNonFungible":
+          built = await this.#buildBurnNonFungibleRequest(op, wasm);
           break;
         case "consume":
           built = await this.#buildConsumeRequest(op, wasm);
@@ -1082,6 +1203,46 @@ export class TransactionsResource {
       amount,
       opts.reclaimAfter,
       opts.timelockUntil
+    );
+    return { accountId, request };
+  }
+
+  async #buildSendNonFungibleRequest(opts, wasm) {
+    requireNonFungibleAsset(opts, "sendNonFungible");
+    const accountId = resolveAccountRef(opts.account, wasm);
+    const request = await this.#inner.newSendNonFungibleAssetTransactionRequest(
+      accountId,
+      resolveAccountRef(opts.to, wasm),
+      opts.nonFungibleAsset,
+      resolveNoteType(opts.type, wasm),
+      opts.reclaimAfter,
+      opts.timelockUntil
+    );
+    return { accountId, request };
+  }
+
+  async #buildMintNonFungibleRequest(opts, wasm) {
+    requireNonFungibleAsset(opts, "mintNonFungible");
+    const accountId = resolveAccountRef(opts.account, wasm);
+    if (opts.nonFungibleAsset.faucetId().toString() !== accountId.toString()) {
+      throw new Error(
+        "mintNonFungible: `nonFungibleAsset` must be issued by the minting faucet `account`."
+      );
+    }
+    const request = await this.#inner.newMintNonFungibleTransactionRequest(
+      resolveAccountRef(opts.to, wasm),
+      opts.nonFungibleAsset,
+      resolveNoteType(opts.type, wasm)
+    );
+    return { accountId, request };
+  }
+
+  async #buildBurnNonFungibleRequest(opts, wasm) {
+    requireNonFungibleAsset(opts, "burnNonFungible");
+    const accountId = resolveAccountRef(opts.account, wasm);
+    const request = await this.#inner.newBurnNonFungibleAssetTransactionRequest(
+      accountId,
+      opts.nonFungibleAsset
     );
     return { accountId, request };
   }
