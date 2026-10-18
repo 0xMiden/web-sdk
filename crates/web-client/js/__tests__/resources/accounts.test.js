@@ -37,6 +37,9 @@ function makeWasm(overrides = {}) {
 function makeInner(overrides = {}) {
   return {
     newFaucet: vi.fn().mockResolvedValue("newFaucetResult"),
+    newNonFungibleFaucet: vi
+      .fn()
+      .mockResolvedValue("newNonFungibleFaucetResult"),
     newWallet: vi.fn().mockResolvedValue("newWalletResult"),
     newAccount: vi.fn().mockResolvedValue(undefined),
     newAccountWithSecretKey: vi.fn().mockResolvedValue(undefined),
@@ -94,7 +97,6 @@ describe("AccountsResource", () => {
       expect(client.assertNotTerminated).toHaveBeenCalledOnce();
       expect(inner.newFaucet).toHaveBeenCalledWith(
         "public",
-        false, // not NonFungibleFaucet for type=0
         "US Dollar",
         "USD",
         2,
@@ -116,7 +118,6 @@ describe("AccountsResource", () => {
       });
       expect(inner.newFaucet).toHaveBeenCalledWith(
         "public",
-        false,
         "FOO", // name defaults to symbol
         "FOO",
         0,
@@ -136,15 +137,13 @@ describe("AccountsResource", () => {
         decimals: 0,
         maxSupply: 1,
       });
-      expect(inner.newFaucet).toHaveBeenCalledWith(
+      expect(inner.newNonFungibleFaucet).toHaveBeenCalledWith(
         "public",
-        true, // NonFungibleFaucet
         "Collectible",
         "NFT",
-        0,
-        BigInt(1),
         2
       );
+      expect(inner.newFaucet).not.toHaveBeenCalled();
     });
 
     it("creates non-fungible faucet when type='NonFungibleFaucet'", async () => {
@@ -158,15 +157,13 @@ describe("AccountsResource", () => {
         decimals: 0,
         maxSupply: 1,
       });
-      expect(inner.newFaucet).toHaveBeenCalledWith(
+      expect(inner.newNonFungibleFaucet).toHaveBeenCalledWith(
         "public",
-        true,
         "Collectible",
         "NFT",
-        0,
-        BigInt(1),
         2
       );
+      expect(inner.newFaucet).not.toHaveBeenCalled();
     });
 
     it("defaults storage to 'public' when not specified for faucet", async () => {
@@ -196,7 +193,6 @@ describe("AccountsResource", () => {
       });
       expect(inner.newFaucet).toHaveBeenCalledWith(
         "public",
-        false,
         "Test Token",
         "TST",
         0,
@@ -672,7 +668,7 @@ describe("AccountsResource.create selector validation", () => {
     expect(inner.newFaucet).toHaveBeenCalledOnce();
     // 0 is also AccountType.Private: a visibility value passed as `type` is
     // read as the legacy fungible-faucet selector, as the docs state.
-    expect(inner.newFaucet.mock.calls[0][1]).toBe(false);
+    expect(inner.newNonFungibleFaucet).not.toHaveBeenCalled();
   });
 
   it("still creates a wallet when no type and no faucet fields are given", async () => {

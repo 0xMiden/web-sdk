@@ -33,7 +33,6 @@ test("private-note recipient still receives after the sender syncs past the note
 
     const faucet = await sender.newFaucet(
       sdk.AccountStorageMode.private(),
-      false,
       "DAG",
       "DAG",
       8,
@@ -155,7 +154,6 @@ test("agnostic sendPrivateNote delivers the proof captured before the sender syn
     );
     const faucet = await sender.newFaucet(
       sdk.AccountStorageMode.private(),
-      false,
       "DAG",
       "DAG",
       8,

@@ -10,7 +10,6 @@ test.describe("basic fungible faucet", () => {
     const result = await run(async ({ client, sdk }) => {
       const newFaucet = await client.newFaucet(
         sdk.AccountStorageMode.tryFromStr("public"),
-        false,
         "DAG Token",
         "DAG",
         8,
@@ -50,7 +49,6 @@ test.describe("basic fungible faucet", () => {
     const result = await run(async ({ client, sdk }) => {
       const newFaucet = await client.newFaucet(
         sdk.AccountStorageMode.tryFromStr("public"),
-        false,
         "DAG Token",
         "DAG",
         8,
@@ -119,7 +117,6 @@ test.describe("basic fungible faucet", () => {
       // Build a real faucet only to harvest its storage slot values.
       const newFaucet = await client.newFaucet(
         sdk.AccountStorageMode.tryFromStr("public"),
-        false,
         "AGG Token",
         "AGG",
         8,

@@ -265,7 +265,6 @@ test.describe("export and import note", () => {
           );
           const faucet = await client.newFaucet(
             window.AccountStorageMode.private(),
-            false,
             "DAG",
             "DAG",
             8,

@@ -622,7 +622,6 @@ const setupInPage = async ({ threads: wantThreads }) => {
   );
   const faucet = await client.newFaucet(
     sdk.AccountStorageMode.private(),
-    false,
     "BNCH",
     "BNCH",
     8,

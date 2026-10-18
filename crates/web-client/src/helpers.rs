@@ -1,20 +1,12 @@
-use miden_client::account::component::{
-    AccountComponent,
-    BasicWallet,
-    BurnPolicy,
-    FungibleFaucet,
-    MintPolicy,
-    TokenName,
-    TokenPolicyManager,
-};
+use miden_client::account::component::AccountComponent;
+use miden_client::account::standards::access::{Authority, Pausable, PausableManager};
+use miden_client::account::standards::auth::{Approver, AuthSingleSig};
+use miden_client::account::standards::faucets::{FungibleFaucet, NonFungibleFaucet, TokenName};
+use miden_client::account::standards::policies::{BurnPolicy, MintPolicy, TokenPolicyManager};
+use miden_client::account::standards::wallets::BasicWallet;
 use miden_client::account::{Account, AccountBuilder, AccountBuilderSchemaCommitmentExt};
 use miden_client::asset::{AssetAmount, TokenSymbol};
-use miden_client::auth::{
-    Approver,
-    AuthSchemeId as NativeAuthScheme,
-    AuthSecretKey,
-    AuthSingleSig,
-};
+use miden_client::auth::{AuthSchemeId as NativeAuthScheme, AuthSecretKey};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -84,11 +76,8 @@ pub(crate) async fn generate_wallet(
 
 /// Builds a fungible faucet account together with its authentication key.
 ///
-/// A faucet is assembled from a [`FungibleFaucet`] component plus a [`TokenPolicyManager`]. Only
-/// mint and burn policies are registered: registering transfer (send/receive) policies installs
-/// asset-callback slots on the faucet, which forces minted `FungibleAsset`s to carry an enabled
-/// callback flag and breaks the standard mint path. Mirrors the faucet construction used by the
-/// rust-client test utilities.
+/// The faucet is assembled from a [`FungibleFaucet`] component; see [`build_faucet_account`]
+/// for the components every faucet gets.
 ///
 /// # Errors:
 /// - If the token name / symbol / max supply are invalid
@@ -101,6 +90,64 @@ pub(crate) async fn generate_faucet(
     decimals: u8,
     max_supply: u64,
     auth_scheme: AuthScheme,
+) -> Result<(Account, AuthSecretKey), JsErr> {
+    let symbol = TokenSymbol::new(&token_symbol).map_err(|err| from_str_err(&err.to_string()))?;
+    let name = TokenName::new(&token_name).map_err(|err| from_str_err(&err.to_string()))?;
+    let max_supply = AssetAmount::new(max_supply).map_err(|err| from_str_err(&err.to_string()))?;
+    let faucet = FungibleFaucet::builder()
+        .name(name)
+        .symbol(symbol)
+        .decimals(decimals)
+        .max_supply(max_supply)
+        .build()
+        .map_err(|err| js_error_with_context(err, "failed to build fungible faucet"))?;
+
+    build_faucet_account(storage_mode, auth_scheme, vec![faucet.into()])
+}
+
+/// Builds a non-fungible faucet account together with its authentication key.
+///
+/// The faucet is assembled from a [`NonFungibleFaucet`] component plus the authority and pause
+/// components that `create_user_non_fungible_faucet` installs; see [`build_faucet_account`] for
+/// the components every faucet gets.
+///
+/// # Errors:
+/// - If the token name / symbol are invalid
+/// - If the auth scheme is unsupported
+/// - If the rust client account builder fails
+pub(crate) async fn generate_non_fungible_faucet(
+    storage_mode: &AccountStorageMode,
+    token_name: String,
+    token_symbol: String,
+    auth_scheme: AuthScheme,
+) -> Result<(Account, AuthSecretKey), JsErr> {
+    let symbol = TokenSymbol::new(&token_symbol).map_err(|err| from_str_err(&err.to_string()))?;
+    let name = TokenName::new(&token_name).map_err(|err| from_str_err(&err.to_string()))?;
+    let faucet_components: Vec<AccountComponent> = vec![
+        NonFungibleFaucet::builder().name(name).symbol(symbol).build().into(),
+        Authority::AuthControlled.into(),
+        Pausable::unpaused().into(),
+        PausableManager.into(),
+    ];
+
+    build_faucet_account(storage_mode, auth_scheme, faucet_components)
+}
+
+/// Builds a faucet account from its faucet components, together with its authentication key.
+///
+/// Besides `faucet_components`, the account gets a single-signature auth component, a
+/// [`BasicWallet`] and a [`TokenPolicyManager`]. Only mint and burn policies are registered:
+/// registering transfer (send/receive) policies installs asset-callback slots on the faucet,
+/// which forces minted `FungibleAsset`s to carry an enabled callback flag and breaks the
+/// standard mint path. Mirrors the faucet construction used by the rust-client test utilities.
+///
+/// # Errors:
+/// - If the auth scheme is unsupported
+/// - If the rust client account builder fails
+fn build_faucet_account(
+    storage_mode: &AccountStorageMode,
+    auth_scheme: AuthScheme,
+    faucet_components: Vec<AccountComponent>,
 ) -> Result<(Account, AuthSecretKey), JsErr> {
     let mut rng: StdRng = rand::make_rng();
 
@@ -119,17 +166,6 @@ pub(crate) async fn generate_faucet(
     };
     let approver = Approver::new(key_pair.public_key().to_commitment(), native_scheme);
     let auth_component: AccountComponent = AuthSingleSig::new(approver).into();
-
-    let symbol = TokenSymbol::new(&token_symbol).map_err(|err| from_str_err(&err.to_string()))?;
-    let name = TokenName::new(&token_name).map_err(|err| from_str_err(&err.to_string()))?;
-    let max_supply = AssetAmount::new(max_supply).map_err(|err| from_str_err(&err.to_string()))?;
-    let faucet = FungibleFaucet::builder()
-        .name(name)
-        .symbol(symbol)
-        .decimals(decimals)
-        .max_supply(max_supply)
-        .build()
-        .map_err(|err| js_error_with_context(err, "failed to build fungible faucet"))?;
 
     // Only mint/burn policies are registered — see the function rustdoc for why transfer
     // policies are intentionally omitted.
@@ -152,7 +188,7 @@ pub(crate) async fn generate_faucet(
     let new_account = AccountBuilder::new(init_seed)
         .account_type(storage_mode.into())
         .with_component(auth_component)
-        .with_component(faucet)
+        .with_components(faucet_components)
         .with_component(BasicWallet)
         .with_components(policy_manager)
         .build_with_schema_commitment()

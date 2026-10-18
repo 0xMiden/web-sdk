@@ -66,10 +66,18 @@ export class AccountsResource {
       }
       const storageMode = resolveStorageMode(opts.storage ?? "public", wasm);
       const authScheme = resolveAuthScheme(opts.auth, wasm);
+      const name = opts.name ?? opts.symbol;
+      if (type === 1 || type === "NonFungibleFaucet") {
+        return await this.#inner.newNonFungibleFaucet(
+          storageMode,
+          name,
+          opts.symbol,
+          authScheme
+        );
+      }
       return await this.#inner.newFaucet(
         storageMode,
-        type === 1 || type === "NonFungibleFaucet",
-        opts.name ?? opts.symbol,
+        name,
         opts.symbol,
         opts.decimals,
         BigInt(opts.maxSupply),
