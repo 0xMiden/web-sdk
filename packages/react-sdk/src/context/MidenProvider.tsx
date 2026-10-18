@@ -10,6 +10,7 @@ import {
 } from "react";
 import { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk";
 import { useMidenStore } from "../store/MidenStore";
+import { captureAccountReadGuard } from "../store/accountReadGuard";
 import type { MidenConfig } from "../types";
 import { DEFAULTS } from "../types";
 import { AsyncLock } from "../utils/asyncLock";
@@ -125,22 +126,14 @@ export function MidenProvider({
   const sync = useCallback(async () => {
     if (!client || !isReady) return;
 
-    const store = useMidenStore.getState();
-    if (store.sync.isSyncing || store.client !== client) return;
-    const cacheGeneration = store.cacheGeneration;
-    const isStale = () => {
-      const currentStore = useMidenStore.getState();
-      return (
-        currentStore.cacheGeneration !== cacheGeneration ||
-        currentStore.client !== client
-      );
-    };
+    const isCurrent = captureAccountReadGuard(client);
+    if (useMidenStore.getState().sync.isSyncing || !isCurrent()) return;
 
     setSyncState({ isSyncing: true, error: null });
 
     try {
       const summary = await client.syncState();
-      if (isStale()) return;
+      if (!isCurrent()) return;
       const syncHeight = summary.blockNum();
 
       setSyncState({
@@ -152,10 +145,10 @@ export function MidenProvider({
 
       // Trigger account and note refresh after sync
       const accounts = await client.getAccounts();
-      if (isStale()) return;
+      if (!isCurrent()) return;
       useMidenStore.getState().setAccounts(accounts);
     } catch (error) {
-      if (isStale()) return;
+      if (!isCurrent()) return;
       setSyncState({
         isSyncing: false,
         error: error instanceof Error ? error : new Error(String(error)),
@@ -329,6 +322,7 @@ export function MidenProvider({
           if (!cancelled) {
             try {
               const accounts = await webClient.getAccounts();
+              // The effect's cancelled guard is this preload's stale check.
               if (cancelled) return;
               useMidenStore.getState().setAccounts(accounts);
             } catch {
@@ -417,19 +411,12 @@ export function MidenProvider({
 
     // The WebClient exposes onStateChanged when BroadcastChannel is available.
     const unsubscribe = client.onStateChanged?.(async () => {
-      const currentStore = useMidenStore.getState();
-      if (currentStore.client !== client) return;
-      const cacheGeneration = currentStore.cacheGeneration;
+      const isCurrent = captureAccountReadGuard(client);
+      if (!isCurrent()) return;
       try {
         const accounts = await client.getAccounts();
-        const store = useMidenStore.getState();
-        if (
-          store.cacheGeneration !== cacheGeneration ||
-          store.client !== client
-        ) {
-          return;
-        }
-        store.setAccounts(accounts);
+        if (!isCurrent()) return;
+        useMidenStore.getState().setAccounts(accounts);
         setSyncState({ lastSyncTime: Date.now() });
       } catch {
         // Non-fatal — next explicit sync will catch up.

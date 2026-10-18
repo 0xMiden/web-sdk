@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from "react";
 import { useMiden } from "../context/MidenProvider";
 import { useMidenStore, useAccountsStore } from "../store/MidenStore";
+import { captureAccountReadGuard } from "../store/accountReadGuard";
 import type { AccountsResult } from "../types";
 
 /**
@@ -35,26 +36,19 @@ export function useAccounts(): AccountsResult {
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
 
-    const currentStore = useMidenStore.getState();
-    if (currentStore.client !== client) return;
-    const cacheGeneration = currentStore.cacheGeneration;
-    const isStale = () => {
-      const store = useMidenStore.getState();
-      return (
-        store.cacheGeneration !== cacheGeneration || store.client !== client
-      );
-    };
+    const isCurrent = captureAccountReadGuard(client);
+    if (!isCurrent()) return;
 
     setLoadingAccounts(true);
     try {
       const fetchedAccounts = await client.getAccounts();
-      if (isStale()) return;
+      if (!isCurrent()) return;
       setAccounts(fetchedAccounts);
     } catch (error) {
-      if (isStale()) return;
+      if (!isCurrent()) return;
       console.error("Failed to fetch accounts:", error);
     } finally {
-      if (!isStale()) {
+      if (isCurrent()) {
         setLoadingAccounts(false);
       }
     }
