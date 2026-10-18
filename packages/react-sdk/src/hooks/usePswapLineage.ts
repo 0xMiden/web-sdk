@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { PswapLineageRecord } from "@miden-sdk/miden-sdk";
 import { useMiden } from "../context/MidenProvider";
 import { useMidenStore, useSyncStateStore } from "../store/MidenStore";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import { useCacheGenerationState } from "../store/useCacheGenerationState";
 import type { PswapLineageResult } from "../types";
 
@@ -45,6 +46,9 @@ export function usePswapLineage(
   const refetch = useCallback(async () => {
     if (!client || !isReady || orderIdStr == null) return;
 
+    const isCurrent = captureClientReadGuard(client);
+    if (!isCurrent()) return;
+
     const { cacheGeneration } = useMidenStore.getState();
     const gen = ++fetchGenRef.current;
     setIsLoading(true);
@@ -52,10 +56,10 @@ export function usePswapLineage(
 
     try {
       const fetched = await client.getPswapLineage(orderIdStr);
-      if (gen === fetchGenRef.current)
+      if (isCurrent() && gen === fetchGenRef.current)
         setLineage(fetched ?? null, cacheGeneration);
     } catch (err) {
-      if (gen === fetchGenRef.current)
+      if (isCurrent() && gen === fetchGenRef.current)
         setError(
           err instanceof Error ? err : new Error(String(err)),
           cacheGeneration
