@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import { useMidenStore } from "../store/MidenStore";
-import { captureAccountReadGuard } from "../store/accountReadGuard";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import { AccountFile } from "@miden-sdk/miden-sdk";
 import type {
   Account,
@@ -112,7 +112,7 @@ export function useImportAccount(): UseImportAccountResult {
                 }
               }
 
-              isAccountsAfterCurrent = captureAccountReadGuard(client);
+              isAccountsAfterCurrent = captureClientReadGuard(client);
               accountsAfter = await client.getAccounts();
 
               if (accountFromFile) {
@@ -169,7 +169,7 @@ export function useImportAccount(): UseImportAccountResult {
 
         ensureAccountBech32(imported);
         const isCurrent =
-          isAccountsAfterCurrent ?? captureAccountReadGuard(client);
+          isAccountsAfterCurrent ?? captureClientReadGuard(client);
         const accounts = accountsAfter ?? (await client.getAccounts());
         if (isCurrent()) {
           setAccounts(accounts);

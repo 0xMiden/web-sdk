@@ -6,6 +6,7 @@ import {
   useConsumableNotesStore,
   useSyncStateStore,
 } from "../store/MidenStore";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import { isConsumableNow, NoteFilter } from "@miden-sdk/miden-sdk";
 import type { NotesFilter, NotesResult, NoteSummary } from "../types";
 import { getNoteSummary } from "../utils/notes";
@@ -79,6 +80,9 @@ export function useNotes(options?: NotesFilter): NotesResult {
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
 
+    const isCurrent = captureClientReadGuard(client);
+    if (!isCurrent()) return;
+
     setLoadingNotes(true);
     setError(null);
 
@@ -104,13 +108,17 @@ export function useNotes(options?: NotesFilter): NotesResult {
         );
       }
 
+      if (!isCurrent()) return;
       // Smart refetch: only update store if note IDs changed (prevents unnecessary re-renders)
       setNotesIfChanged(fetchedNotes);
       setConsumableNotesIfChanged(fetchedConsumable);
     } catch (err) {
+      if (!isCurrent()) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      setLoadingNotes(false);
+      if (isCurrent()) {
+        setLoadingNotes(false);
+      }
     }
   }, [
     client,
