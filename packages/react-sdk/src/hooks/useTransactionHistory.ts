@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TransactionFilter } from "@miden-sdk/miden-sdk";
 import type { TransactionId, TransactionRecord } from "@miden-sdk/miden-sdk";
 import { useMiden } from "../context/MidenProvider";
-import { useSyncStateStore } from "../store/MidenStore";
+import { useMidenStore, useSyncStateStore } from "../store/MidenStore";
 import { captureClientReadGuard } from "../store/clientReadGuard";
+import { useCacheGenerationState } from "../store/useCacheGenerationState";
 import type {
   TransactionHistoryOptions,
   TransactionHistoryResult,
@@ -36,9 +37,11 @@ export function useTransactionHistory(
   const { client, isReady } = useMiden();
   const { lastSyncTime } = useSyncStateStore();
 
-  const [records, setRecords] = useState<TransactionRecord[]>([]);
+  const [records, setRecords] = useCacheGenerationState<TransactionRecord[]>(
+    []
+  );
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
+  const [error, setError] = useCacheGenerationState<Error | null>(null);
   const latestRequestRef = useRef(0);
 
   const rawIds = useMemo(() => {
@@ -63,9 +66,10 @@ export function useTransactionHistory(
     const isCurrent = captureClientReadGuard(client);
     if (!isCurrent()) return;
 
+    const { cacheGeneration } = useMidenStore.getState();
     const request = ++latestRequestRef.current;
     setIsLoading(true);
-    setError(null);
+    setError(null, cacheGeneration);
 
     try {
       const { filter: resolvedFilter, localFilterHexes } = buildFilter(
@@ -80,10 +84,13 @@ export function useTransactionHistory(
             localFilterHexes.includes(normalizeHex(record.id().toHex()))
           )
         : fetched;
-      setRecords(filtered);
+      setRecords(filtered, cacheGeneration);
     } catch (err) {
       if (!isCurrent() || latestRequestRef.current !== request) return;
-      setError(err instanceof Error ? err : new Error(String(err)));
+      setError(
+        err instanceof Error ? err : new Error(String(err)),
+        cacheGeneration
+      );
     } finally {
       if (latestRequestRef.current === request) setIsLoading(false);
     }

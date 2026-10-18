@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PswapLineageRecord } from "@miden-sdk/miden-sdk";
 import { useMiden } from "../context/MidenProvider";
-import { useSyncStateStore } from "../store/MidenStore";
+import { useMidenStore, useSyncStateStore } from "../store/MidenStore";
+import { useCacheGenerationState } from "../store/useCacheGenerationState";
 import type { PswapLineagesResult } from "../types";
 
 /**
@@ -32,9 +33,11 @@ export function usePswapLineages(): PswapLineagesResult {
   const { client, isReady } = useMiden();
   const { lastSyncTime } = useSyncStateStore();
 
-  const [lineages, setLineages] = useState<PswapLineageRecord[]>([]);
+  const [lineages, setLineages] = useCacheGenerationState<PswapLineageRecord[]>(
+    []
+  );
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
+  const [error, setError] = useCacheGenerationState<Error | null>(null);
 
   // Generation counter: an in-flight fetch skips setState once a newer fetch
   // or unmount bumps it — stops stale results from overwriting fresh data.
@@ -43,16 +46,20 @@ export function usePswapLineages(): PswapLineagesResult {
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
 
+    const { cacheGeneration } = useMidenStore.getState();
     const gen = ++fetchGenRef.current;
     setIsLoading(true);
-    setError(null);
+    setError(null, cacheGeneration);
 
     try {
       const fetched = await client.getPswapLineages();
-      if (gen === fetchGenRef.current) setLineages(fetched);
+      if (gen === fetchGenRef.current) setLineages(fetched, cacheGeneration);
     } catch (err) {
       if (gen === fetchGenRef.current)
-        setError(err instanceof Error ? err : new Error(String(err)));
+        setError(
+          err instanceof Error ? err : new Error(String(err)),
+          cacheGeneration
+        );
     } finally {
       if (gen === fetchGenRef.current) setIsLoading(false);
     }
