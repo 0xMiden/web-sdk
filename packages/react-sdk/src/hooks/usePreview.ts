@@ -77,7 +77,8 @@ export interface UsePreviewResult {
  * `request.blockNumbers()`); below it the preview fails with "requested block N
  * is after transaction reference block M". A request from `withFeeAwareAuth`
  * takes no anchor either, but does not declare that block, so sync before
- * previewing it.
+ * previewing or executing it. An anchor captured for that copy does not track
+ * the bound block.
  * This hook does not sync first. Call `sync()` from `useMiden()` before
  * previewing a received proposal, then confirm `client.getSyncHeight()` is at
  * least that block: the provider's sync returns early while another sync runs.

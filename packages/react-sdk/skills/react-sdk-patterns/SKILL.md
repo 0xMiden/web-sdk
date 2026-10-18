@@ -459,7 +459,7 @@ const bytes = captured.serialize();                   // ship to co-signers
 const rebuilt = ChainAnchor.deserialize(bytes);
 ```
 
-`usePreview` is the first summary surface in the React SDK: verifying and co-signing a multisig proposal no longer requires dropping to the WASM client. The summary only exists while authorization is pending, i.e. when the account's auth procedure aborts with the unauthorized event (a multisig below its signing threshold). For a multisig request from `feeAwareTransactionRequestBuilder`, preview without an anchor after syncing to its bound block. Pass `anchor` when verifying a summary that binds the reference block, because deriving that summary at the local sync height produces a different one.
+`usePreview` is the first summary surface in the React SDK: verifying and co-signing a multisig proposal no longer requires dropping to the WASM client. The summary only exists while authorization is pending, i.e. when the account's auth procedure aborts with the unauthorized event (a multisig below its signing threshold). A multisig request from `feeAwareTransactionRequestBuilder` declares its bound block and previews and executes without an anchor at the tip once the client has synced to it. A `withFeeAwareAuth` copy takes no anchor either, but declares no bound block, so sync before previewing or executing it; an anchor captured for that copy does not track the bound block. Pass `anchor` when verifying a summary that binds the reference block, because deriving that summary at the local sync height produces a different one.
 
 ## Network Notes
 

@@ -1923,12 +1923,15 @@ export interface MultisigAuthOptions {
    */
   approvalExpirationDelta?: number;
   /**
-   * The salt the summary binds. Omitted, one is drawn fresh per build.
+   * The salt the summary binds. If omitted or spent,
+   * {@link MidenClient.feeAwareTransactionRequestBuilder} draws a fresh one;
+   * {@link MidenClient.withFeeAwareAuth} uses the salt the request declares,
+   * or draws a fresh one if it declares none.
    *
    * Consumed by the call: the `Word` is moved across the WASM boundary, so a
    * second call needs a freshly constructed one. Passing a spent handle is not
-   * an error - it arrives as if no salt were given and one is drawn, which is
-   * the divergence pinning the salt exists to prevent.
+   * an error - it arrives as if no salt were given and follows that method's
+   * default, which can change the salt the summary binds.
    */
   feeConversionSalt?: Word;
   /** The block the summary binds. Omitted, the store's sync height. */

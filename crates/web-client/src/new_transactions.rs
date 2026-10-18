@@ -525,10 +525,13 @@ impl WebClient {
     /// summary with `executeForSummaryAt`, and ship the anchor alongside the signed data; the same
     /// anchor then reproduces the summary during later verification and execution.
     ///
-    /// A multisig proposal built by `feeAwareTransactionRequestBuilder` needs no anchor: its
-    /// summary binds the block its auth args name, so it is previewed with `executeForSummary`
-    /// and executed with `executeTransaction` at the tip. An anchor at an older block fails once
-    /// the node prunes that block's account state (about 50 blocks).
+    /// A multisig proposal needs no anchor: its summary binds the block its auth args name.
+    /// `feeAwareTransactionRequestBuilder` declares that bound block, so the request is previewed
+    /// with `executeForSummary` and executed with `executeTransaction` at the tip once the client
+    /// has synced to it. A `withFeeAwareAuth` copy declares no bound block: sync before previewing
+    /// or executing it. An anchor captured for that copy does not track the bound block. An
+    /// anchor at an older block fails once the node prunes that block's account state (about 50
+    /// blocks).
     ///
     /// # Errors
     ///
@@ -594,8 +597,11 @@ impl WebClient {
     /// This is what lets a co-signer verify a proposal whose summary binds the reference block:
     /// re-deriving the summary at the proposer's anchor reproduces it exactly, so it can be
     /// compared against the summary they were asked to sign. Deriving such a summary at the local
-    /// sync height instead produces a different one. A multisig proposal built by
-    /// `feeAwareTransactionRequestBuilder` is verified with `executeForSummary` at the tip.
+    /// sync height instead produces a different one. A multisig request from
+    /// `feeAwareTransactionRequestBuilder` declares its bound block and is verified with
+    /// `executeForSummary` at the tip once the client has synced to it. A `withFeeAwareAuth` copy
+    /// takes no anchor either, but declares no bound block: sync before previewing or executing
+    /// it. An anchor captured for that copy does not track the bound block.
     ///
     /// # Errors
     /// - If the transaction executes successfully (error code `TRANSACTION_ALREADY_AUTHORIZED`).
