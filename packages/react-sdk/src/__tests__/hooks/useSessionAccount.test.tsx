@@ -109,6 +109,95 @@ describe("useSessionAccount", () => {
     expect(localStorageMock.length).toBe(0);
   });
 
+  it.each([false, true])(
+    "restores a replacement local client's session while creation is pending (ready=%s)",
+    async (storedReady) => {
+      const pendingA = deferred<ReturnType<typeof createMockAccount>>();
+      const clientA = createMockWebClient({
+        newWallet: vi.fn().mockReturnValue(pendingA.promise),
+      });
+      const clientB = createMockWebClient({
+        newWallet: vi.fn().mockResolvedValue(
+          createMockAccount({
+            id: vi.fn(() => createMockAccountId("0xsessionB")),
+          })
+        ),
+        getConsumableNotes: vi
+          .fn()
+          .mockResolvedValue([
+            createMockConsumableNoteRecord("0xfunding", "0xsessionB"),
+          ]),
+      });
+      const fund = vi.fn().mockResolvedValue(undefined);
+      const context = {
+        client: clientA,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+        clientStoreName: null,
+        signerConnected: null,
+        hasSigner: false,
+      };
+      mockUseMiden.mockReturnValue(context);
+      useMidenStore.getState().setClient(clientA as never);
+      const { result, rerender } = renderHook(() =>
+        useSessionAccount({ fund })
+      );
+      let initializingA!: Promise<void>;
+      act(() => {
+        initializingA = result.current.initialize();
+      });
+      expect(result.current.step).toBe("creating");
+
+      if (storedReady) {
+        localStorageMock.setItem("miden-session:accountId", "0xsessionB");
+        localStorageMock.setItem("miden-session:ready", "true");
+      }
+      localStorageMock.setItem.mockClear();
+      act(() => {
+        useMidenStore.getState().setClient(clientB as never);
+        mockUseMiden.mockReturnValue({ ...context, client: clientB });
+      });
+      rerender();
+      expect(result.current.step).toBe(storedReady ? "ready" : "idle");
+      expect(result.current.sessionAccountId).toBe(
+        storedReady ? "0xsessionB" : null
+      );
+
+      await act(async () => {
+        pendingA.resolve(createMockAccount());
+        await initializingA;
+      });
+      expect(clientA.getAccounts).not.toHaveBeenCalled();
+      expect(fund).not.toHaveBeenCalled();
+      expect(localStorageMock.setItem).not.toHaveBeenCalled();
+      expect(result.current.step).toBe(storedReady ? "ready" : "idle");
+      expect(result.current.error).toBeNull();
+
+      await act(async () => {
+        await result.current.initialize();
+      });
+      expect(clientB.newWallet).toHaveBeenCalledTimes(storedReady ? 0 : 1);
+      expect(fund).toHaveBeenCalledTimes(1);
+      expect(fund).toHaveBeenCalledWith("0xsessionB");
+      expect(result.current.step).toBe("ready");
+    }
+  );
+
+  it("does not restore storage again when the session identity is unchanged", () => {
+    const client = createMockWebClient();
+    mockUseMiden.mockReturnValue({
+      client,
+      isReady: true,
+      sync: vi.fn(),
+      hasSigner: false,
+    });
+    useMidenStore.getState().setClient(client as never);
+    const { rerender } = renderHook(() => useSessionAccount({ fund: vi.fn() }));
+    localStorageMock.getItem.mockClear();
+    rerender();
+    expect(localStorageMock.getItem).not.toHaveBeenCalled();
+  });
+
   it("lets B initialize while A is pending and keeps B busy when A finishes", async () => {
     const pendingA = deferred<ReturnType<typeof createMockAccount>>();
     const pendingB = deferred<ReturnType<typeof createMockAccount>>();

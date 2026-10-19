@@ -78,18 +78,21 @@ export function useSessionAccount(
   fundRef.current = options.fund;
 
   const identityRef = useRef({
+    client,
     storagePrefix,
     clientStoreName,
     signerConnected,
     hasSigner,
   });
   if (
+    identityRef.current.client !== client ||
     identityRef.current.storagePrefix !== storagePrefix ||
     identityRef.current.clientStoreName !== clientStoreName ||
     identityRef.current.signerConnected !== signerConnected ||
     identityRef.current.hasSigner !== hasSigner
   ) {
     identityRef.current = {
+      client,
       storagePrefix,
       clientStoreName,
       signerConnected,
