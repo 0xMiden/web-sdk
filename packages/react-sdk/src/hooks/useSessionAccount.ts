@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
-import { useSigner } from "../context/SignerContext";
 import { captureClientCurrency, useMidenStore } from "../store/MidenStore";
 import { AccountStorageMode, isConsumableNow } from "@miden-sdk/miden-sdk";
 import type { ConsumableNoteRecord } from "@miden-sdk/miden-sdk";
@@ -52,8 +51,8 @@ export function useSessionAccount(
     sync,
     clientStoreName = null,
     signerConnected = null,
+    hasSigner,
   } = useMiden();
-  const hasSignerProvider = useSigner() !== null;
   const setAccounts = useMidenStore((state) => state.setAccounts);
 
   const [sessionAccountId, setSessionAccountId] = useState<string | null>(null);
@@ -82,19 +81,19 @@ export function useSessionAccount(
     storagePrefix,
     clientStoreName,
     signerConnected,
-    hasSignerProvider,
+    hasSigner,
   });
   if (
     identityRef.current.storagePrefix !== storagePrefix ||
     identityRef.current.clientStoreName !== clientStoreName ||
     identityRef.current.signerConnected !== signerConnected ||
-    identityRef.current.hasSignerProvider !== hasSignerProvider
+    identityRef.current.hasSigner !== hasSigner
   ) {
     identityRef.current = {
       storagePrefix,
       clientStoreName,
       signerConnected,
-      hasSignerProvider,
+      hasSigner,
     };
     generationRef.current += 1;
   }
@@ -103,7 +102,7 @@ export function useSessionAccount(
   const keyPrefix =
     clientStoreName !== null
       ? `${storagePrefix}:${clientStoreName}`
-      : hasSignerProvider
+      : hasSigner
         ? null
         : storagePrefix;
   const accountIdKey = keyPrefix === null ? null : `${keyPrefix}:accountId`;

@@ -26,6 +26,8 @@ interface MidenContextValue {
   sync: () => Promise<void>;
   runExclusive: <T>(fn: () => Promise<T>) => Promise<T>;
   prover: ReturnType<typeof resolveTransactionProver>;
+  /** Whether MidenProvider has an ancestor signer provider. */
+  hasSigner: boolean;
   /** Account ID from signer (only set when using external signer) */
   signerAccountId: string | null;
   /**
@@ -71,6 +73,7 @@ export function MidenProvider({
 }: MidenProviderProps) {
   const {
     client,
+    clientStoreName,
     isReady,
     isInitializing,
     initError,
@@ -89,9 +92,8 @@ export function MidenProvider({
   const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isInitializedRef = useRef(false);
   const clientLockRef = useRef(new AsyncLock());
-
-  // The signer identity belongs to the committed client; local clients have none.
-  const currentStoreNameRef = useRef<string | null>(null);
+  // Reuse only a client whose signing callback reads this mount's ref.
+  const signerClientRef = useRef<WebClient | null>(null);
 
   // Ref to hold the latest signCb so it can be hot-swapped on the WebClient
   const signCbRef = useRef<
@@ -237,8 +239,9 @@ export function MidenProvider({
 
       // Same identity reconnecting and client already exists
       if (
-        currentStoreNameRef.current === signerStoreName &&
-        store.client !== null
+        store.clientStoreName === signerStoreName &&
+        store.client !== null &&
+        signerClientRef.current === store.client
       ) {
         // The client was created with wrappedSignCb, which reads signCbRef
         // (kept in sync above) on every call, so there's nothing to swap.
@@ -252,16 +255,14 @@ export function MidenProvider({
         // Also clear old client so we get a fresh one for the new identity
         setClient(null);
         setSignerAccountId(null);
-        currentStoreNameRef.current = null;
       }
     } else if (
       signerIsConnected === null &&
-      currentStoreNameRef.current !== null
+      useMidenStore.getState().clientStoreName !== null
     ) {
       useMidenStore.getState().resetInMemoryState();
       setClient(null);
       setSignerAccountId(null);
-      currentStoreNameRef.current = null;
     }
 
     let cancelled = false;
@@ -382,11 +383,9 @@ export function MidenProvider({
             if (!signerContext) {
               isInitializedRef.current = true;
             }
-            currentStoreNameRef.current = didSignerInit
-              ? signerStoreName
-              : null;
+            signerClientRef.current = didSignerInit ? webClient : null;
             setSignerAccountId(accountId);
-            setClient(webClient);
+            setClient(webClient, didSignerInit ? signerStoreName : null);
             unowned = null;
             setSignerConnected(didSignerInit ? true : null);
           }
@@ -502,7 +501,8 @@ export function MidenProvider({
     runExclusive,
     prover: defaultProver,
     signerAccountId,
-    clientStoreName: client === null ? null : currentStoreNameRef.current,
+    clientStoreName,
+    hasSigner: signerContext !== null,
     signerConnected,
   };
 

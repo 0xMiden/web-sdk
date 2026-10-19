@@ -11,6 +11,7 @@ import type { SyncState, MidenConfig, AssetMetadata } from "../types";
 interface MidenStoreState {
   // Client state
   client: WebClient | null;
+  clientStoreName: string | null;
   isReady: boolean;
   isInitializing: boolean;
   initError: Error | null;
@@ -47,7 +48,10 @@ interface MidenStoreState {
   initializingToken: number;
 
   // Actions
-  setClient: (client: WebClient | null) => void;
+  setClient: (
+    client: WebClient | null,
+    clientStoreName?: string | null
+  ) => void;
   setInitializing: (isInitializing: boolean) => void;
   setInitError: (error: Error | null) => void;
   setConfig: (config: MidenConfig) => void;
@@ -115,6 +119,7 @@ function freshCachedState() {
 function freshState() {
   return {
     client: null as WebClient | null,
+    clientStoreName: null as string | null,
     isReady: false,
     isInitializing: false,
     initError: null as Error | null,
@@ -133,9 +138,10 @@ function freshState() {
 export const useMidenStore = create<MidenStoreState>()((set, get) => ({
   ...freshState(),
 
-  setClient: (client) =>
+  setClient: (client, clientStoreName = null) =>
     set({
       client,
+      clientStoreName: client === null ? null : clientStoreName,
       isReady: client !== null,
       isInitializing: false,
       initError: null,
