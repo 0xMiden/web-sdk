@@ -33,6 +33,62 @@ beforeEach(() => {
 });
 
 describe("useCreateFaucet", () => {
+  it.each(["resolve", "reject"])(
+    "keeps the latest call busy when the replaced client's call settles (%s)",
+    async (outcome) => {
+      const pendingA = deferred<ReturnType<typeof createMockAccount>>();
+      const pendingB = deferred<ReturnType<typeof createMockAccount>>();
+      const clientA = createMockWebClient({
+        newFaucet: vi.fn().mockReturnValue(pendingA.promise),
+      });
+      const clientB = createMockWebClient({
+        newFaucet: vi.fn().mockReturnValue(pendingB.promise),
+      });
+      mockUseMiden.mockReturnValue({ client: clientA, isReady: true });
+      useMidenStore.getState().setClient(clientA as never);
+      const { result, rerender } = renderHook(() => useCreateFaucet());
+      let callA!: Promise<unknown>;
+      act(() => {
+        callA = result.current
+          .createFaucet({ tokenSymbol: "TEST", maxSupply: 1000000n })
+          .catch((error: Error) => error);
+      });
+      expect(clientA.newFaucet).toHaveBeenCalledTimes(1);
+      expect(result.current.isCreating).toBe(true);
+
+      act(() => {
+        useMidenStore.getState().setClient(clientB as never);
+        mockUseMiden.mockReturnValue({ client: clientB, isReady: true });
+      });
+      rerender();
+      let callB!: Promise<unknown>;
+      act(() => {
+        callB = result.current.createFaucet({
+          tokenSymbol: "TEST",
+          maxSupply: 1000000n,
+        });
+      });
+      expect(clientB.newFaucet).toHaveBeenCalledTimes(1);
+      expect(result.current.isCreating).toBe(true);
+
+      await act(async () => {
+        if (outcome === "resolve") pendingA.resolve(createMockAccount());
+        else pendingA.reject(new Error("replaced call failed"));
+        await callA;
+      });
+      expect(result.current.isCreating).toBe(true);
+      expect(result.current.error).toBeNull();
+      expect(clientA.getAccounts).not.toHaveBeenCalled();
+
+      await act(async () => {
+        pendingB.resolve(createMockAccount());
+        await callB;
+      });
+      expect(result.current.isCreating).toBe(false);
+      expect(result.current.error).toBeNull();
+    }
+  );
+
   describe("initial state", () => {
     it("should return initial state", () => {
       mockUseMiden.mockReturnValue({

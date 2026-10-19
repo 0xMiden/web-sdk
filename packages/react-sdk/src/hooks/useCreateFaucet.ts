@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import { captureClientCurrency, useMidenStore } from "../store/MidenStore";
 import { AccountStorageMode } from "@miden-sdk/miden-sdk";
@@ -57,6 +57,7 @@ export function useCreateFaucet(): UseCreateFaucetResult {
   const [faucet, setFaucet] = useState<Account | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const latestCallRef = useRef(0);
 
   const createFaucet = useCallback(
     async (options: CreateFaucetOptions): Promise<Account> => {
@@ -69,6 +70,7 @@ export function useCreateFaucet(): UseCreateFaucetResult {
         throw new Error("Miden client is not ready");
       }
 
+      const call = ++latestCallRef.current;
       setIsCreating(true);
       setError(null);
 
@@ -108,7 +110,7 @@ export function useCreateFaucet(): UseCreateFaucetResult {
         if (isCurrent()) setError(error);
         throw error;
       } finally {
-        setIsCreating(false);
+        if (latestCallRef.current === call) setIsCreating(false);
       }
     },
     [client, isReady, runExclusive, setAccounts]

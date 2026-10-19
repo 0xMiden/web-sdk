@@ -35,6 +35,62 @@ beforeEach(() => {
 });
 
 describe("useImportAccount", () => {
+  it.each(["resolve", "reject"])(
+    "keeps the latest call busy when the replaced client's call settles (%s)",
+    async (outcome) => {
+      const pendingA = deferred<ReturnType<typeof createMockAccount>>();
+      const pendingB = deferred<ReturnType<typeof createMockAccount>>();
+      const clientA = createMockWebClient({
+        importPublicAccountFromSeed: vi.fn().mockReturnValue(pendingA.promise),
+      });
+      const clientB = createMockWebClient({
+        importPublicAccountFromSeed: vi.fn().mockReturnValue(pendingB.promise),
+      });
+      mockUseMiden.mockReturnValue({ client: clientA, isReady: true });
+      useMidenStore.getState().setClient(clientA as never);
+      const { result, rerender } = renderHook(() => useImportAccount());
+      let callA!: Promise<unknown>;
+      act(() => {
+        callA = result.current
+          .importAccount({ type: "seed", seed: new Uint8Array(32) })
+          .catch((error: Error) => error);
+      });
+      expect(clientA.importPublicAccountFromSeed).toHaveBeenCalledTimes(1);
+      expect(result.current.isImporting).toBe(true);
+
+      act(() => {
+        useMidenStore.getState().setClient(clientB as never);
+        mockUseMiden.mockReturnValue({ client: clientB, isReady: true });
+      });
+      rerender();
+      let callB!: Promise<unknown>;
+      act(() => {
+        callB = result.current.importAccount({
+          type: "seed",
+          seed: new Uint8Array(32),
+        });
+      });
+      expect(clientB.importPublicAccountFromSeed).toHaveBeenCalledTimes(1);
+      expect(result.current.isImporting).toBe(true);
+
+      await act(async () => {
+        if (outcome === "resolve") pendingA.resolve(createMockAccount());
+        else pendingA.reject(new Error("replaced call failed"));
+        await callA;
+      });
+      expect(result.current.isImporting).toBe(true);
+      expect(result.current.error).toBeNull();
+      expect(clientA.getAccounts).not.toHaveBeenCalled();
+
+      await act(async () => {
+        pendingB.resolve(createMockAccount());
+        await callB;
+      });
+      expect(result.current.isImporting).toBe(false);
+      expect(result.current.error).toBeNull();
+    }
+  );
+
   describe("initial state", () => {
     it("should return initial state", () => {
       mockUseMiden.mockReturnValue({

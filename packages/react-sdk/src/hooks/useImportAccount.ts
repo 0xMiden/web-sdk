@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import { captureClientCurrency, useMidenStore } from "../store/MidenStore";
 import { AccountFile } from "@miden-sdk/miden-sdk";
@@ -66,6 +66,7 @@ export function useImportAccount(): UseImportAccountResult {
   const [account, setAccount] = useState<Account | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const latestCallRef = useRef(0);
 
   const importAccount = useCallback(
     async (options: ImportAccountOptions): Promise<Account> => {
@@ -81,6 +82,7 @@ export function useImportAccount(): UseImportAccountResult {
 
       assertSignerConnected(signerConnected);
 
+      const call = ++latestCallRef.current;
       setIsImporting(true);
       setError(null);
       let obtainedAccount: Account | null = null;
@@ -203,7 +205,7 @@ export function useImportAccount(): UseImportAccountResult {
         setError(error);
         throw error;
       } finally {
-        setIsImporting(false);
+        if (latestCallRef.current === call) setIsImporting(false);
       }
     },
     [client, isReady, setAccounts, signerConnected]

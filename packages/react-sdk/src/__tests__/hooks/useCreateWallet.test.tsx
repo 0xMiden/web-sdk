@@ -33,6 +33,57 @@ beforeEach(() => {
 });
 
 describe("useCreateWallet", () => {
+  it.each(["resolve", "reject"])(
+    "keeps the latest call busy when the replaced client's call settles (%s)",
+    async (outcome) => {
+      const pendingA = deferred<ReturnType<typeof createMockAccount>>();
+      const pendingB = deferred<ReturnType<typeof createMockAccount>>();
+      const clientA = createMockWebClient({
+        newWallet: vi.fn().mockReturnValue(pendingA.promise),
+      });
+      const clientB = createMockWebClient({
+        newWallet: vi.fn().mockReturnValue(pendingB.promise),
+      });
+      mockUseMiden.mockReturnValue({ client: clientA, isReady: true });
+      useMidenStore.getState().setClient(clientA as never);
+      const { result, rerender } = renderHook(() => useCreateWallet());
+      let callA!: Promise<unknown>;
+      act(() => {
+        callA = result.current.createWallet().catch((error: Error) => error);
+      });
+      expect(clientA.newWallet).toHaveBeenCalledTimes(1);
+      expect(result.current.isCreating).toBe(true);
+
+      act(() => {
+        useMidenStore.getState().setClient(clientB as never);
+        mockUseMiden.mockReturnValue({ client: clientB, isReady: true });
+      });
+      rerender();
+      let callB!: Promise<unknown>;
+      act(() => {
+        callB = result.current.createWallet();
+      });
+      expect(clientB.newWallet).toHaveBeenCalledTimes(1);
+      expect(result.current.isCreating).toBe(true);
+
+      await act(async () => {
+        if (outcome === "resolve") pendingA.resolve(createMockAccount());
+        else pendingA.reject(new Error("replaced call failed"));
+        await callA;
+      });
+      expect(result.current.isCreating).toBe(true);
+      expect(result.current.error).toBeNull();
+      expect(clientA.getAccounts).not.toHaveBeenCalled();
+
+      await act(async () => {
+        pendingB.resolve(createMockAccount());
+        await callB;
+      });
+      expect(result.current.isCreating).toBe(false);
+      expect(result.current.error).toBeNull();
+    }
+  );
+
   describe("initial state", () => {
     it("should return initial state", () => {
       mockUseMiden.mockReturnValue({
