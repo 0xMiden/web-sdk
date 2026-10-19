@@ -16,7 +16,7 @@ own store.
 | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `@miden-sdk/miden-wallet-adapter`         | React app. Re-exports the four below and serves the stylesheet at `@miden-sdk/miden-wallet-adapter/styles.css`. |
 | `@miden-sdk/miden-wallet-adapter-base`    | No React, or you are writing an adapter. Types, errors, transaction shapes, `BaseWalletAdapter`.                |
-| `@miden-sdk/miden-wallet-adapter-miden`   | `MidenWalletAdapter`, the adapter for the Bread wallet extension.                                               |
+| `@miden-sdk/miden-wallet-adapter-miden`   | `MidenWalletAdapter`, the adapter for the Bread wallet: its browser extension, or its app from a phone browser. |
 | `@miden-sdk/miden-wallet-adapter-react`   | `WalletProvider`, `useWallet`, `MidenFiSignerProvider`.                                                         |
 | `@miden-sdk/miden-wallet-adapter-reactui` | Prebuilt connect button, dropdown and wallet modal.                                                             |
 
@@ -115,9 +115,9 @@ rendered outside the provider, or with `useWallet()` from the same package.
 | State         | Meaning                                                                                                                                                                                           |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Unsupported` | No DOM. `MidenWalletAdapter` enters this state when `window` or `document` is undefined at construction, and never leaves it.                                                                     |
-| `NotDetected` | DOM present, nothing injected yet. The starting state in a browser.                                                                                                                               |
+| `NotDetected` | DOM present, nothing injected yet. The starting state in a desktop browser.                                                                                                                       |
 | `Installed`   | The wallet injected itself. `MidenWalletAdapter` polls for `window.midenWallet` or `window.miden` once a second, on `DOMContentLoaded`, on `load` and immediately, then emits `readyStateChange`. |
-| `Loadable`    | A wallet that needs no install. No adapter in this repo reports it, but the providers treat it as connectable.                                                                                    |
+| `Loadable`    | A phone browser with nothing injected that has the User Activation API, outside Bread's own browser. `MidenWalletAdapter` starts here on iOS, iPadOS and Android, and `openInBread()` or `connect()` opens the page in the Bread app (see below). |
 
 The connect path is: `select(name)` writes the wallet name to
 `localStorage` (key `walletName`, override with `localStorageKey`), the
@@ -129,9 +129,29 @@ If `readyState` is neither `Installed` nor `Loadable`, the provider's
 `connect()` clears the stored name, opens `adapter.url` in a new tab (the
 extension's store listing) and throws `WalletNotReadyError`.
 
+While `Loadable`, `MidenWalletAdapter.openInBread()` navigates the current tab
+to `getBreadOpenLink()`, which is `BREAD_OPEN_LINK_BASE` with the page URL
+percent-encoded in the fragment, `#url=`, so it never reaches a server. The
+Bread app claims that link on iOS and Android
+and opens the page in its own browser, where the adapter starts at
+`NotDetected`, the wallet is injected and the dApp connects as usual; without
+the app, a web page loads instead. `connect()` hands off the same way while
+`Loadable` and resolves without connecting. Both look for the wallet first,
+and if it was injected since the last poll they move to `Installed` instead
+of navigating, `connect()` then connecting. `adapter.url` is the link while
+`Loadable` and the extension's store listing in every other state. The OS
+hands the link to the app only for a navigation the user's tap started, so
+call `openInBread()` synchronously from the click handler, with no `await`
+before it. Without an active tap it does nothing, and calls within a second
+of a handoff do not navigate again. In any other state `openInBread()` does
+nothing. The reactui modal shows an "Open in Bread" button for the `Loadable`
+state that selects Bread and calls `openInBread()` from inside the tap;
+opening the modal with a `Loadable` Bread selected connects nothing.
+
 `autoConnect` is off by default. When on, it connects as soon as a stored
-wallet resolves to a ready adapter, and clears the stored name if that fails.
-It never rethrows; the failure reaches you through `onError` only.
+wallet resolves to an `Installed` adapter, and clears the stored name if that
+fails. It never connects a `Loadable` one, which would hand off to its app on
+page load. It never rethrows; the failure reaches you through `onError` only.
 
 Connecting twice is deliberately not a no-op. A second `connect()` re-drives
 the handshake so a dApp whose JS context survived a park and restore gets its
@@ -320,7 +340,9 @@ looks correct in development and drops results in production.
 
 **The not-installed path is never exercised in development.** Your machine has
 the extension. Test the `NotDetected` branch: `connect()` opens a store page
-in a new tab and throws.
+in a new tab and throws. Then test from a phone browser: a tap on connect
+should leave for the Bread app. If it lands on Bread's web page with the app
+installed, something awaited between the tap and `connect()`.
 
 ## Writing an adapter for another wallet
 

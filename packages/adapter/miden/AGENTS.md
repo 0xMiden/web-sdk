@@ -1,7 +1,7 @@
 # @miden-sdk/miden-wallet-adapter-miden - Agent Guide
 
-**Audience: AI coding agents** connecting an app to the Bread wallet browser
-extension.
+**Audience: AI coding agents** connecting an app to the Bread wallet: the
+browser extension on desktop, or the Bread app from a phone browser.
 
 This file ships inside the published package, so the copy at
 `node_modules/@miden-sdk/miden-wallet-adapter-miden/AGENTS.md` matches the
@@ -18,8 +18,9 @@ resolves with no extra install.
 ## What this package is
 
 One concrete adapter, `MidenWalletAdapter`, plus the `MidenWallet` interface
-it expects the extension to inject and a conformance suite for checking a
-provider against that interface.
+it expects the extension to inject, `BREAD_OPEN_LINK_BASE` and
+`getBreadOpenLink()` for handing a page to the Bread app, and a conformance
+suite for checking a provider against that interface.
 
 ```ts
 import { MidenWalletAdapter } from "@miden-sdk/miden-wallet-adapter-miden";
@@ -30,7 +31,9 @@ export const wallets = [new MidenWalletAdapter({ appName: "My dApp" })];
 ```
 
 `MidenWalletName` is the branded name (`"Bread Wallet"`) the React providers
-and the wallet modal select on. `adapter.url` is the extension's Chrome Web
+and the wallet modal select on. `adapter.url` follows `readyState`: while
+`Loadable` it is the Open in Bread link for the current page,
+`getBreadOpenLink()`; in every other state it is the extension's Chrome Web
 Store listing, which the providers open on a connect without it installed.
 
 ## How detection works
@@ -41,11 +44,39 @@ Detection runs immediately, once a second, on `DOMContentLoaded` and on
 before the extension injects starts at `NotDetected` and flips to `Installed`
 about a second later: render from `readyState`, not from a check at mount.
 
+In a phone browser with nothing injected, the adapter starts at `Loadable`
+instead. That covers an iPhone, iPad or iPod user agent, a Mac user agent with
+more than one touch point (iPadOS asks for desktop sites by default) and an
+Android one, in a browser with the User Activation API
+(`navigator.userActivation`): the handoff needs to know a tap started it, so
+without the API the adapter stays at `NotDetected`. Detection keeps running,
+so it still moves to `Installed` when the wallet appears. The Bread app's own
+browser is the exception: it defines `window.bread` before any page script
+runs and injects the wallet later, so there the adapter starts at
+`NotDetected` and waits for the wallet.
+
 An adapter constructed where `window` or `document` is undefined is
 `Unsupported` **permanently** - the constructor decides once and never starts
 detection. Under SSR, construct adapters in a browser-only module.
 
 ## Behavior specific to this adapter
+
+**While `Loadable`, `openInBread()` opens the page in Bread.** It navigates
+the current tab to `getBreadOpenLink()`: `BREAD_OPEN_LINK_BASE` with the page
+URL percent-encoded in the fragment, `#url=`, which browsers never send to a
+server. The Bread app claims that link on iOS and
+Android and opens the page in its own browser, where the wallet is injected
+and a normal connect follows. Without the app, a web page loads instead.
+`connect()` hands off the same way while `Loadable`, and its promise resolves
+without connecting or throwing. Both look for the wallet first: if it was
+injected since the last poll, `openInBread()` moves to `Installed` and emits
+`readyStateChange` instead of navigating, and `connect()` connects. The OS
+hands the link to the app only for a navigation the user's tap started, so
+call `openInBread()` synchronously from the click handler, with no `await`
+before it. Without an active tap, such as a dApp's own `connect()` on page
+load, it does nothing, and a second call within a second of a handoff is
+ignored. In any other state `openInBread()` does nothing. The providers'
+`autoConnect` waits for `Installed`, so it never hands off.
 
 **A resolved request with no transaction id is a failure.** The wallet reports
 success as soon as it accepts a transaction into its queue. If it hands back

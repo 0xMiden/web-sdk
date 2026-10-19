@@ -19,6 +19,7 @@ export default defineConfig({
       "./packages/adapter/base/vitest.config.ts",
       "./packages/adapter/miden/vitest.config.ts",
       "./packages/adapter/react/vitest.config.ts",
+      "./packages/adapter/reactui/vitest.config.ts",
       "./crates/web-client/vitest.config.js",
     ],
   },
