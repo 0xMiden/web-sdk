@@ -54,7 +54,7 @@ describe("MidenProvider sync ownership", () => {
       syncState: vi.fn().mockResolvedValue({ blockNum: () => 2 }),
     };
     vi.mocked(WebClient.createClient).mockResolvedValueOnce(
-      clientB as WebClient
+      clientB as unknown as WebClient
     );
     rerender(
       <MidenProvider config={{ autoSyncInterval: 0 }}>
