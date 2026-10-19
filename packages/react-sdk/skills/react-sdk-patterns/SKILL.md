@@ -203,6 +203,8 @@ Each returns its own action function plus `error` and `reset`. The families diff
 
 **Transaction stages**: `"idle"` -> `"executing"` -> `"proving"` -> `"submitting"` -> `"complete"`
 
+`useCreateWallet`, `useCreateFaucet` and `useImportAccount` bind their action to the client it captured. A callback retained from a replaced client rejects with `"Miden client is not ready"` before making SDK calls. Wallet and faucet creation check again after waiting for `runExclusive`; a replaced flow does not refresh accounts or publish its result or error after the pending SDK call settles. A cancelled import stops before further SDK calls, including file lookups and export fallbacks: it returns an Account it already holds, or rejects with `"Miden client is not ready"` if it has not obtained one. Its loading flag still clears.
+
 Auth scheme for the create/import hooks. At runtime the `AuthScheme` re-exported from the package root is the friendly string const `{ Falcon: "falcon", ECDSA: "ecdsa" }`, because `@miden-sdk/miden-sdk`'s own `AuthScheme` export shadows the numeric wasm enum of the same name:
 
 ```tsx

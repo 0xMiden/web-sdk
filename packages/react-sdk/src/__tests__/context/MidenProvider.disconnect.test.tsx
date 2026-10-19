@@ -1002,6 +1002,43 @@ describe("MidenProvider cache generation guards", () => {
     expect(useMidenStore.getState().initError).toBeNull();
   });
 
+  it("ignores A's cross-tab listener after B commits before A's cleanup", async () => {
+    let notifyStateChanged!: () => Promise<void>;
+    const unsubscribe = vi.fn();
+    const clientA = {
+      ...createMockWebClient(),
+      onStateChanged: vi.fn((listener: () => Promise<void>) => {
+        notifyStateChanged = listener;
+        return unsubscribe;
+      }),
+    };
+    vi.mocked(WebClient.createClient).mockResolvedValueOnce(
+      clientA as unknown as WebClient
+    );
+    const { result } = renderHook(() => useMiden(), { wrapper });
+    await waitFor(() => {
+      expect(result.current.client).toBe(clientA);
+      expect(clientA.onStateChanged).toHaveBeenCalledTimes(1);
+    });
+    clientA.getAccounts.mockClear();
+    const clientB = createMockWebClient();
+    const accountsB = [createMockAccountHeader("0x2000000000000002")];
+    let refreshing!: Promise<void>;
+    act(() => {
+      useMidenStore.getState().setClient(clientB as never);
+      useMidenStore.getState().setAccounts(accountsB as never);
+      useMidenStore.getState().setSyncState({ lastSyncTime: 123 });
+      expect(unsubscribe).not.toHaveBeenCalled();
+      refreshing = notifyStateChanged();
+    });
+    await act(async () => {
+      await refreshing;
+    });
+    expect(useMidenStore.getState().accounts).toBe(accountsB);
+    expect(useMidenStore.getState().sync.lastSyncTime).toBe(123);
+    expect(clientA.getAccounts).not.toHaveBeenCalled();
+  });
+
   it("caches a cross-tab refresh while the cache generation is unchanged", async () => {
     let notifyStateChanged!: () => Promise<void>;
     const mockClient = {

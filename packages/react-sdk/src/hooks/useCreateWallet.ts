@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
-import { useMidenStore } from "../store/MidenStore";
+import { captureClientCurrency, useMidenStore } from "../store/MidenStore";
 import { AccountStorageMode } from "@miden-sdk/miden-sdk";
 import type { Account } from "@miden-sdk/miden-sdk";
 import type { CreateWalletOptions } from "../types";
@@ -63,10 +63,13 @@ export function useCreateWallet(): UseCreateWalletResult {
         throw new Error("Miden client is not ready");
       }
 
+      const isCurrent = captureClientCurrency(client);
+      if (!isCurrent()) {
+        throw new Error("Miden client is not ready");
+      }
+
       setIsCreating(true);
       setError(null);
-
-      const generation = useMidenStore.getState().cacheGeneration;
 
       try {
         const storageMode = getStorageMode(
@@ -75,25 +78,29 @@ export function useCreateWallet(): UseCreateWalletResult {
         const authScheme = options.authScheme ?? DEFAULTS.AUTH_SCHEME;
 
         const newWallet = await runExclusiveSafe(async () => {
+          if (!isCurrent()) {
+            throw new Error("Miden client is not ready");
+          }
           const createdWallet = await client.newWallet(
             storageMode,
             authScheme,
             options.initSeed
           );
+          if (!isCurrent()) return createdWallet;
           ensureAccountBech32(createdWallet);
           const accounts = await client.getAccounts();
-          if (useMidenStore.getState().cacheGeneration === generation) {
+          if (isCurrent()) {
             setAccounts(accounts);
           }
           return createdWallet;
         });
 
-        setWallet(newWallet);
+        if (isCurrent()) setWallet(newWallet);
 
         return newWallet;
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
-        setError(error);
+        if (isCurrent()) setError(error);
         throw error;
       } finally {
         setIsCreating(false);

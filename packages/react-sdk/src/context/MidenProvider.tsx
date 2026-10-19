@@ -463,10 +463,11 @@ export function MidenProvider({
 
     // The WebClient exposes onStateChanged when BroadcastChannel is available.
     const unsubscribe = client.onStateChanged?.(async () => {
-      const generation = useMidenStore.getState().cacheGeneration;
+      const isCurrent = captureClientCurrency(client);
+      if (!isCurrent()) return;
       try {
         const accounts = await client.getAccounts();
-        if (useMidenStore.getState().cacheGeneration !== generation) return;
+        if (!isCurrent()) return;
         useMidenStore.getState().setAccounts(accounts);
         setSyncState({ lastSyncTime: Date.now() });
       } catch {

@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
-import { useMidenStore } from "../store/MidenStore";
+import { captureClientCurrency, useMidenStore } from "../store/MidenStore";
 import { AccountStorageMode } from "@miden-sdk/miden-sdk";
 import type { Account } from "@miden-sdk/miden-sdk";
 import type { CreateFaucetOptions } from "../types";
@@ -64,10 +64,13 @@ export function useCreateFaucet(): UseCreateFaucetResult {
         throw new Error("Miden client is not ready");
       }
 
+      const isCurrent = captureClientCurrency(client);
+      if (!isCurrent()) {
+        throw new Error("Miden client is not ready");
+      }
+
       setIsCreating(true);
       setError(null);
-
-      const generation = useMidenStore.getState().cacheGeneration;
 
       try {
         const storageMode = getStorageMode(
@@ -77,6 +80,9 @@ export function useCreateFaucet(): UseCreateFaucetResult {
         const authScheme = options.authScheme ?? DEFAULTS.AUTH_SCHEME;
 
         const newFaucet = await runExclusiveSafe(async () => {
+          if (!isCurrent()) {
+            throw new Error("Miden client is not ready");
+          }
           const createdFaucet = await client.newFaucet(
             storageMode,
             false, // nonFungible - currently only fungible faucets supported
@@ -86,19 +92,20 @@ export function useCreateFaucet(): UseCreateFaucetResult {
             BigInt(options.maxSupply),
             authScheme
           );
+          if (!isCurrent()) return createdFaucet;
           const accounts = await client.getAccounts();
-          if (useMidenStore.getState().cacheGeneration === generation) {
+          if (isCurrent()) {
             setAccounts(accounts);
           }
           return createdFaucet;
         });
 
-        setFaucet(newFaucet);
+        if (isCurrent()) setFaucet(newFaucet);
 
         return newFaucet;
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
-        setError(error);
+        if (isCurrent()) setError(error);
         throw error;
       } finally {
         setIsCreating(false);
