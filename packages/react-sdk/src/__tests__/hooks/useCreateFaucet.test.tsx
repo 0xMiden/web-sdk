@@ -191,6 +191,49 @@ describe("useCreateFaucet", () => {
       expect(mockClient.getAccounts).toHaveBeenCalled();
       expect(useMidenStore.getState().accounts).toEqual(mockAccounts);
     });
+
+    it("does not cache accounts from a faucet creation after the cache generation changes", async () => {
+      const mockFaucet = createMockAccount({ isFaucet: vi.fn(() => true) });
+      const staleAccounts = [createMockAccountHeader()];
+      let finishAccounts!: (accounts: typeof staleAccounts) => void;
+      const pendingAccounts = new Promise<typeof staleAccounts>((resolve) => {
+        finishAccounts = resolve;
+      });
+      const mockClient = createMockWebClient({
+        newFaucet: vi.fn().mockResolvedValue(mockFaucet),
+        getAccounts: vi.fn().mockReturnValue(pendingAccounts),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      const { result } = renderHook(() => useCreateFaucet());
+
+      let creation!: Promise<unknown>;
+      act(() => {
+        creation = result.current.createFaucet({
+          tokenSymbol: "TEST",
+          maxSupply: 1000n,
+        });
+      });
+      await waitFor(() => {
+        expect(mockClient.getAccounts).toHaveBeenCalledTimes(1);
+      });
+      expect(result.current.isCreating).toBe(true);
+
+      const generation = useMidenStore.getState().cacheGeneration;
+      act(() => {
+        useMidenStore.getState().resetInMemoryState();
+      });
+      expect(useMidenStore.getState().cacheGeneration).toBe(generation + 1);
+
+      await act(async () => {
+        finishAccounts(staleAccounts);
+        await expect(creation).resolves.toBe(mockFaucet);
+      });
+
+      expect(result.current.faucet).toBe(mockFaucet);
+      expect(result.current.isCreating).toBe(false);
+      expect(result.current.error).toBeNull();
+      expect(useMidenStore.getState().accounts).toEqual([]);
+    });
   });
 
   describe("loading state", () => {

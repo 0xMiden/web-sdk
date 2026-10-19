@@ -75,6 +75,8 @@ export function useImportAccount(): UseImportAccountResult {
       setIsImporting(true);
       setError(null);
 
+      const generation = useMidenStore.getState().cacheGeneration;
+
       try {
         type AccountHeaders = Awaited<ReturnType<WebClient["getAccounts"]>>;
         let accountsAfter: AccountHeaders | null = null;
@@ -166,7 +168,9 @@ export function useImportAccount(): UseImportAccountResult {
 
         ensureAccountBech32(imported);
         const accounts = accountsAfter ?? (await client.getAccounts());
-        setAccounts(accounts);
+        if (useMidenStore.getState().cacheGeneration === generation) {
+          setAccounts(accounts);
+        }
         setAccount(imported);
 
         return imported;

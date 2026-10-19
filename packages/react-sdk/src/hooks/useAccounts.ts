@@ -36,13 +36,18 @@ export function useAccounts(): AccountsResult {
     if (!client || !isReady) return;
 
     setLoadingAccounts(true);
+    const generation = useMidenStore.getState().cacheGeneration;
+    const isStale = () =>
+      useMidenStore.getState().cacheGeneration !== generation;
+
     try {
       const fetchedAccounts = await client.getAccounts();
+      if (isStale()) return;
       setAccounts(fetchedAccounts);
     } catch (error) {
       console.error("Failed to fetch accounts:", error);
     } finally {
-      setLoadingAccounts(false);
+      if (!isStale()) setLoadingAccounts(false);
     }
   }, [client, isReady, setAccounts, setLoadingAccounts]);
 

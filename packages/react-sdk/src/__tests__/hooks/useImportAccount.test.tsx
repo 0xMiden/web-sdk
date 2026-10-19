@@ -7,6 +7,7 @@ import type { AccountFile } from "@miden-sdk/miden-sdk";
 import {
   createMockAccount,
   createMockAccountFile,
+  createMockAccountHeader,
   createMockAccountId,
   createMockWebClient,
 } from "../mocks/miden-sdk";
@@ -149,6 +150,50 @@ describe("useImportAccount", () => {
       expect(mockClient.importAccountById).toHaveBeenCalled();
       expect(mockClient.getAccount).toHaveBeenCalled();
       expect(result.current.account).toBe(mockAccount);
+    });
+
+    it("does not cache accounts from an import after the cache generation changes", async () => {
+      const mockAccount = createMockAccount();
+      const staleAccounts = [createMockAccountHeader()];
+      let finishAccounts!: (accounts: typeof staleAccounts) => void;
+      const pendingAccounts = new Promise<typeof staleAccounts>((resolve) => {
+        finishAccounts = resolve;
+      });
+      const mockClient = createMockWebClient({
+        importAccountById: vi.fn().mockResolvedValue(undefined),
+        getAccount: vi.fn().mockResolvedValue(mockAccount),
+        getAccounts: vi.fn().mockReturnValue(pendingAccounts),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      const { result } = renderHook(() => useImportAccount());
+
+      let importing!: Promise<unknown>;
+      act(() => {
+        importing = result.current.importAccount({
+          type: "id",
+          accountId: "0x1234567890abcdef",
+        });
+      });
+      await waitFor(() => {
+        expect(mockClient.getAccounts).toHaveBeenCalledTimes(1);
+      });
+      expect(result.current.isImporting).toBe(true);
+
+      const generation = useMidenStore.getState().cacheGeneration;
+      act(() => {
+        useMidenStore.getState().resetInMemoryState();
+      });
+      expect(useMidenStore.getState().cacheGeneration).toBe(generation + 1);
+
+      await act(async () => {
+        finishAccounts(staleAccounts);
+        await expect(importing).resolves.toBe(mockAccount);
+      });
+
+      expect(result.current.account).toBe(mockAccount);
+      expect(result.current.isImporting).toBe(false);
+      expect(result.current.error).toBeNull();
+      expect(useMidenStore.getState().accounts).toEqual([]);
     });
 
     it("should import public account from seed", async () => {

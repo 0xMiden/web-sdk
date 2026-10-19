@@ -104,6 +104,8 @@ export function useSessionAccount(
     cancelledRef.current = false;
     setError(null);
 
+    const generation = useMidenStore.getState().cacheGeneration;
+
     try {
       // Step 1: Create wallet (or use persisted one)
       let walletId = sessionAccountId;
@@ -116,7 +118,9 @@ export function useSessionAccount(
         const wallet = await client.newWallet(resolvedStorageMode, authScheme);
         ensureAccountBech32(wallet);
         const accounts = await client.getAccounts();
-        setAccounts(accounts);
+        if (useMidenStore.getState().cacheGeneration === generation) {
+          setAccounts(accounts);
+        }
 
         if (cancelledRef.current) return;
 

@@ -67,6 +67,8 @@ export function useCreateFaucet(): UseCreateFaucetResult {
       setIsCreating(true);
       setError(null);
 
+      const generation = useMidenStore.getState().cacheGeneration;
+
       try {
         const storageMode = getStorageMode(
           options.storageMode ?? DEFAULTS.STORAGE_MODE
@@ -85,7 +87,9 @@ export function useCreateFaucet(): UseCreateFaucetResult {
             authScheme
           );
           const accounts = await client.getAccounts();
-          setAccounts(accounts);
+          if (useMidenStore.getState().cacheGeneration === generation) {
+            setAccounts(accounts);
+          }
           return createdFaucet;
         });
 

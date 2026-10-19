@@ -66,6 +66,8 @@ export function useCreateWallet(): UseCreateWalletResult {
       setIsCreating(true);
       setError(null);
 
+      const generation = useMidenStore.getState().cacheGeneration;
+
       try {
         const storageMode = getStorageMode(
           options.storageMode ?? DEFAULTS.STORAGE_MODE
@@ -80,7 +82,9 @@ export function useCreateWallet(): UseCreateWalletResult {
           );
           ensureAccountBech32(createdWallet);
           const accounts = await client.getAccounts();
-          setAccounts(accounts);
+          if (useMidenStore.getState().cacheGeneration === generation) {
+            setAccounts(accounts);
+          }
           return createdWallet;
         });
 

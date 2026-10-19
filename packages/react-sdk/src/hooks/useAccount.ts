@@ -62,9 +62,12 @@ export function useAccount(accountId: AccountRef | undefined): AccountResult {
     setIsLoading(true);
     setError(null);
 
+    const generation = useMidenStore.getState().cacheGeneration;
+
     try {
       const accountIdObj = parseAccountId(accountIdStr);
       const fetchedAccount = await client.getAccount(accountIdObj);
+      if (useMidenStore.getState().cacheGeneration !== generation) return;
       if (fetchedAccount) {
         ensureAccountBech32(fetchedAccount);
         setAccountDetails(accountIdStr, fetchedAccount);

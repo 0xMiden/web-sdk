@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { useSessionAccount } from "../../hooks/useSessionAccount";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
 import {
   createMockWebClient,
   createMockAccount,
+  createMockAccountHeader,
   createMockConsumableNoteRecord,
 } from "../mocks/miden-sdk";
 
@@ -235,6 +236,52 @@ describe("useSessionAccount", () => {
         mockClient.newConsumeTransactionRequest.mock.calls[0][1]
       ).toBeDefined();
     });
+  });
+
+  it("does not cache session accounts after the cache generation changes", async () => {
+    const staleAccounts = [createMockAccountHeader()];
+    let finishAccounts!: (accounts: typeof staleAccounts) => void;
+    const pendingAccounts = new Promise<typeof staleAccounts>((resolve) => {
+      finishAccounts = resolve;
+    });
+    const mockClient = createMockWebClient({
+      newWallet: vi.fn().mockResolvedValue(createMockAccount()),
+      getAccounts: vi.fn().mockReturnValue(pendingAccounts),
+      getConsumableNotes: vi
+        .fn()
+        .mockResolvedValue([createMockConsumableNoteRecord()]),
+    });
+    mockUseMiden.mockReturnValue({
+      client: mockClient,
+      isReady: true,
+      sync: vi.fn().mockResolvedValue(undefined),
+    });
+    const { result } = renderHook(() => useSessionAccount(defaultOptions));
+
+    let initializing!: Promise<void>;
+    act(() => {
+      initializing = result.current.initialize();
+    });
+    await waitFor(() => {
+      expect(mockClient.getAccounts).toHaveBeenCalledTimes(1);
+    });
+    expect(result.current.step).toBe("creating");
+
+    const generation = useMidenStore.getState().cacheGeneration;
+    act(() => {
+      useMidenStore.getState().resetInMemoryState();
+    });
+    expect(useMidenStore.getState().cacheGeneration).toBe(generation + 1);
+
+    await act(async () => {
+      finishAccounts(staleAccounts);
+      await initializing;
+    });
+
+    expect(result.current.step).toBe("ready");
+    expect(result.current.isReady).toBe(true);
+    expect(result.current.error).toBeNull();
+    expect(useMidenStore.getState().accounts).toEqual([]);
   });
 
   describe("persistence", () => {

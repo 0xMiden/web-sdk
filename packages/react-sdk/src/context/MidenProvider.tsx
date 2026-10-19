@@ -80,7 +80,7 @@ export function MidenProvider({
   const isInitializedRef = useRef(false);
   const clientLockRef = useRef(new AsyncLock());
 
-  // Track the current signer identity (storeName) to detect identity changes
+  // The signer identity belongs to the committed client; local clients have none.
   const currentStoreNameRef = useRef<string | null>(null);
 
   // Ref to hold the latest signCb so it can be hot-swapped on the WebClient
@@ -143,8 +143,13 @@ export function MidenProvider({
 
     setSyncState({ isSyncing: true, error: null });
 
+    const generation = useMidenStore.getState().cacheGeneration;
+    const isStale = () =>
+      useMidenStore.getState().cacheGeneration !== generation;
+
     try {
       const summary = await client.syncState();
+      if (isStale()) return;
       const syncHeight = summary.blockNum();
 
       setSyncState({
@@ -156,8 +161,10 @@ export function MidenProvider({
 
       // Trigger account and note refresh after sync
       const accounts = await client.getAccounts();
+      if (isStale()) return;
       useMidenStore.getState().setAccounts(accounts);
     } catch (error) {
+      if (isStale()) return;
       setSyncState({
         isSyncing: false,
         error: error instanceof Error ? error : new Error(String(error)),
@@ -230,17 +237,22 @@ export function MidenProvider({
         return;
       }
 
-      // Different identity — clear cached state (but not IndexedDB)
-      if (
-        currentStoreNameRef.current !== null &&
-        currentStoreNameRef.current !== signerStoreName
-      ) {
+      // A different signer or a local client needs fresh in-memory state.
+      if (store.client !== null) {
         store.resetInMemoryState();
         // Also clear old client so we get a fresh one for the new identity
         setClient(null);
         setSignerAccountId(null);
         currentStoreNameRef.current = null;
       }
+    } else if (
+      signerIsConnected === null &&
+      currentStoreNameRef.current !== null
+    ) {
+      useMidenStore.getState().resetInMemoryState();
+      setClient(null);
+      setSignerAccountId(null);
+      currentStoreNameRef.current = null;
     }
 
     let cancelled = false;
@@ -256,6 +268,7 @@ export function MidenProvider({
 
         setInitializing(true);
         setConfig(resolvedConfig);
+        const generation = useMidenStore.getState().cacheGeneration;
 
         // The provider terminates only a client it never handed to the store
         // (a cancelled or failed init). One handed out stays alive when it is
@@ -265,6 +278,7 @@ export function MidenProvider({
         try {
           let webClient: WebClient;
           let didSignerInit = false;
+          let accountId: string | null = null;
 
           if (signerContext && signerIsConnected === true) {
             // External keystore mode - signer provider is present and connected
@@ -294,18 +308,14 @@ export function MidenProvider({
 
             // Initialize account from signer config
             // (this already syncs the client internally)
-            const accountId = await initializeSignerAccount(
+            accountId = await initializeSignerAccount(
               webClient,
               signerContext.accountConfig
             );
             if (cancelled) return;
-            setSignerAccountId(accountId);
             didSignerInit = true;
-            currentStoreNameRef.current = signerContext.storeName;
           } else {
-            // No signer provider - standard local keystore (existing behavior)
-            currentStoreNameRef.current = null;
-            setSignerAccountId(null);
+            // No signer provider - standard local keystore
             const seed = resolvedConfig.seed as Parameters<
               typeof WebClient.createClient
             >[2];
@@ -333,10 +343,12 @@ export function MidenProvider({
             try {
               const summary = await webClient.syncState();
               if (cancelled) return;
-              setSyncState({
-                syncHeight: summary.blockNum(),
-                lastSyncTime: Date.now(),
-              });
+              if (useMidenStore.getState().cacheGeneration === generation) {
+                setSyncState({
+                  syncHeight: summary.blockNum(),
+                  lastSyncTime: Date.now(),
+                });
+              }
             } catch {
               // Initial sync failure is non-fatal
             }
@@ -347,7 +359,9 @@ export function MidenProvider({
             try {
               const accounts = await webClient.getAccounts();
               if (cancelled) return;
-              useMidenStore.getState().setAccounts(accounts);
+              if (useMidenStore.getState().cacheGeneration === generation) {
+                useMidenStore.getState().setAccounts(accounts);
+              }
             } catch {
               // Non-fatal
             }
@@ -359,12 +373,13 @@ export function MidenProvider({
             if (!signerContext) {
               isInitializedRef.current = true;
             }
+            currentStoreNameRef.current = didSignerInit
+              ? signerStoreName
+              : null;
+            setSignerAccountId(accountId);
             setClient(webClient);
             unowned = null;
-            // Mark signer as connected if in signer mode
-            if (signerIsConnected === true) {
-              setSignerConnected(true);
-            }
+            setSignerConnected(didSignerInit ? true : null);
           }
         } catch (error) {
           if (!cancelled) {
@@ -437,8 +452,10 @@ export function MidenProvider({
 
     // The WebClient exposes onStateChanged when BroadcastChannel is available.
     const unsubscribe = client.onStateChanged?.(async () => {
+      const generation = useMidenStore.getState().cacheGeneration;
       try {
         const accounts = await client.getAccounts();
+        if (useMidenStore.getState().cacheGeneration !== generation) return;
         useMidenStore.getState().setAccounts(accounts);
         setSyncState({ lastSyncTime: Date.now() });
       } catch {
