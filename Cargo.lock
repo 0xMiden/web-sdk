@@ -2047,7 +2047,7 @@ dependencies = [
 
 [[package]]
 name = "js-export-macro"
-version = "0.17.3"
+version = "0.17.4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2419,9 +2419,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client"
-version = "0.17.3"
+version = "0.17.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35579ec11e02e43ffcb5e3a8248edf5eca9bb583565d5ac82c0d4fc1a5769854"
+checksum = "1ff5e4050ea84345783d60c38ce4d70ebeebf66d705d6e8c20feb0d1d2fad9fb"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2439,6 +2439,7 @@ dependencies = [
  "miden-testing",
  "miden-tx",
  "miden-tx-batch",
+ "miden-usdcx",
  "miette",
  "prost",
  "prost-types",
@@ -2460,9 +2461,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client-proto"
-version = "0.17.3"
+version = "0.17.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9653499f04b636a59d1d1b02af8bad5583f189dec720801d7f71fb59d53cf86"
+checksum = "f98a92c2c4ce421891e79bb6a5721d12d1dfe1cde10191c036dac1edbe1a5f39"
 dependencies = [
  "miden-client",
  "miden-objects",
@@ -2496,7 +2497,7 @@ dependencies = [
 
 [[package]]
 name = "miden-client-web"
-version = "0.17.3"
+version = "0.17.4"
 dependencies = [
  "async-trait",
  "console_error_panic_hook",
@@ -2798,7 +2799,7 @@ dependencies = [
 
 [[package]]
 name = "miden-idxdb-store"
-version = "0.17.3"
+version = "0.17.4"
 dependencies = [
  "async-trait",
  "base64",
@@ -2960,7 +2961,7 @@ dependencies = [
 
 [[package]]
 name = "miden-mobile-prover"
-version = "0.17.3"
+version = "0.17.4"
 dependencies = [
  "miden-client",
 ]
@@ -3347,6 +3348,24 @@ dependencies = [
  "miden-prover",
  "miden-verifier",
  "thiserror",
+]
+
+[[package]]
+name = "miden-usdcx"
+version = "0.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf4aa588e0224fd03ed6cc9837f7c4f0384eba222416816f53892d4f535ae72e"
+dependencies = [
+ "bon",
+ "miden-assembly",
+ "miden-core-lib",
+ "miden-package-registry",
+ "miden-protocol",
+ "miden-protocol-build-utils",
+ "miden-standards",
+ "miden-tx",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -5384,7 +5403,7 @@ dependencies = [
 
 [[package]]
 name = "strip-masp-debug"
-version = "0.17.3"
+version = "0.17.4"
 dependencies = [
  "miden-core 0.33.0",
  "miden-mast-package 0.33.0",

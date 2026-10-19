@@ -481,11 +481,13 @@ export class TransactionsResource {
    * different summary and the comparison fails.
    *
    * The exception is a multisig request built by
-   * `client.feeAwareTransactionRequestBuilder`: its summary binds the block its
-   * auth args name, which the request declares, so previewing it without an
-   * anchor reproduces the proposal's summary at the current tip, once this
-   * client has synced to at least that block (the largest of
-   * `request.blockNumbers()`).
+   * `client.feeAwareTransactionRequestBuilder` or given its auth args by
+   * `client.withFeeAwareAuth`: its summary binds the block its auth args name,
+   * which miden-client tracks when it executes the request, so previewing it
+   * without an anchor reproduces the proposal's summary at the current tip,
+   * once this client has synced to at least that block. For a builder's
+   * request that is the largest of `request.blockNumbers()`; a
+   * `withFeeAwareAuth` copy does not declare it, so sync before previewing it.
    */
   async preview(opts) {
     this.#client.assertNotTerminated();
@@ -673,7 +675,8 @@ export class TransactionsResource {
    * the request itself, or the push fails with `FeeConversionInfoRequired`.
    * Because a batch proves each transaction as it is pushed, such a rejection
    * has already cost the proofs ahead of it — build multisig requests from
-   * `client.feeAwareTransactionRequestBuilder`.
+   * `client.feeAwareTransactionRequestBuilder`, or pass a finished one through
+   * `client.withFeeAwareAuth` before batching it.
    *
    * @param {AccountRef} account - The account executing the batch.
    * @param {TransactionRequest[]} requests - Pre-built transaction requests.

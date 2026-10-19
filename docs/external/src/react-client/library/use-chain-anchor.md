@@ -11,11 +11,13 @@ single-signature account.
 
 > **Multisig proposals do not need an anchor.**
 > Since protocol 0.17 a multisig summary binds a bound block named in its auth
-> args, not the reference block. Build the request with
-> `client.feeAwareTransactionRequestBuilder(account)`, which adds that block with
-> `withBlockNumbers`, and let every party `usePreview()` and `useTransaction()`
-> without an anchor, at their own tip, once their client has synced to the bound
-> block ([below](#multisig-proposals)). Re-executing an older multisig proposal at
+> args, not the reference block, and miden-client tracks that block when it
+> executes the request. Build the request with
+> `client.feeAwareTransactionRequestBuilder(account)`, or give a finished request
+> its auth args with `client.withFeeAwareAuth(request, account)`, and let every
+> party `usePreview()` and `useTransaction()` without an anchor, at their own
+> tip, once their client has synced to the bound block
+> ([below](#multisig-proposals)). Re-executing an older multisig proposal at
 > an anchor fails once the node prunes that block's account state (50 blocks), and
 > a transaction executed at an older reference block expires 20 blocks after it.
 > See [Multisig Proposals: Bind a Block, Execute at the Tip](../../web-client/library/transactions.md#multisig-proposals-bind-a-block-execute-at-the-tip).
@@ -33,6 +35,11 @@ block N is after transaction reference block M` until the client syncs.
 `usePreview` does not sync at all. Both go through the provider's `sync()`,
 which returns early while another sync is running and records a failure rather
 than throwing, so check the height after syncing rather than assuming it.
+
+A request from `withFeeAwareAuth` does not declare the bound block, so the
+check below cannot read it from `request.blockNumbers()` and does not wait for
+it. Sync before previewing such a request, and treat `requested block N is
+after transaction reference block M` as a reason to sync again.
 
 ```tsx
 import { useMiden, usePreview, useTransaction } from "@miden-sdk/react";
@@ -121,7 +128,9 @@ recipient. For an account that is not a multisig the builder comes back
 untouched, so this is a safe drop-in; a zero base fee is not a second condition,
 since 0.17 a multisig resolves its auth args whatever the chain charges.
 Requests produced by the `new*TransactionRequest` constructors already declare a
-salt and need nothing extra.
+salt and need nothing extra. A wallet handed a finished request, such as a
+dApp's, cannot rebuild it, so it adds the same auth args with
+`await client.withFeeAwareAuth(request, multisig)`.
 
 Two caveats. `withAuthArg` and `withFeeConversionSalt` occupy the same slot and
 each setter clears the other, so a request cannot carry both. Never call either
