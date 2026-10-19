@@ -26,21 +26,27 @@ const faucet = await client.accounts.create({
   decimals: 8,
   maxSupply: 10_000_000n,
 });
+const collectibles = await client.accounts.create({
+  type: FaucetType.NonFungibleFaucet,
+  symbol: "NFT",
+});
 ```
 
-`FaucetType.FungibleFaucet` is the string `"FungibleFaucet"` on both runtimes,
-so it cannot be mistaken for an `AccountType` value. Migrate older
-`AccountType.FungibleFaucet` references to `FaucetType.FungibleFaucet`. Neither
-enum has wallet or contract members: omit `type` for a wallet, or pass
+`FaucetType.FungibleFaucet` and `FaucetType.NonFungibleFaucet` are the strings
+`"FungibleFaucet"` and `"NonFungibleFaucet"` on both runtimes, so they cannot
+be mistaken for an `AccountType` value. Both require `symbol` and accept an
+optional `name` that defaults to `symbol`. Only fungible faucets require
+`decimals` and `maxSupply`; non-fungible faucets reject those fields. Migrate
+older `AccountType.FungibleFaucet` references to `FaucetType.FungibleFaucet`.
+Neither enum has wallet or contract members: omit `type` for a wallet, or pass
 `components` for a contract, and choose visibility with `storage` only.
 
-`accounts.create()` still reads the legacy selectors `0`, `1` and
-`"NonFungibleFaucet"` as faucet types (`0` fungible; the non-fungible ones are
-rejected, since non-fungible faucets are not supported yet). `0` and `1` are
-also the values of `AccountType.Private` and `AccountType.Public`, so never pass
-a visibility value as `type`: it is read as a legacy faucet selector. It throws
-a `TypeError` for any other `type`, for faucet fields (`name`, `symbol`,
-`decimals`, `maxSupply`) without a faucet type, for `components` on a faucet,
-and for a faucet missing `symbol`, `decimals` or `maxSupply`.
+`accounts.create()` still reads the legacy numeric selectors `0` and `1` as
+fungible and non-fungible faucet types respectively. They are also the values
+of `AccountType.Private` and `AccountType.Public`, so never pass a visibility
+value as `type`: it is read as a legacy faucet selector. It throws a `TypeError`
+for any other `type`, for faucet fields (`name`, `symbol`, `decimals`, `maxSupply`)
+without a faucet type, for `components` on a faucet, and for missing or
+inapplicable faucet fields.
 
 Wallets default to private storage; faucets and contracts default to public.

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AccountsResource } from "../../resources/accounts.js";
+import { FaucetType } from "../../enums.js";
 
 function makeWasm(overrides = {}) {
   const fakeBuilderInstance = {
@@ -82,7 +83,7 @@ describe("AccountsResource", () => {
     return new AccountsResource(inner, getWasm, client);
   }
 
-  describe("create — faucet", () => {
+  describe("create - faucet", () => {
     it("creates fungible faucet when type=0", async () => {
       const resource = makeResource();
       const result = await resource.create({
@@ -134,8 +135,6 @@ describe("AccountsResource", () => {
         auth: "falcon",
         name: "Collectible",
         symbol: "NFT",
-        decimals: 0,
-        maxSupply: 1,
       });
       expect(inner.newNonFungibleFaucet).toHaveBeenCalledWith(
         "public",
@@ -154,8 +153,6 @@ describe("AccountsResource", () => {
         auth: "falcon",
         name: "Collectible",
         symbol: "NFT",
-        decimals: 0,
-        maxSupply: 1,
       });
       expect(inner.newNonFungibleFaucet).toHaveBeenCalledWith(
         "public",
@@ -164,6 +161,84 @@ describe("AccountsResource", () => {
         2
       );
       expect(inner.newFaucet).not.toHaveBeenCalled();
+    });
+
+    describe.each([
+      ["FaucetType.NonFungibleFaucet", FaucetType.NonFungibleFaucet],
+      ["NonFungibleFaucet", "NonFungibleFaucet"],
+      ["legacy 1", 1],
+    ])("non-fungible faucet with %s", (_label, type) => {
+      it("requires only a symbol and defaults the name to it", async () => {
+        const resource = makeResource();
+        const result = await resource.create({ type, symbol: "NFT" });
+
+        expect(inner.newNonFungibleFaucet).toHaveBeenCalledWith(
+          "public",
+          "NFT",
+          "NFT",
+          2
+        );
+        expect(result).toBe("newNonFungibleFaucetResult");
+        expect(inner.newFaucet).not.toHaveBeenCalled();
+        expect(inner.newWallet).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ["decimals", { decimals: 0 }],
+        ["maxSupply", { maxSupply: 1n }],
+        ["both fungible fields", { decimals: 0, maxSupply: 1n }],
+      ])("rejects %s before creating any account", async (_field, fields) => {
+        const resource = makeResource();
+
+        await expect(
+          resource.create({ type, symbol: "NFT", ...fields })
+        ).rejects.toThrow(
+          expect.objectContaining({
+            name: "TypeError",
+            message: expect.stringMatching(
+              /decimals and maxSupply only apply to fungible faucets.*FaucetType/
+            ),
+          })
+        );
+        expect(inner.newNonFungibleFaucet).not.toHaveBeenCalled();
+        expect(inner.newFaucet).not.toHaveBeenCalled();
+        expect(inner.newWallet).not.toHaveBeenCalled();
+        expect(wasm.AccountBuilder).not.toHaveBeenCalled();
+      });
+
+      it("rejects a missing symbol", async () => {
+        const resource = makeResource();
+
+        await expect(resource.create({ type })).rejects.toThrow(
+          expect.objectContaining({
+            name: "TypeError",
+            message: expect.stringMatching(/needs symbol\..*FaucetType/),
+          })
+        );
+        expect(inner.newNonFungibleFaucet).not.toHaveBeenCalled();
+        expect(inner.newFaucet).not.toHaveBeenCalled();
+        expect(inner.newWallet).not.toHaveBeenCalled();
+        expect(wasm.AccountBuilder).not.toHaveBeenCalled();
+      });
+
+      it("rejects components", async () => {
+        const resource = makeResource();
+
+        await expect(
+          resource.create({ type, symbol: "NFT", components: ["component"] })
+        ).rejects.toThrow(
+          expect.objectContaining({
+            name: "TypeError",
+            message: expect.stringMatching(
+              /cannot carry components.*FaucetType/
+            ),
+          })
+        );
+        expect(inner.newNonFungibleFaucet).not.toHaveBeenCalled();
+        expect(inner.newFaucet).not.toHaveBeenCalled();
+        expect(inner.newWallet).not.toHaveBeenCalled();
+        expect(wasm.AccountBuilder).not.toHaveBeenCalled();
+      });
     });
 
     it("defaults storage to 'public' when not specified for faucet", async () => {
@@ -175,7 +250,7 @@ describe("AccountsResource", () => {
         symbol: "TST",
         decimals: 0,
         maxSupply: 1,
-        // no storage specified — should default to "public"
+        // no storage specified - should default to "public"
       });
       expect(wasm.AccountStorageMode.public).toHaveBeenCalled();
     });
@@ -202,7 +277,7 @@ describe("AccountsResource", () => {
     });
   });
 
-  describe("create — wallet", () => {
+  describe("create - wallet", () => {
     it("creates a wallet by default (no type)", async () => {
       const resource = makeResource();
       const result = await resource.create({});
@@ -234,7 +309,7 @@ describe("AccountsResource", () => {
     });
   });
 
-  describe("create — contract", () => {
+  describe("create - contract", () => {
     it("throws when seed is missing", async () => {
       const resource = makeResource();
       await expect(

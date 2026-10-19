@@ -5,12 +5,11 @@ import {
   hashSeed,
 } from "../utils.js";
 
-// Legacy numeric 0/1 and "NonFungibleFaucet" are still accepted; non-fungible
-// requests reach the Rust rejection.
+// Legacy numeric 0/1 select fungible/non-fungible faucets.
 const FAUCET_TYPES = new Set(["FungibleFaucet", "NonFungibleFaucet", 0, 1]);
 const CONTRACT_TYPES = new Set(["ImmutableContract", "MutableContract"]);
 const FAUCET_FIELDS = ["name", "symbol", "decimals", "maxSupply"];
-const REQUIRED_FAUCET_FIELDS = ["symbol", "decimals", "maxSupply"];
+const REQUIRED_FUNGIBLE_FAUCET_FIELDS = ["symbol", "decimals", "maxSupply"];
 
 function display(value) {
   try {
@@ -41,12 +40,16 @@ export class AccountsResource {
    * Create a wallet by default, a faucet via `FaucetType`, or a contract via
    * `components`. Visibility is selected separately with `storage`.
    *
-   * The legacy 0, 1 and "NonFungibleFaucet" still select a faucet; 0 and 1 are
-   * also AccountType.Private/Public, so a visibility value passed as `type` is
-   * read as a faucet selector. Throws a TypeError naming `FaucetType`, before
-   * creating anything, for an unrecognised `type`, for faucet fields (`name`,
-   * `symbol`, `decimals`, `maxSupply`) without a faucet type, for `components`
-   * on a faucet, and for a faucet missing `symbol`, `decimals` or `maxSupply`.
+   * `FaucetType.FungibleFaucet` requires `symbol`, `decimals` and `maxSupply`.
+   * `FaucetType.NonFungibleFaucet` requires only `symbol` and rejects `decimals`
+   * and `maxSupply`. Both accept an optional `name`, defaulting to `symbol`.
+   *
+   * The legacy 0 and 1 select fungible and non-fungible faucets respectively;
+   * they are also AccountType.Private/Public, so a visibility value passed as
+   * `type` is read as a faucet selector. Throws a TypeError naming `FaucetType`,
+   * before creating anything, for an unrecognised `type`, for faucet fields
+   * (`name`, `symbol`, `decimals`, `maxSupply`) without a faucet type, for
+   * `components` on a faucet, or for missing or inapplicable faucet fields.
    */
   async create(opts) {
     this.#client.assertNotTerminated();
@@ -55,10 +58,22 @@ export class AccountsResource {
     const type = opts?.type;
 
     if (FAUCET_TYPES.has(type)) {
+      const nonFungible = type === 1 || type === "NonFungibleFaucet";
       if (opts.components !== undefined) {
         throw selectorError("a faucet request cannot carry components.");
       }
-      const missing = REQUIRED_FAUCET_FIELDS.filter(
+      if (
+        nonFungible &&
+        (opts.decimals !== undefined || opts.maxSupply !== undefined)
+      ) {
+        throw selectorError(
+          "decimals and maxSupply only apply to fungible faucets."
+        );
+      }
+      const requiredFields = nonFungible
+        ? ["symbol"]
+        : REQUIRED_FUNGIBLE_FAUCET_FIELDS;
+      const missing = requiredFields.filter(
         (field) => opts[field] === undefined
       );
       if (missing.length > 0) {
@@ -67,7 +82,7 @@ export class AccountsResource {
       const storageMode = resolveStorageMode(opts.storage ?? "public", wasm);
       const authScheme = resolveAuthScheme(opts.auth, wasm);
       const name = opts.name ?? opts.symbol;
-      if (type === 1 || type === "NonFungibleFaucet") {
+      if (nonFungible) {
         return await this.#inner.newNonFungibleFaucet(
           storageMode,
           name,

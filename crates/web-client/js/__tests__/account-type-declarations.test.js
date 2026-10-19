@@ -26,7 +26,9 @@ it("type-checks visibility and faucet selectors through the public declarations"
       consumer,
       `
       import { AccountBuilder, AccountType, FaucetType,
-        type FaucetCreateOptions } from "./index";
+        type CreateAccountOptions, type FaucetCreateOptions,
+        type FungibleFaucetCreateOptions,
+        type NonFungibleFaucetCreateOptions } from "./index";
       new AccountBuilder(new Uint8Array(32)).accountType(AccountType.Public);
       new AccountBuilder(new Uint8Array(32)).accountType(AccountType.Private);
       const visibility: AccountType = AccountType.Public;
@@ -35,8 +37,26 @@ it("type-checks visibility and faucet selectors through the public declarations"
       const faucet: FaucetCreateOptions = {
         type: kind, symbol: "TOK", decimals: 8, maxSupply: 1000n
       };
-      // @ts-expect-error Non-fungible faucets have no public selector.
-      FaucetType.NonFungibleFaucet;
+      const fungible: FungibleFaucetCreateOptions = faucet;
+      const nonFungibleKind: FaucetType = FaucetType.NonFungibleFaucet;
+      const nonFungibleLiteral: "NonFungibleFaucet" = nonFungibleKind;
+      const nonFungible: NonFungibleFaucetCreateOptions = {
+        type: nonFungibleKind, symbol: "NFT"
+      };
+      const namedNonFungible: NonFungibleFaucetCreateOptions = {
+        type: nonFungibleKind, symbol: "NFT", name: "Collectible",
+        storage: "public", auth: "ecdsa"
+      };
+      const nonFungibleFaucet: FaucetCreateOptions = nonFungible;
+      const account: CreateAccountOptions = nonFungibleFaucet;
+      // @ts-expect-error Fungible faucets require decimals and maxSupply.
+      const incompleteFungible: FungibleFaucetCreateOptions = { type: kind, symbol: "TOK" };
+      // @ts-expect-error Non-fungible faucets require a symbol.
+      const incompleteNonFungible: NonFungibleFaucetCreateOptions = { type: nonFungibleKind };
+      // @ts-expect-error Decimals apply only to fungible faucets.
+      const nonFungibleDecimals: FaucetCreateOptions = { type: nonFungibleKind, symbol: "NFT", decimals: 0 };
+      // @ts-expect-error Max supply applies only to fungible faucets.
+      const nonFungibleSupply: FaucetCreateOptions = { type: nonFungibleKind, symbol: "NFT", maxSupply: 1n };
       // @ts-expect-error AccountTypeValue was removed with the rename.
       import type { AccountTypeValue } from "./index";
       // @ts-expect-error Faucet kinds are no longer members of AccountType.

@@ -30,7 +30,7 @@ base(
       // WASM already initialized and every call on the next lines is sync.
       const mod = await import("./eager.js");
 
-      // Bare constructor — wasm.felt_new is called synchronously.
+      // Bare constructor - wasm.felt_new is called synchronously.
       const felt = new mod.Felt(42n);
 
       // Static factory with a valid input — wasm.transactionprover_newLocalProver
@@ -106,7 +106,10 @@ for (const entry of ["./eager.js", "./index.js"]) {
       }, entry);
       expect(result.accepted).toEqual([0, 1]);
       expect(result.native).toBe(true);
-      expect(result.faucetType).toEqual({ FungibleFaucet: "FungibleFaucet" });
+      expect(result.faucetType).toEqual({
+        FungibleFaucet: "FungibleFaucet",
+        NonFungibleFaucet: "NonFungibleFaucet",
+      });
     }
   );
 }

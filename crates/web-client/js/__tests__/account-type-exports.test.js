@@ -42,9 +42,11 @@ describe.each([
     expect(sdk.AccountType.FungibleFaucet).toBeUndefined();
   });
 
-  it("exports an immutable string faucet selector distinct from AccountType", () => {
-    expect(sdk.FaucetType).toEqual({ FungibleFaucet: "FungibleFaucet" });
-    expect(sdk.FaucetType.NonFungibleFaucet).toBeUndefined();
+  it("exports immutable string faucet selectors distinct from AccountType", () => {
+    expect(sdk.FaucetType).toEqual({
+      FungibleFaucet: "FungibleFaucet",
+      NonFungibleFaucet: "NonFungibleFaucet",
+    });
     expect(Object.isFrozen(sdk.FaucetType)).toBe(true);
   });
 
@@ -75,6 +77,27 @@ describe.each([
       "TOK",
       8,
       1000n,
+      2
+    );
+  });
+
+  it("routes FaucetType.NonFungibleFaucet to non-fungible creation", async () => {
+    const inner = { newNonFungibleFaucet: vi.fn().mockResolvedValue("faucet") };
+    const resource = new AccountsResource(
+      inner,
+      async () => ({
+        AccountStorageMode: { public: () => "public" },
+        AuthScheme: { AuthRpoFalcon512: 2 },
+      }),
+      { assertNotTerminated() {} }
+    );
+    await expect(
+      resource.create({ type: sdk.FaucetType.NonFungibleFaucet, symbol: "NFT" })
+    ).resolves.toBe("faucet");
+    expect(inner.newNonFungibleFaucet).toHaveBeenCalledWith(
+      "public",
+      "NFT",
+      "NFT",
       2
     );
   });
