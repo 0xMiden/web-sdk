@@ -291,6 +291,14 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
     })),
 }));
 
+export function captureClientCurrency(client: WebClient): () => boolean {
+  const { cacheGeneration } = useMidenStore.getState();
+  return () => {
+    const state = useMidenStore.getState();
+    return state.client === client && state.cacheGeneration === cacheGeneration;
+  };
+}
+
 const EMPTY_INPUT_NOTES: InputNoteRecord[] = [];
 const EMPTY_CONSUMABLE_NOTES: ConsumableNoteRecord[] = [];
 

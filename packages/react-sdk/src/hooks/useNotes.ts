@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import {
+  captureClientCurrency,
   useMidenStore,
   useNotesStore,
   useConsumableNotesStore,
@@ -79,20 +80,18 @@ export function useNotes(options?: NotesFilter): NotesResult {
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
 
+    const isCurrent = captureClientCurrency(client);
+    if (!isCurrent()) return;
+
     setLoadingNotes(true);
     setError(null);
-
-    // The provider resets the store on a signer identity change while the old
-    // client's fetch may still be running; its result must not land in the new cache.
-    const generation = useMidenStore.getState().cacheGeneration;
-    const isStale = () =>
-      useMidenStore.getState().cacheGeneration !== generation;
 
     try {
       const filterType = getNoteFilterType(options?.status);
       const filter = new NoteFilter(filterType);
 
       const fetchedNotes = await client.getInputNotes(filter);
+      if (!isCurrent()) return;
 
       // Block-locked notes come back from the screener but cannot be consumed
       // yet, so they are not "consumable" here either - the same rule
@@ -101,26 +100,28 @@ export function useNotes(options?: NotesFilter): NotesResult {
       if (accountKey !== "default") {
         const accountIdObj = parseAccountId(accountKey);
         const accountIdHex = accountIdObj.toString();
-        fetchedConsumable = (
-          await client.getConsumableNotes(accountIdObj)
-        ).filter((record) => isConsumableNow(record, accountIdHex));
+        const consumable = await client.getConsumableNotes(accountIdObj);
+        if (!isCurrent()) return;
+        fetchedConsumable = consumable.filter((record) =>
+          isConsumableNow(record, accountIdHex)
+        );
       } else {
-        fetchedConsumable = (await client.getConsumableNotes()).filter(
-          (record) => isConsumableNow(record)
+        const consumable = await client.getConsumableNotes();
+        if (!isCurrent()) return;
+        fetchedConsumable = consumable.filter((record) =>
+          isConsumableNow(record)
         );
       }
-
-      if (isStale()) return;
 
       // Smart refetch: only update store if note IDs changed (prevents unnecessary re-renders)
       setNotesIfChanged(fetchedNotes, filterKey);
       setConsumableNotesIfChanged(fetchedConsumable, accountKey);
     } catch (err) {
-      if (isStale()) return;
+      if (!isCurrent()) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
       // The reset already cleared the shared flag; a post-reset fetch owns it now.
-      if (!isStale()) setLoadingNotes(false);
+      if (isCurrent()) setLoadingNotes(false);
     }
   }, [
     client,

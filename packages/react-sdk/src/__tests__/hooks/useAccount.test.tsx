@@ -24,6 +24,61 @@ beforeEach(() => {
 });
 
 describe("useAccount", () => {
+  it.each(["resolve", "reject"])(
+    "keeps B's pending fetch state when A's fetch %ss after replacement",
+    async (outcome) => {
+      let finishA!: (account: ReturnType<typeof createMockAccount>) => void;
+      let failA!: (error: Error) => void;
+      const pendingA = new Promise<ReturnType<typeof createMockAccount>>(
+        (resolve, reject) => {
+          finishA = resolve;
+          failA = reject;
+        }
+      );
+      let finishB!: (account: ReturnType<typeof createMockAccount>) => void;
+      const pendingB = new Promise<ReturnType<typeof createMockAccount>>(
+        (resolve) => {
+          finishB = resolve;
+        }
+      );
+      const clientA = createMockWebClient({
+        getAccount: vi.fn().mockReturnValue(pendingA),
+      });
+      const clientB = createMockWebClient({
+        getAccount: vi.fn().mockReturnValue(pendingB),
+      });
+      mockUseMiden.mockReturnValue({ client: clientA, isReady: true });
+      useMidenStore.getState().setClient(clientA as unknown as WebClient);
+      const { result, rerender } = renderHook(() => useAccount("0x1234"));
+      expect(clientA.getAccount).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        mockUseMiden.mockReturnValue({ client: clientB, isReady: true });
+        useMidenStore.getState().resetInMemoryState();
+        useMidenStore.getState().setClient(clientB as unknown as WebClient);
+      });
+      rerender();
+      expect(clientB.getAccount).toHaveBeenCalledTimes(1);
+      expect(result.current.isLoading).toBe(true);
+
+      await act(async () => {
+        if (outcome === "resolve") finishA(createMockAccount());
+        else failA(new Error("stale account fetch"));
+        await pendingA.catch(() => {});
+      });
+      expect(result.current.error).toBeNull();
+      expect(result.current.isLoading).toBe(true);
+      expect(result.current.account).toBeNull();
+
+      await act(async () => {
+        finishB(createMockAccount());
+        await pendingB;
+      });
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.account).not.toBeNull();
+    }
+  );
+
   describe("initial state", () => {
     it("should return null account when no id provided", () => {
       mockUseMiden.mockReturnValue({
@@ -476,6 +531,9 @@ describe("useAccount", () => {
       mockUseMiden.mockReturnValue({
         client: mockClient,
         isReady: true,
+      });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
       });
 
       const { result } = renderHook(() => useAccount("0xacc"));

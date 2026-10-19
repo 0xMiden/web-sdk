@@ -16,6 +16,16 @@ vi.mock("../../context/MidenProvider", () => ({
 
 const mockUseMiden = useMiden as ReturnType<typeof vi.fn>;
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 // Mock localStorage
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
@@ -56,6 +66,255 @@ describe("useSessionAccount", () => {
     fund: vi.fn().mockResolvedValue(undefined),
     assetId: "0xfaucet",
   };
+
+  it("ignores a saved initialize after its client was replaced", async () => {
+    const clientA = createMockWebClient({
+      getConsumableNotes: vi
+        .fn()
+        .mockResolvedValue([createMockConsumableNoteRecord()]),
+    });
+    const fund = vi.fn().mockResolvedValue(undefined);
+    mockUseMiden.mockReturnValue({
+      client: clientA,
+      isReady: true,
+      sync: vi.fn(),
+    });
+    useMidenStore.getState().setClient(clientA as never);
+    const { result } = renderHook(() => useSessionAccount({ fund }));
+    const initializeA = result.current.initialize;
+    act(() => {
+      useMidenStore.getState().resetInMemoryState();
+      useMidenStore.getState().setClient(createMockWebClient() as never);
+    });
+    await act(async () => {
+      await initializeA();
+    });
+    expect(clientA.newWallet).not.toHaveBeenCalled();
+    expect(clientA.getAccounts).not.toHaveBeenCalled();
+    expect(clientA.syncState).not.toHaveBeenCalled();
+    expect(fund).not.toHaveBeenCalled();
+    expect(result.current.sessionAccountId).toBeNull();
+    expect(result.current.step).toBe("idle");
+    expect(result.current.error).toBeNull();
+    expect(localStorageMock.length).toBe(0);
+  });
+
+  it("lets B initialize while A is pending and keeps B busy when A finishes", async () => {
+    const pendingA = deferred<ReturnType<typeof createMockAccount>>();
+    const pendingB = deferred<ReturnType<typeof createMockAccount>>();
+    const clientA = createMockWebClient({
+      newWallet: vi.fn().mockReturnValue(pendingA.promise),
+    });
+    const clientB = createMockWebClient({
+      newWallet: vi.fn().mockReturnValue(pendingB.promise),
+      getConsumableNotes: vi
+        .fn()
+        .mockResolvedValue([createMockConsumableNoteRecord()]),
+    });
+    const sync = vi.fn().mockResolvedValue(undefined);
+    mockUseMiden.mockReturnValue({ client: clientA, isReady: true, sync });
+    useMidenStore.getState().setClient(clientA as never);
+    const { result, rerender } = renderHook(() =>
+      useSessionAccount({ fund: vi.fn().mockResolvedValue(undefined) })
+    );
+    let initializingA!: Promise<void>;
+    act(() => {
+      initializingA = result.current.initialize();
+    });
+    act(() => {
+      mockUseMiden.mockReturnValue({ client: clientB, isReady: true, sync });
+      useMidenStore.getState().resetInMemoryState();
+      useMidenStore.getState().setClient(clientB as never);
+    });
+    rerender();
+    let initializingB!: Promise<void>;
+    act(() => {
+      initializingB = result.current.initialize();
+      void initializingB.catch(() => {});
+    });
+    expect(clientB.newWallet).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      pendingA.resolve(createMockAccount());
+      await initializingA;
+    });
+    await expect(result.current.initialize()).rejects.toMatchObject({
+      code: "OPERATION_BUSY",
+    });
+    await act(async () => {
+      pendingB.resolve(createMockAccount());
+      await initializingB;
+    });
+    expect(result.current.isReady).toBe(true);
+  });
+
+  it.each(["wallet", "accounts", "fund", "sync", "notes", "request", "submit"])(
+    "stops initialization when the client is replaced during %s",
+    async (stage) => {
+      const pending = deferred<unknown>();
+      const reached = deferred<void>();
+      const hold = () => {
+        reached.resolve();
+        return pending.promise;
+      };
+      const wallet = createMockAccount();
+      const notes = [createMockConsumableNoteRecord()];
+      const clientA = createMockWebClient({
+        newWallet:
+          stage === "wallet" ? vi.fn(hold) : vi.fn().mockResolvedValue(wallet),
+        getAccounts:
+          stage === "accounts" ? vi.fn(hold) : vi.fn().mockResolvedValue([]),
+        syncState:
+          stage === "sync" ? vi.fn(hold) : vi.fn().mockResolvedValue({}),
+        getConsumableNotes:
+          stage === "notes" ? vi.fn(hold) : vi.fn().mockResolvedValue(notes),
+        newConsumeTransactionRequest:
+          stage === "request" ? vi.fn(hold) : vi.fn().mockResolvedValue({}),
+        submitNewTransaction:
+          stage === "submit" ? vi.fn(hold) : vi.fn().mockResolvedValue({}),
+      });
+      const fund =
+        stage === "fund" ? vi.fn(hold) : vi.fn().mockResolvedValue(undefined);
+      const sync = vi.fn().mockResolvedValue(undefined);
+      mockUseMiden.mockReturnValue({ client: clientA, isReady: true, sync });
+      useMidenStore.getState().setClient(clientA as never);
+      const { result } = renderHook(() => useSessionAccount({ fund }));
+      let initializing!: Promise<void>;
+      await act(async () => {
+        initializing = result.current.initialize();
+        await reached.promise;
+      });
+      const previousStep = result.current.step;
+      const previousId = result.current.sessionAccountId;
+      const previousWrites = localStorageMock.setItem.mock.calls.length;
+      act(() => {
+        useMidenStore.getState().resetInMemoryState();
+        useMidenStore.getState().setClient(createMockWebClient() as never);
+      });
+      const calls = [
+        clientA.getAccounts,
+        fund,
+        clientA.syncState,
+        clientA.getConsumableNotes,
+        clientA.newConsumeTransactionRequest,
+        clientA.submitNewTransaction,
+        sync,
+      ];
+      const previousCalls = calls.map((method) => method.mock.calls.length);
+      await act(async () => {
+        pending.resolve(
+          stage === "wallet"
+            ? wallet
+            : stage === "accounts"
+              ? []
+              : stage === "notes"
+                ? notes
+                : {}
+        );
+        await initializing;
+      });
+      expect(calls.map((method) => method.mock.calls.length)).toEqual(
+        previousCalls
+      );
+      expect(result.current.sessionAccountId).toBe(previousId);
+      expect(result.current.step).toBe(previousStep);
+      expect(result.current.isReady).toBe(false);
+      expect(result.current.error).toBeNull();
+      expect(localStorageMock.setItem).toHaveBeenCalledTimes(previousWrites);
+      expect(localStorageMock.getItem("miden-session:ready")).toBeNull();
+      expect(useMidenStore.getState().accounts).toEqual([]);
+      if (stage === "wallet") {
+        expect(fund).not.toHaveBeenCalled();
+        expect(localStorageMock.getItem("miden-session:accountId")).toBeNull();
+      }
+      if (stage !== "submit")
+        expect(clientA.submitNewTransaction).not.toHaveBeenCalled();
+    }
+  );
+
+  it("stops polling after a client replacement during the polling delay", async () => {
+    vi.useFakeTimers();
+    try {
+      const clientA = createMockWebClient({
+        getConsumableNotes: vi.fn().mockResolvedValue([]),
+      });
+      const sync = vi.fn().mockResolvedValue(undefined);
+      mockUseMiden.mockReturnValue({ client: clientA, isReady: true, sync });
+      useMidenStore.getState().setClient(clientA as never);
+      const { result } = renderHook(() =>
+        useSessionAccount({
+          fund: vi.fn().mockResolvedValue(undefined),
+          pollIntervalMs: 10,
+          maxWaitMs: 100,
+        })
+      );
+      let initializing!: Promise<void>;
+      await act(async () => {
+        initializing = result.current.initialize();
+      });
+      const settled = initializing.catch(() => {});
+      expect(clientA.getConsumableNotes).toHaveBeenCalledTimes(1);
+      act(() => {
+        useMidenStore.getState().resetInMemoryState();
+        useMidenStore.getState().setClient(createMockWebClient() as never);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+        await settled;
+      });
+      expect(clientA.syncState).toHaveBeenCalledTimes(1);
+      expect(clientA.getConsumableNotes).toHaveBeenCalledTimes(1);
+      expect(clientA.newConsumeTransactionRequest).not.toHaveBeenCalled();
+      expect(clientA.submitNewTransaction).not.toHaveBeenCalled();
+      expect(sync).not.toHaveBeenCalled();
+      expect(result.current.step).toBe("consuming");
+      expect(result.current.error).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["wallet", "closing sync"])(
+    "ignores a stale rejection during %s",
+    async (stage) => {
+      const pending = deferred<unknown>();
+      const reached = deferred<void>();
+      const hold = () => {
+        reached.resolve();
+        return pending.promise;
+      };
+      const clientA = createMockWebClient({
+        newWallet:
+          stage === "wallet"
+            ? vi.fn(hold)
+            : vi.fn().mockResolvedValue(createMockAccount()),
+        getConsumableNotes: vi
+          .fn()
+          .mockResolvedValue([createMockConsumableNoteRecord()]),
+      });
+      const sync = stage === "closing sync" ? vi.fn(hold) : vi.fn();
+      mockUseMiden.mockReturnValue({ client: clientA, isReady: true, sync });
+      useMidenStore.getState().setClient(clientA as never);
+      const { result } = renderHook(() =>
+        useSessionAccount({ fund: vi.fn().mockResolvedValue(undefined) })
+      );
+      let initializing!: Promise<void>;
+      await act(async () => {
+        initializing = result.current.initialize();
+        await reached.promise;
+      });
+      const previousStep = result.current.step;
+      act(() => {
+        useMidenStore.getState().resetInMemoryState();
+        useMidenStore.getState().setClient(createMockWebClient() as never);
+      });
+      await act(async () => {
+        pending.reject(new Error("stale session operation"));
+        await expect(initializing).resolves.toBeUndefined();
+      });
+      expect(result.current.error).toBeNull();
+      expect(result.current.step).toBe(previousStep);
+    }
+  );
 
   describe("initial state", () => {
     it("should return idle state when not initialized", () => {
@@ -102,6 +361,9 @@ describe("useSessionAccount", () => {
         isReady: true,
         sync: vi.fn().mockResolvedValue(undefined),
       });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
+      });
 
       const { result } = renderHook(() =>
         useSessionAccount({
@@ -146,6 +408,9 @@ describe("useSessionAccount", () => {
         client: mockClient,
         isReady: true,
         sync: vi.fn().mockResolvedValue(undefined),
+      });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
       });
 
       const { result } = renderHook(() =>
@@ -202,6 +467,9 @@ describe("useSessionAccount", () => {
         isReady: true,
         sync: mockSync,
       });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
+      });
 
       const { result } = renderHook(() =>
         useSessionAccount({
@@ -222,7 +490,7 @@ describe("useSessionAccount", () => {
 
       // `newConsumeTransactionRequest` is async, so submit must receive the
       // resolved request rather than the promise. Asserting on identity is what
-      // catches a dropped `await` — a permissive submit mock takes a thenable
+      // catches a dropped `await` - a permissive submit mock takes a thenable
       // without complaint, which is how that bug shipped once already.
       const consumeRequest =
         await mockClient.newConsumeTransactionRequest.mock.results[0].value;
@@ -256,6 +524,9 @@ describe("useSessionAccount", () => {
       isReady: true,
       sync: vi.fn().mockResolvedValue(undefined),
     });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
+    });
     const { result } = renderHook(() => useSessionAccount(defaultOptions));
 
     let initializing!: Promise<void>;
@@ -278,8 +549,8 @@ describe("useSessionAccount", () => {
       await initializing;
     });
 
-    expect(result.current.step).toBe("ready");
-    expect(result.current.isReady).toBe(true);
+    expect(result.current.step).toBe("creating");
+    expect(result.current.isReady).toBe(false);
     expect(result.current.error).toBeNull();
     expect(useMidenStore.getState().accounts).toEqual([]);
   });
@@ -314,6 +585,9 @@ describe("useSessionAccount", () => {
         client: mockClient,
         isReady: true,
         sync: vi.fn(),
+      });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
       });
 
       const { result } = renderHook(() =>
@@ -421,6 +695,9 @@ describe("useSessionAccount", () => {
         client: mockClient,
         isReady: true,
         sync: vi.fn(),
+      });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
       });
 
       const { result } = renderHook(() => useSessionAccount(defaultOptions));

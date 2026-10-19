@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
-import { useMidenStore } from "../store/MidenStore";
+import { captureClientCurrency, useMidenStore } from "../store/MidenStore";
 import { AccountStorageMode, isConsumableNow } from "@miden-sdk/miden-sdk";
 import type { ConsumableNoteRecord } from "@miden-sdk/miden-sdk";
 import type {
@@ -52,7 +52,8 @@ export function useSessionAccount(
   const [step, setStep] = useState<SessionAccountStep>("idle");
   const [error, setError] = useState<Error | null>(null);
   const cancelledRef = useRef(false);
-  const isBusyRef = useRef(false);
+  // A replaced flow must neither block initialization nor clear its successor's guard.
+  const isBusyRef = useRef<(() => boolean) | null>(null);
 
   const storagePrefix = options.storagePrefix ?? "miden-session";
   const pollIntervalMs = options.pollIntervalMs ?? 3000;
@@ -93,18 +94,19 @@ export function useSessionAccount(
       throw new Error("Miden client is not ready");
     }
 
-    if (isBusyRef.current) {
+    const isCurrent = captureClientCurrency(client);
+    if (!isCurrent()) return;
+
+    if (isBusyRef.current?.()) {
       throw new MidenError(
         "Session account initialization is already in progress.",
         { code: "OPERATION_BUSY" }
       );
     }
 
-    isBusyRef.current = true;
+    isBusyRef.current = isCurrent;
     cancelledRef.current = false;
     setError(null);
-
-    const generation = useMidenStore.getState().cacheGeneration;
 
     try {
       // Step 1: Create wallet (or use persisted one)
@@ -116,11 +118,11 @@ export function useSessionAccount(
         const resolvedStorageMode = getStorageMode(storageMode);
 
         const wallet = await client.newWallet(resolvedStorageMode, authScheme);
+        if (!isCurrent()) return;
         ensureAccountBech32(wallet);
         const accounts = await client.getAccounts();
-        if (useMidenStore.getState().cacheGeneration === generation) {
-          setAccounts(accounts);
-        }
+        if (!isCurrent()) return;
+        setAccounts(accounts);
 
         if (cancelledRef.current) return;
 
@@ -133,7 +135,7 @@ export function useSessionAccount(
       setStep("funding");
       await fundRef.current(walletId);
 
-      if (cancelledRef.current) return;
+      if (!isCurrent() || cancelledRef.current) return;
 
       // Step 3: Wait for funding note and consume it
       setStep("consuming");
@@ -142,25 +144,27 @@ export function useSessionAccount(
         walletId,
         pollIntervalMs,
         maxWaitMs,
-        cancelledRef
+        cancelledRef,
+        isCurrent
       );
 
-      if (cancelledRef.current) return;
+      if (!isCurrent() || cancelledRef.current) return;
 
       // Done
       setStep("ready");
       localStorage.setItem(`${storagePrefix}:ready`, "true");
 
       await sync();
+      if (!isCurrent()) return;
     } catch (err) {
-      if (!cancelledRef.current) {
+      if (isCurrent() && !cancelledRef.current) {
         const error = err instanceof Error ? err : new Error(String(err));
         setError(error);
         setStep("idle");
         throw error;
       }
     } finally {
-      isBusyRef.current = false;
+      if (isCurrent()) isBusyRef.current = null;
     }
   }, [
     client,
@@ -177,7 +181,7 @@ export function useSessionAccount(
 
   const reset = useCallback(() => {
     cancelledRef.current = true;
-    isBusyRef.current = false;
+    isBusyRef.current = null;
     setSessionAccountId(null);
     setStep("idle");
     setError(null);
@@ -226,23 +230,26 @@ async function waitAndConsume(
   walletId: string,
   pollIntervalMs: number,
   maxWaitMs: number,
-  cancelledRef: { current: boolean }
+  cancelledRef: { current: boolean },
+  isCurrent: () => boolean
 ) {
   const deadline = Date.now() + maxWaitMs;
 
   while (Date.now() < deadline) {
-    if (cancelledRef.current) return;
+    if (!isCurrent() || cancelledRef.current) return;
 
     await (client as { syncState: () => Promise<unknown> }).syncState();
 
-    if (cancelledRef.current) return;
+    if (!isCurrent() || cancelledRef.current) return;
 
     const accountIdObj = parseAccountId(walletId);
     const accountIdHex = accountIdObj.toString();
     // One block-locked note would fail the whole consume transaction, and
     // waiting is the right answer for it, so keep only what is consumable now.
-    const consumable = (await client.getConsumableNotes(accountIdObj)).filter(
-      (record) => isConsumableNow(record, accountIdHex)
+    const records = await client.getConsumableNotes(accountIdObj);
+    if (!isCurrent()) return;
+    const consumable = records.filter((record) =>
+      isConsumableNow(record, accountIdHex)
     );
     if (consumable.length > 0) {
       const notes = consumable.map((c) => c.inputNoteRecord().toNote());
@@ -257,12 +264,14 @@ async function waitAndConsume(
       // Building the request suspends, so re-check before submitting: a
       // cancellation landing in that window would otherwise still submit, and
       // the caller's catch discards the outcome once cancelled.
-      if (cancelledRef.current) return;
+      if (!isCurrent() || cancelledRef.current) return;
       await client.submitNewTransaction(freshAccountId, txRequest);
+      if (!isCurrent()) return;
       return;
     }
 
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    if (!isCurrent()) return;
   }
 
   throw new Error("Timeout waiting for session wallet funding");

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState, useMemo } from "react";
 import { useMiden } from "../context/MidenProvider";
-import { useMidenStore, useSyncStateStore } from "../store/MidenStore";
+import {
+  captureClientCurrency,
+  useMidenStore,
+  useSyncStateStore,
+} from "../store/MidenStore";
 import type { AccountResult, AssetBalance } from "../types";
 import { ensureAccountBech32 } from "../utils/accountBech32";
 import { parseAccountId, type AccountRef } from "../utils/accountParsing";
@@ -59,23 +63,25 @@ export function useAccount(accountId: AccountRef | undefined): AccountResult {
   const refetch = useCallback(async () => {
     if (!client || !isReady || !accountIdStr) return;
 
+    const isCurrent = captureClientCurrency(client);
+    if (!isCurrent()) return;
+
     setIsLoading(true);
     setError(null);
-
-    const generation = useMidenStore.getState().cacheGeneration;
 
     try {
       const accountIdObj = parseAccountId(accountIdStr);
       const fetchedAccount = await client.getAccount(accountIdObj);
-      if (useMidenStore.getState().cacheGeneration !== generation) return;
+      if (!isCurrent()) return;
       if (fetchedAccount) {
         ensureAccountBech32(fetchedAccount);
         setAccountDetails(accountIdStr, fetchedAccount);
       }
     } catch (err) {
+      if (!isCurrent()) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      setIsLoading(false);
+      if (isCurrent()) setIsLoading(false);
     }
   }, [client, isReady, accountIdStr, setAccountDetails]);
 

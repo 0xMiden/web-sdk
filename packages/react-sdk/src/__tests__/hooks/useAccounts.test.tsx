@@ -101,6 +101,37 @@ describe("useAccounts", () => {
   });
 
   describe("refetch", () => {
+    it("ignores a saved refetch after its client was replaced", async () => {
+      const clientA = createMockWebClient();
+      mockUseMiden.mockReturnValue({ client: clientA, isReady: true });
+      useMidenStore.getState().setClient(clientA as unknown as WebClient);
+      useMidenStore
+        .getState()
+        .setAccounts([createMockAccountHeader()] as never);
+      const { result } = renderHook(() => useAccounts());
+      const refetchA = result.current.refetch;
+      const accountsB = [createMockAccountHeader("0x2000000000000002")];
+      act(() => {
+        useMidenStore.getState().resetInMemoryState();
+        useMidenStore
+          .getState()
+          .setClient(createMockWebClient() as unknown as WebClient);
+        useMidenStore.getState().setAccounts(accountsB as never);
+      });
+
+      let fetching!: Promise<void>;
+      act(() => {
+        fetching = refetchA();
+      });
+      expect(result.current.isLoading).toBe(false);
+      await act(async () => {
+        await fetching;
+      });
+      expect(clientA.getAccounts).not.toHaveBeenCalled();
+      expect(result.current.accounts).toBe(accountsB);
+      expect(result.current.error).toBeNull();
+    });
+
     it("keeps signer B's accounts when signer A's pending fetch resolves", async () => {
       const accountsA = [createMockAccountHeader("0x1000000000000001")];
       const accountsB = [createMockAccountHeader("0x1000000000000002")];

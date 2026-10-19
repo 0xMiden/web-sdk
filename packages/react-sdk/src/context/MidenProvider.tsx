@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk";
-import { useMidenStore } from "../store/MidenStore";
+import { captureClientCurrency, useMidenStore } from "../store/MidenStore";
 import type { MidenConfig } from "../types";
 import { DEFAULTS } from "../types";
 import { AsyncLock } from "../utils/asyncLock";
@@ -138,18 +138,17 @@ export function MidenProvider({
   const sync = useCallback(async () => {
     if (!client || !isReady) return;
 
+    const isCurrent = captureClientCurrency(client);
+    if (!isCurrent()) return;
+
     const store = useMidenStore.getState();
     if (store.sync.isSyncing) return;
 
     setSyncState({ isSyncing: true, error: null });
 
-    const generation = useMidenStore.getState().cacheGeneration;
-    const isStale = () =>
-      useMidenStore.getState().cacheGeneration !== generation;
-
     try {
       const summary = await client.syncState();
-      if (isStale()) return;
+      if (!isCurrent()) return;
       const syncHeight = summary.blockNum();
 
       setSyncState({
@@ -161,10 +160,10 @@ export function MidenProvider({
 
       // Trigger account and note refresh after sync
       const accounts = await client.getAccounts();
-      if (isStale()) return;
+      if (!isCurrent()) return;
       useMidenStore.getState().setAccounts(accounts);
     } catch (error) {
-      if (isStale()) return;
+      if (!isCurrent()) return;
       setSyncState({
         isSyncing: false,
         error: error instanceof Error ? error : new Error(String(error)),

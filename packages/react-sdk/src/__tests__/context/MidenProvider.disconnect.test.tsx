@@ -197,7 +197,7 @@ describe("MidenProvider resilient disconnect handling", () => {
       const store = useMidenStore.getState();
       expect(store.client).not.toBeNull();
 
-      // Disconnect — cached state should NOT be cleared
+      // Disconnect - cached state should NOT be cleared
       // Simulate disconnect by setting signerConnected=false directly
       // (in real usage, MidenProvider effect does this)
       act(() => {
@@ -283,7 +283,7 @@ describe("MidenProvider resilient disconnect handling", () => {
         expect(screen.getByTestId("signer-connected").textContent).toBe("true");
       });
 
-      // No additional client was created — signCb was hot-swapped
+      // No additional client was created - signCb was hot-swapped
       expect(
         (WebClient.createClientWithExternalKeystore as ReturnType<typeof vi.fn>)
           .mock.calls.length
@@ -734,6 +734,53 @@ describe("MidenProvider cache generation guards", () => {
   const wrapper = ({ children }: { children: React.ReactNode }) => (
     <IdentityWrapper signer={null}>{children}</IdentityWrapper>
   );
+
+  it("ignores signer A's saved sync after switching to signer B", async () => {
+    const clientA = createMockWebClient();
+    const clientB = createMockWebClient();
+    vi.mocked(WebClient.createClientWithExternalKeystore)
+      .mockResolvedValueOnce(clientA as unknown as WebClient)
+      .mockResolvedValueOnce(clientB as unknown as WebClient);
+    const signerA = createMockSignerContext({ storeName: "wallet-a" });
+    const signerB = createMockSignerContext({ storeName: "wallet-b" });
+    let signer = signerA;
+    const { result, rerender } = renderHook(() => useMiden(), {
+      wrapper: ({ children }) => (
+        <IdentityWrapper signer={signer}>{children}</IdentityWrapper>
+      ),
+    });
+    await waitFor(() => {
+      expect(result.current.client).toBe(clientA);
+    });
+    const syncA = result.current.sync;
+    signer = signerB;
+    rerender();
+    await waitFor(() => {
+      expect(result.current.client).toBe(clientB);
+    });
+    const accountsB = [createMockAccountHeader("0x2000000000000002")];
+    act(() => {
+      useMidenStore.getState().resetInMemoryState();
+      useMidenStore
+        .getState()
+        .setAccounts(accountsB as unknown as AccountHeader[]);
+    });
+    clientA.syncState.mockClear();
+    clientA.getAccounts.mockClear();
+
+    let syncing!: Promise<void>;
+    act(() => {
+      syncing = syncA();
+    });
+    expect(useMidenStore.getState().sync.isSyncing).toBe(false);
+    await act(async () => {
+      await syncing;
+    });
+    expect(useMidenStore.getState().sync.lastSyncTime).toBeNull();
+    expect(useMidenStore.getState().accounts).toBe(accountsB);
+    expect(clientA.syncState).not.toHaveBeenCalled();
+    expect(clientA.getAccounts).not.toHaveBeenCalled();
+  });
 
   it("does not cache a sync summary after the cache generation changes", async () => {
     const mockClient = createMockWebClient();
