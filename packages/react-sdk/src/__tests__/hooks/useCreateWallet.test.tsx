@@ -40,6 +40,75 @@ describe("useCreateWallet", () => {
   });
 
   describe("createWallet", () => {
+    it.each(["reset", "replace"])(
+      "drops a pending account list after %s and publishes a current wallet's list",
+      async (change) => {
+        const wallet = createMockAccount();
+        const staleAccounts = [createMockAccountHeader("0x1000000000000001")];
+        const retainedAccounts = [
+          createMockAccountHeader("0x1000000000000002"),
+        ];
+        const currentAccounts = [createMockAccountHeader("0x1000000000000003")];
+        let resolveAccounts!: (accounts: typeof staleAccounts) => void;
+        const pendingAccounts = new Promise<typeof staleAccounts>((resolve) => {
+          resolveAccounts = resolve;
+        });
+        const previousClient = createMockWebClient({
+          newWallet: vi.fn().mockResolvedValue(wallet),
+          getAccounts: vi
+            .fn()
+            .mockReturnValueOnce(pendingAccounts)
+            .mockResolvedValue(currentAccounts),
+        });
+        const currentClient =
+          change === "reset"
+            ? previousClient
+            : createMockWebClient({
+                newWallet: vi.fn().mockResolvedValue(wallet),
+                getAccounts: vi.fn().mockResolvedValue(currentAccounts),
+              });
+        useMidenStore.getState().setClient(previousClient as any);
+        mockUseMiden.mockReturnValue({ client: previousClient, isReady: true });
+        const { result, rerender } = renderHook(() => useCreateWallet());
+
+        let creation!: ReturnType<typeof result.current.createWallet>;
+        act(() => {
+          creation = result.current.createWallet();
+        });
+        await waitFor(() => {
+          expect(previousClient.getAccounts).toHaveBeenCalledTimes(1);
+        });
+
+        act(() => {
+          if (change === "reset") {
+            useMidenStore.getState().resetInMemoryState();
+          } else {
+            useMidenStore.getState().setClient(currentClient as any);
+          }
+          useMidenStore.getState().setAccounts(retainedAccounts as any);
+          mockUseMiden.mockReturnValue({
+            client: currentClient,
+            isReady: true,
+          });
+          rerender();
+        });
+        await act(async () => {
+          resolveAccounts(staleAccounts);
+          expect(await creation).toBe(wallet);
+        });
+
+        expect(useMidenStore.getState().accounts).toBe(retainedAccounts);
+        expect(result.current.wallet).toBe(wallet);
+        expect(result.current.error).toBeNull();
+        expect(result.current.isCreating).toBe(false);
+
+        await act(async () => {
+          expect(await result.current.createWallet()).toBe(wallet);
+        });
+        expect(useMidenStore.getState().accounts).toBe(currentAccounts);
+      }
+    );
+
     it("should throw error when client is not ready", async () => {
       mockUseMiden.mockReturnValue({
         client: null,
@@ -143,6 +212,7 @@ describe("useCreateWallet", () => {
         newWallet: vi.fn().mockResolvedValue(mockWallet),
         getAccounts: vi.fn().mockResolvedValue(mockAccounts),
       });
+      useMidenStore.getState().setClient(mockClient as any);
 
       mockUseMiden.mockReturnValue({
         client: mockClient,

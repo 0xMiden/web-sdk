@@ -40,6 +40,76 @@ describe("useCreateFaucet", () => {
   });
 
   describe("createFaucet", () => {
+    it.each(["reset", "replace"])(
+      "drops a pending account list after %s and publishes a current faucet's list",
+      async (change) => {
+        const faucet = createMockAccount({ isFaucet: vi.fn(() => true) });
+        const staleAccounts = [createMockAccountHeader("0x1000000000000001")];
+        const retainedAccounts = [
+          createMockAccountHeader("0x1000000000000002"),
+        ];
+        const currentAccounts = [createMockAccountHeader("0x1000000000000003")];
+        let resolveAccounts!: (accounts: typeof staleAccounts) => void;
+        const pendingAccounts = new Promise<typeof staleAccounts>((resolve) => {
+          resolveAccounts = resolve;
+        });
+        const previousClient = createMockWebClient({
+          newFaucet: vi.fn().mockResolvedValue(faucet),
+          getAccounts: vi
+            .fn()
+            .mockReturnValueOnce(pendingAccounts)
+            .mockResolvedValue(currentAccounts),
+        });
+        const currentClient =
+          change === "reset"
+            ? previousClient
+            : createMockWebClient({
+                newFaucet: vi.fn().mockResolvedValue(faucet),
+                getAccounts: vi.fn().mockResolvedValue(currentAccounts),
+              });
+        const options = { tokenSymbol: "TEST", maxSupply: 1000n };
+        useMidenStore.getState().setClient(previousClient as any);
+        mockUseMiden.mockReturnValue({ client: previousClient, isReady: true });
+        const { result, rerender } = renderHook(() => useCreateFaucet());
+
+        let creation!: ReturnType<typeof result.current.createFaucet>;
+        act(() => {
+          creation = result.current.createFaucet(options);
+        });
+        await waitFor(() => {
+          expect(previousClient.getAccounts).toHaveBeenCalledTimes(1);
+        });
+
+        act(() => {
+          if (change === "reset") {
+            useMidenStore.getState().resetInMemoryState();
+          } else {
+            useMidenStore.getState().setClient(currentClient as any);
+          }
+          useMidenStore.getState().setAccounts(retainedAccounts as any);
+          mockUseMiden.mockReturnValue({
+            client: currentClient,
+            isReady: true,
+          });
+          rerender();
+        });
+        await act(async () => {
+          resolveAccounts(staleAccounts);
+          expect(await creation).toBe(faucet);
+        });
+
+        expect(useMidenStore.getState().accounts).toBe(retainedAccounts);
+        expect(result.current.faucet).toBe(faucet);
+        expect(result.current.error).toBeNull();
+        expect(result.current.isCreating).toBe(false);
+
+        await act(async () => {
+          expect(await result.current.createFaucet(options)).toBe(faucet);
+        });
+        expect(useMidenStore.getState().accounts).toBe(currentAccounts);
+      }
+    );
+
     it("should throw error when client is not ready", async () => {
       mockUseMiden.mockReturnValue({
         client: null,
@@ -171,6 +241,7 @@ describe("useCreateFaucet", () => {
         newFaucet: vi.fn().mockResolvedValue(mockFaucet),
         getAccounts: vi.fn().mockResolvedValue(mockAccounts),
       });
+      useMidenStore.getState().setClient(mockClient as any);
 
       mockUseMiden.mockReturnValue({
         client: mockClient,

@@ -53,12 +53,12 @@ export function midenVitePlugin(options?: MidenVitePluginOptions): Plugin {
     enforce: "pre",
 
     config(userConfig, env) {
-      const root = userConfig.root ?? process.cwd();
+      const root = path.resolve(userConfig.root ?? process.cwd());
 
       // Use array form for resolve.alias so Vite appends rather than replaces
       // any existing aliases the user may have configured.
       // Use require.resolve for portable resolution in pnpm/Yarn Plug'n'Play setups.
-      const esmRequire = createRequire(`file://${root}/`);
+      const esmRequire = createRequire(path.join(root, "package.json"));
       // Exact-match regex alias (not prefix match). Vite's default string-form
       // alias matches prefixes, which rewrites subpath imports (e.g.
       // `@miden-sdk/miden-sdk/lazy`) to file-path lookups and bypasses the

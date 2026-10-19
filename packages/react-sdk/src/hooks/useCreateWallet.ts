@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import { useMidenStore } from "../store/MidenStore";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import { AccountStorageMode } from "@miden-sdk/miden-sdk";
 import type { Account } from "@miden-sdk/miden-sdk";
 import type { CreateWalletOptions } from "../types";
@@ -79,8 +80,11 @@ export function useCreateWallet(): UseCreateWalletResult {
             options.initSeed
           );
           ensureAccountBech32(createdWallet);
+          const isCurrent = captureClientReadGuard(client);
           const accounts = await client.getAccounts();
-          setAccounts(accounts);
+          if (isCurrent()) {
+            setAccounts(accounts);
+          }
           return createdWallet;
         });
 

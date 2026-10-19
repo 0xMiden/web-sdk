@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { useSessionAccount } from "../../hooks/useSessionAccount";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
 import {
   createMockWebClient,
   createMockAccount,
+  createMockAccountHeader,
   createMockConsumableNoteRecord,
 } from "../mocks/miden-sdk";
 
@@ -76,6 +77,95 @@ describe("useSessionAccount", () => {
   });
 
   describe("initialize", () => {
+    it.each(["reset", "replace"])(
+      "drops a pending account list after %s and publishes a current session's list",
+      async (change) => {
+        const wallet = createMockAccount();
+        const walletId = wallet.id().toString();
+        const fundingNote = createMockConsumableNoteRecord(
+          "0xfunding",
+          walletId
+        );
+        const staleAccounts = [createMockAccountHeader("0x1000000000000001")];
+        const retainedAccounts = [
+          createMockAccountHeader("0x1000000000000002"),
+        ];
+        const currentAccounts = [createMockAccountHeader("0x1000000000000003")];
+        let resolveAccounts!: (accounts: typeof staleAccounts) => void;
+        const pendingAccounts = new Promise<typeof staleAccounts>((resolve) => {
+          resolveAccounts = resolve;
+        });
+        const previousClient = createMockWebClient({
+          newWallet: vi.fn().mockResolvedValue(wallet),
+          getAccounts: vi
+            .fn()
+            .mockReturnValueOnce(pendingAccounts)
+            .mockResolvedValue(currentAccounts),
+          getConsumableNotes: vi.fn().mockResolvedValue([fundingNote]),
+        });
+        const currentClient =
+          change === "reset"
+            ? previousClient
+            : createMockWebClient({
+                newWallet: vi.fn().mockResolvedValue(wallet),
+                getAccounts: vi.fn().mockResolvedValue(currentAccounts),
+                getConsumableNotes: vi.fn().mockResolvedValue([fundingNote]),
+              });
+        const sync = vi.fn().mockResolvedValue(undefined);
+        useMidenStore.getState().setClient(previousClient as any);
+        mockUseMiden.mockReturnValue({
+          client: previousClient,
+          isReady: true,
+          sync,
+        });
+        const { result, rerender } = renderHook(() =>
+          useSessionAccount({
+            fund: vi.fn().mockResolvedValue(undefined),
+            assetId: "0xfaucet",
+          })
+        );
+
+        let initializing!: Promise<void>;
+        act(() => {
+          initializing = result.current.initialize();
+        });
+        await waitFor(() => {
+          expect(previousClient.getAccounts).toHaveBeenCalledTimes(1);
+        });
+
+        act(() => {
+          if (change === "reset") {
+            useMidenStore.getState().resetInMemoryState();
+          } else {
+            useMidenStore.getState().setClient(currentClient as any);
+          }
+          useMidenStore.getState().setAccounts(retainedAccounts as any);
+          mockUseMiden.mockReturnValue({
+            client: currentClient,
+            isReady: true,
+            sync,
+          });
+          rerender();
+        });
+        await act(async () => {
+          resolveAccounts(staleAccounts);
+          expect(await initializing).toBeUndefined();
+        });
+
+        expect(useMidenStore.getState().accounts).toBe(retainedAccounts);
+        expect(result.current.sessionAccountId).toBe(walletId);
+        expect(result.current.isReady).toBe(true);
+        expect(result.current.error).toBeNull();
+
+        act(() => result.current.reset());
+        await act(async () => {
+          expect(await result.current.initialize()).toBeUndefined();
+        });
+        expect(useMidenStore.getState().accounts).toBe(currentAccounts);
+        expect(result.current.isReady).toBe(true);
+      }
+    );
+
     it("should throw when client is not ready", async () => {
       mockUseMiden.mockReturnValue({
         client: null,

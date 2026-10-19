@@ -24,6 +24,8 @@ interface MidenStoreState {
   syncPaused: boolean;
 
   // Cached data
+  // Advanced on every reset so in-flight cache reads can discard stale results.
+  cacheGeneration: number;
   accounts: AccountHeader[];
   accountDetails: Map<string, Account>;
   notes: InputNoteRecord[];
@@ -98,6 +100,7 @@ function freshState() {
     signerConnected: null as boolean | null,
 
     ...freshCachedState(),
+    cacheGeneration: 0,
   };
 }
 
@@ -105,12 +108,21 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
   ...freshState(),
 
   setClient: (client) =>
-    set({
+    set((state) => ({
       client,
       isReady: client !== null,
       isInitializing: false,
       initError: null,
-    }),
+      // A replaced client's account-list, account-detail, sync and note reads
+      // publish nothing, so its shared loading and syncing flags end with it.
+      ...(state.client === client
+        ? {}
+        : {
+            isLoadingAccounts: false,
+            isLoadingNotes: false,
+            sync: { ...state.sync, isSyncing: false },
+          }),
+    })),
 
   setInitializing: (isInitializing) => set({ isInitializing }),
 
@@ -246,9 +258,17 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
 
   setLoadingNotes: (isLoadingNotes) => set({ isLoadingNotes }),
 
-  resetInMemoryState: () => set(freshCachedState()),
+  resetInMemoryState: () =>
+    set((state) => ({
+      ...freshCachedState(),
+      cacheGeneration: state.cacheGeneration + 1,
+    })),
 
-  reset: () => set(freshState()),
+  reset: () =>
+    set((state) => ({
+      ...freshState(),
+      cacheGeneration: state.cacheGeneration + 1,
+    })),
 }));
 
 // Selector hooks for optimal re-renders

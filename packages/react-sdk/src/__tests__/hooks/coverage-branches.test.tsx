@@ -1047,6 +1047,7 @@ describe("useNoteStream — buildStreamedNote catch paths", () => {
       sync: vi.fn(),
     });
 
+    useMidenStore.getState().setClient(mockClient as any);
     const { result } = renderHook(() => useNoteStream());
     await waitFor(() => {
       expect(result.current.error?.message).toBe("notes fetch exploded");
@@ -1335,6 +1336,7 @@ describe("useTransactionHistory — filter + catch + normalizeHex", () => {
     });
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
 
+    useMidenStore.getState().setClient(mockClient as any);
     const { result } = renderHook(() =>
       useTransactionHistory({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1363,6 +1365,7 @@ describe("useTransactionHistory — filter + catch + normalizeHex", () => {
 
     // Caller passes "abc123" without a 0x prefix — normalizeHex should
     // canonicalize to "0xabc123" on both sides so the record matches.
+    useMidenStore.getState().setClient(mockClient as any);
     const { result } = renderHook(() =>
       useTransactionHistory({ ids: ["abc123"] })
     );
@@ -1386,6 +1389,7 @@ describe("useTransactionHistory — filter + catch + normalizeHex", () => {
     });
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
 
+    useMidenStore.getState().setClient(mockClient as any);
     const { result } = renderHook(() =>
       useTransactionHistory({ ids: ["0xpending"] })
     );
@@ -1408,6 +1412,7 @@ describe("useTransactionHistory — filter + catch + normalizeHex", () => {
     });
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
 
+    useMidenStore.getState().setClient(mockClient as any);
     const { result } = renderHook(() =>
       useTransactionHistory({ ids: ["0xnone"] })
     );
@@ -1425,6 +1430,7 @@ describe("useTransactionHistory — filter + catch + normalizeHex", () => {
     });
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
 
+    useMidenStore.getState().setClient(mockClient as any);
     renderHook(() => useTransactionHistory());
     // Initial fetch on mount.
     await waitFor(() => {
@@ -1446,6 +1452,7 @@ describe("useTransactionHistory — filter + catch + normalizeHex", () => {
     });
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
 
+    useMidenStore.getState().setClient(mockClient as any);
     const { result } = renderHook(() => useTransactionHistory());
     await waitFor(() => {
       expect(result.current.error?.message).toBe("history boom");
@@ -1458,6 +1465,7 @@ describe("useTransactionHistory — filter + catch + normalizeHex", () => {
     });
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
 
+    useMidenStore.getState().setClient(mockClient as any);
     const { result } = renderHook(() => useTransactionHistory());
     await waitFor(() => {
       expect(result.current.error).toBeInstanceOf(Error);
