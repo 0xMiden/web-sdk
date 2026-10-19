@@ -2420,16 +2420,16 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.17.2"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-typed-settings-remove-defaults#eb76f24dfb72ce590d03dedff6e85ba467e78d12"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-typed-settings-remove-defaults#fb488ff7dd3f623c7019833c8b945161b722bc04"
 dependencies = [
  "anyhow",
  "async-trait",
- "chrono",
  "futures",
  "getrandom 0.3.4",
  "gloo-timers",
  "miden-agglayer",
  "miden-assembly-syntax 0.35.0",
+ "miden-client-core",
  "miden-node-proto-build",
  "miden-objects",
  "miden-processor",
@@ -2458,11 +2458,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "miden-client-core"
+version = "0.17.2"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-typed-settings-remove-defaults#fb488ff7dd3f623c7019833c8b945161b722bc04"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "miden-objects",
+ "miden-protocol",
+ "thiserror",
+]
+
+[[package]]
 name = "miden-client-proto"
 version = "0.17.2"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-typed-settings-remove-defaults#eb76f24dfb72ce590d03dedff6e85ba467e78d12"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-typed-settings-remove-defaults#fb488ff7dd3f623c7019833c8b945161b722bc04"
 dependencies = [
- "miden-client",
+ "miden-client-core",
  "miden-objects",
  "miden-protocol",
  "prost",
@@ -2474,14 +2486,14 @@ dependencies = [
 [[package]]
 name = "miden-client-sqlite-store"
 version = "0.17.2"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-typed-settings-remove-defaults#eb76f24dfb72ce590d03dedff6e85ba467e78d12"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-typed-settings-remove-defaults#fb488ff7dd3f623c7019833c8b945161b722bc04"
 dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
  "deadpool",
  "deadpool-sync",
- "miden-client",
+ "miden-client-core",
  "miden-client-proto",
  "miden-protocol",
  "rusqlite",
@@ -2802,6 +2814,7 @@ dependencies = [
  "base64",
  "chrono",
  "miden-client",
+ "miden-client-core",
  "miden-client-proto",
  "miette",
  "serde",

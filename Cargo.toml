@@ -50,6 +50,7 @@ js-export-macro = { path = "crates/js-export-macro", version = "0.18.0-rc.0" }
 # args are committed through. A requirement that drifts from `miden-client`'s would resolve a second
 # copy of the protocol types, so bump the three together.
 miden-client              = { branch = "jmunoz-typed-settings-remove-defaults", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
+miden-client-core         = { branch = "jmunoz-typed-settings-remove-defaults", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
 miden-client-proto        = { branch = "jmunoz-typed-settings-remove-defaults", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
 miden-client-sqlite-store = { branch = "jmunoz-typed-settings-remove-defaults", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
 miden-protocol            = { default-features = false, version = "=0.17.1" }

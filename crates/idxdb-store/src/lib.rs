@@ -39,18 +39,11 @@ use miden_client::pswap::{PswapLineageFilter, PswapLineageRecord};
 use miden_client::rpc::RpcLimits;
 use miden_client::rpc::encryption::TransactionEncryptionKey;
 use miden_client::store::{
-    AccountRecord,
     AccountStatus,
-    AccountStorageFilter,
     BlockRelevance,
-    ClientAccountType,
-    InputNoteCursor,
     InputNoteRecord,
     NoteFilter,
     OutputNoteRecord,
-    PartialBlockchainFilter,
-    SettingMutation,
-    SettingScope,
     Store,
     StoreError,
     TransactionFilter,
@@ -59,6 +52,15 @@ use miden_client::sync::{NoteTagRecord, StateSyncUpdate};
 use miden_client::transaction::{TransactionRecord, TransactionStoreUpdate};
 use miden_client::utils::RwLock;
 use miden_client::{Felt, Word};
+use miden_client_core::store::{
+    AccountRecord,
+    AccountStorageFilter,
+    ClientAccountType,
+    InputNoteCursor,
+    PartialBlockchainFilter,
+    SettingMutation,
+    SettingScope,
+};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use wasm_bindgen::prelude::*;

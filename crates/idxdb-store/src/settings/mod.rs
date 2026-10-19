@@ -5,10 +5,11 @@ use alloc::vec::Vec;
 use miden_client::Word;
 use miden_client::note::NoteTag;
 use miden_client::note_transport::{NOTE_TRANSPORT_CURSORS_KEY, NoteTransportCursor};
-use miden_client::protocol_config::{ProtocolConfig, protocol_config_setting_key};
+use miden_client::protocol_config::ProtocolConfig;
 use miden_client::rpc::RpcLimits;
 use miden_client::rpc::encryption::TransactionEncryptionKey;
-use miden_client::store::{SettingMutation, SettingScope, StoreError};
+use miden_client::store::StoreError;
+use miden_client_core::store::{SettingMutation, SettingScope, protocol_config_setting_key};
 use miden_client_proto::{ProtobufValue, decode_unchecked, encode};
 
 mod js_bindings;

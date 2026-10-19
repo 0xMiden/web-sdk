@@ -6,7 +6,8 @@ use miden_client::Word;
 use miden_client::block::BlockHeader;
 use miden_client::crypto::InOrderIndex;
 use miden_client::note::BlockNumber;
-use miden_client::store::{BlockRelevance, PartialBlockchainFilter, StoreError};
+use miden_client::store::{BlockRelevance, StoreError};
+use miden_client_core::store::PartialBlockchainFilter;
 use miden_client_proto::decode_unchecked;
 
 use super::IdxdbStore;

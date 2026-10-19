@@ -11,7 +11,8 @@ use alloc::vec::Vec;
 use miden_client::Felt;
 use miden_client::note::NoteId;
 use miden_client::pswap::{PswapLineageFilter, PswapLineageRecord, PswapLineageState};
-use miden_client::store::{SettingMutation, SettingScope, StoreError};
+use miden_client::store::StoreError;
+use miden_client_core::store::{SettingMutation, SettingScope};
 use miden_client_proto::encode;
 
 use crate::IdxdbStore;

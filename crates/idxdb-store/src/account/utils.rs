@@ -15,9 +15,10 @@ use miden_client::account::{
     StorageSlotType,
 };
 use miden_client::asset::AssetVault;
-use miden_client::store::{AccountStatus, ClientAccountType, StoreError};
+use miden_client::store::{AccountStatus, StoreError};
 use miden_client::utils::{Deserializable, Serializable};
 use miden_client::{Felt, Word};
+use miden_client_core::store::ClientAccountType;
 use miden_client_proto::encode;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
