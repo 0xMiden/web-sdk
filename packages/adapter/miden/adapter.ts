@@ -98,9 +98,6 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
   private _address: string | null;
   private _publicKey: Uint8Array | null;
   private _privateDataPermission: string;
-  // Advanced by every disconnect(): a handshake that settles after one belongs
-  // to a session the consumer has already ended, so it publishes nothing.
-  private _session = 0;
   // Providers update these fields before emitting accountChange. Reuse the
   // adapter's connect/disconnect events so every existing consumer refreshes.
   private readonly _handleAccountChange = () => {
@@ -421,7 +418,6 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
         throw new WalletNotReadyError();
 
       this._connecting = true;
-      const session = this._session;
 
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const wallet = window.midenWallet! || window.miden!;
@@ -432,14 +428,12 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
           network,
           allowedPrivateData
         );
-        if (session !== this._session) return;
         if (!wallet.address) {
           throw new WalletConnectionError();
         }
         this._address = wallet.address;
         this._publicKey = wallet.publicKey!;
       } catch (error: any) {
-        if (session !== this._session) return;
         throw new WalletConnectionError(error?.message, error);
       }
 
@@ -458,7 +452,6 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
   }
 
   async disconnect(): Promise<void> {
-    this._session += 1;
     const wallet = this._wallet;
     if (wallet) {
       wallet.off("accountChange", this._handleAccountChange);
