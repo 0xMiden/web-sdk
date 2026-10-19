@@ -8,7 +8,6 @@ test.describe("fungible asset vault entries", () => {
     const result = await run(async ({ client, sdk }) => {
       const faucet = await client.newFaucet(
         sdk.AccountStorageMode.tryFromStr("public"),
-        false,
         "DAG Token",
         "DAG",
         8,

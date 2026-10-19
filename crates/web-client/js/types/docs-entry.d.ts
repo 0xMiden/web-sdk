@@ -31,6 +31,7 @@ export {
   InputNoteRecord,
   NetworkAccountTarget,
   NonFungibleAsset,
+  NonFungibleFaucetComponent,
   Note,
   NoteAssets,
   NoteConsumability,

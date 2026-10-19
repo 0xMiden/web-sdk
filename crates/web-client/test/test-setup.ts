@@ -452,7 +452,6 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           );
           const faucet = await c.newFaucet(
             window.AccountStorageMode.private(),
-            false,
             "DAG",
             "DAG",
             8,

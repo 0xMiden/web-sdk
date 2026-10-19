@@ -158,6 +158,7 @@ export type FaucetType = (typeof FaucetType)[keyof typeof FaucetType];
  */
 export declare const FaucetType: {
   readonly FungibleFaucet: "FungibleFaucet";
+  readonly NonFungibleFaucet: "NonFungibleFaucet";
 };
 
 // ════════════════════════════════════════════════════════════════
@@ -310,13 +311,15 @@ export type NoteInput = string | NoteId | Note | InputNoteRecord;
 // ════════════════════════════════════════════════════════════════
 
 /**
- * Create a wallet, faucet, or contract. A faucet sets `type:
- * FaucetType.FungibleFaucet`, a contract passes `components`, and a wallet is
- * the default (neither). Visibility comes from `storage`.
+ * Create a wallet, faucet, or contract. A faucet sets `type` to
+ * `FaucetType.FungibleFaucet` or `FaucetType.NonFungibleFaucet`, a contract
+ * passes `components`, and a wallet is the default (neither). Visibility
+ * comes from `storage`.
  */
 export type CreateAccountOptions =
   | WalletCreateOptions
-  | FaucetCreateOptions
+  | FungibleFaucetCreateOptions
+  | NonFungibleFaucetCreateOptions
   | ContractCreateOptions;
 
 export interface WalletCreateOptions {
@@ -325,15 +328,40 @@ export interface WalletCreateOptions {
   seed?: string | Uint8Array;
 }
 
-export interface FaucetCreateOptions {
+/** Options for either a fungible or a non-fungible faucet. */
+export type FaucetCreateOptions =
+  | FungibleFaucetCreateOptions
+  | NonFungibleFaucetCreateOptions;
+
+/** Create a fungible faucet with a token symbol, decimals and maximum supply. */
+export interface FungibleFaucetCreateOptions {
   /** Use `FaucetType.FungibleFaucet`. */
-  type: FaucetType;
+  type: "FungibleFaucet";
   /** Human-readable token name. Defaults to `symbol` when omitted. */
   name?: string;
+  /** Token symbol. Required for both faucet kinds. */
   symbol: string;
+  /** Number of decimal places. Required for fungible faucets only. */
   decimals: number;
+  /** Maximum token supply. Required for fungible faucets only. */
   maxSupply: number | bigint;
+  /** Storage mode. Defaults to "public". */
   storage?: StorageMode;
+  /** Authentication scheme. Defaults to Falcon. */
+  auth?: AuthSchemeType;
+}
+
+/** Create a non-fungible faucet. `decimals` and `maxSupply` are not accepted. */
+export interface NonFungibleFaucetCreateOptions {
+  /** Use `FaucetType.NonFungibleFaucet`. */
+  type: "NonFungibleFaucet";
+  /** Human-readable collection name. Defaults to `symbol` when omitted. */
+  name?: string;
+  /** Collection symbol. Required for both faucet kinds. */
+  symbol: string;
+  /** Storage mode. Defaults to "public". */
+  storage?: StorageMode;
+  /** Authentication scheme. Defaults to Falcon. */
   auth?: AuthSchemeType;
 }
 
@@ -1049,17 +1077,21 @@ export interface AccountsResource {
    * Create a new wallet, faucet, or contract account. Defaults to a wallet
    * if no options are provided.
    *
-   * The legacy selectors `0`, `1` and `"NonFungibleFaucet"` are still read as
-   * faucet types (non-fungible faucets are rejected). `0` and `1` are also
-   * `AccountType.Private` / `AccountType.Public`, so never pass a visibility
-   * value as `type`; use `storage`.
+   * `FaucetType.FungibleFaucet` requires `symbol`, `decimals` and `maxSupply`.
+   * `FaucetType.NonFungibleFaucet` requires only `symbol` and rejects `decimals`
+   * and `maxSupply`. Both accept an optional `name`, defaulting to `symbol`.
+   *
+   * The legacy selectors `0` and `1` select fungible and non-fungible faucets
+   * respectively. They are also `AccountType.Private` / `AccountType.Public`,
+   * so never pass a visibility value as `type`; use `storage`.
    *
    * @param options - Account creation options. A faucet sets `type`, a
    * contract passes `components`, and a wallet is the default.
    * @throws TypeError naming `FaucetType`, before creating anything, for an
    * unrecognised `type`, for faucet fields (`name`, `symbol`, `decimals`,
-   * `maxSupply`) without a faucet type, for `components` on a faucet, and for a
-   * faucet missing `symbol`, `decimals` or `maxSupply`.
+   * `maxSupply`) without a faucet type, for `components` on a faucet, for
+   * missing required faucet fields, or for `decimals` or `maxSupply` on a
+   * non-fungible faucet.
    */
   create(options?: CreateAccountOptions): Promise<Account>;
   /**

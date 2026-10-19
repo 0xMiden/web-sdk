@@ -235,6 +235,9 @@ export const NetworkNoteStatusInfo = /* @__PURE__ */ _reexport(
 );
 export const NetworkType = /* @__PURE__ */ _reexport("NetworkType");
 export const NonFungibleAsset = /* @__PURE__ */ _reexport("NonFungibleAsset");
+export const NonFungibleFaucetComponent = /* @__PURE__ */ _reexport(
+  "NonFungibleFaucetComponent"
+);
 export const Note = /* @__PURE__ */ _reexport("Note");
 export const NoteAndArgs = /* @__PURE__ */ _reexport("NoteAndArgs");
 export const NoteAndArgsArray = /* @__PURE__ */ _reexport("NoteAndArgsArray");
