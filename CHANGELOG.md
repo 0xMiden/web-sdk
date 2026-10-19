@@ -4,7 +4,7 @@
 
 ### Fixes
 
-* [FIX][web] `MidenWalletAdapter` now follows the wallet when the user switches accounts: `address` and `publicKey` update for another granted account, while a revoked grant or an account without permission clears the connection. React adapter consumers receive the same update instead of continuing to send requests from the previous address. A `disconnect()` made while `connect()` still waits for the wallet now ends that attempt: it neither connects nor reports an error ([#472](https://github.com/0xMiden/web-sdk/pull/472)).
+* [FIX][web] `MidenWalletAdapter` now follows the wallet when the user switches accounts: `address` and `publicKey` update for another granted account, while a revoked grant or an account without permission clears the connection. React adapter consumers receive the same update instead of continuing to send requests from the previous address. ([#472](https://github.com/0xMiden/web-sdk/pull/472)).
 
 ## 0.17.4 (2026-10-18)
 
