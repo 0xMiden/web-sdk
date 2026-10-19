@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
+  EventEmitter,
   WalletNotConnectedError,
   WalletTransactionError,
   WalletReadyState,
@@ -20,7 +21,7 @@ import { Note } from "@miden-sdk/miden-sdk";
 import { MidenWalletAdapter } from "../adapter";
 
 function createMockWallet(overrides: Record<string, any> = {}) {
-  return {
+  return Object.assign(new EventEmitter(), {
     address: "0xmockaddress",
     publicKey: new Uint8Array([1, 2, 3]),
     connect: vi.fn(),
@@ -56,7 +57,7 @@ function createMockWallet(overrides: Record<string, any> = {}) {
     createAccount: vi.fn().mockResolvedValue({ accountId: "account-123" }),
     waitForTransaction: vi.fn(),
     ...overrides,
-  };
+  });
 }
 
 // Helper to set up a connected adapter by injecting mock wallet via window
@@ -515,6 +516,62 @@ describe("MidenWalletAdapter", () => {
       expect(adapter.address).toBe("0xmockaddress");
     });
 
+    it("follows the wallet account and public key when accountChange fires", async () => {
+      const { adapter, mockWallet } = await createConnectedAdapter();
+      const connectHandler = vi.fn();
+      const disconnectHandler = vi.fn();
+      adapter.on("connect", connectHandler);
+      adapter.on("disconnect", disconnectHandler);
+
+      mockWallet.address = "0xsecondaddress";
+      mockWallet.publicKey = new Uint8Array([4, 5, 6]);
+      mockWallet.emit("accountChange", { address: "0xsecondaddress" });
+
+      expect(adapter.address).toBe("0xsecondaddress");
+      expect(adapter.publicKey).toEqual(new Uint8Array([4, 5, 6]));
+      expect(connectHandler).toHaveBeenCalledOnce();
+      expect(connectHandler).toHaveBeenCalledWith("0xsecondaddress");
+      expect(disconnectHandler).not.toHaveBeenCalled();
+    });
+
+    it("clears the adapter when accountChange reports a revoked session", async () => {
+      const { adapter, mockWallet } = await createConnectedAdapter();
+      const connectHandler = vi.fn();
+      const disconnectHandler = vi.fn();
+      adapter.on("connect", connectHandler);
+      adapter.on("disconnect", disconnectHandler);
+
+      Object.assign(mockWallet, { address: undefined, publicKey: undefined });
+      mockWallet.emit("accountChange", null);
+
+      expect(adapter.address).toBeNull();
+      expect(adapter.publicKey).toBeNull();
+      expect(adapter.connected).toBe(false);
+      expect(disconnectHandler).toHaveBeenCalledOnce();
+
+      mockWallet.address = "0xignored";
+      mockWallet.emit("accountChange", { address: "0xignored" });
+      expect(adapter.address).toBeNull();
+      expect(connectHandler).not.toHaveBeenCalled();
+    });
+
+    it("keeps one accountChange subscription across reconnects", async () => {
+      const { adapter, mockWallet } = await createConnectedAdapter();
+
+      await adapter.connect(
+        PrivateDataPermission.UponRequest,
+        WalletAdapterNetwork.Testnet
+      );
+
+      expect(mockWallet.listenerCount("accountChange")).toBe(1);
+
+      const connectHandler = vi.fn();
+      adapter.on("connect", connectHandler);
+      mockWallet.address = "0xsecondaddress";
+      mockWallet.emit("accountChange", { address: "0xsecondaddress" });
+      expect(connectHandler).toHaveBeenCalledOnce();
+    });
+
     it("ignores a concurrent connect() while one is still in flight", async () => {
       let releaseFirstConnect: () => void = () => {};
       const mockWallet = createMockWallet({
@@ -550,7 +607,7 @@ describe("MidenWalletAdapter", () => {
 
   describe("disconnect", () => {
     it("clears address, publicKey, and emits disconnect", async () => {
-      const { adapter } = await createConnectedAdapter();
+      const { adapter, mockWallet } = await createConnectedAdapter();
 
       const disconnectHandler = vi.fn();
       adapter.on("disconnect", disconnectHandler);
@@ -561,6 +618,11 @@ describe("MidenWalletAdapter", () => {
       expect(adapter.publicKey).toBeNull();
       expect(adapter.connected).toBe(false);
       expect(disconnectHandler).toHaveBeenCalled();
+      expect(mockWallet.listenerCount("accountChange")).toBe(0);
+
+      mockWallet.address = "0xignored";
+      mockWallet.emit("accountChange", { address: "0xignored" });
+      expect(adapter.address).toBeNull();
     });
 
     it("emits error if wallet.disconnect fails", async () => {
