@@ -620,8 +620,12 @@ const setupInPage = async ({ threads: wantThreads }) => {
     AuthScheme.AuthEcdsaK256Keccak,
     WALLET_SEED
   );
+  // This script also drives the base build, whose newFaucet still takes a
+  // nonFungible flag second; a build that dropped it declares six parameters.
+  const fungibleFlag = client.newFaucet.length > 6 ? [false] : [];
   const faucet = await client.newFaucet(
     sdk.AccountStorageMode.private(),
+    ...fungibleFlag,
     "BNCH",
     "BNCH",
     8,
