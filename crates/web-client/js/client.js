@@ -89,6 +89,11 @@ export class MidenClient {
    * inline, racing wasm-bindgen's borrow check. The wallet pattern
    * (own outer mutex around `_withInnerWebClient`) satisfies this.
    *
+   * A call inside `fn` that takes the store lock (see
+   * `WebClient._withStoreLock`) still waits for other clients on the same
+   * store, and runs its own work rather than joining a sync this client
+   * queued behind `fn`.
+   *
    * Stability: marked `@internal`. The shape of the proxied client is
    * intentionally not part of the documented public API and may change
    * between SDK versions. If you depend on this method, pin the SDK
@@ -386,13 +391,8 @@ export class MidenClient {
    * intentional, so a caller can drain and proceed without being blocked
    * indefinitely by concurrent workload.
    *
-   * Caveat for `syncState`: `syncStateWithTimeout` awaits the sync lock
-   * (`acquireSyncLock`, which uses Web Locks) BEFORE putting its WASM
-   * call onto the chain, so a `syncState` that is queued on the sync
-   * lock — but has not yet begun its WASM phase — is not visible to
-   * `waitForIdle` and will not be awaited. Other methods (`newWallet`,
-   * `executeTransaction`, etc.) route through the chain synchronously
-   * on call and are always observed.
+   * A call that takes the store lock is on the chain from the moment it is
+   * made, like every other call; see `WebClient._withStoreLock`.
    *
    * Safe to call at any time; returns immediately if nothing was in
    * flight.
@@ -518,13 +518,15 @@ export class MidenClient {
    * by the summary. A co-signer holding the proposer's serialized request needs
    * neither - it carries the auth argument and its advice-map preimage.
    *
-   * For a multisig the builder also declares the bound block through
-   * `withBlockNumbers`, so the request executes at the current chain tip with
-   * no anchor. The summary stays bound to the bound block while foreign
-   * accounts, the fee faucet among them, load at the tip, so the request still
-   * executes after the node has pruned the bound block's account state (about
-   * 50 blocks), and `transactions.preview` without an anchor reproduces the
-   * proposal's summary at the tip.
+   * For a multisig the request executes at the current chain tip with no
+   * anchor: miden-client tracks the bound block when it executes the request.
+   * The summary stays bound to the bound block while foreign accounts, the fee
+   * faucet among them, load at the tip, so the request still executes after
+   * the node has pruned the bound block's account state (about 50 blocks), and
+   * `transactions.preview` without an anchor reproduces the proposal's summary
+   * at the tip. The builder also declares the bound block through
+   * `withBlockNumbers`, which only `transactions.captureAnchor` and the height
+   * check below read.
    * Each party's client must first have synced to at least that bound block,
    * the largest of `request.blockNumbers()` and by default the proposer's sync
    * height when it built the request; below it execution fails with
@@ -549,6 +551,53 @@ export class MidenClient {
     this.assertNotTerminated();
     const wasm = await this.#getWasm();
     return await this.#inner.feeAwareTransactionRequestBuilder(
+      resolveAccountRef(account, wasm),
+      options?.approvalExpirationDelta,
+      options?.feeConversionSalt,
+      options?.boundBlockNum
+    );
+  }
+
+  /**
+   * Returns a copy of a finished `TransactionRequest` that carries the auth
+   * args the executing account needs.
+   *
+   * Use this when another party built the request, such as a dApp that gives a
+   * finished request to a wallet, and the executing account is a multisig. For
+   * a multisig this sets the same auth args that
+   * `feeAwareTransactionRequestBuilder` declares, through
+   * `TransactionRequest.withAuthArgs`: the auth argument and its advice-map
+   * preimage. The auth args replace a declared fee conversion salt.
+   * Every other field of the request stays the same. For every other account
+   * the request comes back unchanged, auth argument and all.
+   *
+   * The copy does not declare the bound block among its block numbers.
+   * miden-client tracks the bound block when it executes the request, so it
+   * executes at the tip with no anchor, but a co-signer cannot read the bound
+   * block from `request.blockNumbers()` to check its sync height: sync before
+   * previewing the copy.
+   *
+   * @param {TransactionRequest} request - The finished request. It is not
+   *   consumed and not changed.
+   * @param {AccountRef} account - The executing account.
+   * @param {object} [options] - Multisig-only overrides, the same as for
+   *   `feeAwareTransactionRequestBuilder`.
+   * @param {number} [options.approvalExpirationDelta] - Expires the approvers'
+   *   signatures this many blocks after the block the summary binds.
+   * @param {Word} [options.feeConversionSalt] - The salt the summary binds.
+   *   Consumed by the call. When omitted, the salt that the request declares,
+   *   or a fresh one.
+   * @param {number} [options.boundBlockNum] - The block the summary binds.
+   * @returns {Promise<TransactionRequest>} The request with the auth inputs.
+   * @throws An error with `code` `"AUTH_ALREADY_SET"` if the account is a
+   *   multisig and the request already has an auth argument (on Node.js the
+   *   code prefixes the message instead).
+   */
+  async withFeeAwareAuth(request, account, options) {
+    this.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    return await this.#inner.withFeeAwareAuth(
+      request,
       resolveAccountRef(account, wasm),
       options?.approvalExpirationDelta,
       options?.feeConversionSalt,

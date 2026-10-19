@@ -45,7 +45,8 @@ export interface UsePreviewResult {
  * the fee conversion salt as its summary's replay guard, so miden-client will
  * not invent one and the request rejects with `FeeConversionInfoRequired`.
  * Build those from `client.feeAwareTransactionRequestBuilder(account)` rather
- * than `new TransactionRequestBuilder()`.
+ * than `new TransactionRequestBuilder()`, or add the auth args to a finished
+ * request you did not build with `client.withFeeAwareAuth(request, account)`.
  *
  * Preview the request you will submit, not a rebuild of it. That salt is drawn
  * fresh on every build, and the multisig auth procedure uses the auth argument
@@ -70,10 +71,14 @@ export interface UsePreviewResult {
  * different summary and the comparison fails.
  *
  * A multisig request built by `feeAwareTransactionRequestBuilder` takes no
- * anchor. Its summary binds the block its auth args name, which the request
- * declares, so it reproduces at the local tip once this client has synced to
- * at least that block (the largest of `request.blockNumbers()`); below it the
- * preview fails with "requested block N is after transaction reference block M".
+ * anchor. Its summary binds the block its auth args name, which miden-client
+ * tracks when it executes the request, so it reproduces at the local tip once
+ * this client has synced to at least that block (the largest of
+ * `request.blockNumbers()`); below it the preview fails with "requested block N
+ * is after transaction reference block M". A request from `withFeeAwareAuth`
+ * takes no anchor either, but does not declare that block, so sync before
+ * previewing or executing it. An anchor captured for that copy does not track
+ * the bound block.
  * This hook does not sync first. Call `sync()` from `useMiden()` before
  * previewing a received proposal, then confirm `client.getSyncHeight()` is at
  * least that block: the provider's sync returns early while another sync runs.

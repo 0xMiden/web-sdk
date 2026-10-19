@@ -192,7 +192,11 @@ impl TransactionRequestBuilder {
     #[js_export(js_name = "withAuthArg")]
     pub fn with_auth_arg(&mut self, auth_arg: &Word) -> Self {
         let native_word: NativeWord = auth_arg.into();
-        self.builder = self.builder.clone().auth_arg(native_word);
+        // Deprecated in 0.17.4 for auth_args, yet still the only raw-word setter, which a
+        // component that reads the auth arg directly needs.
+        #[allow(deprecated)]
+        let builder = self.builder.clone().auth_arg(native_word);
+        self.builder = builder;
         self.clone()
     }
 

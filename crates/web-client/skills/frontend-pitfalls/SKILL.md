@@ -100,13 +100,42 @@ which one you are relying on tells you what a second browser tab can still do to
    promise chain (`_serializeWasmCall`), including methods it does not wrap explicitly.
    The raw-bound `SYNC_METHODS` are the only exceptions. This is what stops
    "recursive use of an object detected".
-2. **Web Locks.** Exactly three entry points run under `withSyncLock(dbId, methodId, fn)`:
-   `syncState`, `syncChain` and `syncNoteTransport` - six call sites, since `MockWebClient`
-   extends `WebClient`. It coalesces concurrent calls of the *same* method into one shared
-   promise and serializes *different* methods on the same database, **across tabs**. With
-   no Web Locks API it degrades to an in-process per-database chain. `fetchPrivateNotes`
-   is **not** among them: it has no JS wrapper, so it gets layer 1 only - no Web Lock, no
-   cross-tab coalescing.
+2. **Web Locks.** Every call that writes the chain MMR or its tracked block headers holds
+   one per-database Web Lock, **across tabs** and clients: the syncs (`syncState`,
+   `syncChain`, `syncNoteTransport`), `importNoteFile` (`notes.import`),
+   `fetchPrivateNotes` (`notes.fetchPrivate`) and `syncBeforeAccountCreation`, the sync
+   of a store still at genesis that account creation (`newWallet`, `newFaucet`,
+   `newAccount`, `newAccountWithSecretKey`) runs first. `syncBeforeAccountCreation` and
+   account creation request and wait for the lock only on a store still at genesis, the
+   only state in which that sync writes; past genesis they neither sync nor request it.
+   A creation holds the lock only for that sync and releases it before it generates a
+   key, stores the account or calls an external keystore's `insertKey`, so no callback
+   of yours runs under the lock. Two clients interleaving those writes leave a store
+   that fails every later sync and import with
+   `inconsistent partial mmr: missing sibling for tracked leaf`.
+   The lock is per store opened: a client that omits `storeName` opens
+   `MidenClientDB_<network id>` for its node URL and takes the same lock as one that names
+   that store, and clients on different default stores do not block each other. Such a
+   call takes its place on the layer 1 chain when it is made and requests the lock
+   when its turn comes (chain, then lock), so call order, `waitForIdle()` and
+   `terminate()` treat it like any other call. While it waits for another client's lock,
+   later calls on its own client wait behind it. A call of a sync joins its client's
+   pending run of the *same* sync only while no other call has been queued on that client
+   since the run; after one has, it starts a run of its own behind that call, so it never
+   settles ahead of a call made before it. Every other call, the same sync on another
+   client included, queues for the lock in turn. The exported `withSyncLock` takes this
+   same lock and is not reentrant: its callback must not wait, directly or through any
+   lock or queue, for anything that waits for a call on a client of the same store. That
+   is any call on such a client, not only the calls above: one of them already queued on
+   that client, an auto-sync for example, holds the client's chain while it waits for the
+   lock the callback holds, and every later call on that client waits behind it. It is
+   also any lock whose holder is waiting on such a call, such as `@miden-sdk/react`'s
+   `runExclusive`, which `MidenProvider` holds across its init sync, or an application
+   mutex around `_withInnerWebClient`. Every client on the store then stops. With no Web
+   Locks API it degrades to an in-process per-database chain. Two writes take no lock:
+   the free `importStore` function, which replaces a whole store, so run it only while no
+   client uses that store; and the genesis block header `createClient` stores in a store
+   that has none.
 3. **Cross-tab state change.** `client.onStateChanged(cb)` fires when another tab mutates
    the store, where `BroadcastChannel` exists. `MidenProvider` subscribes and refreshes the
    Zustand store so the UI re-renders; the client has already synced its own Rust state by
@@ -371,7 +400,7 @@ Related: `notes.fetchPrivate({ mode: "all" })` is gone. `fetchPrivate()` takes n
 
 A foreign account's state and witness are fetched against the transaction's own reference block, and the vault entries and storage-map keys the foreign code reads are resolved during execution as per-asset and per-key witnesses. Nothing is prefetched: `foreignAccountInputs` and `ForeignAccount.prefetched` were removed in 0.17 along with the upstream types behind them.
 
-**The reference block must be one the node still serves account state for.** Nodes keep a bounded window of account history (50 blocks at the time of writing), so a transaction pinned to an older block - an anchor captured minutes earlier, say - fails naming the account and the block, and there is no longer a way to carry the state along with the request. Capture the `ChainAnchor` close to execution. For a multisig proposal, do not anchor at all: execute at the tip with the bound block in `withBlockNumbers` (chain-anchored-execution R0).
+**The reference block must be one the node still serves account state for.** Nodes keep a bounded window of account history (50 blocks at the time of writing), so a transaction pinned to an older block - an anchor captured minutes earlier, say - fails naming the account and the block, and there is no longer a way to carry the state along with the request. Capture the `ChainAnchor` close to execution. For a multisig proposal, do not anchor at all: execute at the tip, where miden-client tracks the bound block of the auth args (chain-anchored-execution R0).
 
 ```tsx
 const foreign = ForeignAccount.public(id, storageRequirements);

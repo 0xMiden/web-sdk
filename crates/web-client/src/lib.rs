@@ -185,6 +185,39 @@ pub fn sequential_sum_bench(n: u64) -> u64 {
 #[cfg(feature = "browser")]
 const BASE_STORE_NAME: &str = "MidenClientDB";
 
+/// The node endpoint a browser client connects to: `node_url`, else testnet.
+#[cfg(feature = "browser")]
+fn node_endpoint(node_url: Option<String>) -> Result<Endpoint, JsValue> {
+    node_url.map_or(Ok(Endpoint::testnet()), |url| {
+        Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
+    })
+}
+
+/// The name of the store a browser client opens: `store_name`, else
+/// `MidenClientDB_{network_id}` of the endpoint.
+#[cfg(feature = "browser")]
+fn store_name_for(endpoint: &Endpoint, store_name: Option<String>) -> String {
+    store_name.unwrap_or_else(|| format!("{}_{}", BASE_STORE_NAME, endpoint.to_network_id()))
+}
+
+/// Returns the name of the `IndexedDB` store `createClient` and `createClientWithExternalKeystore`
+/// open for these arguments: `store_name` when given, else `MidenClientDB_{network_id}`, where
+/// `network_id` is derived from `node_url` (testnet when `None`).
+///
+/// The JS client keys its store lock by this name, so every client on one store takes one lock
+/// whichever way it named the store.
+///
+/// # Errors
+/// Fails with "Invalid node URL" when `node_url` is not a valid endpoint, as client creation does.
+#[cfg(feature = "browser")]
+#[wasm_bindgen(js_name = "resolveStoreName")]
+pub fn resolve_store_name(
+    node_url: Option<String>,
+    store_name: Option<String>,
+) -> Result<String, JsValue> {
+    Ok(store_name_for(&node_endpoint(node_url)?, store_name))
+}
+
 /// Initializes the `tracing` subscriber that routes Rust log output to the
 /// browser console via `console.log` / `console.warn` / `console.error`.
 ///
@@ -435,9 +468,7 @@ impl WebClient {
         note_transport_max_retries: Option<u32>,
         note_transport_retry_interval_ms: Option<u32>,
     ) -> Result<JsValue, JsValue> {
-        let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
-            Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
-        })?;
+        let endpoint = node_endpoint(node_url)?;
 
         let web_rpc_client =
             Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
@@ -450,8 +481,7 @@ impl WebClient {
             )
         });
 
-        let store_name =
-            store_name.unwrap_or(format!("{}_{}", BASE_STORE_NAME, endpoint.to_network_id()));
+        let store_name = store_name_for(&endpoint, store_name);
 
         let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
@@ -512,9 +542,7 @@ impl WebClient {
         note_transport_max_retries: Option<u32>,
         note_transport_retry_interval_ms: Option<u32>,
     ) -> Result<JsValue, JsValue> {
-        let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
-            Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
-        })?;
+        let endpoint = node_endpoint(node_url)?;
 
         let web_rpc_client =
             Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
@@ -527,8 +555,7 @@ impl WebClient {
             )
         });
 
-        let store_name =
-            store_name.unwrap_or(format!("{}_{}", BASE_STORE_NAME, endpoint.to_network_id()));
+        let store_name = store_name_for(&endpoint, store_name);
 
         let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(

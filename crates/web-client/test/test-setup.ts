@@ -1165,8 +1165,8 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           }
         },
 
-        createMidenMockClient: async () =>
-          await window.MidenClient.createMock(),
+        createMidenMockClient: async (options) =>
+          await window.MidenClient.createMock(options),
 
         getRpcUrl: () => window.rpcUrl,
       };
@@ -1294,10 +1294,10 @@ async function createNodeRunHelpers(client: any, sdk: any): Promise<any> {
         serializedNoteTransport
       ),
     createIntegrationClient: () => h.createIntegrationClient(),
-    createMidenMockClient: async () => {
+    createMidenMockClient: async (options?: any) => {
       const MidenClient = await h.createMidenClient(sdk);
       if (!MidenClient) throw new Error("MidenClient unavailable");
-      return MidenClient.createMock();
+      return MidenClient.createMock(options);
     },
     getRpcUrl: () => getRpcUrl(),
   };

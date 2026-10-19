@@ -480,6 +480,16 @@ rather than producing an error. Never call either on a builder this method
 returned for a multisig - it already carries the three-word auth args, and
 either setter discards them. Pass `feeConversionSalt` in the options instead, building a fresh `Word` per call - the parameter is moved across the WASM boundary, so a reused handle arrives as "no salt given" and one is drawn.
 
+A request you did not build, such as a finished one a dApp hands to a wallet,
+cannot go back through the builder. Add the multisig auth args to it with
+`await client.withFeeAwareAuth(request, accountId)`: it returns a copy with the
+auth args the builder would set, and returns any other account's request
+unchanged. For a multisig it refuses a request that already has an auth
+argument (`AUTH_ALREADY_SET`). To set auth args you build yourself, such as a
+custom auth procedure's, on a finished request, use
+`request.withAuthArgs(preimage)`; in the browser build it consumes the `Felt`s
+it is given.
+
 ### Prevent Race Conditions
 ```tsx
 const client = useMidenClient();   // throws if the provider is not ready
@@ -747,15 +757,19 @@ party, later) executes it, every party has to derive the same summary. How
 depends on what the summary binds.
 
 **Multisig proposals (0.17+): no anchor.** A multisig summary binds a bound
-block named in its auth args. Build the request with
+block named in its auth args, and miden-client tracks that block when it
+executes the request. Build the request with
 `client.feeAwareTransactionRequestBuilder(accountId)`, which binds the current
-sync height and declares it with `withBlockNumbers`, and ship the request
+sync height and also declares it with `withBlockNumbers`, and ship the request
 bytes. Every party previews and executes at its own tip once its client has
 synced to at least the bound block (the largest of `request.blockNumbers()`);
 below it the call fails with `requested block N is after transaction reference
 block M` until it syncs. `usePreview` does not sync, and `useTransaction` syncs
 through the provider's `sync()`, which returns early while another sync runs, so
-sync and then check the height before previewing or executing.
+sync and then check the height before previewing or executing. A request from
+`client.withFeeAwareAuth` does not declare the bound block, so the height check
+below cannot read it: sync before previewing such a request, and sync again on
+`requested block N is after transaction reference block M`.
 
 ```tsx
 import { TransactionRequest } from "@miden-sdk/miden-sdk";
