@@ -203,6 +203,8 @@ Each returns its own action function plus `error` and `reset`. The families diff
 
 **Transaction stages**: `"idle"` -> `"executing"` -> `"proving"` -> `"submitting"` -> `"complete"`
 
+`useCreateWallet`, `useCreateFaucet` and `useImportAccount` bind their action to the client it captured. A callback retained from a replaced client rejects with `"Miden client is not ready"` before making SDK calls. Wallet and faucet creation check again after waiting for `runExclusive`; a replaced flow does not refresh accounts or publish its result or error after the pending SDK call settles. A cancelled import stops before further SDK calls, including file lookups and export fallbacks: it returns an Account it already holds, or rejects with `"Miden client is not ready"` if it has not obtained one. Each hook instance's `isCreating` or `isImporting` flag tracks its latest started call: an older call settling cannot clear a newer call's flag. A replaced call with no successor still clears its flag when it settles, and `reset()` still clears it immediately.
+
 Auth scheme for the create/import hooks. At runtime the `AuthScheme` re-exported from the package root is the friendly string const `{ Falcon: "falcon", ECDSA: "ecdsa" }`, because `@miden-sdk/miden-sdk`'s own `AuthScheme` export shadows the numeric wasm enum of the same name:
 
 ```tsx
@@ -421,7 +423,7 @@ Three things that surprise people here:
 
 - **The session wallet defaults to `storageMode: "public"`**, unlike `useCreateWallet`'s `"private"`. If you want a private session wallet, say so explicitly.
 - **`assetId` is reserved and never read.** It is typed and documented as "reserved for future filtering of consumable notes"; the hook body does not consult it. Passing it does nothing, and omitting it changes nothing.
-- **The hook persists across reloads.** It writes `${storagePrefix}:accountId` and `${storagePrefix}:ready` to `localStorage`, restores both on mount, and `reset()` removes both. So a session survives a refresh, and clearing it means calling `reset()` rather than dropping your own state.
+- **The hook persists across reloads.** With a signer, it writes `${storagePrefix}:${clientStoreName}:accountId` and `${storagePrefix}:${clientStoreName}:ready` to `localStorage`, where `clientStoreName` belongs to the committed client, not the selected signer, and survives a `MidenProvider` remount with that client. Signer mode comes from `useMiden().hasSigner`, which reflects the signer context above `MidenProvider`; a signer provider nested below a local-mode `MidenProvider` leaves sessions in local mode. With a signer provider above `MidenProvider` but no committed signer client, it shows no session and refuses initialization until the client commits. It never reads or writes the plain keys for a signer, including while client initialization is pending or has failed. Local keystore mode keeps `${storagePrefix}:accountId` and `${storagePrefix}:ready`. It restores the session whenever that identity changes, including when the committed client is replaced with the same store name or in local mode; the previous flow stops and the step returns to the stored ready or idle state. An unchanged render does not re-read storage. `reset()` removes its two keys. So a session survives a refresh, and clearing it means calling `reset()` rather than dropping your own state.
 
 ## Chain-Anchored Execution
 

@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk";
-import { useMidenStore } from "../store/MidenStore";
+import { captureClientCurrency, useMidenStore } from "../store/MidenStore";
 import type { MidenConfig } from "../types";
 import { DEFAULTS } from "../types";
 import { AsyncLock } from "../utils/asyncLock";
@@ -26,8 +26,17 @@ interface MidenContextValue {
   sync: () => Promise<void>;
   runExclusive: <T>(fn: () => Promise<T>) => Promise<T>;
   prover: ReturnType<typeof resolveTransactionProver>;
+  /** Whether MidenProvider has an ancestor signer provider. */
+  hasSigner: boolean;
   /** Account ID from signer (only set when using external signer) */
   signerAccountId: string | null;
+  /**
+   * Store name of the committed signer client. Sessions use
+   * `${storagePrefix}:${clientStoreName}:accountId` and `:ready`, never the plain
+   * keys. Signer selection alone does not change it; local clients use null
+   * and keep `${storagePrefix}:accountId` and `:ready`.
+   */
+  clientStoreName: string | null;
   /** Whether the external signer is connected (null = no signer provider) */
   signerConnected: boolean | null;
 }
@@ -64,12 +73,16 @@ export function MidenProvider({
 }: MidenProviderProps) {
   const {
     client,
+    clientStoreName,
     isReady,
     isInitializing,
     initError,
     signerConnected,
     setClient,
-    setInitializing,
+    beginInitializing,
+    endInitializing,
+    beginSync,
+    endSync,
     setInitError,
     setConfig,
     setSyncState,
@@ -79,9 +92,8 @@ export function MidenProvider({
   const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isInitializedRef = useRef(false);
   const clientLockRef = useRef(new AsyncLock());
-
-  // Track the current signer identity (storeName) to detect identity changes
-  const currentStoreNameRef = useRef<string | null>(null);
+  // Reuse only a client whose signing callback reads this mount's ref.
+  const signerClientRef = useRef<WebClient | null>(null);
 
   // Ref to hold the latest signCb so it can be hot-swapped on the WebClient
   const signCbRef = useRef<
@@ -138,32 +150,38 @@ export function MidenProvider({
   const sync = useCallback(async () => {
     if (!client || !isReady) return;
 
+    const isCurrent = captureClientCurrency(client);
+    if (!isCurrent()) return;
+
     const store = useMidenStore.getState();
     if (store.sync.isSyncing) return;
 
-    setSyncState({ isSyncing: true, error: null });
+    const syncToken = beginSync();
 
     try {
       const summary = await client.syncState();
+      if (!isCurrent()) return;
       const syncHeight = summary.blockNum();
 
       setSyncState({
         syncHeight,
-        isSyncing: false,
         lastSyncTime: Date.now(),
         error: null,
       });
 
       // Trigger account and note refresh after sync
       const accounts = await client.getAccounts();
+      if (!isCurrent()) return;
       useMidenStore.getState().setAccounts(accounts);
     } catch (error) {
+      if (!isCurrent()) return;
       setSyncState({
-        isSyncing: false,
         error: error instanceof Error ? error : new Error(String(error)),
       });
+    } finally {
+      endSync(syncToken);
     }
-  }, [client, isReady, setSyncState]);
+  }, [client, isReady, setSyncState, beginSync, endSync]);
 
   // Extract stable primitives from signerContext to avoid spurious effect re-runs
   // when the signer provider creates a new object reference on every render.
@@ -219,29 +237,32 @@ export function MidenProvider({
     if (signerIsConnected === true && signerStoreName !== null) {
       const store = useMidenStore.getState();
 
-      // Same identity reconnecting and client already exists — hot-swap signCb
+      // Same identity reconnecting and client already exists
       if (
-        currentStoreNameRef.current === signerStoreName &&
-        store.client !== null
+        store.clientStoreName === signerStoreName &&
+        store.client !== null &&
+        signerClientRef.current === store.client
       ) {
-        // Hot-swap the signCb on the existing WebClient instance.
-        // The worker reads this.signCb fresh on every callback invocation.
-        // signCbRef is already kept in sync by the dedicated useEffect above.
-        store.client.setSignCb(wrappedSignCb);
+        // The client was created with wrappedSignCb, which reads signCbRef
+        // (kept in sync above) on every call, so there's nothing to swap.
         setSignerConnected(true);
         return;
       }
 
-      // Different identity — clear cached state (but not IndexedDB)
-      if (
-        currentStoreNameRef.current !== null &&
-        currentStoreNameRef.current !== signerStoreName
-      ) {
+      // A different signer or a local client needs fresh in-memory state.
+      if (store.client !== null) {
         store.resetInMemoryState();
         // Also clear old client so we get a fresh one for the new identity
         setClient(null);
         setSignerAccountId(null);
       }
+    } else if (
+      signerIsConnected === null &&
+      useMidenStore.getState().clientStoreName !== null
+    ) {
+      useMidenStore.getState().resetInMemoryState();
+      setClient(null);
+      setSignerAccountId(null);
     }
 
     let cancelled = false;
@@ -255,8 +276,9 @@ export function MidenProvider({
         // Re-check cancelled after potentially waiting for the lock
         if (cancelled) return;
 
-        setInitializing(true);
+        const initializingToken = beginInitializing();
         setConfig(resolvedConfig);
+        const generation = useMidenStore.getState().cacheGeneration;
 
         // The provider terminates only a client it never handed to the store
         // (a cancelled or failed init). One handed out stays alive when it is
@@ -266,6 +288,7 @@ export function MidenProvider({
         try {
           let webClient: WebClient;
           let didSignerInit = false;
+          let accountId: string | null = null;
 
           if (signerContext && signerIsConnected === true) {
             // External keystore mode - signer provider is present and connected
@@ -295,16 +318,14 @@ export function MidenProvider({
 
             // Initialize account from signer config
             // (this already syncs the client internally)
-            const accountId = await initializeSignerAccount(
+            accountId = await initializeSignerAccount(
               webClient,
               signerContext.accountConfig
             );
             if (cancelled) return;
-            setSignerAccountId(accountId);
             didSignerInit = true;
-            currentStoreNameRef.current = signerContext.storeName;
           } else {
-            // No signer provider - standard local keystore (existing behavior)
+            // No signer provider - standard local keystore
             const seed = resolvedConfig.seed as Parameters<
               typeof WebClient.createClient
             >[2];
@@ -332,10 +353,12 @@ export function MidenProvider({
             try {
               const summary = await webClient.syncState();
               if (cancelled) return;
-              setSyncState({
-                syncHeight: summary.blockNum(),
-                lastSyncTime: Date.now(),
-              });
+              if (useMidenStore.getState().cacheGeneration === generation) {
+                setSyncState({
+                  syncHeight: summary.blockNum(),
+                  lastSyncTime: Date.now(),
+                });
+              }
             } catch {
               // Initial sync failure is non-fatal
             }
@@ -346,7 +369,9 @@ export function MidenProvider({
             try {
               const accounts = await webClient.getAccounts();
               if (cancelled) return;
-              useMidenStore.getState().setAccounts(accounts);
+              if (useMidenStore.getState().cacheGeneration === generation) {
+                useMidenStore.getState().setAccounts(accounts);
+              }
             } catch {
               // Non-fatal
             }
@@ -358,12 +383,11 @@ export function MidenProvider({
             if (!signerContext) {
               isInitializedRef.current = true;
             }
-            setClient(webClient);
+            signerClientRef.current = didSignerInit ? webClient : null;
+            setSignerAccountId(accountId);
+            setClient(webClient, didSignerInit ? signerStoreName : null);
             unowned = null;
-            // Mark signer as connected if in signer mode
-            if (signerIsConnected === true) {
-              setSignerConnected(true);
-            }
+            setSignerConnected(didSignerInit ? true : null);
           }
         } catch (error) {
           if (!cancelled) {
@@ -372,6 +396,7 @@ export function MidenProvider({
             );
           }
         } finally {
+          endInitializing(initializingToken);
           unowned?.terminate();
         }
       });
@@ -391,7 +416,8 @@ export function MidenProvider({
     setClient,
     setConfig,
     setInitError,
-    setInitializing,
+    beginInitializing,
+    endInitializing,
     setSyncState,
     setSignerConnected,
     signerIsConnected,
@@ -436,8 +462,11 @@ export function MidenProvider({
 
     // The WebClient exposes onStateChanged when BroadcastChannel is available.
     const unsubscribe = client.onStateChanged?.(async () => {
+      const isCurrent = captureClientCurrency(client);
+      if (!isCurrent()) return;
       try {
         const accounts = await client.getAccounts();
+        if (!isCurrent()) return;
         useMidenStore.getState().setAccounts(accounts);
         setSyncState({ lastSyncTime: Date.now() });
       } catch {
@@ -472,6 +501,8 @@ export function MidenProvider({
     runExclusive,
     prover: defaultProver,
     signerAccountId,
+    clientStoreName,
+    hasSigner: signerContext !== null,
     signerConnected,
   };
 

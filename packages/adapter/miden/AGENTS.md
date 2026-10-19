@@ -95,6 +95,13 @@ survived a park and restore gets its account back, at the cost of an unlock
 prompt if the wallet locked meanwhile. A failed disconnect arrives as a
 `WalletDisconnectionError` on the `error` event while the promise resolves.
 
+**Account changes propagate through the normal adapter lifecycle.** After a
+connection, the adapter follows the injected wallet's `accountChange` event.
+Switching to another granted account updates `address` and `publicKey` and
+emits `connect` again, so React consumers refresh in place. Switching to an
+account without a grant, or revoking the current grant, clears those fields
+and emits `disconnect`. Calling `disconnect()` removes the subscription.
+
 ## Checking a provider
 
 `createAccount` is on the published `MidenWallet` interface, but no known

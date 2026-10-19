@@ -158,6 +158,13 @@ the handshake so a dApp whose JS context survived a park and restore gets its
 account back. The cost is that a wallet that locked in the meantime may
 prompt for unlock.
 
+After connecting, `MidenWalletAdapter` follows the injected wallet's current
+account. A switch to another granted account updates `address` and `publicKey`
+and refreshes `useWallet()` / `useMidenFiWallet()` through the existing
+`connect` event. A switch to an account without a grant, or revoking the
+current grant, clears the connection and emits `disconnect`; reconnect before
+making another request.
+
 ## Calling the wallet
 
 `useWallet()` and `useMidenFiWallet()` return each method as

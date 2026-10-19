@@ -389,6 +389,7 @@ describe("transaction hooks — non-Error rejection branches (final)", () => {
       sync: vi.fn().mockResolvedValue(undefined),
       runExclusive: <T,>(fn: () => Promise<T>) => fn(),
     });
+    useMidenStore.getState().setClient(mockClient as never);
     return mockClient;
   };
 

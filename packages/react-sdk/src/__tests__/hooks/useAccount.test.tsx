@@ -3,6 +3,7 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { useAccount } from "../../hooks/useAccount";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
+import type { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk";
 import {
   createMockWebClient,
   createMockAccount,
@@ -22,7 +23,127 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe("useAccount loading ownership", () => {
+  it.each(["resolve", "reject"])(
+    "clears loading after a reset when the fetch %ss",
+    async (outcome) => {
+      let finish!: (value: never) => void;
+      let fail!: (error: Error) => void;
+      const pending = new Promise<never>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      });
+      const client = createMockWebClient({
+        getAccount: vi.fn().mockReturnValue(pending),
+      });
+      mockUseMiden.mockReturnValue({ client, isReady: true });
+      useMidenStore.getState().setClient(client as never);
+      const { result } = renderHook(() => useAccount("0x1234"));
+      expect(result.current.isLoading).toBe(true);
+      act(() => {
+        useMidenStore.getState().reset();
+      });
+      await act(async () => {
+        if (outcome === "resolve") finish(null as never);
+        else fail(new Error("stale fetch"));
+        await pending.catch(() => {});
+      });
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.error).toBeNull();
+    }
+  );
+
+  it("keeps loading until the latest same-client fetch settles", async () => {
+    let finishA!: (value: never) => void;
+    let finishB!: (value: never) => void;
+    const pendingA = new Promise<never>((resolve) => {
+      finishA = resolve;
+    });
+    const pendingB = new Promise<never>((resolve) => {
+      finishB = resolve;
+    });
+    const client = createMockWebClient({
+      getAccount: vi
+        .fn()
+        .mockReturnValueOnce(pendingA)
+        .mockReturnValue(pendingB),
+    });
+    mockUseMiden.mockReturnValue({ client, isReady: true });
+    useMidenStore.getState().setClient(client as never);
+    const { result } = renderHook(() => useAccount("0x1234"));
+    act(() => {
+      void result.current.refetch();
+    });
+    expect(client.getAccount).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      finishA(null as never);
+      await pendingA;
+    });
+    expect(result.current.isLoading).toBe(true);
+    await act(async () => {
+      finishB(null as never);
+      await pendingB;
+    });
+    expect(result.current.isLoading).toBe(false);
+  });
+});
+
 describe("useAccount", () => {
+  it.each(["resolve", "reject"])(
+    "keeps B's pending fetch state when A's fetch %ss after replacement",
+    async (outcome) => {
+      let finishA!: (account: ReturnType<typeof createMockAccount>) => void;
+      let failA!: (error: Error) => void;
+      const pendingA = new Promise<ReturnType<typeof createMockAccount>>(
+        (resolve, reject) => {
+          finishA = resolve;
+          failA = reject;
+        }
+      );
+      let finishB!: (account: ReturnType<typeof createMockAccount>) => void;
+      const pendingB = new Promise<ReturnType<typeof createMockAccount>>(
+        (resolve) => {
+          finishB = resolve;
+        }
+      );
+      const clientA = createMockWebClient({
+        getAccount: vi.fn().mockReturnValue(pendingA),
+      });
+      const clientB = createMockWebClient({
+        getAccount: vi.fn().mockReturnValue(pendingB),
+      });
+      mockUseMiden.mockReturnValue({ client: clientA, isReady: true });
+      useMidenStore.getState().setClient(clientA as unknown as WebClient);
+      const { result, rerender } = renderHook(() => useAccount("0x1234"));
+      expect(clientA.getAccount).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        mockUseMiden.mockReturnValue({ client: clientB, isReady: true });
+        useMidenStore.getState().resetInMemoryState();
+        useMidenStore.getState().setClient(clientB as unknown as WebClient);
+      });
+      rerender();
+      expect(clientB.getAccount).toHaveBeenCalledTimes(1);
+      expect(result.current.isLoading).toBe(true);
+
+      await act(async () => {
+        if (outcome === "resolve") finishA(createMockAccount());
+        else failA(new Error("stale account fetch"));
+        await pendingA.catch(() => {});
+      });
+      expect(result.current.error).toBeNull();
+      expect(result.current.isLoading).toBe(true);
+      expect(result.current.account).toBeNull();
+
+      await act(async () => {
+        finishB(createMockAccount());
+        await pendingB;
+      });
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.account).not.toBeNull();
+    }
+  );
+
   describe("initial state", () => {
     it("should return null account when no id provided", () => {
       mockUseMiden.mockReturnValue({
@@ -277,6 +398,52 @@ describe("useAccount", () => {
   });
 
   describe("refetch", () => {
+    it("keeps signer B's account details when signer A's pending fetch resolves", async () => {
+      const accountId = "0x1234567890abcdef";
+      const accountA = createMockAccount();
+      const accountB = createMockAccount();
+      let finishFetch!: (account: typeof accountA) => void;
+      const pendingAccount = new Promise<typeof accountA>((resolve) => {
+        finishFetch = resolve;
+      });
+      const clientA = createMockWebClient({
+        getAccount: vi.fn().mockReturnValue(pendingAccount),
+      });
+      const clientB = createMockWebClient({
+        getAccount: vi.fn().mockResolvedValue(accountB),
+      });
+
+      mockUseMiden.mockReturnValue({ client: clientA, isReady: true });
+      useMidenStore.getState().setClient(clientA as unknown as WebClient);
+
+      const { result, rerender } = renderHook(() => useAccount(accountId));
+      await waitFor(() => {
+        expect(clientA.getAccount).toHaveBeenCalledTimes(1);
+      });
+      expect(result.current.isLoading).toBe(true);
+
+      act(() => {
+        mockUseMiden.mockReturnValue({ client: clientB, isReady: true });
+        useMidenStore.getState().resetInMemoryState();
+        useMidenStore.getState().setClient(clientB as unknown as WebClient);
+      });
+      rerender();
+      await waitFor(() => {
+        expect(result.current.account).toBe(accountB);
+      });
+
+      await act(async () => {
+        finishFetch(accountA);
+        await pendingAccount;
+      });
+
+      expect(useMidenStore.getState().client).toBe(clientB);
+      expect(useMidenStore.getState().accountDetails.get(accountId)).toBe(
+        accountB
+      );
+      expect(result.current.account).toBe(accountB);
+    });
+
     it("should refetch account data", async () => {
       const accountId = "0x1234567890abcdef";
       const mockAccount1 = createMockAccount();
@@ -429,6 +596,9 @@ describe("useAccount", () => {
       mockUseMiden.mockReturnValue({
         client: mockClient,
         isReady: true,
+      });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
       });
 
       const { result } = renderHook(() => useAccount("0xacc"));

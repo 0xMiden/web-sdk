@@ -51,6 +51,71 @@ function createStreamableNote(
   };
 }
 
+describe("useNoteStream loading ownership", () => {
+  it.each(["resolve", "reject"])(
+    "clears loading after a reset when the fetch %ss",
+    async (outcome) => {
+      let finish!: (value: never) => void;
+      let fail!: (error: Error) => void;
+      const pending = new Promise<never>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      });
+      const client = createMockWebClient({
+        getInputNotes: vi.fn().mockReturnValue(pending),
+      });
+      mockUseMiden.mockReturnValue({ client, isReady: true });
+      useMidenStore.getState().setClient(client as never);
+      const { result } = renderHook(() => useNoteStream());
+      expect(result.current.isLoading).toBe(true);
+      act(() => {
+        useMidenStore.getState().reset();
+      });
+      await act(async () => {
+        if (outcome === "resolve") finish([] as never);
+        else fail(new Error("stale fetch"));
+        await pending.catch(() => {});
+      });
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.error).toBeNull();
+    }
+  );
+
+  it("keeps loading until the latest same-client fetch settles", async () => {
+    let finishA!: (value: never) => void;
+    let finishB!: (value: never) => void;
+    const pendingA = new Promise<never>((resolve) => {
+      finishA = resolve;
+    });
+    const pendingB = new Promise<never>((resolve) => {
+      finishB = resolve;
+    });
+    const client = createMockWebClient({
+      getInputNotes: vi
+        .fn()
+        .mockReturnValueOnce(pendingA)
+        .mockReturnValue(pendingB),
+    });
+    mockUseMiden.mockReturnValue({ client, isReady: true });
+    useMidenStore.getState().setClient(client as never);
+    const { result } = renderHook(() => useNoteStream());
+    act(() => {
+      useMidenStore.getState().setSyncState({ lastSyncTime: 1 });
+    });
+    expect(client.getInputNotes).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      finishA([] as never);
+      await pendingA;
+    });
+    expect(result.current.isLoading).toBe(true);
+    await act(async () => {
+      finishB([] as never);
+      await pendingB;
+    });
+    expect(result.current.isLoading).toBe(false);
+  });
+});
+
 describe("useNoteStream", () => {
   describe("initial state", () => {
     it("should return empty notes when client is not ready", () => {
@@ -79,6 +144,9 @@ describe("useNoteStream", () => {
         client: mockClient,
         isReady: true,
         sync: vi.fn(),
+      });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
       });
 
       // Pre-populate the store so the hook can read from it
@@ -120,6 +188,9 @@ describe("useNoteStream", () => {
         isReady: true,
         sync: vi.fn(),
       });
+      act(() => {
+        useMidenStore.getState().setClient(clientA as never);
+      });
 
       const { result, rerender } = renderHook(() => useNoteStream());
       await waitFor(() => {
@@ -133,6 +204,9 @@ describe("useNoteStream", () => {
         client: clientB,
         isReady: true,
         sync: vi.fn(),
+      });
+      act(() => {
+        useMidenStore.getState().setClient(clientB as never);
       });
       rerender();
       await waitFor(() => {
@@ -172,6 +246,9 @@ describe("useNoteStream", () => {
         isReady: true,
         sync: vi.fn(),
       });
+      act(() => {
+        useMidenStore.getState().setClient(clientA as never);
+      });
 
       const { result, rerender } = renderHook(() => useNoteStream());
       await waitFor(() => {
@@ -185,6 +262,9 @@ describe("useNoteStream", () => {
         client: clientB,
         isReady: true,
         sync: vi.fn(),
+      });
+      act(() => {
+        useMidenStore.getState().setClient(clientB as never);
       });
       rerender();
       await waitFor(() => {
@@ -206,41 +286,49 @@ describe("useNoteStream", () => {
       });
     });
 
-    it("clears isLoading when the reset is followed by no client", async () => {
-      const pendingA = deferred<unknown[]>();
-      const clientA = createMockWebClient({
-        getInputNotes: vi.fn().mockReturnValue(pendingA.promise),
-      });
-      mockUseMiden.mockReturnValue({
-        client: clientA,
-        isReady: true,
-        sync: vi.fn(),
-      });
+    it.each(["resolve", "reject"])(
+      "clears loading and preserves error when a stale fetch %ss without a successor",
+      async (outcome) => {
+        const pendingA = deferred<unknown[]>();
+        const clientA = createMockWebClient({
+          getInputNotes: vi.fn().mockReturnValue(pendingA.promise),
+        });
+        mockUseMiden.mockReturnValue({
+          client: clientA,
+          isReady: true,
+          sync: vi.fn(),
+        });
+        act(() => {
+          useMidenStore.getState().setClient(clientA as never);
+        });
 
-      const { result, rerender } = renderHook(() => useNoteStream());
-      await waitFor(() => {
-        expect(result.current.isLoading).toBe(true);
-      });
+        const { result, rerender } = renderHook(() => useNoteStream());
+        await waitFor(() => {
+          expect(result.current.isLoading).toBe(true);
+        });
 
-      act(() => {
-        useMidenStore.getState().resetInMemoryState();
-      });
-      mockUseMiden.mockReturnValue({
-        client: null,
-        isReady: false,
-        sync: vi.fn(),
-      });
-      rerender();
+        act(() => {
+          useMidenStore.getState().resetInMemoryState();
+          useMidenStore.getState().setClient(null);
+        });
+        mockUseMiden.mockReturnValue({
+          client: null,
+          isReady: false,
+          sync: vi.fn(),
+        });
+        rerender();
 
-      await act(async () => {
-        pendingA.resolve([createStreamableNote("0xnoteA")]);
-        await pendingA.promise;
-      });
-      await waitFor(() => {
+        await act(async () => {
+          if (outcome === "resolve")
+            pendingA.resolve([createStreamableNote("0xnoteA")]);
+          else pendingA.reject(new Error("stale stream fetch"));
+          await pendingA.promise.catch(() => {});
+        });
         expect(result.current.isLoading).toBe(false);
-      });
-      expect(result.current.notes).toEqual([]);
-    });
+        expect(result.current.error).toBeNull();
+        expect(result.current.notes).toEqual([]);
+      }
+    );
 
     it("drops a fetch error that lands after the store was reset", async () => {
       const pendingA = deferred<unknown[]>();
@@ -257,6 +345,9 @@ describe("useNoteStream", () => {
         isReady: true,
         sync: vi.fn(),
       });
+      act(() => {
+        useMidenStore.getState().setClient(clientA as never);
+      });
 
       const { result, rerender } = renderHook(() => useNoteStream());
       await waitFor(() => {
@@ -270,6 +361,9 @@ describe("useNoteStream", () => {
         client: clientB,
         isReady: true,
         sync: vi.fn(),
+      });
+      act(() => {
+        useMidenStore.getState().setClient(clientB as never);
       });
       rerender();
       await waitFor(() => {
@@ -302,6 +396,9 @@ describe("useNoteStream", () => {
         isReady: true,
         sync: vi.fn(),
       });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
+      });
 
       useMidenStore.getState().setNotes(notes as any, "committed");
 
@@ -331,6 +428,9 @@ describe("useNoteStream", () => {
         isReady: true,
         sync: vi.fn(),
       });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
+      });
 
       useMidenStore.getState().setNotes(notes as any, "committed");
 
@@ -358,6 +458,9 @@ describe("useNoteStream", () => {
         client: mockClient,
         isReady: true,
         sync: vi.fn(),
+      });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
       });
 
       useMidenStore.getState().setNotes(notes as any, "committed");
@@ -388,6 +491,9 @@ describe("useNoteStream", () => {
         isReady: true,
         sync: vi.fn(),
       });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
+      });
 
       useMidenStore.getState().setNotes(notes as any, "committed");
 
@@ -410,12 +516,15 @@ describe("useNoteStream", () => {
         isReady: true,
         sync: vi.fn(),
       });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
+      });
 
       useMidenStore.getState().setNotes(notes as any, "committed");
 
       const { result } = renderHook(() => useNoteStream({ sender: null }));
 
-      // sender: null means "no sender filter" — returns all notes
+      // sender: null means "no sender filter" - returns all notes
       await waitFor(() => {
         expect(result.current.notes.length).toBe(1);
       });
@@ -436,6 +545,9 @@ describe("useNoteStream", () => {
         client: mockClient,
         isReady: true,
         sync: vi.fn(),
+      });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
       });
 
       useMidenStore.getState().setNotes(notes as any, "committed");
@@ -473,6 +585,9 @@ describe("useNoteStream", () => {
         isReady: true,
         sync: vi.fn(),
       });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
+      });
 
       useMidenStore.getState().setNotes(notes as any, "committed");
 
@@ -509,6 +624,9 @@ describe("useNoteStream", () => {
         isReady: true,
         sync: vi.fn(),
       });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
+      });
 
       useMidenStore.getState().setNotes(notes as any, "committed");
 
@@ -542,6 +660,9 @@ describe("useNoteStream", () => {
         client: mockClient,
         isReady: true,
         sync: vi.fn(),
+      });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
       });
 
       useMidenStore.getState().setNotes(notes as any, "committed");
