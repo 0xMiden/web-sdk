@@ -28,6 +28,13 @@ interface MidenContextValue {
   prover: ReturnType<typeof resolveTransactionProver>;
   /** Account ID from signer (only set when using external signer) */
   signerAccountId: string | null;
+  /**
+   * Store name of the committed signer client. Sessions use
+   * `${storagePrefix}:${clientStoreName}:accountId` and `:ready`, never the plain
+   * keys. Signer selection alone does not change it; local clients use null
+   * and keep `${storagePrefix}:accountId` and `:ready`.
+   */
+  clientStoreName: string | null;
   /** Whether the external signer is connected (null = no signer provider) */
   signerConnected: boolean | null;
 }
@@ -494,6 +501,7 @@ export function MidenProvider({
     runExclusive,
     prover: defaultProver,
     signerAccountId,
+    clientStoreName: client === null ? null : currentStoreNameRef.current,
     signerConnected,
   };
 

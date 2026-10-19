@@ -359,6 +359,7 @@ describe("useSessionAccount - storage mode + timeout branches", () => {
 
     // Use a unique storagePrefix so localStorage state from previous tests
     // doesn't restore a "ready" session before this test runs.
+    const storagePrefix = `priv-storage-${Math.random()}`;
     const { result } = renderHook(() =>
       useSessionAccount({
         fund: vi.fn().mockResolvedValue(undefined),
@@ -366,7 +367,7 @@ describe("useSessionAccount - storage mode + timeout branches", () => {
         pollIntervalMs: 1,
         maxWaitMs: 100,
         walletOptions: { storageMode: "private" },
-        storagePrefix: `priv-storage-${Math.random()}`,
+        storagePrefix,
       })
     );
 
@@ -393,11 +394,12 @@ describe("useSessionAccount - storage mode + timeout branches", () => {
       useMidenStore.getState().setClient(mockClient as never);
     });
 
+    const storagePrefix = `non-error-${Math.random()}`;
     const { result } = renderHook(() =>
       useSessionAccount({
         fund: vi.fn().mockResolvedValue(undefined),
         assetId: "0xfaucet",
-        storagePrefix: `non-error-${Math.random()}`,
+        storagePrefix,
       })
     );
 
@@ -433,13 +435,14 @@ describe("useSessionAccount - storage mode + timeout branches", () => {
       useMidenStore.getState().setClient(mockClient as never);
     });
 
+    const storagePrefix = `cancel-mid-fund-${Math.random()}`;
     const { result } = renderHook(() =>
       useSessionAccount({
         fund,
         assetId: "0xfaucet",
         pollIntervalMs: 1,
         maxWaitMs: 50,
-        storagePrefix: `cancel-mid-fund-${Math.random()}`,
+        storagePrefix,
       })
     );
 
@@ -493,6 +496,7 @@ describe("useSessionAccount - storage mode + timeout branches", () => {
       useMidenStore.getState().setClient(mockClient as never);
     });
 
+    const storagePrefix = `default-storage-${Math.random()}`;
     const { result } = renderHook(() =>
       useSessionAccount({
         fund: vi.fn().mockResolvedValue(undefined),
@@ -502,7 +506,7 @@ describe("useSessionAccount - storage mode + timeout branches", () => {
         // Cast through unknown to bypass the union type and exercise the
         // default case in getStorageMode.
         walletOptions: { storageMode: "unknown" as unknown as "public" },
-        storagePrefix: `default-storage-${Math.random()}`,
+        storagePrefix,
       })
     );
 
@@ -533,13 +537,14 @@ describe("useSessionAccount - storage mode + timeout branches", () => {
       useMidenStore.getState().setClient(mockClient as never);
     });
 
+    const storagePrefix = `timeout-${Math.random()}`;
     const { result } = renderHook(() =>
       useSessionAccount({
         fund: vi.fn().mockResolvedValue(undefined),
         assetId: "0xfaucet",
         pollIntervalMs: 1,
         maxWaitMs: 5,
-        storagePrefix: `timeout-${Math.random()}`,
+        storagePrefix,
       })
     );
 
@@ -1537,13 +1542,14 @@ describe("useSessionAccount - busy guard + localStorage catch", () => {
       useMidenStore.getState().setClient(mockClient as never);
     });
 
+    const storagePrefix = `busy-${Math.random()}`;
     const { result } = renderHook(() =>
       useSessionAccount({
         fund,
         assetId: "0xfaucet",
         pollIntervalMs: 1,
         maxWaitMs: 50,
-        storagePrefix: `busy-${Math.random()}`,
+        storagePrefix,
       })
     );
 

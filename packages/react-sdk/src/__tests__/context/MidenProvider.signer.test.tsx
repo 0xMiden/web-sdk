@@ -8,7 +8,7 @@ import {
 } from "@testing-library/react";
 import React from "react";
 import { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk";
-import { MidenProvider } from "../../context/MidenProvider";
+import { MidenProvider, useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
 import { createMockWebClient } from "../mocks/miden-sdk";
 import { SignerContext, useSigner } from "../../context/SignerContext";
@@ -400,5 +400,76 @@ describe("MidenProvider initialization ownership", () => {
       expect(useMidenStore.getState().isReady).toBe(true);
     });
     expect(useMidenStore.getState().isInitializing).toBe(false);
+  });
+});
+
+describe("MidenProvider committed store identity", () => {
+  beforeEach(() => {
+    useMidenStore.getState().reset();
+    vi.clearAllMocks();
+  });
+  const config = { autoSyncInterval: 0 };
+  it("publishes the committed store while a newly selected signer is disconnected", async () => {
+    let context!: ReturnType<typeof useMiden>;
+    function Consumer() {
+      context = useMiden();
+      return null;
+    }
+    function Tree({ name, connected }: { name: string; connected: boolean }) {
+      return (
+        <SignerContext.Provider
+          value={createMockSignerContext({
+            storeName: name,
+            isConnected: connected,
+          })}
+        >
+          <MidenProvider config={config}>
+            <Consumer />
+          </MidenProvider>
+        </SignerContext.Provider>
+      );
+    }
+    const { rerender } = render(<Tree name="a" connected />);
+    await waitFor(() => {
+      expect(context.isReady).toBe(true);
+    });
+    expect(context.clientStoreName).toBe("a");
+    const clientA = context.client;
+    rerender(<Tree name="b" connected={false} />);
+    expect(context.client).toBe(clientA);
+    expect(context.clientStoreName).toBe("a");
+    expect(context.signerConnected).toBe(false);
+    let finish!: (client: WebClient) => void;
+    const pending = new Promise<WebClient>((resolve) => {
+      finish = resolve;
+    });
+    vi.mocked(WebClient.createClientWithExternalKeystore).mockReturnValueOnce(
+      pending
+    );
+    rerender(<Tree name="b" connected />);
+    await waitFor(() => {
+      expect(context.client).toBeNull();
+    });
+    expect(context.clientStoreName).toBeNull();
+    await act(async () => {
+      finish(createMockWebClient() as never);
+      await pending;
+    });
+    await waitFor(() => {
+      expect(context.isReady).toBe(true);
+    });
+    expect(context.clientStoreName).toBe("b");
+  });
+
+  it("publishes null for a local client", async () => {
+    const { result } = renderHook(() => useMiden(), {
+      wrapper: ({ children }) => (
+        <MidenProvider config={config}>{children}</MidenProvider>
+      ),
+    });
+    await waitFor(() => {
+      expect(result.current.isReady).toBe(true);
+    });
+    expect(result.current.clientStoreName).toBeNull();
   });
 });

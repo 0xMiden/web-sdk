@@ -11,7 +11,7 @@ import type {
 import { DEFAULTS } from "../types";
 import { parseAccountId } from "../utils/accountParsing";
 import { ensureAccountBech32 } from "../utils/accountBech32";
-import { MidenError } from "../utils/errors";
+import { assertSignerConnected, MidenError } from "../utils/errors";
 
 /**
  * Hook to manage a session wallet lifecycle: create -> fund -> consume.
@@ -45,13 +45,21 @@ import { MidenError } from "../utils/errors";
 export function useSessionAccount(
   options: UseSessionAccountOptions
 ): UseSessionAccountReturn {
-  const { client, isReady, sync } = useMiden();
+  const {
+    client,
+    isReady,
+    sync,
+    clientStoreName = null,
+    signerConnected = null,
+  } = useMiden();
   const setAccounts = useMidenStore((state) => state.setAccounts);
 
   const [sessionAccountId, setSessionAccountId] = useState<string | null>(null);
   const [step, setStep] = useState<SessionAccountStep>("idle");
   const [error, setError] = useState<Error | null>(null);
-  const cancelledRef = useRef(false);
+  const mountedRef = useRef(false);
+  const generationRef = useRef(0);
+  const [, setResetVersion] = useState(0);
   // A replaced flow must neither block initialization nor clear its successor's guard.
   const isBusyRef = useRef<(() => boolean) | null>(null);
 
@@ -68,33 +76,60 @@ export function useSessionAccount(
   const fundRef = useRef(options.fund);
   fundRef.current = options.fund;
 
-  // Restore persisted session on mount
+  const identityRef = useRef({
+    storagePrefix,
+    clientStoreName,
+    signerConnected,
+  });
+  if (
+    identityRef.current.storagePrefix !== storagePrefix ||
+    identityRef.current.clientStoreName !== clientStoreName ||
+    identityRef.current.signerConnected !== signerConnected
+  ) {
+    identityRef.current = { storagePrefix, clientStoreName, signerConnected };
+    generationRef.current += 1;
+  }
+  const identity = identityRef.current;
+  const generation = generationRef.current;
+  const keyPrefix =
+    clientStoreName === null
+      ? storagePrefix
+      : `${storagePrefix}:${clientStoreName}`;
+  const accountIdKey = `${keyPrefix}:accountId`;
+  const readyKey = `${keyPrefix}:ready`;
+
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(`${storagePrefix}:accountId`);
-      const storedReady = localStorage.getItem(`${storagePrefix}:ready`);
-      if (stored && stored.length > 0) {
-        // Validate the stored ID is parseable before restoring
-        const validationId = parseAccountId(stored);
-        (validationId as { free?: () => void })?.free?.();
-        setSessionAccountId(stored);
-        if (storedReady === "true") {
-          setStep("ready");
-        }
-      }
-    } catch {
-      // Stored data is invalid — clear it and start fresh
-      localStorage.removeItem(`${storagePrefix}:accountId`);
-      localStorage.removeItem(`${storagePrefix}:ready`);
-    }
-  }, [storagePrefix]);
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const session = readSession(accountIdKey, readyKey);
+    setSessionAccountId(session.accountId);
+    setStep(session.ready ? "ready" : "idle");
+    setError(null);
+  }, [identity, accountIdKey, readyKey]);
 
   const initialize = useCallback(async () => {
+    if (
+      !mountedRef.current ||
+      identityRef.current !== identity ||
+      generationRef.current !== generation
+    )
+      return;
     if (!client || !isReady) {
       throw new Error("Miden client is not ready");
     }
 
-    const isCurrent = captureClientCurrency(client);
+    assertSignerConnected(signerConnected);
+    const isClientCurrent = captureClientCurrency(client);
+    const isCurrent = () =>
+      mountedRef.current &&
+      identityRef.current === identity &&
+      generationRef.current === generation &&
+      isClientCurrent();
     if (!isCurrent()) return;
 
     if (isBusyRef.current?.()) {
@@ -105,12 +140,12 @@ export function useSessionAccount(
     }
 
     isBusyRef.current = isCurrent;
-    cancelledRef.current = false;
+    const fund = fundRef.current;
     setError(null);
 
     try {
-      // Step 1: Create wallet (or use persisted one)
-      let walletId = sessionAccountId;
+      // Read this identity's storage even before its restore effect has run.
+      let walletId = readSession(accountIdKey, readyKey).accountId;
 
       if (!walletId) {
         setStep("creating");
@@ -124,18 +159,17 @@ export function useSessionAccount(
         if (!isCurrent()) return;
         setAccounts(accounts);
 
-        if (cancelledRef.current) return;
-
         walletId = wallet.id().toString();
         setSessionAccountId(walletId);
-        localStorage.setItem(`${storagePrefix}:accountId`, walletId);
+        localStorage.setItem(accountIdKey, walletId);
       }
 
       // Step 2: Fund the session wallet
       setStep("funding");
-      await fundRef.current(walletId);
+      if (!isCurrent()) return;
+      await fund(walletId);
 
-      if (!isCurrent() || cancelledRef.current) return;
+      if (!isCurrent()) return;
 
       // Step 3: Wait for funding note and consume it
       setStep("consuming");
@@ -144,50 +178,52 @@ export function useSessionAccount(
         walletId,
         pollIntervalMs,
         maxWaitMs,
-        cancelledRef,
         isCurrent
       );
 
-      if (!isCurrent() || cancelledRef.current) return;
+      if (!isCurrent()) return;
 
       // Done
       setStep("ready");
-      localStorage.setItem(`${storagePrefix}:ready`, "true");
+      localStorage.setItem(readyKey, "true");
 
       await sync();
       if (!isCurrent()) return;
     } catch (err) {
-      if (isCurrent() && !cancelledRef.current) {
+      if (isCurrent()) {
         const error = err instanceof Error ? err : new Error(String(err));
         setError(error);
         setStep("idle");
         throw error;
       }
     } finally {
-      if (isCurrent()) isBusyRef.current = null;
+      if (isBusyRef.current === isCurrent) isBusyRef.current = null;
     }
   }, [
     client,
     isReady,
     sync,
-    sessionAccountId,
+    identity,
+    generation,
+    signerConnected,
+    accountIdKey,
+    readyKey,
     storageMode,
     authScheme,
-    storagePrefix,
     pollIntervalMs,
     maxWaitMs,
     setAccounts,
   ]);
 
   const reset = useCallback(() => {
-    cancelledRef.current = true;
-    isBusyRef.current = null;
+    generationRef.current += 1;
+    setResetVersion((version) => version + 1);
     setSessionAccountId(null);
     setStep("idle");
     setError(null);
-    localStorage.removeItem(`${storagePrefix}:accountId`);
-    localStorage.removeItem(`${storagePrefix}:ready`);
-  }, [storagePrefix]);
+    localStorage.removeItem(accountIdKey);
+    localStorage.removeItem(readyKey);
+  }, [accountIdKey, readyKey]);
 
   return {
     initialize,
@@ -197,6 +233,22 @@ export function useSessionAccount(
     error,
     reset,
   };
+}
+
+function readSession(accountIdKey: string, readyKey: string) {
+  try {
+    const accountId = localStorage.getItem(accountIdKey);
+    const ready = localStorage.getItem(readyKey) === "true";
+    if (accountId) {
+      const validationId = parseAccountId(accountId);
+      (validationId as { free?: () => void })?.free?.();
+      return { accountId, ready };
+    }
+  } catch {
+    localStorage.removeItem(accountIdKey);
+    localStorage.removeItem(readyKey);
+  }
+  return { accountId: null, ready: false };
 }
 
 function getStorageMode(
@@ -230,17 +282,16 @@ async function waitAndConsume(
   walletId: string,
   pollIntervalMs: number,
   maxWaitMs: number,
-  cancelledRef: { current: boolean },
   isCurrent: () => boolean
 ) {
   const deadline = Date.now() + maxWaitMs;
 
   while (Date.now() < deadline) {
-    if (!isCurrent() || cancelledRef.current) return;
+    if (!isCurrent()) return;
 
     await (client as { syncState: () => Promise<unknown> }).syncState();
 
-    if (!isCurrent() || cancelledRef.current) return;
+    if (!isCurrent()) return;
 
     const accountIdObj = parseAccountId(walletId);
     const accountIdHex = accountIdObj.toString();
@@ -264,7 +315,7 @@ async function waitAndConsume(
       // Building the request suspends, so re-check before submitting: a
       // cancellation landing in that window would otherwise still submit, and
       // the caller's catch discards the outcome once cancelled.
-      if (!isCurrent() || cancelledRef.current) return;
+      if (!isCurrent()) return;
       await client.submitNewTransaction(freshAccountId, txRequest);
       if (!isCurrent()) return;
       return;
