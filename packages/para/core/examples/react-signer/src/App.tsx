@@ -88,7 +88,12 @@ function App() {
                 />
                 <StatusRow
                   label="Is Faucet"
-                  value={accountResult.account.isFaucet() ? "Yes" : "No"}
+                  value={
+                    accountResult.account.isFaucet() ||
+                    accountResult.account.isNonFungibleFaucet()
+                      ? "Yes"
+                      : "No"
+                  }
                 />
               </>
             )}

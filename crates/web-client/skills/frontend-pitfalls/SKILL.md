@@ -384,13 +384,22 @@ If the transaction is already fully authorized it executes successfully, no summ
 
 `useAccounts()` returns `{ accounts, wallets, faucets, isLoading, error, refetch }`, but `wallets` is an alias of `accounts` and `faucets` is a hardcoded empty array. Filtering faucets through that field silently yields nothing.
 
+`accounts` contains `AccountHeader`s, which have no faucet predicates. Load each full `Account` before classifying: `isFaucet()` means fungible faucet only, `isNonFungibleFaucet()` means non-fungible faucet, and `isRegularAccount()` means wallet. In React, use `useAccount(header)` in a child component for each header. With a high-level `MidenClient`, use its account resource:
+
 ```tsx
 // WRONG - always []
 const { faucets } = useAccounts();
 
-// CORRECT - classify from the account list yourself
-const { accounts } = useAccounts();
-const faucets = accounts.filter((a) => a.isFaucet());
+// CORRECT - client is a MidenClient; load full Accounts before classifying
+const headers = await client.accounts.list();
+const faucets = [];
+const wallets = [];
+for (const header of headers) {
+  const account = await client.accounts.get(header);
+  if (!account) continue;
+  if (account.isFaucet() || account.isNonFungibleFaucet()) faucets.push(account);
+  if (account.isRegularAccount()) wallets.push(account);
+}
 ```
 
 ## FP16: The Web Worker Shim Silently Downgrades Callback Provers (HIGH - fails silently)
@@ -498,7 +507,7 @@ Verify: `crates/web-client/js/eager.js`.
 | FP12 | `sendPrivate` inclusion proof | HIGH | Pass a `NoteInclusionProof`, or `sendPrivateOutput` after the note commits |
 | FP13 | Foreign-account inputs | HIGH | Pinned to one block; do not sync between fetching and executing |
 | FP14 | `preview` already authorized | MEDIUM | Summary only while auth is pending; otherwise rejects `TRANSACTION_ALREADY_AUTHORIZED` |
-| FP15 | `useAccounts().faucets` | MEDIUM | Always empty; classify from `accounts` with `isFaucet()` |
+| FP15 | `useAccounts().faucets` | MEDIUM | Always empty; load each full `Account` via `client.accounts.get(header)` or `useAccount(header)`; faucets: `isFaucet() \|\| isNonFungibleFaucet()`, wallets: `isRegularAccount()` |
 | FP16 | Worker shim | HIGH | `useWorker` defaults `true` and silently downgrades a callback prover - set `false` when you supply one |
 | FP17 | Error handling | MEDIUM | Branch on `error.code`, never message text; `WASM_CLASS_MISMATCH` means two copies of the core |
 | FP18 | Eager entry | MEDIUM | Use `/lazy` under Capacitor and SSR - top-level await hangs there |
