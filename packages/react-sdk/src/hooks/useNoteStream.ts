@@ -6,6 +6,7 @@ import {
   useSyncStateStore,
   useNoteFirstSeenStore,
 } from "../store/MidenStore";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import { NoteFilter } from "@miden-sdk/miden-sdk";
 import type { InputNoteRecord } from "@miden-sdk/miden-sdk";
 import type {
@@ -57,6 +58,7 @@ export function useNoteStream(
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const latestRequestRef = useRef(0);
   const handledIdsRef = useRef<Set<string>>(new Set());
   const [handledVersion, setHandledVersion] = useState(0);
 
@@ -88,6 +90,10 @@ export function useNoteStream(
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
 
+    const isCurrent = captureClientReadGuard(client);
+    if (!isCurrent()) return;
+
+    const request = ++latestRequestRef.current;
     setIsLoading(true);
     setError(null);
 
@@ -95,11 +101,13 @@ export function useNoteStream(
       const filterType = getNoteFilterType(status);
       const filter = new NoteFilter(filterType);
       const fetched = await client.getInputNotes(filter);
+      if (!isCurrent()) return;
       setNotesIfChanged(fetched);
     } catch (err) {
+      if (!isCurrent() || latestRequestRef.current !== request) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      setIsLoading(false);
+      if (latestRequestRef.current === request) setIsLoading(false);
     }
   }, [client, isReady, status, setNotesIfChanged]);
 

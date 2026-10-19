@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, renderHook } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  renderHook,
+  act,
+} from "@testing-library/react";
 import { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk";
 import {
   MidenProvider,
@@ -9,6 +15,10 @@ import {
 import { useMidenStore } from "../../store/MidenStore";
 import { SignerContext } from "../../context/SignerContext";
 import { createMockSignerContext } from "../mocks/signer-context";
+import {
+  createMockWebClient,
+  createMockAccountHeader,
+} from "../mocks/miden-sdk";
 
 // Coverage-targeted tests for branches that the main MidenProvider.test.tsx
 // doesn't exercise (custom loading/error UI, init failure path, useMidenClient
@@ -239,6 +249,77 @@ describe("useMiden / useMidenClient", () => {
 });
 
 describe("MidenProvider — auto-sync + state-change listener", () => {
+  it.each(["resolve", "reject"])(
+    "releases syncing on a client replacement without reset when the old sync will %s",
+    async (outcome) => {
+      let resolveSync!: (summary: { blockNum: () => number }) => void;
+      let rejectSync!: (error: Error) => void;
+      const pendingSync = new Promise<{ blockNum: () => number }>(
+        (resolve, reject) => {
+          resolveSync = resolve;
+          rejectSync = reject;
+        }
+      );
+      const previousClient = createMockWebClient({
+        syncState: vi
+          .fn()
+          .mockResolvedValueOnce({ blockNum: () => 100 })
+          .mockReturnValueOnce(pendingSync),
+      });
+      const currentAccounts = [createMockAccountHeader("0x1000000000000002")];
+      const currentClient = createMockWebClient({
+        getAccounts: vi.fn().mockResolvedValue(currentAccounts),
+        syncState: vi.fn().mockResolvedValue({ blockNum: () => 200 }),
+      });
+      vi.mocked(WebClient.createClient).mockResolvedValueOnce(
+        previousClient as unknown as WebClient
+      );
+      const config = {
+        rpcUrl: "https://rpc.testnet.miden.io",
+        autoSyncInterval: 0,
+      };
+      const { result } = renderHook(() => useMiden(), {
+        wrapper: ({ children }) => (
+          <MidenProvider config={config}>{children}</MidenProvider>
+        ),
+      });
+      await waitFor(() => expect(result.current.isReady).toBe(true));
+
+      let sync!: Promise<void>;
+      act(() => {
+        sync = result.current.sync();
+      });
+      expect(useMidenStore.getState().sync.isSyncing).toBe(true);
+
+      act(() => {
+        useMidenStore
+          .getState()
+          .setClient(currentClient as unknown as WebClient);
+        useMidenStore.getState().setAccounts(currentAccounts as any);
+      });
+      expect(useMidenStore.getState().sync.isSyncing).toBe(false);
+      const afterReplacement = useMidenStore.getState();
+
+      await act(async () => {
+        if (outcome === "resolve") {
+          resolveSync({ blockNum: () => 999 });
+        } else {
+          rejectSync(new Error("previous client failed"));
+        }
+        await sync;
+      });
+      expect(useMidenStore.getState()).toBe(afterReplacement);
+
+      await act(async () => {
+        await result.current.sync();
+      });
+      expect(useMidenStore.getState().sync.syncHeight).toBe(200);
+      expect(useMidenStore.getState().sync.isSyncing).toBe(false);
+      expect(useMidenStore.getState().sync.error).toBeNull();
+      expect(useMidenStore.getState().accounts).toBe(currentAccounts);
+    }
+  );
+
   it("auto-syncs at the configured interval", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
@@ -441,6 +522,162 @@ describe("MidenProvider — auto-sync + state-change listener", () => {
     expect(useMidenStore.getState().sync.error?.message).toBe(
       "explicit sync boom"
     );
+  });
+
+  it("discards an account refresh from sync() after the cache is reset", async () => {
+    let resolveAccounts: (value: any[]) => void;
+    const staleAccounts = [{ id: "previous-signer" }];
+    const pendingAccounts = new Promise<any[]>((resolve) => {
+      resolveAccounts = resolve;
+    });
+    const stub = {
+      getAccounts: vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockReturnValueOnce(pendingAccounts),
+      syncState: vi.fn().mockResolvedValue({ blockNum: () => 100 }),
+      getSyncHeight: vi.fn().mockResolvedValue(100),
+      onStateChanged: vi.fn(() => () => {}),
+      free: vi.fn(),
+    };
+    vi.mocked(WebClient.createClient).mockResolvedValueOnce(
+      stub as unknown as WebClient
+    );
+
+    let midenRef: ReturnType<typeof useMiden>;
+    function Capture() {
+      midenRef = useMiden();
+      return null;
+    }
+
+    render(
+      <MidenProvider config={{ rpcUrl: "https://rpc.testnet.miden.io" }}>
+        <Capture />
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(midenRef?.isReady).toBe(true);
+    });
+
+    const syncPromise = midenRef!.sync();
+    await waitFor(() => {
+      expect(stub.getAccounts).toHaveBeenCalledTimes(2);
+    });
+
+    act(() => {
+      useMidenStore.getState().resetInMemoryState();
+    });
+
+    await act(async () => {
+      resolveAccounts!(staleAccounts);
+      await syncPromise;
+    });
+
+    expect(useMidenStore.getState().accounts).toEqual([]);
+  });
+
+  it("discards an onStateChanged refresh that started before the cache reset", async () => {
+    let registeredCb: (() => Promise<void>) | null = null;
+    let resolveAccounts: (value: any[]) => void;
+    const staleAccounts = [{ id: "previous-signer" }];
+    const pendingAccounts = new Promise<any[]>((resolve) => {
+      resolveAccounts = resolve;
+    });
+    const stub = {
+      getAccounts: vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockReturnValueOnce(pendingAccounts),
+      syncState: vi.fn().mockResolvedValue({ blockNum: () => 100 }),
+      getSyncHeight: vi.fn().mockResolvedValue(100),
+      onStateChanged: vi.fn((cb: () => Promise<void>) => {
+        registeredCb = cb;
+        return () => {};
+      }),
+      free: vi.fn(),
+    };
+    vi.mocked(WebClient.createClient).mockResolvedValueOnce(
+      stub as unknown as WebClient
+    );
+
+    render(
+      <MidenProvider config={{ rpcUrl: "https://rpc.testnet.miden.io" }}>
+        <div>ready</div>
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(registeredCb).toBeTypeOf("function");
+    });
+
+    const refreshPromise = registeredCb!();
+    await waitFor(() => {
+      expect(stub.getAccounts).toHaveBeenCalledTimes(2);
+    });
+
+    act(() => {
+      useMidenStore.getState().resetInMemoryState();
+    });
+
+    await act(async () => {
+      resolveAccounts!(staleAccounts);
+      await refreshPromise;
+    });
+
+    expect(useMidenStore.getState().accounts).toEqual([]);
+    expect(useMidenStore.getState().sync.lastSyncTime).toBeNull();
+  });
+
+  it("discards an old client's onStateChanged refresh invoked after reset", async () => {
+    let registeredCb: (() => Promise<void>) | null = null;
+    const staleAccounts = [{ id: "previous-signer" }];
+    const previousClient = {
+      getAccounts: vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce(staleAccounts),
+      syncState: vi.fn().mockResolvedValue({ blockNum: () => 100 }),
+      getSyncHeight: vi.fn().mockResolvedValue(100),
+      onStateChanged: vi.fn((cb: () => Promise<void>) => {
+        registeredCb = cb;
+        return () => {};
+      }),
+      free: vi.fn(),
+    };
+    const currentClient = {
+      getAccounts: vi.fn().mockResolvedValue([]),
+      syncState: vi.fn().mockResolvedValue({ blockNum: () => 100 }),
+      getSyncHeight: vi.fn().mockResolvedValue(100),
+      onStateChanged: vi.fn(() => () => {}),
+      free: vi.fn(),
+    };
+    vi.mocked(WebClient.createClient).mockResolvedValueOnce(
+      previousClient as unknown as WebClient
+    );
+
+    render(
+      <MidenProvider config={{ rpcUrl: "https://rpc.testnet.miden.io" }}>
+        <div>ready</div>
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(registeredCb).toBeTypeOf("function");
+    });
+
+    act(() => {
+      useMidenStore.getState().resetInMemoryState();
+      useMidenStore.getState().setClient(currentClient as unknown as WebClient);
+    });
+
+    await act(async () => {
+      await registeredCb!();
+    });
+
+    expect(useMidenStore.getState().accounts).toEqual([]);
+    expect(useMidenStore.getState().client).toBe(currentClient);
+    expect(previousClient.getAccounts).toHaveBeenCalledTimes(1);
   });
 
   it("invokes the success path of the onStateChanged listener (setAccounts + setSyncState)", async () => {

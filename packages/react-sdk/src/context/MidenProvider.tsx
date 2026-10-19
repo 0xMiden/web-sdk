@@ -10,6 +10,7 @@ import {
 } from "react";
 import { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk";
 import { useMidenStore } from "../store/MidenStore";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import type { MidenConfig } from "../types";
 import { DEFAULTS } from "../types";
 import { AsyncLock } from "../utils/asyncLock";
@@ -125,13 +126,14 @@ export function MidenProvider({
   const sync = useCallback(async () => {
     if (!client || !isReady) return;
 
-    const store = useMidenStore.getState();
-    if (store.sync.isSyncing) return;
+    const isCurrent = captureClientReadGuard(client);
+    if (useMidenStore.getState().sync.isSyncing || !isCurrent()) return;
 
     setSyncState({ isSyncing: true, error: null });
 
     try {
       const summary = await client.syncState();
+      if (!isCurrent()) return;
       const syncHeight = summary.blockNum();
 
       setSyncState({
@@ -143,8 +145,10 @@ export function MidenProvider({
 
       // Trigger account and note refresh after sync
       const accounts = await client.getAccounts();
+      if (!isCurrent()) return;
       useMidenStore.getState().setAccounts(accounts);
     } catch (error) {
+      if (!isCurrent()) return;
       setSyncState({
         isSyncing: false,
         error: error instanceof Error ? error : new Error(String(error)),
@@ -318,6 +322,7 @@ export function MidenProvider({
           if (!cancelled) {
             try {
               const accounts = await webClient.getAccounts();
+              // The effect's cancelled guard is this preload's stale check.
               if (cancelled) return;
               useMidenStore.getState().setAccounts(accounts);
             } catch {
@@ -406,8 +411,11 @@ export function MidenProvider({
 
     // The WebClient exposes onStateChanged when BroadcastChannel is available.
     const unsubscribe = client.onStateChanged?.(async () => {
+      const isCurrent = captureClientReadGuard(client);
+      if (!isCurrent()) return;
       try {
         const accounts = await client.getAccounts();
+        if (!isCurrent()) return;
         useMidenStore.getState().setAccounts(accounts);
         setSyncState({ lastSyncTime: Date.now() });
       } catch {

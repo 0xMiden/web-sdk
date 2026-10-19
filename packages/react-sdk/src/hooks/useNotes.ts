@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import {
   useMidenStore,
@@ -6,6 +6,7 @@ import {
   useConsumableNotesStore,
   useSyncStateStore,
 } from "../store/MidenStore";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import { isConsumableNow, NoteFilter } from "@miden-sdk/miden-sdk";
 import type { NotesFilter, NotesResult, NoteSummary } from "../types";
 import { getNoteSummary } from "../utils/notes";
@@ -75,10 +76,15 @@ export function useNotes(options?: NotesFilter): NotesResult {
   const { lastSyncTime } = useSyncStateStore();
 
   const [error, setError] = useState<Error | null>(null);
+  const latestRequestRef = useRef(0);
 
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
 
+    const isCurrent = captureClientReadGuard(client);
+    if (!isCurrent()) return;
+
+    const request = ++latestRequestRef.current;
     setLoadingNotes(true);
     setError(null);
 
@@ -104,13 +110,17 @@ export function useNotes(options?: NotesFilter): NotesResult {
         );
       }
 
+      if (!isCurrent()) return;
       // Smart refetch: only update store if note IDs changed (prevents unnecessary re-renders)
       setNotesIfChanged(fetchedNotes);
       setConsumableNotesIfChanged(fetchedConsumable);
     } catch (err) {
+      if (!isCurrent() || latestRequestRef.current !== request) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      setLoadingNotes(false);
+      if (isCurrent()) {
+        setLoadingNotes(false);
+      }
     }
   }, [
     client,

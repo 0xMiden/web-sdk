@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import { useMidenStore } from "../store/MidenStore";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import { AccountStorageMode, isConsumableNow } from "@miden-sdk/miden-sdk";
 import type { ConsumableNoteRecord } from "@miden-sdk/miden-sdk";
 import type {
@@ -115,8 +116,11 @@ export function useSessionAccount(
 
         const wallet = await client.newWallet(resolvedStorageMode, authScheme);
         ensureAccountBech32(wallet);
+        const isCurrent = captureClientReadGuard(client);
         const accounts = await client.getAccounts();
-        setAccounts(accounts);
+        if (isCurrent()) {
+          setAccounts(accounts);
+        }
 
         if (cancelledRef.current) return;
 
