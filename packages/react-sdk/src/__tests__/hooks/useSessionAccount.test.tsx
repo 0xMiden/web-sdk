@@ -3,6 +3,8 @@ import React, { useLayoutEffect } from "react";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useSessionAccount } from "../../hooks/useSessionAccount";
 import { useMiden } from "../../context/MidenProvider";
+import { useSigner } from "../../context/SignerContext";
+import { createMockSignerContext } from "../mocks/signer-context";
 import { useMidenStore } from "../../store/MidenStore";
 import {
   createMockWebClient,
@@ -16,7 +18,12 @@ vi.mock("../../context/MidenProvider", () => ({
   useMiden: vi.fn(),
 }));
 
+vi.mock("../../context/SignerContext", () => ({
+  useSigner: vi.fn(),
+}));
+
 const mockUseMiden = useMiden as ReturnType<typeof vi.fn>;
+const mockUseSigner = vi.mocked(useSigner);
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -57,6 +64,7 @@ beforeEach(() => {
   localStorageMock._reset();
   vi.stubGlobal("localStorage", localStorageMock);
   vi.clearAllMocks();
+  mockUseSigner.mockReturnValue(null);
 });
 
 afterEach(() => {
@@ -731,6 +739,76 @@ describe("session identity and flow ownership", () => {
         .mockResolvedValue([createMockConsumableNoteRecord("0xfunding", id)]),
     });
   }
+
+  it.each([null, true])(
+    "does not restore a local session before a signer client commits (signerConnected=%s)",
+    async (signerConnected) => {
+      localStorageMock.setItem("miden-session:accountId", "0xlocal");
+      localStorageMock.setItem("miden-session:ready", "true");
+      localStorageMock.setItem("miden-session:a:accountId", "0xsessionA");
+      localStorageMock.setItem("miden-session:a:ready", "true");
+      localStorageMock.getItem.mockClear();
+      localStorageMock.removeItem.mockClear();
+      mockUseSigner.mockReturnValue(createMockSignerContext());
+      const context = {
+        client: null,
+        isReady: false,
+        sync: vi.fn(),
+        clientStoreName: null,
+        signerConnected,
+      };
+      mockUseMiden.mockReturnValue(context);
+      const { result, rerender } = renderHook(() =>
+        useSessionAccount({ fund: vi.fn() })
+      );
+
+      expect(result.current.sessionAccountId).toBeNull();
+      expect(result.current.step).toBe("idle");
+      await expect(result.current.initialize()).rejects.toThrow(
+        "Miden client is not ready"
+      );
+      act(() => result.current.reset());
+      expect(localStorageMock.getItem).not.toHaveBeenCalled();
+      expect(localStorageMock.removeItem).not.toHaveBeenCalled();
+
+      const client = sessionClient();
+      act(() => {
+        useMidenStore.getState().setClient(client as never);
+        mockUseMiden.mockReturnValue({
+          ...context,
+          client,
+          isReady: true,
+          clientStoreName: "a",
+          signerConnected: true,
+        });
+      });
+      rerender();
+      expect(result.current.sessionAccountId).toBe("0xsessionA");
+      expect(result.current.step).toBe("ready");
+    }
+  );
+
+  it("restores a local session without a signer provider before a client commits", () => {
+    localStorageMock.setItem("miden-session:accountId", "0xlocal");
+    localStorageMock.setItem("miden-session:ready", "true");
+    mockUseMiden.mockReturnValue({
+      client: null,
+      isReady: false,
+      sync: vi.fn(),
+      clientStoreName: null,
+      signerConnected: null,
+    });
+    const { result, rerender } = renderHook(() =>
+      useSessionAccount({ fund: vi.fn() })
+    );
+    expect(result.current.sessionAccountId).toBe("0xlocal");
+    expect(result.current.step).toBe("ready");
+
+    mockUseSigner.mockReturnValue(createMockSignerContext());
+    rerender();
+    expect(result.current.sessionAccountId).toBeNull();
+    expect(result.current.step).toBe("idle");
+  });
 
   it("restores only the committed signer's session across selection and client commits", async () => {
     const clientA = sessionClient("0xsessionA");

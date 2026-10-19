@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
+import { useSigner } from "../context/SignerContext";
 import { captureClientCurrency, useMidenStore } from "../store/MidenStore";
 import { AccountStorageMode, isConsumableNow } from "@miden-sdk/miden-sdk";
 import type { ConsumableNoteRecord } from "@miden-sdk/miden-sdk";
@@ -52,6 +53,7 @@ export function useSessionAccount(
     clientStoreName = null,
     signerConnected = null,
   } = useMiden();
+  const hasSignerProvider = useSigner() !== null;
   const setAccounts = useMidenStore((state) => state.setAccounts);
 
   const [sessionAccountId, setSessionAccountId] = useState<string | null>(null);
@@ -80,23 +82,32 @@ export function useSessionAccount(
     storagePrefix,
     clientStoreName,
     signerConnected,
+    hasSignerProvider,
   });
   if (
     identityRef.current.storagePrefix !== storagePrefix ||
     identityRef.current.clientStoreName !== clientStoreName ||
-    identityRef.current.signerConnected !== signerConnected
+    identityRef.current.signerConnected !== signerConnected ||
+    identityRef.current.hasSignerProvider !== hasSignerProvider
   ) {
-    identityRef.current = { storagePrefix, clientStoreName, signerConnected };
+    identityRef.current = {
+      storagePrefix,
+      clientStoreName,
+      signerConnected,
+      hasSignerProvider,
+    };
     generationRef.current += 1;
   }
   const identity = identityRef.current;
   const generation = generationRef.current;
   const keyPrefix =
-    clientStoreName === null
-      ? storagePrefix
-      : `${storagePrefix}:${clientStoreName}`;
-  const accountIdKey = `${keyPrefix}:accountId`;
-  const readyKey = `${keyPrefix}:ready`;
+    clientStoreName !== null
+      ? `${storagePrefix}:${clientStoreName}`
+      : hasSignerProvider
+        ? null
+        : storagePrefix;
+  const accountIdKey = keyPrefix === null ? null : `${keyPrefix}:accountId`;
+  const readyKey = keyPrefix === null ? null : `${keyPrefix}:ready`;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -119,7 +130,7 @@ export function useSessionAccount(
       generationRef.current !== generation
     )
       return;
-    if (!client || !isReady) {
+    if (!client || !isReady || accountIdKey === null || readyKey === null) {
       throw new Error("Miden client is not ready");
     }
 
@@ -221,8 +232,8 @@ export function useSessionAccount(
     setSessionAccountId(null);
     setStep("idle");
     setError(null);
-    localStorage.removeItem(accountIdKey);
-    localStorage.removeItem(readyKey);
+    if (accountIdKey !== null) localStorage.removeItem(accountIdKey);
+    if (readyKey !== null) localStorage.removeItem(readyKey);
   }, [accountIdKey, readyKey]);
 
   return {
@@ -235,7 +246,10 @@ export function useSessionAccount(
   };
 }
 
-function readSession(accountIdKey: string, readyKey: string) {
+function readSession(accountIdKey: string | null, readyKey: string | null) {
+  if (accountIdKey === null || readyKey === null) {
+    return { accountId: null, ready: false };
+  }
   try {
     const accountId = localStorage.getItem(accountIdKey);
     const ready = localStorage.getItem(readyKey) === "true";
