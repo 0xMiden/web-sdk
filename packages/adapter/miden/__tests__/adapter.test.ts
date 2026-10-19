@@ -603,6 +603,82 @@ describe("MidenWalletAdapter", () => {
       await first;
       expect(adapter.connected).toBe(true);
     });
+
+    it("publishes nothing when disconnect() runs while the handshake is pending", async () => {
+      let releaseConnect: () => void = () => {};
+      const mockWallet = createMockWallet({
+        connect: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              releaseConnect = resolve;
+            })
+        ),
+      });
+      (window as any).midenWallet = mockWallet;
+      const adapter = new MidenWalletAdapter();
+      adapter.readyState = WalletReadyState.Installed;
+      const connectHandler = vi.fn();
+      const errorHandler = vi.fn();
+      adapter.on("connect", connectHandler);
+      adapter.on("error", errorHandler);
+
+      const pending = adapter.connect(
+        PrivateDataPermission.UponRequest,
+        WalletAdapterNetwork.Testnet
+      );
+      await adapter.disconnect();
+      releaseConnect();
+      await pending;
+
+      expect(adapter.connected).toBe(false);
+      expect(adapter.address).toBeNull();
+      expect(mockWallet.listenerCount("accountChange")).toBe(0);
+      expect(connectHandler).not.toHaveBeenCalled();
+      expect(errorHandler).not.toHaveBeenCalled();
+    });
+
+    it("connects again after a disconnect", async () => {
+      const { adapter, mockWallet } = await createConnectedAdapter();
+      await adapter.disconnect();
+
+      await adapter.connect(
+        PrivateDataPermission.UponRequest,
+        WalletAdapterNetwork.Testnet
+      );
+
+      expect(adapter.connected).toBe(true);
+      expect(adapter.address).toBe("0xmockaddress");
+      expect(mockWallet.listenerCount("accountChange")).toBe(1);
+    });
+
+    it("reports no error when the handshake rejects after disconnect()", async () => {
+      let rejectConnect: (error: Error) => void = () => {};
+      const mockWallet = createMockWallet({
+        connect: vi.fn(
+          () =>
+            new Promise<void>((_resolve, reject) => {
+              rejectConnect = reject;
+            })
+        ),
+      });
+      (window as any).midenWallet = mockWallet;
+      const adapter = new MidenWalletAdapter();
+      adapter.readyState = WalletReadyState.Installed;
+      const errorHandler = vi.fn();
+      adapter.on("error", errorHandler);
+
+      const pending = adapter.connect(
+        PrivateDataPermission.UponRequest,
+        WalletAdapterNetwork.Testnet
+      );
+      await adapter.disconnect();
+      rejectConnect(new Error("User rejected the request"));
+
+      await expect(pending).resolves.toBeUndefined();
+      expect(errorHandler).not.toHaveBeenCalled();
+      expect(adapter.connected).toBe(false);
+      expect(mockWallet.listenerCount("accountChange")).toBe(0);
+    });
   });
 
   describe("disconnect", () => {
