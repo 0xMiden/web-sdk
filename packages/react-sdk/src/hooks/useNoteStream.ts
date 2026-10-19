@@ -107,9 +107,8 @@ export function useNoteStream(
       if (!isCurrent()) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      // A stale or superseded fetch no longer owns the loading state.
-      if (isCurrent() && latestRequestRef.current === request)
-        setIsLoading(false);
+      // Only a newer fetch can take ownership of this instance's loading flag.
+      if (latestRequestRef.current === request) setIsLoading(false);
     }
   }, [client, isReady, status, setNotesIfChanged]);
 

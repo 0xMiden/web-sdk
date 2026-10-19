@@ -41,6 +41,11 @@ interface MidenStoreState {
   isLoadingAccounts: boolean;
   isLoadingNotes: boolean;
 
+  loadingAccountsToken: number;
+  loadingNotesToken: number;
+  syncToken: number;
+  initializingToken: number;
+
   // Actions
   setClient: (client: WebClient | null) => void;
   setInitializing: (isInitializing: boolean) => void;
@@ -64,6 +69,15 @@ interface MidenStoreState {
     accountIdKey: string
   ) => void;
   setAssetMetadata: (assetId: string, metadata: AssetMetadata) => void;
+
+  beginLoadingAccounts: () => number;
+  endLoadingAccounts: (token: number) => void;
+  beginLoadingNotes: () => number;
+  endLoadingNotes: (token: number) => void;
+  beginSync: () => number;
+  endSync: (token: number) => void;
+  beginInitializing: () => number;
+  endInitializing: (token: number) => void;
 
   setLoadingAccounts: (isLoading: boolean) => void;
   setLoadingNotes: (isLoading: boolean) => void;
@@ -109,10 +123,14 @@ function freshState() {
 
     ...freshCachedState(),
     cacheGeneration: 0,
+    loadingAccountsToken: 0,
+    loadingNotesToken: 0,
+    syncToken: 0,
+    initializingToken: 0,
   };
 }
 
-export const useMidenStore = create<MidenStoreState>()((set) => ({
+export const useMidenStore = create<MidenStoreState>()((set, get) => ({
   ...freshState(),
 
   setClient: (client) =>
@@ -274,6 +292,55 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
       return { assetMetadata: newMap };
     }),
 
+  beginLoadingAccounts: () => {
+    const token = get().loadingAccountsToken + 1;
+    set({ loadingAccountsToken: token, isLoadingAccounts: true });
+    return token;
+  },
+
+  endLoadingAccounts: (token) =>
+    set((state) =>
+      state.loadingAccountsToken === token ? { isLoadingAccounts: false } : {}
+    ),
+
+  beginLoadingNotes: () => {
+    const token = get().loadingNotesToken + 1;
+    set({ loadingNotesToken: token, isLoadingNotes: true });
+    return token;
+  },
+
+  endLoadingNotes: (token) =>
+    set((state) =>
+      state.loadingNotesToken === token ? { isLoadingNotes: false } : {}
+    ),
+
+  beginSync: () => {
+    const token = get().syncToken + 1;
+    set({
+      syncToken: token,
+      sync: { ...get().sync, isSyncing: true, error: null },
+    });
+    return token;
+  },
+
+  endSync: (token) =>
+    set((state) =>
+      state.syncToken === token
+        ? { sync: { ...state.sync, isSyncing: false } }
+        : {}
+    ),
+
+  beginInitializing: () => {
+    const token = get().initializingToken + 1;
+    set({ initializingToken: token, isInitializing: true });
+    return token;
+  },
+
+  endInitializing: (token) =>
+    set((state) =>
+      state.initializingToken === token ? { isInitializing: false } : {}
+    ),
+
   setLoadingAccounts: (isLoadingAccounts) => set({ isLoadingAccounts }),
 
   setLoadingNotes: (isLoadingNotes) => set({ isLoadingNotes }),
@@ -282,12 +349,19 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
     set((state) => ({
       ...freshCachedState(),
       cacheGeneration: state.cacheGeneration + 1,
+      loadingAccountsToken: state.loadingAccountsToken + 1,
+      loadingNotesToken: state.loadingNotesToken + 1,
+      syncToken: state.syncToken + 1,
     })),
 
   reset: () =>
     set((state) => ({
       ...freshState(),
+      initializingToken: state.initializingToken + 1,
       cacheGeneration: state.cacheGeneration + 1,
+      loadingAccountsToken: state.loadingAccountsToken + 1,
+      loadingNotesToken: state.loadingNotesToken + 1,
+      syncToken: state.syncToken + 1,
     })),
 }));
 

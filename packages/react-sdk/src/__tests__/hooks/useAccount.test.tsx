@@ -23,6 +23,71 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe("useAccount loading ownership", () => {
+  it.each(["resolve", "reject"])(
+    "clears loading after a reset when the fetch %ss",
+    async (outcome) => {
+      let finish!: (value: never) => void;
+      let fail!: (error: Error) => void;
+      const pending = new Promise<never>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      });
+      const client = createMockWebClient({
+        getAccount: vi.fn().mockReturnValue(pending),
+      });
+      mockUseMiden.mockReturnValue({ client, isReady: true });
+      useMidenStore.getState().setClient(client as never);
+      const { result } = renderHook(() => useAccount("0x1234"));
+      expect(result.current.isLoading).toBe(true);
+      act(() => {
+        useMidenStore.getState().reset();
+      });
+      await act(async () => {
+        if (outcome === "resolve") finish(null as never);
+        else fail(new Error("stale fetch"));
+        await pending.catch(() => {});
+      });
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.error).toBeNull();
+    }
+  );
+
+  it("keeps loading until the latest same-client fetch settles", async () => {
+    let finishA!: (value: never) => void;
+    let finishB!: (value: never) => void;
+    const pendingA = new Promise<never>((resolve) => {
+      finishA = resolve;
+    });
+    const pendingB = new Promise<never>((resolve) => {
+      finishB = resolve;
+    });
+    const client = createMockWebClient({
+      getAccount: vi
+        .fn()
+        .mockReturnValueOnce(pendingA)
+        .mockReturnValue(pendingB),
+    });
+    mockUseMiden.mockReturnValue({ client, isReady: true });
+    useMidenStore.getState().setClient(client as never);
+    const { result } = renderHook(() => useAccount("0x1234"));
+    act(() => {
+      void result.current.refetch();
+    });
+    expect(client.getAccount).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      finishA(null as never);
+      await pendingA;
+    });
+    expect(result.current.isLoading).toBe(true);
+    await act(async () => {
+      finishB(null as never);
+      await pendingB;
+    });
+    expect(result.current.isLoading).toBe(false);
+  });
+});
+
 describe("useAccount", () => {
   it.each(["resolve", "reject"])(
     "keeps B's pending fetch state when A's fetch %ss after replacement",

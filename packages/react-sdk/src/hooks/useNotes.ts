@@ -68,7 +68,8 @@ export function useNotes(options?: NotesFilter): NotesResult {
       state.consumableNotesByAccount.has(accountKey)
   );
   const isLoadingNotes = useMidenStore((state) => state.isLoadingNotes);
-  const setLoadingNotes = useMidenStore((state) => state.setLoadingNotes);
+  const beginLoadingNotes = useMidenStore((state) => state.beginLoadingNotes);
+  const endLoadingNotes = useMidenStore((state) => state.endLoadingNotes);
   const setNotesIfChanged = useMidenStore((state) => state.setNotesIfChanged);
   const setConsumableNotesIfChanged = useMidenStore(
     (state) => state.setConsumableNotesIfChanged
@@ -83,7 +84,7 @@ export function useNotes(options?: NotesFilter): NotesResult {
     const isCurrent = captureClientCurrency(client);
     if (!isCurrent()) return;
 
-    setLoadingNotes(true);
+    const loadingToken = beginLoadingNotes();
     setError(null);
 
     try {
@@ -120,8 +121,7 @@ export function useNotes(options?: NotesFilter): NotesResult {
       if (!isCurrent()) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      // The reset already cleared the shared flag; a post-reset fetch owns it now.
-      if (isCurrent()) setLoadingNotes(false);
+      endLoadingNotes(loadingToken);
     }
   }, [
     client,
@@ -129,7 +129,8 @@ export function useNotes(options?: NotesFilter): NotesResult {
     options?.status,
     filterKey,
     accountKey,
-    setLoadingNotes,
+    beginLoadingNotes,
+    endLoadingNotes,
     setNotesIfChanged,
     setConsumableNotesIfChanged,
   ]);

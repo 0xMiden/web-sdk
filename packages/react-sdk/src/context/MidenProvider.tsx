@@ -69,7 +69,10 @@ export function MidenProvider({
     initError,
     signerConnected,
     setClient,
-    setInitializing,
+    beginInitializing,
+    endInitializing,
+    beginSync,
+    endSync,
     setInitError,
     setConfig,
     setSyncState,
@@ -144,7 +147,7 @@ export function MidenProvider({
     const store = useMidenStore.getState();
     if (store.sync.isSyncing) return;
 
-    setSyncState({ isSyncing: true, error: null });
+    const syncToken = beginSync();
 
     try {
       const summary = await client.syncState();
@@ -153,7 +156,6 @@ export function MidenProvider({
 
       setSyncState({
         syncHeight,
-        isSyncing: false,
         lastSyncTime: Date.now(),
         error: null,
       });
@@ -165,11 +167,12 @@ export function MidenProvider({
     } catch (error) {
       if (!isCurrent()) return;
       setSyncState({
-        isSyncing: false,
         error: error instanceof Error ? error : new Error(String(error)),
       });
+    } finally {
+      endSync(syncToken);
     }
-  }, [client, isReady, setSyncState]);
+  }, [client, isReady, setSyncState, beginSync, endSync]);
 
   // Extract stable primitives from signerContext to avoid spurious effect re-runs
   // when the signer provider creates a new object reference on every render.
@@ -265,7 +268,7 @@ export function MidenProvider({
         // Re-check cancelled after potentially waiting for the lock
         if (cancelled) return;
 
-        setInitializing(true);
+        const initializingToken = beginInitializing();
         setConfig(resolvedConfig);
         const generation = useMidenStore.getState().cacheGeneration;
 
@@ -387,6 +390,7 @@ export function MidenProvider({
             );
           }
         } finally {
+          endInitializing(initializingToken);
           unowned?.terminate();
         }
       });
@@ -406,7 +410,8 @@ export function MidenProvider({
     setClient,
     setConfig,
     setInitError,
-    setInitializing,
+    beginInitializing,
+    endInitializing,
     setSyncState,
     setSignerConnected,
     signerIsConnected,

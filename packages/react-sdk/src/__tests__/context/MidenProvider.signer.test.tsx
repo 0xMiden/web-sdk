@@ -1,6 +1,16 @@
-import { describe, it, expect, vi } from "vitest";
-import { renderHook, render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  renderHook,
+  render,
+  screen,
+  act,
+  waitFor,
+} from "@testing-library/react";
 import React from "react";
+import { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk";
+import { MidenProvider } from "../../context/MidenProvider";
+import { useMidenStore } from "../../store/MidenStore";
+import { createMockWebClient } from "../mocks/miden-sdk";
 import { SignerContext, useSigner } from "../../context/SignerContext";
 import {
   createMockSignerContext,
@@ -300,5 +310,95 @@ describe("MidenProvider signer integration contract", () => {
 
       expect(screen.getByTestId("signer-name").textContent).toBe("Para");
     });
+  });
+});
+
+describe("MidenProvider initialization ownership", () => {
+  beforeEach(() => {
+    useMidenStore.getState().reset();
+    vi.clearAllMocks();
+  });
+  const config = { autoSyncInterval: 0 };
+  function Tree({ connected }: { connected: boolean }) {
+    return (
+      <SignerContext.Provider
+        value={createMockSignerContext({ isConnected: connected })}
+      >
+        <MidenProvider config={config}>
+          <span>child</span>
+        </MidenProvider>
+      </SignerContext.Provider>
+    );
+  }
+
+  it.each(["resolve", "reject", "cache reset"])(
+    "ends cancelled initialization after %s",
+    async (outcome) => {
+      let finish!: (client: WebClient) => void;
+      let fail!: (error: Error) => void;
+      const pending = new Promise<WebClient>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      });
+      vi.mocked(WebClient.createClientWithExternalKeystore).mockReturnValueOnce(
+        pending
+      );
+      const { rerender } = render(<Tree connected />);
+      await waitFor(() => {
+        expect(useMidenStore.getState().isInitializing).toBe(true);
+      });
+      if (outcome === "cache reset")
+        act(() => {
+          useMidenStore.getState().resetInMemoryState();
+        });
+      rerender(<Tree connected={false} />);
+      await act(async () => {
+        if (outcome === "reject") fail(new Error("cancelled create"));
+        else finish(createMockWebClient() as never);
+        await pending.catch(() => {});
+      });
+      expect(useMidenStore.getState().isInitializing).toBe(false);
+      expect(useMidenStore.getState().initError).toBeNull();
+    }
+  );
+
+  it("does not end a replacement provider's initialization", async () => {
+    let finishA!: (client: WebClient) => void;
+    let finishB!: (client: WebClient) => void;
+    const pendingA = new Promise<WebClient>((resolve) => {
+      finishA = resolve;
+    });
+    const pendingB = new Promise<WebClient>((resolve) => {
+      finishB = resolve;
+    });
+    vi.mocked(WebClient.createClientWithExternalKeystore)
+      .mockReturnValueOnce(pendingA)
+      .mockReturnValueOnce(pendingB);
+    const first = render(<Tree connected />);
+    await waitFor(() => {
+      expect(WebClient.createClientWithExternalKeystore).toHaveBeenCalledTimes(
+        1
+      );
+    });
+    first.unmount();
+    render(<Tree connected />);
+    await waitFor(() => {
+      expect(WebClient.createClientWithExternalKeystore).toHaveBeenCalledTimes(
+        2
+      );
+    });
+    await act(async () => {
+      finishA(createMockWebClient() as never);
+      await pendingA;
+    });
+    expect(useMidenStore.getState().isInitializing).toBe(true);
+    await act(async () => {
+      finishB(createMockWebClient() as never);
+      await pendingB;
+    });
+    await waitFor(() => {
+      expect(useMidenStore.getState().isReady).toBe(true);
+    });
+    expect(useMidenStore.getState().isInitializing).toBe(false);
   });
 });

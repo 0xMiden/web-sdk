@@ -33,7 +33,10 @@ export function useAccounts(): AccountsResult {
   const { client, isReady } = useMiden();
   const accounts = useAccountsStore();
   const isLoadingAccounts = useMidenStore((state) => state.isLoadingAccounts);
-  const setLoadingAccounts = useMidenStore((state) => state.setLoadingAccounts);
+  const beginLoadingAccounts = useMidenStore(
+    (state) => state.beginLoadingAccounts
+  );
+  const endLoadingAccounts = useMidenStore((state) => state.endLoadingAccounts);
   const setAccounts = useMidenStore((state) => state.setAccounts);
 
   const refetch = useCallback(async () => {
@@ -42,7 +45,7 @@ export function useAccounts(): AccountsResult {
     const isCurrent = captureClientCurrency(client);
     if (!isCurrent()) return;
 
-    setLoadingAccounts(true);
+    const loadingToken = beginLoadingAccounts();
 
     try {
       const fetchedAccounts = await client.getAccounts();
@@ -52,9 +55,9 @@ export function useAccounts(): AccountsResult {
       if (!isCurrent()) return;
       console.error("Failed to fetch accounts:", error);
     } finally {
-      if (isCurrent()) setLoadingAccounts(false);
+      endLoadingAccounts(loadingToken);
     }
-  }, [client, isReady, setAccounts, setLoadingAccounts]);
+  }, [client, isReady, setAccounts, beginLoadingAccounts, endLoadingAccounts]);
 
   // Initial fetch
   useEffect(() => {

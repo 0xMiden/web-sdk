@@ -51,6 +51,71 @@ function createStreamableNote(
   };
 }
 
+describe("useNoteStream loading ownership", () => {
+  it.each(["resolve", "reject"])(
+    "clears loading after a reset when the fetch %ss",
+    async (outcome) => {
+      let finish!: (value: never) => void;
+      let fail!: (error: Error) => void;
+      const pending = new Promise<never>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      });
+      const client = createMockWebClient({
+        getInputNotes: vi.fn().mockReturnValue(pending),
+      });
+      mockUseMiden.mockReturnValue({ client, isReady: true });
+      useMidenStore.getState().setClient(client as never);
+      const { result } = renderHook(() => useNoteStream());
+      expect(result.current.isLoading).toBe(true);
+      act(() => {
+        useMidenStore.getState().reset();
+      });
+      await act(async () => {
+        if (outcome === "resolve") finish([] as never);
+        else fail(new Error("stale fetch"));
+        await pending.catch(() => {});
+      });
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.error).toBeNull();
+    }
+  );
+
+  it("keeps loading until the latest same-client fetch settles", async () => {
+    let finishA!: (value: never) => void;
+    let finishB!: (value: never) => void;
+    const pendingA = new Promise<never>((resolve) => {
+      finishA = resolve;
+    });
+    const pendingB = new Promise<never>((resolve) => {
+      finishB = resolve;
+    });
+    const client = createMockWebClient({
+      getInputNotes: vi
+        .fn()
+        .mockReturnValueOnce(pendingA)
+        .mockReturnValue(pendingB),
+    });
+    mockUseMiden.mockReturnValue({ client, isReady: true });
+    useMidenStore.getState().setClient(client as never);
+    const { result } = renderHook(() => useNoteStream());
+    act(() => {
+      useMidenStore.getState().setSyncState({ lastSyncTime: 1 });
+    });
+    expect(client.getInputNotes).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      finishA([] as never);
+      await pendingA;
+    });
+    expect(result.current.isLoading).toBe(true);
+    await act(async () => {
+      finishB([] as never);
+      await pendingB;
+    });
+    expect(result.current.isLoading).toBe(false);
+  });
+});
+
 describe("useNoteStream", () => {
   describe("initial state", () => {
     it("should return empty notes when client is not ready", () => {
@@ -222,7 +287,7 @@ describe("useNoteStream", () => {
     });
 
     it.each(["resolve", "reject"])(
-      "preserves loading and error when a stale fetch %ss without a successor",
+      "clears loading and preserves error when a stale fetch %ss without a successor",
       async (outcome) => {
         const pendingA = deferred<unknown[]>();
         const clientA = createMockWebClient({
@@ -259,7 +324,7 @@ describe("useNoteStream", () => {
           else pendingA.reject(new Error("stale stream fetch"));
           await pendingA.promise.catch(() => {});
         });
-        expect(result.current.isLoading).toBe(true);
+        expect(result.current.isLoading).toBe(false);
         expect(result.current.error).toBeNull();
         expect(result.current.notes).toEqual([]);
       }

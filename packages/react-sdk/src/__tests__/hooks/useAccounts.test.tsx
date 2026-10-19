@@ -22,6 +22,63 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe("useAccounts shared loading ownership", () => {
+  it("keeps a remounted instance loading when the old instance settles", async () => {
+    let finishA!: (value: never[]) => void;
+    let finishB!: (value: never[]) => void;
+    const pendingA = new Promise<never[]>((resolve) => {
+      finishA = resolve;
+    });
+    const pendingB = new Promise<never[]>((resolve) => {
+      finishB = resolve;
+    });
+    const client = createMockWebClient({
+      getAccounts: vi
+        .fn()
+        .mockReturnValueOnce(pendingA)
+        .mockReturnValue(pendingB),
+    });
+    mockUseMiden.mockReturnValue({ client, isReady: true });
+    useMidenStore.getState().setClient(client as never);
+    const first = renderHook(() => useAccounts());
+    first.unmount();
+    const { result } = renderHook(() => useAccounts());
+    expect(client.getAccounts).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      finishA([]);
+      await pendingA;
+    });
+    expect(result.current.isLoading).toBe(true);
+    await act(async () => {
+      finishB([]);
+      await pendingB;
+    });
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it("clears loading after replacement without a newer fetch", async () => {
+    let finish!: (value: never[]) => void;
+    const pending = new Promise<never[]>((resolve) => {
+      finish = resolve;
+    });
+    const client = createMockWebClient({
+      getAccounts: vi.fn().mockReturnValue(pending),
+    });
+    mockUseMiden.mockReturnValue({ client, isReady: true });
+    useMidenStore.getState().setClient(client as never);
+    const { result } = renderHook(() => useAccounts());
+    act(() => {
+      useMidenStore.getState().setClient(createMockWebClient() as never);
+    });
+    await act(async () => {
+      finish([]);
+      await pending;
+    });
+    expect(result.current.isLoading).toBe(false);
+    expect(useMidenStore.getState().isLoadingAccounts).toBe(false);
+  });
+});
+
 describe("useAccounts", () => {
   describe("initial state", () => {
     it("should return empty accounts when client is not ready", () => {

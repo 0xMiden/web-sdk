@@ -23,6 +23,60 @@ function StatusDisplay() {
   );
 }
 
+describe("MidenProvider sync ownership", () => {
+  it("ends a stale sync after config replacement and allows the new client to sync", async () => {
+    let context!: ReturnType<typeof useMiden>;
+    function Consumer() {
+      context = useMiden();
+      return null;
+    }
+    const { rerender } = render(
+      <MidenProvider config={{ autoSyncInterval: 0 }}>
+        <Consumer />
+      </MidenProvider>
+    );
+    await waitFor(() => {
+      expect(context.isReady).toBe(true);
+    });
+    const clientA = context.client!;
+    let finish!: (summary: never) => void;
+    const pending = new Promise<never>((resolve) => {
+      finish = resolve;
+    });
+    vi.mocked(clientA.syncState).mockReturnValueOnce(pending);
+    let syncing!: Promise<void>;
+    act(() => {
+      syncing = context.sync();
+    });
+    expect(useMidenStore.getState().sync.isSyncing).toBe(true);
+    const clientB = {
+      ...clientA,
+      syncState: vi.fn().mockResolvedValue({ blockNum: () => 2 }),
+    };
+    vi.mocked(WebClient.createClient).mockResolvedValueOnce(
+      clientB as WebClient
+    );
+    rerender(
+      <MidenProvider config={{ autoSyncInterval: 0 }}>
+        <Consumer />
+      </MidenProvider>
+    );
+    await waitFor(() => {
+      expect(context.client).toBe(clientB);
+    });
+    await act(async () => {
+      finish({ blockNum: () => 1 } as never);
+      await syncing;
+    });
+    expect(useMidenStore.getState().sync.isSyncing).toBe(false);
+    clientB.syncState.mockClear();
+    await act(async () => {
+      await context.sync();
+    });
+    expect(clientB.syncState).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("MidenProvider initialization", () => {
   it("should initialize and become ready", async () => {
     render(

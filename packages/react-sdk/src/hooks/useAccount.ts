@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useMemo } from "react";
+import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { useMiden } from "../context/MidenProvider";
 import {
   captureClientCurrency,
@@ -48,6 +48,8 @@ export function useAccount(accountId: AccountRef | undefined): AccountResult {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
+  const latestRequestRef = useRef(0);
+
   // Normalize accountId to string
   const accountIdStr = useMemo(() => {
     if (!accountId) return undefined;
@@ -66,6 +68,7 @@ export function useAccount(accountId: AccountRef | undefined): AccountResult {
     const isCurrent = captureClientCurrency(client);
     if (!isCurrent()) return;
 
+    const request = ++latestRequestRef.current;
     setIsLoading(true);
     setError(null);
 
@@ -81,7 +84,7 @@ export function useAccount(accountId: AccountRef | undefined): AccountResult {
       if (!isCurrent()) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      if (isCurrent()) setIsLoading(false);
+      if (latestRequestRef.current === request) setIsLoading(false);
     }
   }, [client, isReady, accountIdStr, setAccountDetails]);
 
