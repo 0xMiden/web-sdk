@@ -1,6 +1,10 @@
 import { useCallback, useEffect } from "react";
 import { useMiden } from "../context/MidenProvider";
-import { useMidenStore, useAccountsStore } from "../store/MidenStore";
+import {
+  captureClientCurrency,
+  useMidenStore,
+  useAccountsStore,
+} from "../store/MidenStore";
 import type { AccountsResult } from "../types";
 
 /**
@@ -29,22 +33,31 @@ export function useAccounts(): AccountsResult {
   const { client, isReady } = useMiden();
   const accounts = useAccountsStore();
   const isLoadingAccounts = useMidenStore((state) => state.isLoadingAccounts);
-  const setLoadingAccounts = useMidenStore((state) => state.setLoadingAccounts);
+  const beginLoadingAccounts = useMidenStore(
+    (state) => state.beginLoadingAccounts
+  );
+  const endLoadingAccounts = useMidenStore((state) => state.endLoadingAccounts);
   const setAccounts = useMidenStore((state) => state.setAccounts);
 
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
 
-    setLoadingAccounts(true);
+    const isCurrent = captureClientCurrency(client);
+    if (!isCurrent()) return;
+
+    const loadingToken = beginLoadingAccounts();
+
     try {
       const fetchedAccounts = await client.getAccounts();
+      if (!isCurrent()) return;
       setAccounts(fetchedAccounts);
     } catch (error) {
+      if (!isCurrent()) return;
       console.error("Failed to fetch accounts:", error);
     } finally {
-      setLoadingAccounts(false);
+      endLoadingAccounts(loadingToken);
     }
-  }, [client, isReady, setAccounts, setLoadingAccounts]);
+  }, [client, isReady, setAccounts, beginLoadingAccounts, endLoadingAccounts]);
 
   // Initial fetch
   useEffect(() => {

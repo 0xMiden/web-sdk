@@ -1,6 +1,16 @@
-import { describe, it, expect, vi } from "vitest";
-import { renderHook, render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  renderHook,
+  render,
+  screen,
+  act,
+  waitFor,
+} from "@testing-library/react";
 import React from "react";
+import { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk";
+import { MidenProvider, useMiden } from "../../context/MidenProvider";
+import { useMidenStore } from "../../store/MidenStore";
+import { createMockWebClient } from "../mocks/miden-sdk";
 import { SignerContext, useSigner } from "../../context/SignerContext";
 import {
   createMockSignerContext,
@@ -300,5 +310,253 @@ describe("MidenProvider signer integration contract", () => {
 
       expect(screen.getByTestId("signer-name").textContent).toBe("Para");
     });
+  });
+});
+
+describe("MidenProvider initialization ownership", () => {
+  beforeEach(() => {
+    useMidenStore.getState().reset();
+    vi.clearAllMocks();
+  });
+  const config = { autoSyncInterval: 0 };
+  function Tree({ connected }: { connected: boolean }) {
+    return (
+      <SignerContext.Provider
+        value={createMockSignerContext({ isConnected: connected })}
+      >
+        <MidenProvider config={config}>
+          <span>child</span>
+        </MidenProvider>
+      </SignerContext.Provider>
+    );
+  }
+
+  it.each(["resolve", "reject", "cache reset"])(
+    "ends cancelled initialization after %s",
+    async (outcome) => {
+      let finish!: (client: WebClient) => void;
+      let fail!: (error: Error) => void;
+      const pending = new Promise<WebClient>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      });
+      vi.mocked(WebClient.createClientWithExternalKeystore).mockReturnValueOnce(
+        pending
+      );
+      const { rerender } = render(<Tree connected />);
+      await waitFor(() => {
+        expect(useMidenStore.getState().isInitializing).toBe(true);
+      });
+      if (outcome === "cache reset")
+        act(() => {
+          useMidenStore.getState().resetInMemoryState();
+        });
+      rerender(<Tree connected={false} />);
+      await act(async () => {
+        if (outcome === "reject") fail(new Error("cancelled create"));
+        else finish(createMockWebClient() as never);
+        await pending.catch(() => {});
+      });
+      expect(useMidenStore.getState().isInitializing).toBe(false);
+      expect(useMidenStore.getState().initError).toBeNull();
+    }
+  );
+
+  it("does not end a replacement provider's initialization", async () => {
+    let finishA!: (client: WebClient) => void;
+    let finishB!: (client: WebClient) => void;
+    const pendingA = new Promise<WebClient>((resolve) => {
+      finishA = resolve;
+    });
+    const pendingB = new Promise<WebClient>((resolve) => {
+      finishB = resolve;
+    });
+    vi.mocked(WebClient.createClientWithExternalKeystore)
+      .mockReturnValueOnce(pendingA)
+      .mockReturnValueOnce(pendingB);
+    const first = render(<Tree connected />);
+    await waitFor(() => {
+      expect(WebClient.createClientWithExternalKeystore).toHaveBeenCalledTimes(
+        1
+      );
+    });
+    first.unmount();
+    render(<Tree connected />);
+    await waitFor(() => {
+      expect(WebClient.createClientWithExternalKeystore).toHaveBeenCalledTimes(
+        2
+      );
+    });
+    await act(async () => {
+      finishA(createMockWebClient() as never);
+      await pendingA;
+    });
+    expect(useMidenStore.getState().isInitializing).toBe(true);
+    await act(async () => {
+      finishB(createMockWebClient() as never);
+      await pendingB;
+    });
+    await waitFor(() => {
+      expect(useMidenStore.getState().isReady).toBe(true);
+    });
+    expect(useMidenStore.getState().isInitializing).toBe(false);
+  });
+});
+
+describe("MidenProvider committed store identity", () => {
+  beforeEach(() => {
+    useMidenStore.getState().reset();
+    vi.clearAllMocks();
+  });
+  const config = { autoSyncInterval: 0 };
+  it("publishes the committed store while a newly selected signer is disconnected", async () => {
+    let context!: ReturnType<typeof useMiden>;
+    function Consumer() {
+      context = useMiden();
+      return null;
+    }
+    function Tree({ name, connected }: { name: string; connected: boolean }) {
+      return (
+        <SignerContext.Provider
+          value={createMockSignerContext({
+            storeName: name,
+            isConnected: connected,
+          })}
+        >
+          <MidenProvider config={config}>
+            <Consumer />
+          </MidenProvider>
+        </SignerContext.Provider>
+      );
+    }
+    const { rerender } = render(<Tree name="a" connected />);
+    await waitFor(() => {
+      expect(context.isReady).toBe(true);
+    });
+    expect(context.clientStoreName).toBe("a");
+    const clientA = context.client;
+    rerender(<Tree name="b" connected={false} />);
+    expect(context.client).toBe(clientA);
+    expect(context.clientStoreName).toBe("a");
+    expect(context.signerConnected).toBe(false);
+    let finish!: (client: WebClient) => void;
+    const pending = new Promise<WebClient>((resolve) => {
+      finish = resolve;
+    });
+    vi.mocked(WebClient.createClientWithExternalKeystore).mockReturnValueOnce(
+      pending
+    );
+    rerender(<Tree name="b" connected />);
+    await waitFor(() => {
+      expect(context.client).toBeNull();
+    });
+    expect(context.clientStoreName).toBeNull();
+    await act(async () => {
+      finish(createMockWebClient() as never);
+      await pending;
+    });
+    await waitFor(() => {
+      expect(context.isReady).toBe(true);
+    });
+    expect(context.clientStoreName).toBe("b");
+  });
+
+  it("keeps the committed store after remounting with a disconnected signer", async () => {
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <SignerContext.Provider
+        value={createMockSignerContext({ storeName: "a", isConnected: true })}
+      >
+        <MidenProvider config={config}>{children}</MidenProvider>
+      </SignerContext.Provider>
+    );
+    const first = renderHook(() => useMiden(), { wrapper });
+    await waitFor(() => expect(first.result.current.isReady).toBe(true));
+    expect(first.result.current.clientStoreName).toBe("a");
+    const clientA = first.result.current.client;
+    first.unmount();
+
+    const second = renderHook(() => useMiden(), {
+      wrapper: ({ children }) => (
+        <SignerContext.Provider
+          value={createDisconnectedSignerContext({ storeName: "a" })}
+        >
+          <MidenProvider config={config}>{children}</MidenProvider>
+        </SignerContext.Provider>
+      ),
+    });
+    expect(second.result.current.client).toBe(clientA);
+    expect(second.result.current.signerConnected).toBe(false);
+    expect(second.result.current.clientStoreName).toBe("a");
+  });
+
+  it("uses the remounted provider's signing callback on reconnect", async () => {
+    const signA = vi.fn().mockResolvedValue(new Uint8Array(67));
+    const signB = vi.fn().mockResolvedValue(new Uint8Array(67));
+    function Tree({ connected }: { connected: boolean }) {
+      return (
+        <SignerContext.Provider
+          value={createMockSignerContext({
+            storeName: "a",
+            isConnected: connected,
+            signCb: signB,
+          })}
+        >
+          <MidenProvider config={config}>{null}</MidenProvider>
+        </SignerContext.Provider>
+      );
+    }
+    const first = render(
+      <SignerContext.Provider
+        value={createMockSignerContext({ storeName: "a", signCb: signA })}
+      >
+        <MidenProvider config={config}>{null}</MidenProvider>
+      </SignerContext.Provider>
+    );
+    await waitFor(() => expect(useMidenStore.getState().isReady).toBe(true));
+    first.unmount();
+    const second = render(<Tree connected={false} />);
+    second.rerender(<Tree connected />);
+    await waitFor(() =>
+      expect(useMidenStore.getState().signerConnected).toBe(true)
+    );
+
+    const calls = vi.mocked(WebClient.createClientWithExternalKeystore).mock
+      .calls;
+    const sign = calls[calls.length - 1][6]!;
+    await sign(new Uint8Array(32), new Uint8Array(32));
+    expect(signB).toHaveBeenCalledTimes(1);
+    expect(signA).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "publishes hasSigner=%s from its own ancestor context",
+    async (hasSigner) => {
+      const signer = createMockSignerContext();
+      const { result } = renderHook(() => useMiden(), {
+        wrapper: ({ children }) => (
+          <SignerContext.Provider value={hasSigner ? signer : null}>
+            <MidenProvider config={config}>
+              <SignerContext.Provider value={hasSigner ? null : signer}>
+                {children}
+              </SignerContext.Provider>
+            </MidenProvider>
+          </SignerContext.Provider>
+        ),
+      });
+      await waitFor(() => expect(result.current.isReady).toBe(true));
+      expect(result.current.hasSigner).toBe(hasSigner);
+    }
+  );
+
+  it("publishes null for a local client", async () => {
+    const { result } = renderHook(() => useMiden(), {
+      wrapper: ({ children }) => (
+        <MidenProvider config={config}>{children}</MidenProvider>
+      ),
+    });
+    await waitFor(() => {
+      expect(result.current.isReady).toBe(true);
+    });
+    expect(result.current.clientStoreName).toBeNull();
   });
 });

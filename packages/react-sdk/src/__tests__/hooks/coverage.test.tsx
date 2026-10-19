@@ -52,6 +52,7 @@ describe("useImportAccount — file-input variants", () => {
       importAccountFile: vi.fn().mockResolvedValue("Imported account"),
     });
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+    useMidenStore.getState().setClient(mockClient as never);
 
     const { result } = renderHook(() => useImportAccount());
     const buf = new ArrayBuffer(8);
@@ -110,6 +111,7 @@ describe("useImportAccount — file-input variants", () => {
     });
 
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+    useMidenStore.getState().setClient(mockClient as never);
 
     const { result } = renderHook(() => useImportAccount());
     await act(async () => {
@@ -140,6 +142,7 @@ describe("useImportAccount — file-input variants", () => {
       getAccount: vi.fn().mockResolvedValue(mockAccount),
     });
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+    useMidenStore.getState().setClient(mockClient as never);
 
     const { result } = renderHook(() => useImportAccount());
     await act(async () => {
@@ -171,6 +174,7 @@ describe("useImportAccount — file-input variants", () => {
       getAccount: vi.fn().mockResolvedValue(null),
     });
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+    useMidenStore.getState().setClient(mockClient as never);
 
     const { result } = renderHook(() => useImportAccount());
     await act(async () => {
@@ -199,6 +203,7 @@ describe("useImportAccount — file-input variants", () => {
         .mockRejectedValue(new Error("permission denied")),
     });
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+    useMidenStore.getState().setClient(mockClient as never);
 
     const { result } = renderHook(() => useImportAccount());
     await act(async () => {
@@ -217,6 +222,7 @@ describe("useImportAccount — file-input variants", () => {
       getAccount: vi.fn().mockResolvedValue(null),
     });
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+    useMidenStore.getState().setClient(mockClient as never);
 
     const { result } = renderHook(() => useImportAccount());
     await act(async () => {

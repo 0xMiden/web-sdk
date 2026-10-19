@@ -17,6 +17,70 @@ beforeEach(() => {
   useMidenStore.getState().reset();
 });
 
+describe("in-progress tokens", () => {
+  const flags = [
+    ["beginLoadingAccounts", "endLoadingAccounts", "isLoadingAccounts"],
+    ["beginLoadingNotes", "endLoadingNotes", "isLoadingNotes"],
+    ["beginSync", "endSync", "sync"],
+    ["beginInitializing", "endInitializing", "isInitializing"],
+  ] as const;
+
+  it.each(flags)("%s only ends the latest flow", (begin, end, flag) => {
+    const store = useMidenStore.getState();
+    const old = store[begin]();
+    const latest = store[begin]();
+    store[end](old);
+    const value = () =>
+      flag === "sync"
+        ? useMidenStore.getState().sync.isSyncing
+        : useMidenStore.getState()[flag];
+    expect(value()).toBe(true);
+    store[end](latest);
+    expect(value()).toBe(false);
+  });
+
+  it.each(flags)(
+    "%s invalidates ownership on full reset",
+    (begin, end, flag) => {
+      const store = useMidenStore.getState();
+      const old = store[begin]();
+      store.reset();
+      const latest = store[begin]();
+      store[end](old);
+      const value = () =>
+        flag === "sync"
+          ? useMidenStore.getState().sync.isSyncing
+          : useMidenStore.getState()[flag];
+      expect(value()).toBe(true);
+      store[end](latest);
+      expect(value()).toBe(false);
+    }
+  );
+
+  it.each(flags)(
+    "%s preserves only initialization ownership on cache reset",
+    (begin, end, flag) => {
+      const store = useMidenStore.getState();
+      const old = store[begin]();
+      store.resetInMemoryState();
+      if (flag === "isInitializing") {
+        expect(useMidenStore.getState().isInitializing).toBe(true);
+        store[end](old);
+        expect(useMidenStore.getState().isInitializing).toBe(false);
+      } else {
+        const latest = store[begin]();
+        store[end](old);
+        expect(
+          flag === "sync"
+            ? useMidenStore.getState().sync.isSyncing
+            : useMidenStore.getState()[flag]
+        ).toBe(true);
+        store[end](latest);
+      }
+    }
+  );
+});
+
 describe("MidenStore", () => {
   describe("cacheGeneration", () => {
     it("advances on resetInMemoryState and reset", () => {

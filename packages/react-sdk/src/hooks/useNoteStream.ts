@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import {
+  captureClientCurrency,
   useMidenStore,
   useNotesStore,
   useSyncStateStore,
@@ -89,28 +90,24 @@ export function useNoteStream(
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
 
+    const isCurrent = captureClientCurrency(client);
+    if (!isCurrent()) return;
+
     const request = ++latestRequestRef.current;
     setIsLoading(true);
     setError(null);
-
-    // The provider resets the store on a signer identity change while the old
-    // client's fetch may still be running; its result must not land in the new cache.
-    const generation = useMidenStore.getState().cacheGeneration;
-    const isStale = () =>
-      useMidenStore.getState().cacheGeneration !== generation;
 
     try {
       const filterType = getNoteFilterType(status);
       const filter = new NoteFilter(filterType);
       const fetched = await client.getInputNotes(filter);
-      if (isStale()) return;
+      if (!isCurrent()) return;
       setNotesIfChanged(fetched, status);
     } catch (err) {
-      if (isStale()) return;
+      if (!isCurrent()) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      // Only the latest request clears the flag, so an older fetch cannot end a
-      // newer one's loading state, and a fetch with no successor still clears it.
+      // Only a newer fetch can take ownership of this instance's loading flag.
       if (latestRequestRef.current === request) setIsLoading(false);
     }
   }, [client, isReady, status, setNotesIfChanged]);

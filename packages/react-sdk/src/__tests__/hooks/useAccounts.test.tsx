@@ -3,6 +3,7 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { useAccounts } from "../../hooks/useAccounts";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
+import type { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk";
 import {
   createMockWebClient,
   createMockAccountHeader,
@@ -19,6 +20,63 @@ const mockUseMiden = useMiden as ReturnType<typeof vi.fn>;
 beforeEach(() => {
   useMidenStore.getState().reset();
   vi.clearAllMocks();
+});
+
+describe("useAccounts shared loading ownership", () => {
+  it("keeps a remounted instance loading when the old instance settles", async () => {
+    let finishA!: (value: never[]) => void;
+    let finishB!: (value: never[]) => void;
+    const pendingA = new Promise<never[]>((resolve) => {
+      finishA = resolve;
+    });
+    const pendingB = new Promise<never[]>((resolve) => {
+      finishB = resolve;
+    });
+    const client = createMockWebClient({
+      getAccounts: vi
+        .fn()
+        .mockReturnValueOnce(pendingA)
+        .mockReturnValue(pendingB),
+    });
+    mockUseMiden.mockReturnValue({ client, isReady: true });
+    useMidenStore.getState().setClient(client as never);
+    const first = renderHook(() => useAccounts());
+    first.unmount();
+    const { result } = renderHook(() => useAccounts());
+    expect(client.getAccounts).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      finishA([]);
+      await pendingA;
+    });
+    expect(result.current.isLoading).toBe(true);
+    await act(async () => {
+      finishB([]);
+      await pendingB;
+    });
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it("clears loading after replacement without a newer fetch", async () => {
+    let finish!: (value: never[]) => void;
+    const pending = new Promise<never[]>((resolve) => {
+      finish = resolve;
+    });
+    const client = createMockWebClient({
+      getAccounts: vi.fn().mockReturnValue(pending),
+    });
+    mockUseMiden.mockReturnValue({ client, isReady: true });
+    useMidenStore.getState().setClient(client as never);
+    const { result } = renderHook(() => useAccounts());
+    act(() => {
+      useMidenStore.getState().setClient(createMockWebClient() as never);
+    });
+    await act(async () => {
+      finish([]);
+      await pending;
+    });
+    expect(result.current.isLoading).toBe(false);
+    expect(useMidenStore.getState().isLoadingAccounts).toBe(false);
+  });
 });
 
 describe("useAccounts", () => {
@@ -100,6 +158,130 @@ describe("useAccounts", () => {
   });
 
   describe("refetch", () => {
+    it("ignores a saved refetch after its client was replaced", async () => {
+      const clientA = createMockWebClient();
+      mockUseMiden.mockReturnValue({ client: clientA, isReady: true });
+      useMidenStore.getState().setClient(clientA as unknown as WebClient);
+      useMidenStore
+        .getState()
+        .setAccounts([createMockAccountHeader()] as never);
+      const { result } = renderHook(() => useAccounts());
+      const refetchA = result.current.refetch;
+      const accountsB = [createMockAccountHeader("0x2000000000000002")];
+      act(() => {
+        useMidenStore.getState().resetInMemoryState();
+        useMidenStore
+          .getState()
+          .setClient(createMockWebClient() as unknown as WebClient);
+        useMidenStore.getState().setAccounts(accountsB as never);
+      });
+
+      let fetching!: Promise<void>;
+      act(() => {
+        fetching = refetchA();
+      });
+      expect(result.current.isLoading).toBe(false);
+      await act(async () => {
+        await fetching;
+      });
+      expect(clientA.getAccounts).not.toHaveBeenCalled();
+      expect(result.current.accounts).toBe(accountsB);
+      expect(result.current.error).toBeNull();
+    });
+
+    it("keeps signer B's accounts when signer A's pending fetch resolves", async () => {
+      const accountsA = [createMockAccountHeader("0x1000000000000001")];
+      const accountsB = [createMockAccountHeader("0x1000000000000002")];
+      let finishFetch!: (accounts: typeof accountsA) => void;
+      const pendingAccounts = new Promise<typeof accountsA>((resolve) => {
+        finishFetch = resolve;
+      });
+      const clientA = createMockWebClient({
+        getAccounts: vi.fn().mockReturnValue(pendingAccounts),
+      });
+      const clientB = createMockWebClient({
+        getAccounts: vi.fn().mockResolvedValue(accountsB),
+      });
+
+      mockUseMiden.mockReturnValue({ client: clientA, isReady: true });
+      useMidenStore.getState().setClient(clientA as unknown as WebClient);
+
+      const { result, rerender } = renderHook(() => useAccounts());
+      await waitFor(() => {
+        expect(clientA.getAccounts).toHaveBeenCalledTimes(1);
+      });
+      expect(result.current.isLoading).toBe(true);
+
+      act(() => {
+        mockUseMiden.mockReturnValue({ client: clientB, isReady: true });
+        useMidenStore.getState().resetInMemoryState();
+        useMidenStore.getState().setClient(clientB as unknown as WebClient);
+      });
+      rerender();
+      await waitFor(() => {
+        expect(result.current.accounts).toBe(accountsB);
+      });
+
+      await act(async () => {
+        finishFetch(accountsA);
+        await pendingAccounts;
+      });
+
+      expect(useMidenStore.getState().client).toBe(clientB);
+      expect(useMidenStore.getState().accounts).toBe(accountsB);
+      expect(result.current.accounts).toBe(accountsB);
+    });
+
+    it("keeps signer B's fetch loading when signer A's pending fetch resolves first", async () => {
+      const accountsA = [createMockAccountHeader("0x1000000000000001")];
+      const accountsB = [createMockAccountHeader("0x1000000000000002")];
+      let finishA!: (accounts: typeof accountsA) => void;
+      const pendingA = new Promise<typeof accountsA>((resolve) => {
+        finishA = resolve;
+      });
+      let finishB!: (accounts: typeof accountsB) => void;
+      const pendingB = new Promise<typeof accountsB>((resolve) => {
+        finishB = resolve;
+      });
+      const clientA = createMockWebClient({
+        getAccounts: vi.fn().mockReturnValue(pendingA),
+      });
+      const clientB = createMockWebClient({
+        getAccounts: vi.fn().mockReturnValue(pendingB),
+      });
+
+      mockUseMiden.mockReturnValue({ client: clientA, isReady: true });
+      useMidenStore.getState().setClient(clientA as unknown as WebClient);
+      const { result, rerender } = renderHook(() => useAccounts());
+      await waitFor(() => {
+        expect(clientA.getAccounts).toHaveBeenCalledTimes(1);
+      });
+
+      act(() => {
+        mockUseMiden.mockReturnValue({ client: clientB, isReady: true });
+        useMidenStore.getState().resetInMemoryState();
+        useMidenStore.getState().setClient(clientB as unknown as WebClient);
+      });
+      rerender();
+      await waitFor(() => {
+        expect(clientB.getAccounts).toHaveBeenCalledTimes(1);
+      });
+      expect(result.current.isLoading).toBe(true);
+
+      await act(async () => {
+        finishA(accountsA);
+        await pendingA;
+      });
+      expect(result.current.isLoading).toBe(true);
+
+      await act(async () => {
+        finishB(accountsB);
+        await pendingB;
+      });
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.accounts).toBe(accountsB);
+    });
+
     it("should refetch accounts when called", async () => {
       const mockAccounts = [createMockAccountHeader("0x1000000000000001")];
       const updatedAccounts = [
