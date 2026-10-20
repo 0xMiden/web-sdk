@@ -75,6 +75,7 @@ const ciShardProjects = process.env.CI
           "test/tags.test.ts",
           "test/notes.test.ts",
           "test/note_transport.test.ts",
+          "test/rpc_client.browser.test.ts",
         ],
         testIgnore: browserTestIgnore,
       },

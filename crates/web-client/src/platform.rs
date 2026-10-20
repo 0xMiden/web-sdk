@@ -77,6 +77,87 @@ pub(crate) fn js_to_bytes(js_bytes: &JsBytes) -> Vec<u8> {
     js_bytes.to_vec()
 }
 
+/// A JavaScript `Uint16Array`, used for RPC nullifier prefixes.
+#[cfg(feature = "browser")]
+pub(crate) type JsU16Array = Vec<u16>;
+
+/// An owned snapshot of a JavaScript `Uint16Array` for async RPC calls.
+#[cfg(feature = "nodejs")]
+pub(crate) use owned_u16_array::JsU16Array;
+
+#[cfg(feature = "nodejs")]
+mod owned_u16_array {
+    use std::ptr;
+
+    use napi::bindgen_prelude::{
+        FromNapiValue,
+        TypeName,
+        Uint16ArraySlice,
+        ValidateNapiValue,
+        sys,
+    };
+
+    pub struct JsU16Array(pub(crate) Vec<u16>);
+
+    impl TypeName for JsU16Array {
+        fn type_name() -> &'static str {
+            "Uint16Array"
+        }
+
+        fn value_type() -> napi::ValueType {
+            napi::ValueType::Object
+        }
+    }
+
+    impl ValidateNapiValue for JsU16Array {
+        unsafe fn validate(
+            env: sys::napi_env,
+            value: sys::napi_value,
+        ) -> napi::Result<sys::napi_value> {
+            unsafe { Uint16ArraySlice::validate(env, value) }
+        }
+    }
+
+    impl FromNapiValue for JsU16Array {
+        unsafe fn from_napi_value(
+            env: sys::napi_env,
+            value: sys::napi_value,
+        ) -> napi::Result<Self> {
+            let mut backing_buffer = ptr::null_mut();
+            napi::check_status!(
+                unsafe {
+                    sys::napi_get_typedarray_info(
+                        env,
+                        value,
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                        &raw mut backing_buffer,
+                        ptr::null_mut(),
+                    )
+                },
+                "Expected a Uint16Array"
+            )?;
+            let mut ordinary_buffer = false;
+            napi::check_status!(unsafe {
+                sys::napi_is_arraybuffer(env, backing_buffer, &raw mut ordinary_buffer)
+            })?;
+            if !ordinary_buffer {
+                return Err(napi::Error::new(
+                    napi::Status::InvalidArg,
+                    "Uint16Array prefixes must use an ArrayBuffer, not a SharedArrayBuffer",
+                ));
+            }
+
+            // NAPI converts arguments on the JS thread before scheduling the async body.
+            // Ordinary ArrayBuffer memory cannot be mutated concurrently here. Rejecting
+            // shared backing memory above makes this temporary slice safe to copy.
+            let values = unsafe { Uint16ArraySlice::from_napi_value(env, value) }?;
+            Ok(Self(values.to_vec()))
+        }
+    }
+}
+
 // INTERIOR MUTABILITY
 // ================================================================================================
 

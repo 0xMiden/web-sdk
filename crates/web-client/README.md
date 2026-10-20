@@ -478,6 +478,70 @@ console.log(`Balance: ${balance}`); // 900n
 client.terminate();
 ```
 
+### Stateless RPC queries and submission
+
+Use `RpcClient` when your application keeps its own state or submits
+transactions proved elsewhere. It opens no local store:
+
+```typescript
+import { Endpoint, RpcClient } from "@miden-sdk/miden-sdk";
+
+const rpc = new RpcClient(Endpoint.testnet());
+const updates = await rpc.syncNullifiers(new Uint16Array([0x1234]), 100, 200);
+
+for (const update of updates) {
+  console.log(update.nullifier().toHex(), update.blockNum());
+}
+```
+
+`syncNullifiers(prefixes, blockFrom, blockTo)` includes both range bounds and
+handles chunking and pagination internally. It returns prefix matches, so
+filter by the full nullifier when tracking particular notes. Keep `blockTo`
+at or below the node's chain tip, available through
+`(await rpc.getBlockHeaderByNumber()).blockNum()`.
+
+Prefixes are copied before asynchronous work, and duplicates are scanned once
+without modifying your array. On Node.js, pass an `ArrayBuffer`-backed
+`Uint16Array`; `SharedArrayBuffer` backing is rejected during argument conversion.
+
+For submission, supply the proof and its complete execution inputs, plus a
+key verified against your trusted network and block header:
+
+```typescript
+import {
+  BlockHeader, ProvenTransaction, RpcClient, TransactionInputs, Word
+} from "@miden-sdk/miden-sdk";
+
+async function submitProvedTransaction(
+  rpc: RpcClient,
+  proof: ProvenTransaction,
+  inputs: TransactionInputs,
+  genesisCommitment: Word,
+  trustedBlockHeader: BlockHeader,
+): Promise<number> {
+  const key = await rpc.getTransactionEncryptionKey(
+    genesisCommitment, trustedBlockHeader
+  );
+  return rpc.submitProvenTx(proof, inputs, key);
+}
+```
+
+The SDK seals the inputs before sending them. A proof alone is insufficient.
+Use `TransactionInputs.fromTransactionResult(result)` for an SDK execution
+result, or `TransactionInputs.deserialize(bytes)` for the canonical
+`miden_objects` protobuf payload from an external executor. Independently
+validate a header obtained from an untrusted RPC before using it as a trust
+anchor.
+
+`rpc.submitProvenTxBatch(provenBatch, proposedBatch, transactionInputs, key)`
+submits a proved batch, with inputs in the proposal's transaction order.
+Both submission methods return the node's chain tip at submission, not a
+commitment receipt. They do not execute, prove, apply local state updates or
+send private notes. In the browser the batch call consumes its input wrappers;
+keep serialized inputs to construct fresh wrappers for a retry.
+See the [stateless RPC guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/rpc-client.md)
+for serialization formats, key rotation and complete examples.
+
 ### Account Visibility and Faucet Types
 
 `AccountType.Private` and `AccountType.Public` are the native visibility enum

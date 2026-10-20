@@ -1,6 +1,6 @@
 ---
 name: web-client-usage
-description: Conventions for writing JavaScript/TypeScript code that uses the Miden web SDK (`@miden-sdk/miden-sdk`). Use when building apps on Miden, writing integration tests, or calling MidenClient methods - covers initialization, the resource-based API (accounts, transactions, notes, tags, settings, compile, keystore, pswap), sync ordering, type conversions, transaction flows, fees, batching, named storage slots, custom contracts, foreign accounts, private note transport, mock-chain testing, observability, and pitfalls.
+description: Conventions for writing JavaScript/TypeScript code that uses the Miden web SDK (`@miden-sdk/miden-sdk`). Use when building apps on Miden, writing integration tests, or calling MidenClient or RpcClient methods - covers initialization, the resource-based API (accounts, transactions, notes, tags, settings, compile, keystore, pswap), stateless RPC queries and submission, sync ordering, type conversions, transaction flows, fees, batching, named storage slots, custom contracts, foreign accounts, private note transport, mock-chain testing, observability, and pitfalls.
 ---
 
 # Web SDK Usage Patterns
@@ -30,7 +30,7 @@ The SDK exposes a top-level `MidenClient` whose state is split across typed
 | `client.keystore`    | Inserting / fetching / removing secret keys                                                                                                                                    |
 | `client.pswap`       | Partial-swap lineages: `lineages` / `lineagesFor` / `lineage` / `cancelByOrder`                                                                                                |
 
-`MidenClient` is the public surface. The underlying WASM-bound class is
+`MidenClient` is the main public surface. The underlying WASM-bound class is
 exported as `WasmWebClient` (an alias for `WebClient`) for low-level operations
 the resource API does not yet wrap. The client's own handle on it is the
 private field `#inner`, which is **not reachable from outside the class** -
@@ -61,6 +61,73 @@ the low-level surface on every upgrade.
 
 ## Client Initialization
 
+### Stateless RPC
+
+Use `new RpcClient(new Endpoint(rpcUrl))` for an application that manages its
+own account and note state. It opens no local store. On a lazy entry, await
+`MidenClient.ready()` before constructing WASM objects.
+
+`rpc.syncNullifiers(prefixes: Uint16Array, blockFrom, blockTo)` returns
+`NullifierUpdate[]` for the inclusive range, handling request chunking and
+pagination internally. Each update exposes `nullifier(): Word` and
+`blockNum(): number`. Compute a prefix as
+`Number(nullifier.toU64s()[3] >> 48n)`; filter returned matches by the full
+nullifier because unrelated notes can share a prefix. An empty prefix array
+returns `[]`; a reversed block range rejects. Keep `blockTo` at or below the
+node's chain tip, available with
+`(await rpc.getBlockHeaderByNumber()).blockNum()`.
+
+Prefixes are copied before asynchronous work and duplicates are scanned once;
+the caller's array is unchanged. Node.js requires an `ArrayBuffer`-backed
+`Uint16Array` and rejects `SharedArrayBuffer` backing during argument conversion.
+
+For externally proved transactions:
+
+```typescript
+import {
+  BlockHeader, ProvenTransaction, RpcClient, TransactionInputs, Word,
+} from "@miden-sdk/miden-sdk";
+
+async function submitProvedTransaction(
+  rpc: RpcClient,
+  proof: ProvenTransaction,
+  inputs: TransactionInputs,
+  genesisCommitment: Word,
+  trustedBlockHeader: BlockHeader,
+): Promise<number> {
+  const key = await rpc.getTransactionEncryptionKey(
+    genesisCommitment, trustedBlockHeader,
+  );
+  return rpc.submitProvenTx(proof, inputs, key);
+}
+```
+
+The genesis commitment and header must already be trusted. Fetching a header
+from the same untrusted RPC without independent validation does not establish
+that trust. The SDK verifies the encryption key's validator attestation and
+seals the complete inputs before submission; the proof alone is insufficient.
+`TransactionInputs.fromTransactionResult(result)` extracts inputs from an SDK
+execution result.
+
+`rpc.submitProvenTxBatch(provenBatch, proposedBatch, transactionInputs, key)`
+requires an actual `ProvenBatch`, its matching `ProposedBatch`, and inputs in
+exact proposal order. Do not pass an array of transaction proofs as a batch.
+`TransactionInputs`, `ProposedBatch` and `ProvenBatch` expose `serialize()` /
+`deserialize(bytes)` using their corresponding
+`miden_objects::proto::transaction` protobuf encodings. These are not native
+`to_bytes()` payloads; `ProvenTransaction` retains its native binary encoding.
+`ProposedBatch.deserialize` verifies transaction proofs and consistency.
+In the browser, the batch call consumes each `TransactionInputs` wrapper even
+if submission fails. Serialize the inputs first and deserialize fresh wrappers
+for a retry. The batch proof, proposal and key remain reusable, as do all
+arguments of `submitProvenTx`.
+
+Both submission methods return the node's chain tip at submission, not a
+commitment receipt. They do not execute, prove, apply local state, track
+confirmation or deliver private notes. `RpcClient` does not cache keys or
+automatically retry a retired-key rejection; fetch and verify a current key
+before retrying.
+
 ### Convenience constructors (recommended)
 
 ```typescript
@@ -73,7 +140,7 @@ const client = await MidenClient.createTestnet({ feeFaucetId: FEE_FAUCET });
 const client = await MidenClient.createDevnet({ feeFaucetId: FEE_FAUCET });
 ```
 
-`feeFaucetId` is not optional today, on any constructor but `createMock`. Since
+`feeFaucetId` is not optional today, on any `MidenClient` factory but `createMock`. Since
 0.17 the chain's fee asset lives in a protocol configuration the node does not
 serve over RPC, and the SDK carries a per-network default for no network yet, so
 a client created without it fails with an error naming the option. It is the

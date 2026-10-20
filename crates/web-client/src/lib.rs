@@ -26,7 +26,9 @@ use miden_client::builder::{ClientBuilder, DEFAULT_GRPC_TIMEOUT_MS};
 use miden_client::keystore::FilesystemKeyStore;
 use miden_client::note_transport::NoteTransportClient;
 use miden_client::note_transport::grpc::GrpcNoteTransportClient;
-use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, RpcError, VerifyingRpcClient};
+#[cfg(feature = "browser")]
+use miden_client::rpc::RpcError;
+use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, VerifyingRpcClient};
 use miden_client::store::{Store, StoreError};
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::MockNoteTransportApi;
