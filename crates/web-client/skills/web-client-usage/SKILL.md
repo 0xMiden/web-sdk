@@ -77,6 +77,10 @@ returns `[]`; a reversed block range rejects. Keep `blockTo` at or below the
 node's chain tip, available with
 `(await rpc.getBlockHeaderByNumber()).blockNum()`.
 
+Prefixes are copied before asynchronous work and duplicates are scanned once;
+the caller's array is unchanged. Node.js requires an `ArrayBuffer`-backed
+`Uint16Array` and rejects `SharedArrayBuffer` backing during argument conversion.
+
 For externally proved transactions:
 
 ```typescript

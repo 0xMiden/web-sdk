@@ -66,6 +66,11 @@ const rpc = new RpcClient(Endpoint.testnet());
 const updates = await rpc.syncNullifiers(new Uint16Array([0x1234]), 100, 200);
 ```
 
+`syncNullifiers` copies prefixes before asynchronous work and scans duplicate
+prefixes once without changing the input array. On Node.js, use an
+`ArrayBuffer`-backed `Uint16Array`; shared backing memory is rejected during
+argument conversion.
+
 The block range is inclusive; results are prefix matches, exposed as
 `NullifierUpdate` objects with `nullifier()` and `blockNum()`. Filter by the full
 nullifier yourself and keep the upper bound at or below the node's chain tip.

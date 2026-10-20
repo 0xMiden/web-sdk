@@ -500,6 +500,10 @@ filter by the full nullifier when tracking particular notes. Keep `blockTo`
 at or below the node's chain tip, available through
 `(await rpc.getBlockHeaderByNumber()).blockNum()`.
 
+Prefixes are copied before asynchronous work, and duplicates are scanned once
+without modifying your array. On Node.js, pass an `ArrayBuffer`-backed
+`Uint16Array`; `SharedArrayBuffer` backing is rejected during argument conversion.
+
 For submission, supply the proof and its complete execution inputs, plus a
 key verified against your trusted network and block header:
 

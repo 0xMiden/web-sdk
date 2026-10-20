@@ -4,7 +4,7 @@
 
 ### Enhancements
 
-* [FEATURE][web] Query consumed notes and submit externally proved transactions without a local store using `RpcClient.syncNullifiers(prefixes, blockFrom, blockTo)`, `submitProvenTx(proof, inputs, key)` and `submitProvenTxBatch(provenBatch, proposedBatch, transactionInputs, key)`. Nullifier ranges include both bounds and return full nullifiers with their commit heights. `getTransactionEncryptionKey(genesisCommitment, trustedBlockHeader)` verifies the validator key before submission seals the complete execution inputs; submissions return the node's chain tip, not a commitment receipt. `TransactionInputs`, `ProposedBatch` and `ProvenBatch` support protobuf serialization for external execution and proving workflows ([#492](https://github.com/0xMiden/web-sdk/issues/492)).
+* [FEATURE][web] Query consumed notes and submit externally proved transactions without a local store using `RpcClient.syncNullifiers(prefixes, blockFrom, blockTo)`, `submitProvenTx(proof, inputs, key)` and `submitProvenTxBatch(provenBatch, proposedBatch, transactionInputs, key)`. Nullifier ranges include both bounds and return full nullifiers with their commit heights. Prefix arrays are snapshotted before asynchronous work and duplicate prefixes are scanned once; Node.js requires an `ArrayBuffer`-backed `Uint16Array`. `getTransactionEncryptionKey(genesisCommitment, trustedBlockHeader)` verifies the validator key before submission seals the complete execution inputs; submissions return the node's chain tip, not a commitment receipt. `TransactionInputs`, `ProposedBatch` and `ProvenBatch` support protobuf serialization for external execution and proving workflows ([#492](https://github.com/0xMiden/web-sdk/issues/492)).
 
 ### Fixes
 

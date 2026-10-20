@@ -37,8 +37,9 @@ impl RpcClient {
     /// A prefix is the most significant 16 bits of the nullifier's fourth field element.
     /// Results can include other notes sharing a prefix; compare the full returned nullifier
     /// with the one you track. An empty prefix array returns an empty result without RPC calls.
-    ///
-    /// Duplicate prefixes are scanned once without modifying the caller's array.
+    /// Duplicate prefixes are scanned once. The input is copied before asynchronous work and
+    /// the caller's array is not modified. On Node.js, prefixes must be backed by an `ArrayBuffer`;
+    /// `SharedArrayBuffer` backing is rejected during argument conversion.
     ///
     /// @param prefixes - A `Uint16Array` of nullifier prefixes.
     /// @param block_from - First block to scan, inclusive.
@@ -55,9 +56,9 @@ impl RpcClient {
         if block_from > block_to {
             return Err(from_str_err("block_from must be less than or equal to block_to"));
         }
-        // Snapshot the Node typed array before awaiting; WASM already passes an owned Vec.
+        // Both bindings copy the JS input before scheduling this async body.
         #[cfg(feature = "nodejs")]
-        let prefixes = prefixes.to_vec();
+        let prefixes = prefixes.0;
         let mut prefixes = prefixes;
         if prefixes.is_empty() {
             return Ok(Vec::new());

@@ -28,6 +28,11 @@ await `MidenClient.ready()` before constructing WASM objects.
 `nullifier(): Word` and `blockNum(): number`. The SDK handles request chunking
 and pagination; the caller keeps its own sync cursor.
 
+Prefixes are copied before asynchronous work and duplicate values are scanned
+once, without modifying the caller's array. On Node.js, use an
+`ArrayBuffer`-backed `Uint16Array`. A `SharedArrayBuffer` backing store is rejected
+during argument conversion, so invalid input may throw before returning a Promise.
+
 Prefixes are unsigned 16-bit values, taken from the high 16 bits of the fourth
 field element of a nullifier. Prefixes can match unrelated nullifiers, so
 compare the full returned values with the notes you track:
