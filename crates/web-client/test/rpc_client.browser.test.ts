@@ -158,9 +158,10 @@ test.beforeEach(async ({ page }) => {
   await page.goto(rpcUrl);
 });
 
-test("syncNullifiers returns every prefix chunk and block page", async ({
+test("syncNullifiers scans each unique prefix across every block page", async ({
   page,
 }) => {
+  const syncRequests: ReturnType<typeof syncRequest>[] = [];
   await page.route(rpcRoutes, async (route) => {
     if (route.request().url().endsWith("/GetLimits")) {
       await respond(route, limits);
@@ -168,6 +169,7 @@ test("syncNullifiers returns every prefix chunk and block page", async ({
     }
     expect(route.request().url()).toMatch(/\/SyncNullifiers$/);
     const request = syncRequest(route.request().postDataBuffer()!);
+    syncRequests.push(request);
     expect(request.prefixLength).toBe(16);
     expect(request.prefixes).toHaveLength(1);
     expect([1, 2]).toContain(request.prefixes[0]);
@@ -183,15 +185,20 @@ test("syncNullifiers returns every prefix chunk and block page", async ({
     const sdk = await import("./index.js");
     await sdk.MidenClient.ready();
     const rpc = new sdk.RpcClient(new sdk.Endpoint(location.origin));
-    const updates = await rpc.syncNullifiers(new Uint16Array([1, 2]), 10, 12);
-    return updates.map((update) => ({
-      blockNum: update.blockNum(),
-      word: Array.from(update.nullifier().toU64s(), String),
-    }));
+    const prefixes = new Uint16Array([2, 1, 2, 1]);
+    const updates = await rpc.syncNullifiers(prefixes, 10, 12);
+    return {
+      prefixes: Array.from(prefixes),
+      updates: updates.map((update) => ({
+        blockNum: update.blockNum(),
+        word: Array.from(update.nullifier().toU64s(), String),
+      })),
+    };
   });
 
-  expect(result).toHaveLength(4);
-  expect(result).toEqual(
+  expect(result.prefixes).toEqual([2, 1, 2, 1]);
+  expect(result.updates).toHaveLength(4);
+  expect(result.updates).toEqual(
     expect.arrayContaining([
       { blockNum: 11, word: ["11", "0", "0", "281474976710656"] },
       { blockNum: 12, word: ["12", "0", "0", "281474976710656"] },
@@ -199,6 +206,7 @@ test("syncNullifiers returns every prefix chunk and block page", async ({
       { blockNum: 12, word: ["12", "0", "0", "562949953421312"] },
     ])
   );
+  expect(syncRequests).toHaveLength(4);
 });
 
 test("syncNullifiers handles empty prefixes and rejects an inverted range before RPC", async ({

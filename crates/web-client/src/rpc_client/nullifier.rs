@@ -38,6 +38,8 @@ impl RpcClient {
     /// Results can include other notes sharing a prefix; compare the full returned nullifier
     /// with the one you track. An empty prefix array returns an empty result without RPC calls.
     ///
+    /// Duplicate prefixes are scanned once without modifying the caller's array.
+    ///
     /// @param prefixes - A `Uint16Array` of nullifier prefixes.
     /// @param block_from - First block to scan, inclusive.
     /// @param block_to - Last block to scan, inclusive; must be at least `block_from`.
@@ -56,9 +58,13 @@ impl RpcClient {
         // Snapshot the Node typed array before awaiting; WASM already passes an owned Vec.
         #[cfg(feature = "nodejs")]
         let prefixes = prefixes.to_vec();
+        let mut prefixes = prefixes;
         if prefixes.is_empty() {
             return Ok(Vec::new());
         }
+
+        prefixes.sort_unstable();
+        prefixes.dedup();
 
         self.inner
             .sync_nullifiers(&prefixes, block_from.into(), block_to.into())
