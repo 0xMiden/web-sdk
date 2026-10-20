@@ -341,5 +341,6 @@ async function waitAndConsume(
     if (!isCurrent()) return;
   }
 
+  if (!isCurrent()) return;
   throw new Error("Timeout waiting for session wallet funding");
 }

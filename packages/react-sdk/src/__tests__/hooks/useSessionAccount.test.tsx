@@ -813,6 +813,133 @@ describe("useSessionAccount", () => {
       expect(result.current.step).toBe("idle");
     });
   });
+
+  describe("unmount cancellation (Issue #288)", () => {
+    it("should cancel initialization on unmount during syncState and prevent transaction submission", async () => {
+      const mockWallet = createMockAccount({
+        id: vi.fn(() => ({
+          toString: vi.fn(() => "0xsession_wallet"),
+          toHex: vi.fn(() => "0xsession_wallet"),
+          isFaucet: vi.fn(() => false),
+          isRegularAccount: vi.fn(() => true),
+          free: vi.fn(),
+        })),
+      });
+
+      let resolveSyncState!: () => void;
+      const syncState = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSyncState = resolve;
+          })
+      );
+      const getConsumableNotes = vi.fn().mockResolvedValue([]);
+      const submitNewTransaction = vi.fn();
+      const mockClient = createMockWebClient({
+        newWallet: vi.fn().mockResolvedValue(mockWallet),
+        syncState,
+        getConsumableNotes,
+        submitNewTransaction,
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+        clientStoreName: null,
+        signerConnected: null,
+        hasSigner: false,
+      });
+      useMidenStore.getState().setClient(mockClient as never);
+
+      const { result, unmount } = renderHook(() =>
+        useSessionAccount({
+          ...defaultOptions,
+          pollIntervalMs: 10,
+        })
+      );
+
+      let initializePromise: Promise<void> | undefined;
+      act(() => {
+        initializePromise = result.current.initialize();
+      });
+
+      await waitFor(() => expect(syncState).toHaveBeenCalledTimes(1));
+
+      unmount();
+      resolveSyncState();
+
+      await act(async () => {
+        await initializePromise;
+      });
+
+      expect(getConsumableNotes).not.toHaveBeenCalled();
+      expect(submitNewTransaction).not.toHaveBeenCalled();
+    });
+
+    it("should stop polling and resolve cleanly when unmounted during polling sleep", async () => {
+      const mockWallet = createMockAccount({
+        id: vi.fn(() => ({
+          toString: vi.fn(() => "0xsession_wallet"),
+          toHex: vi.fn(() => "0xsession_wallet"),
+          isFaucet: vi.fn(() => false),
+          isRegularAccount: vi.fn(() => true),
+          free: vi.fn(),
+        })),
+      });
+
+      const syncState = vi.fn().mockResolvedValue(undefined);
+      const getConsumableNotes = vi.fn().mockResolvedValue([]);
+      const submitNewTransaction = vi.fn();
+      const mockClient = createMockWebClient({
+        newWallet: vi.fn().mockResolvedValue(mockWallet),
+        syncState,
+        getConsumableNotes,
+        submitNewTransaction,
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+        clientStoreName: null,
+        signerConnected: null,
+        hasSigner: false,
+      });
+      useMidenStore.getState().setClient(mockClient as never);
+
+      const { result, unmount } = renderHook(() =>
+        useSessionAccount({
+          ...defaultOptions,
+          pollIntervalMs: 20,
+          maxWaitMs: 5000,
+        })
+      );
+
+      let initializePromise: Promise<void> | undefined;
+      act(() => {
+        initializePromise = result.current.initialize();
+      });
+
+      await waitFor(() => expect(getConsumableNotes).toHaveBeenCalled());
+
+      const callsBeforeUnmount = getConsumableNotes.mock.calls.length;
+
+      unmount();
+
+      // Wait longer than pollIntervalMs to verify polling has stopped
+      await new Promise((r) => setTimeout(r, 150));
+
+      expect(getConsumableNotes.mock.calls.length).toBeLessThanOrEqual(
+        callsBeforeUnmount + 1
+      );
+      expect(submitNewTransaction).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await initializePromise;
+      });
+    });
+  });
 });
 
 describe("session identity and flow ownership", () => {
