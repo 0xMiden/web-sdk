@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  EventEmitter,
   PrivateDataPermission,
   WalletAdapterNetwork,
   WalletNotReadyError,
@@ -216,11 +217,11 @@ describe("Open in Bread", () => {
     it("connects to a wallet injected after the last poll instead of handing off", async () => {
       stubBrowser(IPHONE_UA, 5);
       const adapter = new MidenWalletAdapter();
-      const wallet = {
+      const wallet = Object.assign(new EventEmitter(), {
         address: "mtst1abc",
         publicKey: new Uint8Array([1]),
         connect: vi.fn().mockResolvedValue(undefined),
-      };
+      });
       (window as any).midenWallet = wallet;
 
       await connect(adapter);
