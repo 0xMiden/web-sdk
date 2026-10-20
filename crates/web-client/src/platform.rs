@@ -77,6 +77,14 @@ pub(crate) fn js_to_bytes(js_bytes: &JsBytes) -> Vec<u8> {
     js_bytes.to_vec()
 }
 
+/// A JavaScript `Uint16Array`, used for RPC nullifier prefixes.
+#[cfg(feature = "browser")]
+pub(crate) type JsU16Array = Vec<u16>;
+
+/// A JavaScript `Uint16Array`, used for RPC nullifier prefixes.
+#[cfg(feature = "nodejs")]
+pub(crate) type JsU16Array = napi::bindgen_prelude::Uint16Array;
+
 // INTERIOR MUTABILITY
 // ================================================================================================
 

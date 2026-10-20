@@ -276,6 +276,7 @@ export const NoteSyncBlock = /* @__PURE__ */ _reexport("NoteSyncBlock");
 export const NoteSyncInfo = /* @__PURE__ */ _reexport("NoteSyncInfo");
 export const NoteTag = /* @__PURE__ */ _reexport("NoteTag");
 export const NoteType = /* @__PURE__ */ _reexport("NoteType");
+export const NullifierUpdate = /* @__PURE__ */ _reexport("NullifierUpdate");
 export const OutputNote = /* @__PURE__ */ _reexport("OutputNote");
 export const OutputNoteArray = /* @__PURE__ */ _reexport("OutputNoteArray");
 export const OutputNoteRecord = /* @__PURE__ */ _reexport("OutputNoteRecord");
@@ -287,6 +288,8 @@ export const Poseidon2 = /* @__PURE__ */ _reexport("Poseidon2");
 export const ProcedureThreshold =
   /* @__PURE__ */ _reexport("ProcedureThreshold");
 export const Program = /* @__PURE__ */ _reexport("Program");
+export const ProposedBatch = /* @__PURE__ */ _reexport("ProposedBatch");
+export const ProvenBatch = /* @__PURE__ */ _reexport("ProvenBatch");
 export const ProvenTransaction = /* @__PURE__ */ _reexport("ProvenTransaction");
 export const PswapLineageRecord =
   /* @__PURE__ */ _reexport("PswapLineageRecord");
@@ -320,8 +323,12 @@ export const StorageValueSlotPatch = /* @__PURE__ */ _reexport(
 export const SyncSummary = /* @__PURE__ */ _reexport("SyncSummary");
 export const TokenSymbol = /* @__PURE__ */ _reexport("TokenSymbol");
 export const TransactionArgs = /* @__PURE__ */ _reexport("TransactionArgs");
+export const TransactionEncryptionKey = /* @__PURE__ */ _reexport(
+  "TransactionEncryptionKey"
+);
 export const TransactionFilter = /* @__PURE__ */ _reexport("TransactionFilter");
 export const TransactionId = /* @__PURE__ */ _reexport("TransactionId");
+export const TransactionInputs = /* @__PURE__ */ _reexport("TransactionInputs");
 export const TransactionProver = /* @__PURE__ */ _reexport("TransactionProver");
 export const TransactionRecord = /* @__PURE__ */ _reexport("TransactionRecord");
 export const TransactionRequest =

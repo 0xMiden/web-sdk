@@ -32,6 +32,8 @@ use crate::models::word::Word;
 use crate::platform::JsErr;
 
 mod note;
+mod nullifier;
+mod submission;
 
 /// RPC Client for interacting with Miden nodes directly.
 #[js_export]

@@ -1087,6 +1087,8 @@ jobs:
         env:
           MIDEN_MODULE_PATH: ${{ github.workspace }}/crates/web-client/miden_client_web.node
         run: pnpm --filter @miden-sdk/miden-sdk run check:node-reexports
+      - name: Run native RPC contract tests
+        run: make test-web-client-rpc RUST_TEST_PROFILE=release
       - name: Install Playwright (chromium not required, but install pulls deps)
         run: pnpm --filter @miden-sdk/miden-sdk run test:install:ci
       - name: Run nodejs Playwright project

@@ -138,6 +138,12 @@ test-web-client-nodejs: require-fee-faucet ## Run web client tests on Node.js (m
 	cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
 	cd ./crates/web-client && SKIP_WEB_SERVER=1 pnpm exec playwright test --project=nodejs --workers=1
 
+.PHONY: test-web-client-rpc
+RUST_TEST_PROFILE ?= test
+test-web-client-rpc: ## Run native RPC contract tests (no node or local store required)
+	# Dynamic symbols let the Rust test executable link without a Node.js host.
+	cargo test -p miden-client-web --no-default-features --features nodejs,testing,napi/dyn-symbols --profile $(RUST_TEST_PROFILE) --lib rpc_client::
+
 .PHONY: integration-test-web-client
 SHARD_PARAMETER ?= ""
 # Local "clean" run: ensure deps are installed, do a debug WASM build, install
