@@ -2,7 +2,7 @@
 #
 # Replaces the previous two-workflow setup (publish-web-client-release.yml
 # + publish-web-client-next.yml) with one file. The motivation is npm's
-# trusted-publishing constraint: trust is keyed on (package, repo) — only
+# trusted-publishing constraint: trust is keyed on (package, repo) - only
 # ONE workflow filename per package can be the trusted publisher. To use
 # trusted publishing for both the GitHub-release flow AND the next-channel
 # patch-release flow, both must come from the same workflow file.
@@ -60,7 +60,7 @@ jobs:
       dist_tag: ${{ steps.event.outputs.dist_tag }}
       adopted_plan: ${{ steps.plan_adopted.outputs.plan }}
       adopted_count: ${{ steps.plan_adopted.outputs.count }}
-      checkout_ref: ${{ steps.event.outputs.checkout_ref }}
+      checkout_ref: ${{ steps.source.outputs.sha }}
     steps:
       - name: Resolve event-specific config
         id: event
@@ -94,6 +94,11 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ steps.event.outputs.checkout_ref }}
+
+      # Resolve moving next/dispatch refs once, before planning or building.
+      - name: Resolve source commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Check web-client version bump
         id: check_web
@@ -252,11 +257,129 @@ jobs:
           name: node-sdk-linux-x64-musl
           path: packages/node-sdk-linux-x64-musl/miden_client_web.node
 
+  build-release-packages:
+    needs: check-version
+    if: >
+      needs.check-version.outputs.should_publish_web == 'true' ||
+      needs.check-version.outputs.should_publish_react == 'true' ||
+      needs.check-version.outputs.adopted_count != '0'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.check-version.outputs.checkout_ref }}
+
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+
+      - name: Set up Rust toolchains and wasm target
+        if: >
+          needs.check-version.outputs.should_publish_web == 'true' ||
+          needs.check-version.outputs.should_publish_react == 'true'
+        # ST uses stable; MT needs the pinned nightly and build-std components.
+        run: |
+          rustup update --no-self-update
+          rustup target add wasm32-unknown-unknown
+          rustup install stable --no-self-update
+          rustup target add wasm32-unknown-unknown --toolchain stable
+
+      - name: Install binaryen (wasm-opt)
+        if: >
+          needs.check-version.outputs.should_publish_web == 'true' ||
+          needs.check-version.outputs.should_publish_react == 'true'
+        # The digest-verified native optimizer produces the published bytes.
+        run: ./scripts/install-binaryen.sh
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web-client
+        if: >
+          needs.check-version.outputs.should_publish_web == 'true' ||
+          needs.check-version.outputs.should_publish_react == 'true'
+        run: |
+          pnpm --filter @miden-sdk/miden-sdk run build
+          git diff --exit-code -- Cargo.lock
+
+      - name: Verify WASM is optimized
+        if: >
+          needs.check-version.outputs.should_publish_web == 'true' ||
+          needs.check-version.outputs.should_publish_react == 'true'
+        run: ./scripts/verify-wasm-size.sh
+
+      - name: Ensure web-client dist exists (hydrate from npm)
+        # Adopted-only retries still need core types. On next, an unchanged
+        # package version need not exist on npm; reject hydration's fallback
+        # rather than compile against a different SDK. Never hydrate over a
+        # source build whose bytes will be published by this run.
+        if: >
+          needs.check-version.outputs.adopted_count != '0' &&
+          needs.check-version.outputs.should_publish_web != 'true' &&
+          needs.check-version.outputs.should_publish_react != 'true'
+        run: |
+          set -euo pipefail
+          VERSION=$(jq -r '.version' crates/web-client/package.json)
+          PUBLISHED=$(npm view "@miden-sdk/miden-sdk@${VERSION}" version 2>/dev/null || echo "")
+          if [ "$VERSION" != "$PUBLISHED" ]; then
+            echo "::error title=Cannot hydrate web-client::@miden-sdk/miden-sdk@${VERSION} is not on npm and is not being built in this run; refusing to compile the adopted packages against a different client version."
+            exit 1
+          fi
+          pnpm run hydrate:web-client
+
+      - name: Build react-sdk
+        # Adopted packages resolve workspace React types even when React is
+        # already published, so their retries also need its source-built dist.
+        if: >
+          needs.check-version.outputs.should_publish_react == 'true' ||
+          needs.check-version.outputs.adopted_count != '0'
+        run: pnpm --filter @miden-sdk/react run build
+
+      - name: Archive release packages
+        # Preserve complete trees, including worker assets and declarations.
+        run: |
+          paths=(crates/web-client/dist)
+          if [ "${{ needs.check-version.outputs.should_publish_react }}" = "true" ] ||
+             [ "${{ needs.check-version.outputs.adopted_count }}" != "0" ]; then
+            paths+=(packages/react-sdk/dist)
+          fi
+          tar -czf release-packages.tar.gz "${paths[@]}"
+          sha256sum release-packages.tar.gz > release-packages.sha256
+
+      - name: Upload release packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-packages-${{ needs.check-version.outputs.checkout_ref }}
+          path: |
+            release-packages.tar.gz
+            release-packages.sha256
+          if-no-files-found: error
+          compression-level: 0
+
   publish:
-    needs: [check-version, build-native-nodejs, build-native-nodejs-musl]
+    needs: [check-version, build-native-nodejs, build-native-nodejs-musl, build-release-packages]
     if: >
       !cancelled() &&
       needs.check-version.result == 'success' &&
+      (
+        needs.build-release-packages.result == 'success' ||
+        (
+          needs.check-version.outputs.should_publish_web != 'true' &&
+          needs.check-version.outputs.should_publish_react != 'true' &&
+          needs.check-version.outputs.adopted_count == '0'
+        )
+      ) &&
       (
         needs.check-version.outputs.should_publish_web != 'true' ||
         (
@@ -270,14 +393,7 @@ jobs:
         needs.check-version.outputs.should_publish_vite == 'true' ||
         needs.check-version.outputs.adopted_count != '0'
       )
-    # Must be a github-hosted runner — npm's provenance verifier rejects
-    # attestations from "self-hosted" runners (Warp, etc.) with
-    # `422 Unprocessable Entity: Unsupported GitHub Actions runner
-    # environment: "self-hosted"`. The OIDC token's `runner_environment`
-    # claim is checked against an allowlist by npm. Trade-off: 4-core
-    # ubuntu-24.04 builds the WASM dist somewhat slower than warp's 8x
-    # runner, but the build is still well under 15 min and provenance
-    # is the whole point of trusted publishing.
+    # npm provenance requires a GitHub-hosted runner for the OIDC attestation.
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -288,9 +404,6 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.check-version.outputs.checkout_ref }}
-
-      - name: Cleanup large tools for build space
-        uses: ./.github/actions/cleanup-runner
 
       - name: Install pnpm
         uses: pnpm/action-setup@v3
@@ -312,57 +425,36 @@ jobs:
         # workflow would silently break with a floating @latest.
         run: npm install -g 'npm@^11.5'
 
-      - name: Set up Rust toolchains and wasm target
-        # The WASM build matrix needs BOTH toolchains:
-        #   - nightly (pinned by rust-toolchain.toml) for the MT variant —
-        #     `-Z build-std=std,panic_abort` is nightly-only, and
-        #     `cfg(target_feature = "atomics")` only resolves correctly on
-        #     the pinned nightly.
-        #   - stable for the ST variant — rollup.config.js sets
-        #     `RUSTUP_TOOLCHAIN=stable` when MIDEN_BUILD_VARIANT=st,
-        #     keeping the published default WASM stable-built.
-        # `rustup update --no-self-update` honors rust-toolchain.toml from
-        # the checked-out repo root and installs the pinned nightly +
-        # components automatically; the explicit `rustup install stable`
-        # adds stable in parallel. Mirrors the Test workflow's
-        # "Install Rust (needed for WASM build)" step.
-        run: |
-          rustup update --no-self-update
-          rustup target add wasm32-unknown-unknown
-          rustup install stable --no-self-update
-          rustup target add wasm32-unknown-unknown --toolchain stable
-
-      - name: Install binaryen (wasm-opt)
-        # The optimizer that produces the PUBLISHED bytes. The shared installer
-        # verifies the immutable digest recorded in the repository before
-        # extracting the native binary, so a release is reproducible, and
-        # WASM_OPT_BIN avoids resolving to the npm package's ~10x slower JS
-        # shim. Keep this in step with bench.yml: if the two disagree, the
-        # proving benchmark stops measuring the optimizer users actually ship.
-        run: ./scripts/install-binaryen.sh
-
-      # Single workspace install — used for web-client build (when needed),
-      # react-sdk build (which consumes the WASM dist), and vite-plugin build.
       - name: Install workspace dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
-      # ── Web-client (WASM) ─────────────────────────────────────────────
-      # The WASM dist also feeds the react-sdk build, so we run the build
-      # whenever EITHER web-client or react-sdk needs to publish.
-
-      - name: Build web-client
+      # No run-id or repository override: artifacts belong to this workflow run.
+      # The name and every producer checkout are bound to the resolved source SHA.
+      - name: Download release packages
         if: >
           needs.check-version.outputs.should_publish_web == 'true' ||
-          needs.check-version.outputs.should_publish_react == 'true'
-        run: |
-          pnpm --filter @miden-sdk/miden-sdk run build
-          git diff --exit-code -- Cargo.lock
+          needs.check-version.outputs.should_publish_react == 'true' ||
+          needs.check-version.outputs.adopted_count != '0'
+        uses: actions/download-artifact@v4
+        with:
+          name: release-packages-${{ needs.check-version.outputs.checkout_ref }}
+          path: release-artifacts
 
-      - name: Verify WASM is optimized
-        if: needs.check-version.outputs.should_publish_web == 'true'
-        # The variant-specific limits reject both unoptimized output and a
-        # silently skipped MASP strip while leaving normal growth headroom.
-        run: ./scripts/verify-wasm-size.sh
+      - name: Verify and extract release packages
+        if: >
+          needs.check-version.outputs.should_publish_web == 'true' ||
+          needs.check-version.outputs.should_publish_react == 'true' ||
+          needs.check-version.outputs.adopted_count != '0'
+        run: |
+          cd release-artifacts
+          sha256sum --check release-packages.sha256
+          tar -xzf release-packages.tar.gz -C ..
+          cd ..
+          test -s crates/web-client/dist/st/index.d.ts
+          if [ "${{ needs.check-version.outputs.should_publish_react }}" = "true" ] ||
+             [ "${{ needs.check-version.outputs.adopted_count }}" != "0" ]; then
+            test -s packages/react-sdk/dist/index.d.ts
+          fi
 
       # ── Node.js platform packages ─────────────────────────────────────
       # Tied to the web-client publish; ship only when web-client itself
@@ -373,6 +465,7 @@ jobs:
         if: needs.check-version.outputs.should_publish_web == 'true' && needs.build-native-nodejs.result == 'success'
         uses: actions/download-artifact@v4
         with:
+          pattern: node-sdk-*
           path: artifacts
 
       - name: Sync platform package versions and publish
@@ -425,12 +518,6 @@ jobs:
         # outside the monorepo.
         run: pnpm --filter @miden-sdk/miden-sdk publish --tag "${{ needs.check-version.outputs.dist_tag }}" --access public --provenance --no-git-checks
 
-      # ── React SDK ─────────────────────────────────────────────────────
-
-      - name: Build react-sdk
-        if: needs.check-version.outputs.should_publish_react == 'true'
-        run: pnpm --filter @miden-sdk/react run build
-
       - name: Publish react-sdk to npm
         if: needs.check-version.outputs.should_publish_react == 'true'
         run: pnpm --filter @miden-sdk/react publish --tag "${{ needs.check-version.outputs.dist_tag }}" --access public --provenance --no-git-checks
@@ -444,74 +531,6 @@ jobs:
       - name: Publish vite-plugin to npm
         if: needs.check-version.outputs.should_publish_vite == 'true'
         run: pnpm --filter @miden-sdk/vite-plugin publish --tag "${{ needs.check-version.outputs.dist_tag }}" --access public --provenance --no-git-checks
-
-      # ── Adopted packages (wallet-adapter / para / turnkey) ────────────
-      # Published in dependency-level order so a dependent never lands before
-      # the package it pins. The script counts what it attempted against the
-      # plan length, so a loop that publishes nothing cannot report success.
-
-      # Both dist/ directories the adopted packages compile against are
-      # gitignored, so on a fresh checkout they exist only if a step above
-      # produced them — and every step above is gated on *publishing*, not on
-      # *building*. On a retry of a partially published release (the v0.16.0-rc.5
-      # case) @miden-sdk/miden-sdk and @miden-sdk/react are already on npm, so
-      # should_publish_web and should_publish_react are both false, "Build
-      # web-client" and "Build react-sdk" are both skipped, and every adopted
-      # package that resolves either one's types dies with
-      # `TS2307: Cannot find module '@miden-sdk/miden-sdk'` — which is 9 of the
-      # 11 manifest packages. These two steps supply that build input. They are
-      # purely additive: neither changes any existing step's condition, and
-      # neither runs in a job that publishes the package it provisions.
-
-      - name: Ensure web-client dist exists (hydrate from npm)
-        # ONLY when the client is not being built from source. "Build web-client"
-        # above runs whenever web OR react publishes, and when should_publish_web
-        # is true that directory IS the artifact about to be published —
-        # hydrating over it would push npm's old bytes back to npm instead of the
-        # freshly built WASM. The conditions are mutually exclusive by
-        # construction, and hydrate-web-client.mjs refuses to overwrite a
-        # non-empty dist without --force as a second line of defence.
-        #
-        # The exact-version assertion matters because hydrate falls back to the
-        # newest published client when the tree's version is unpublished. In
-        # release mode `should_publish_web == false` already implies "this exact
-        # version is on npm" (check-web-client-version-release.sh is a registry
-        # probe). The `next`-channel path is weaker: check-web-client-version-pr.sh
-        # returns false whenever crates/web-client/package.json merely did not
-        # change in the PR, which is routinely true of an unreleased rc. Compiling
-        # the adopted packages against a silently different client version and
-        # then publishing them is worse than failing here.
-        if: >
-          needs.check-version.outputs.adopted_count != '0' &&
-          needs.check-version.outputs.should_publish_web != 'true' &&
-          needs.check-version.outputs.should_publish_react != 'true'
-        run: |
-          set -euo pipefail
-          VERSION=$(jq -r '.version' crates/web-client/package.json)
-          PUBLISHED=$(npm view "@miden-sdk/miden-sdk@${VERSION}" version 2>/dev/null || echo "")
-          if [ "$VERSION" != "$PUBLISHED" ]; then
-            echo "::error title=Cannot hydrate web-client::@miden-sdk/miden-sdk@${VERSION} is not on npm and is not being built in this run; refusing to compile the adopted packages against a different client version."
-            exit 1
-          fi
-          pnpm run hydrate:web-client
-
-      - name: Ensure react-sdk dist exists (build from source)
-        # `@miden-sdk/react` is a workspace dependency of the adapter/para/turnkey
-        # React packages and its `types` field points at dist/index.d.ts, so its
-        # dist has to exist before they can typecheck. Skipped when
-        # should_publish_react is true — "Build react-sdk" above already produced
-        # it. Built from source rather than hydrated: the ref being released is
-        # the source of the published tarball, there is no hydrate script for this
-        # package, and nothing here publishes it (the publish step above is gated
-        # on should_publish_react, which is false whenever this step runs).
-        #
-        # Ordering: this needs crates/web-client/dist, supplied either by "Build
-        # web-client" above (when should_publish_web is true) or by the hydrate
-        # step immediately above (when it is not).
-        if: >
-          needs.check-version.outputs.adopted_count != '0' &&
-          needs.check-version.outputs.should_publish_react != 'true'
-        run: pnpm --filter @miden-sdk/react run build
 
       - name: Publish adopted packages
         if: needs.check-version.outputs.adopted_count != '0'
