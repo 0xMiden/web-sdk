@@ -115,7 +115,9 @@ test("syncTransactions collects every account chunk and advances past empty page
   const records = await rpc.syncTransactions(
     10,
     12,
-    transactionAccounts.map((id) => sdk.AccountId.fromHex(id))
+    [...transactionAccounts, ...transactionAccounts].map((id) =>
+      sdk.AccountId.fromHex(id)
+    )
   );
   expect(records).toHaveLength(3);
   expect(

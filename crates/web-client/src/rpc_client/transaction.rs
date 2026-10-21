@@ -40,8 +40,9 @@ impl RpcClient {
     /// Fetches transactions for the requested accounts within an inclusive block range.
     ///
     /// Uses the Rust RPC client's account-list chunking, pagination and account-ID verification,
-    /// returning all matching records across every page. An empty account list returns an empty
-    /// array without RPC calls. No local store or tracked accounts are required or updated.
+    /// returning all matching records across every page. Duplicate account IDs are scanned once.
+    /// An empty account list returns an empty array without RPC calls. No local store or tracked
+    /// accounts are required or updated.
     ///
     /// The caller must keep `block_to` at or below the node's chain tip, available through
     /// `(await rpc.getBlockHeaderByNumber()).blockNum()`. A reversed range rejects. Callers retain
@@ -52,7 +53,7 @@ impl RpcClient {
     /// confirmation itself.
     ///
     /// In the browser, this call consumes the `AccountId` wrappers, even if it rejects. Construct
-    /// fresh wrappers from saved account ID strings for each poll or retry.
+    /// fresh wrappers from saved account ID strings for each array entry, poll or retry.
     ///
     /// @param block_from - First block to scan, inclusive.
     /// @param block_to - Last block to scan, inclusive; must be at least `block_from` and no higher
@@ -71,13 +72,12 @@ impl RpcClient {
         if block_from > block_to {
             return Err(from_str_err("block_from must be less than or equal to block_to"));
         }
+        let mut account_ids = account_ids.into_iter().map(Into::into).collect::<Vec<_>>();
+        account_ids.sort_unstable();
+        account_ids.dedup();
 
         self.inner
-            .sync_transactions(
-                block_from.into(),
-                block_to.into(),
-                account_ids.into_iter().map(Into::into).collect(),
-            )
+            .sync_transactions(block_from.into(), block_to.into(), account_ids)
             .await
             .map_err(|err| js_error_with_context(err, "failed to sync transactions"))
             .and_then(|records| {

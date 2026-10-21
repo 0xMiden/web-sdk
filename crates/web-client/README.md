@@ -508,7 +508,8 @@ To find included transactions, use
 `rpc.syncTransactions(blockFrom, blockTo, accountIds)`. It returns
 `RpcTransactionRecord[]` with `id(): TransactionId`, `accountId(): AccountId`
 and `blockNum(): number`, collecting every page and account chunk in the
-inclusive range. An empty account list returns `[]`; a reversed range rejects.
+inclusive range. Duplicate account IDs are scanned once. An empty account list
+returns `[]`; a reversed range rejects.
 Keep `blockTo` at or below the node's tip.
 
 ```typescript
@@ -526,7 +527,8 @@ Start a confirmation scan at the admission tip returned by submission and match
 the exact transaction ID. Keep your own cursor, advancing to `blockTo + 1` after
 a successful scan and waiting for the tip to reach that cursor before scanning
 again. In the browser, each call consumes its `AccountId` wrappers even on
-rejection; construct fresh wrappers from saved strings for each poll or retry.
+rejection; construct fresh wrappers from saved strings for each array entry,
+poll or retry.
 Confirmation assumes trust in the configured RPC node's report of inclusion.
 A polling timeout means unconfirmed, not failed. See the
 [stateless RPC guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/rpc-client.md#find-included-transactions)

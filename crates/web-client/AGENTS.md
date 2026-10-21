@@ -80,9 +80,10 @@ To find included transactions, call
 `rpc.syncTransactions(blockFrom, blockTo, accountIds)`. It returns every matching
 `RpcTransactionRecord` across all pages and account chunks, with `id()`,
 `accountId()` and `blockNum()` accessors. Both bounds are inclusive; a reversed
-range rejects and an empty account list returns `[]`. Keep `blockTo` at or below
-the node's tip. In the browser, the call consumes the `AccountId` wrappers;
-recreate them from saved strings for each poll or retry.
+range rejects and an empty account list returns `[]`. Duplicate account IDs are
+scanned once. Keep `blockTo` at or below the node's tip. In the browser, the call
+consumes the `AccountId` wrappers; recreate them from saved strings for each
+array entry, poll or retry.
 
 For confirmation, start at the admission tip returned by submission, match the
 exact transaction ID, and advance your own cursor to `blockTo + 1` only after a

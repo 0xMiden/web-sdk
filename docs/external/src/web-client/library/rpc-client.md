@@ -69,8 +69,9 @@ at `blockTo + 1`.
 These records come from the node and are distinct from the `TransactionRecord`
 objects a stateful client tracks locally. No local store is opened or updated.
 
-The SDK handles account-list chunking and all pagination, including pages with
-no matching transactions. `blockFrom` must be at most `blockTo`, and `blockTo`
+The SDK scans duplicate account IDs once and handles account-list chunking and
+all pagination, including pages with no matching transactions. `blockFrom` must
+be at most `blockTo`, and `blockTo`
 must not exceed the node's chain tip. An empty account list returns `[]` without
 contacting the node; a reversed range rejects.
 
@@ -111,7 +112,8 @@ async function pollForInclusion(
 
 Use the canonical hex transaction ID returned by `TransactionId.toHex()`.
 In the browser, `syncTransactions` consumes the `AccountId` wrappers even if it
-rejects, so construct fresh wrappers from saved strings for each poll or retry.
+rejects, so construct fresh wrappers from saved strings for each array entry,
+poll or retry.
 The example's timeout stops scheduling new scans; it does not cancel an RPC
 already in flight. RPC errors propagate to the caller.
 

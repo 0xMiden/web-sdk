@@ -86,8 +86,10 @@ the caller's array is unchanged. Node.js requires an `ArrayBuffer`-backed
 `id(): TransactionId`, `accountId(): AccountId` and `blockNum(): number`.
 This is a node result, distinct from a locally tracked `TransactionRecord`.
 The SDK collects every page for every account chunk and verifies that returned
-accounts were requested. An empty account list returns `[]` without RPC calls;
-a reversed range rejects. Keep `blockTo` at or below the node's chain tip.
+accounts were requested. Duplicate account IDs are scanned once. An empty account
+list returns `[]` without RPC calls; a reversed range rejects. Keep `blockTo` at
+or below the node's chain tip. In the browser, create a fresh `AccountId` wrapper
+for each array entry because the call consumes them.
 
 ```typescript
 const blockTo = (await rpc.getBlockHeaderByNumber()).blockNum();
