@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.6 (2026-10-21)
+
+### Fixes
+
+* [FIX][node] Reject certificate chains that use compromised eMudhra intermediate keys in the native Node SDK ([RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382.html)).
+
 ## 0.17.5 (2026-10-20)
 
 ### Enhancements
