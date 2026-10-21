@@ -137,3 +137,78 @@ export function frame(body: Buffer, type = 0): Buffer {
   header.writeUInt32BE(body.length, 1);
   return Buffer.concat([header, body]);
 }
+
+export const transactionAccounts = [
+  "0xc6da5c4573a3731151114a1aa8fe8e",
+  "0x6ccbb3931bbb21910bb3018972d56d",
+];
+
+// Poseidon2 transaction IDs for zero initial state, final state [1|2, 0, 0, 0],
+// and empty input/output notes. The Rust decoder verifies these header IDs.
+export const transactionIds = [
+  "0x1e7e9f4ff0f6f939f60a2f6d10a4fc031a64def2fc66cb968acfc004b1e2d433",
+  "0x79e4476648bc2da19e8bb298ea4424ebb2d5c5bcaf1e7ab20a535f46201dd37b",
+];
+
+export function transactionAccount(hex: string): Buffer {
+  const felt = (value: bigint) => {
+    const bytes = Buffer.alloc(9);
+    bytes[0] = 0x09; // Felt.value: fixed64 field 1.
+    bytes.writeBigUInt64LE(value, 1);
+    return bytes;
+  };
+  return bytesField(
+    1,
+    Buffer.concat([
+      bytesField(1, felt(BigInt(`0x${hex.slice(18)}00`))),
+      bytesField(2, felt(BigInt(hex.slice(0, 18)))),
+    ])
+  );
+}
+
+export function transactionRequest(body: Buffer) {
+  expect(body[0]).toBe(0);
+  expect(body.readUInt32BE(1)).toBe(body.length - 5);
+  const request = fields(body.subarray(5));
+  const range = fields(request.get(1)![0] as Buffer);
+  return {
+    blockFrom: range.get(1)?.[0] ?? 0,
+    blockTo: range.get(2)?.[0] ?? 0,
+    accountIds: (request.get(2) ?? []) as Buffer[],
+  };
+}
+
+export function transactionPage(
+  blockNum: number,
+  records: { accountId: string; finalState: 1 | 2; blockNum: number }[] = []
+): Buffer {
+  return Buffer.concat([
+    bytesField(
+      1,
+      Buffer.concat([fixed32Field(1, 12), fixed32Field(2, blockNum)])
+    ),
+    ...records.map((record) => {
+      const finalState = Buffer.alloc(32);
+      finalState.writeBigUInt64LE(BigInt(record.finalState));
+      const header = Buffer.concat([
+        bytesField(
+          1,
+          bytesField(
+            1,
+            bytesField(
+              1,
+              Buffer.from(transactionIds[record.finalState - 1].slice(2), "hex")
+            )
+          )
+        ),
+        bytesField(2, transactionAccount(record.accountId)),
+        bytesField(3, bytesField(1, Buffer.alloc(32))),
+        bytesField(4, bytesField(1, finalState)),
+      ]);
+      return bytesField(
+        2,
+        Buffer.concat([fixed32Field(1, record.blockNum), bytesField(2, header)])
+      );
+    }),
+  ]);
+}

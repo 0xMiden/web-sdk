@@ -34,6 +34,7 @@ use crate::platform::JsErr;
 mod note;
 mod nullifier;
 mod submission;
+mod transaction;
 
 /// RPC Client for interacting with Miden nodes directly.
 #[js_export]

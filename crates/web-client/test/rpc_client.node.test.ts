@@ -7,18 +7,25 @@ import {
   limits,
   nullifierPage,
   syncRequest,
+  transactionAccount,
+  transactionAccounts,
+  transactionIds,
+  transactionPage,
+  transactionRequest,
 } from "./rpc-client-fixture";
 
 type RpcServer = {
   url: string;
   paths: string[];
   requests: ReturnType<typeof syncRequest>[];
+  transactionRequests: ReturnType<typeof transactionRequest>[];
 };
 
 const test = base.extend<{ rpcServer: RpcServer }>({
   rpcServer: async ({}, use) => {
     const paths: string[] = [];
     const requests: RpcServer["requests"] = [];
+    const transactionRequests: RpcServer["transactionRequests"] = [];
     const sessions = new Set<ServerHttp2Session>();
     const server = createServer();
     server.on("session", (session) => {
@@ -36,6 +43,36 @@ const test = base.extend<{ rpcServer: RpcServer }>({
           const request = syncRequest(Buffer.concat(chunks));
           requests.push(request);
           response = nullifierPage(request.prefixes[0], 12);
+        } else if (path.endsWith("/SyncTransactions")) {
+          const request = transactionRequest(Buffer.concat(chunks));
+          transactionRequests.push(request);
+          expect(request.accountIds).toHaveLength(1);
+          const accountIndex = transactionAccounts.findIndex((account) =>
+            transactionAccount(account).equals(request.accountIds[0])
+          );
+          expect(accountIndex).toBeGreaterThanOrEqual(0);
+          if (request.blockFrom === 12) {
+            response = transactionPage(12, [
+              {
+                accountId: transactionAccounts[accountIndex],
+                finalState: (accountIndex + 1) as 1 | 2,
+                blockNum: 12,
+              },
+            ]);
+          } else {
+            response = transactionPage(
+              11,
+              request.blockFrom === 10 && accountIndex === 0
+                ? [
+                    {
+                      accountId: transactionAccounts[0],
+                      finalState: 2,
+                      blockNum: 10,
+                    },
+                  ]
+                : []
+            );
+          }
         } else {
           expect(path).toMatch(/\/GetLimits$/);
         }
@@ -55,7 +92,12 @@ const test = base.extend<{ rpcServer: RpcServer }>({
     });
     try {
       const { port } = server.address() as AddressInfo;
-      await use({ url: `http://127.0.0.1:${port}`, paths, requests });
+      await use({
+        url: `http://127.0.0.1:${port}`,
+        paths,
+        requests,
+        transactionRequests,
+      });
     } finally {
       for (const session of sessions) session.destroy();
       await new Promise<void>((resolve, reject) =>
@@ -63,6 +105,81 @@ const test = base.extend<{ rpcServer: RpcServer }>({
       );
     }
   },
+});
+
+test("syncTransactions collects every account chunk and advances past empty pages", async ({
+  rpcServer,
+}) => {
+  const sdk = loadNodeSdk();
+  const rpc = new sdk.RpcClient(new sdk.Endpoint(rpcServer.url));
+  const records = await rpc.syncTransactions(
+    10,
+    12,
+    transactionAccounts.map((id) => sdk.AccountId.fromHex(id))
+  );
+  expect(records).toHaveLength(3);
+  expect(
+    records.map((record) => ({
+      id: record.id().toHex(),
+      accountId: record.accountId().toString(),
+      blockNum: record.blockNum(),
+      isRpcRecord: record instanceof sdk.RpcTransactionRecord,
+    }))
+  ).toEqual(
+    expect.arrayContaining([
+      {
+        id: transactionIds[1],
+        accountId: transactionAccounts[0],
+        blockNum: 10,
+        isRpcRecord: true,
+      },
+      ...transactionAccounts.map((accountId, index) => ({
+        id: transactionIds[index],
+        accountId,
+        blockNum: 12,
+        isRpcRecord: true,
+      })),
+    ])
+  );
+  expect(rpcServer.transactionRequests).toHaveLength(4);
+  expect(rpcServer.transactionRequests).toEqual(
+    expect.arrayContaining(
+      transactionAccounts.flatMap((accountId) => [
+        {
+          blockFrom: 10,
+          blockTo: 12,
+          accountIds: [transactionAccount(accountId)],
+        },
+        {
+          blockFrom: 12,
+          blockTo: 12,
+          accountIds: [transactionAccount(accountId)],
+        },
+      ])
+    )
+  );
+  expect(
+    await rpc.syncTransactions(11, 11, [
+      sdk.AccountId.fromHex(transactionAccounts[0]),
+    ])
+  ).toEqual([]);
+});
+
+test("syncTransactions handles empty accounts and rejects an inverted range without RPC", async ({
+  rpcServer,
+}) => {
+  const sdk = loadNodeSdk();
+  const rpc = new sdk.RpcClient(new sdk.Endpoint(rpcServer.url));
+  expect(await rpc.syncTransactions(12, 12, [])).toEqual([]);
+  for (const accounts of [
+    [],
+    [sdk.AccountId.fromHex(transactionAccounts[0])],
+  ]) {
+    await expect(rpc.syncTransactions(12, 10, accounts)).rejects.toThrow(
+      /block_from.*block_to/
+    );
+  }
+  expect(rpcServer.paths).toEqual([]);
 });
 
 test("syncNullifiers snapshots an offset Uint16Array before returning its Promise", async ({
