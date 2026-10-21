@@ -79,7 +79,19 @@ impl RpcClient {
                 account_ids.into_iter().map(Into::into).collect(),
             )
             .await
-            .map(|records| records.into_iter().map(RpcTransactionRecord).collect())
             .map_err(|err| js_error_with_context(err, "failed to sync transactions"))
+            .and_then(|records| {
+                if let Some(record) = records
+                    .iter()
+                    .find(|record| !(block_from..=block_to).contains(&record.block_num.as_u32()))
+                {
+                    return Err(from_str_err(&format!(
+                        "failed to sync transactions: node returned transaction at block {} outside requested range {block_from}..={block_to}",
+                        record.block_num.as_u32()
+                    )));
+                }
+
+                Ok(records.into_iter().map(RpcTransactionRecord).collect())
+            })
     }
 }

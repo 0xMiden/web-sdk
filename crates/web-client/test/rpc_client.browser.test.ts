@@ -84,39 +84,60 @@ test("syncTransactions exposes typed records through the WASM gRPC-web binding",
   ]);
 });
 
-test("syncTransactions rejects a node response for an unrequested account", async ({
-  page,
-}) => {
-  await page.route(rpcRoutes, async (route) => {
-    await respond(
-      route,
-      route.request().url().endsWith("/GetLimits")
-        ? limits
-        : transactionPage(12, [
-            {
-              accountId: transactionAccounts[1],
-              finalState: 1,
-              blockNum: 12,
-            },
-          ])
-    );
-  });
+for (const { name, accountId, blockNum, message } of [
+  {
+    name: "an unrequested account",
+    accountId: transactionAccounts[1],
+    blockNum: 12,
+    message: `node returned transaction for account ${transactionAccounts[1]}`,
+  },
+  {
+    name: "a block below the requested range",
+    accountId: transactionAccounts[0],
+    blockNum: 11,
+    message:
+      "node returned transaction at block 11 outside requested range 12..=12",
+  },
+  {
+    name: "a block above the requested range",
+    accountId: transactionAccounts[0],
+    blockNum: 13,
+    message:
+      "node returned transaction at block 13 outside requested range 12..=12",
+  },
+]) {
+  test(`syncTransactions rejects a node response for ${name}`, async ({
+    page,
+  }) => {
+    await page.route(rpcRoutes, async (route) => {
+      await respond(
+        route,
+        route.request().url().endsWith("/GetLimits")
+          ? limits
+          : transactionPage(12, [
+              {
+                accountId,
+                finalState: 1,
+                blockNum,
+              },
+            ])
+      );
+    });
 
-  const error = await page.evaluate(async (accountId) => {
-    const sdk = await import("./index.js");
-    await sdk.MidenClient.ready();
-    const rpc = new sdk.RpcClient(new sdk.Endpoint(location.origin));
-    try {
-      await rpc.syncTransactions(12, 12, [sdk.AccountId.fromHex(accountId)]);
-    } catch (cause) {
-      return String(cause);
-    }
-  }, transactionAccounts[0]);
-  expect(error).toContain("failed to sync transactions");
-  expect(error).toContain(
-    `node returned transaction for account ${transactionAccounts[1]}`
-  );
-});
+    const error = await page.evaluate(async (accountId) => {
+      const sdk = await import("./index.js");
+      await sdk.MidenClient.ready();
+      const rpc = new sdk.RpcClient(new sdk.Endpoint(location.origin));
+      try {
+        await rpc.syncTransactions(12, 12, [sdk.AccountId.fromHex(accountId)]);
+      } catch (cause) {
+        return String(cause);
+      }
+    }, transactionAccounts[0]);
+    expect(error).toContain("failed to sync transactions");
+    expect(error).toContain(message);
+  });
+}
 
 test("syncNullifiers scans each unique prefix across every block page", async ({
   page,
