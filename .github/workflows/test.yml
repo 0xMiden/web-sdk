@@ -708,6 +708,27 @@ jobs:
           name: coverage-vite-plugin
           path: packages/vite-plugin/coverage
 
+  vite-plugin-lint:
+    name: vite-plugin lint
+    runs-on: ubuntu-24.04
+    needs: [changes]
+    if: needs.changes.outputs.non_docs == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Run lint
+        run: make vite-plugin-lint
+
   test-bench-scripts:
     name: benchmark script unit tests
     runs-on: ubuntu-24.04
