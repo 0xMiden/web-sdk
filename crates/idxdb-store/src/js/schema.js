@@ -2,6 +2,10 @@ import Dexie from "dexie";
 import * as semver from "semver";
 import { logWebStoreError } from "./utils.js";
 export const CLIENT_VERSION_SETTING_KEY = "clientVersion";
+/** Prefix of the `clientConfig` key of a protocol configuration. */
+export const PROTOCOL_CONFIG_KEY_PREFIX = "protocol_config:";
+/** Mirrors `PswapLineageState::Active`, originally defined in miden-client. */
+export const PSWAP_STATE_ACTIVE = 0;
 /** Mirrors `StorageSlotType::Map`, originally defined in miden-protocol. */
 export const STORAGE_SLOT_TYPE_MAP = 1;
 const textEncoder = new TextEncoder();
@@ -61,8 +65,11 @@ var Table;
     Table["ForeignAccountCode"] = "foreignAccountCode";
     Table["Settings"] = "settings";
     Table["AccountWitnesses"] = "accountWitnesses";
+    Table["ClientConfig"] = "clientConfig";
+    Table["UserSettings"] = "userSettings";
+    Table["PswapLineages"] = "pswapLineages";
 })(Table || (Table = {}));
-/** Mirrors `SettingScope`, whose discriminants are part of a store's schema. */
+/** Scope of a row of the `settings` table, which version 8 removes. Version 7 reads it. */
 export const SETTING_SCOPE_CLIENT = 0;
 export const SETTING_SCOPE_USER = 1;
 function indexes(...items) {
@@ -121,8 +128,10 @@ export class MidenDatabase {
     partialBlockchainNodes;
     tags;
     foreignAccountCode;
-    settings;
     accountWitnesses;
+    clientConfig;
+    userSettings;
+    pswapLineages;
     constructor(network) {
         this.dexie = new Dexie(network);
         // --- Schema versioning ---
@@ -221,6 +230,32 @@ export class MidenDatabase {
         this.dexie.version(6).stores({
             [Table.AccountWitnesses]: indexes("&accountId"),
         });
+        // v7 (miden-client 0.18): split `settings`, as SQLite migration 5 does. The user rows move to
+        // `userSettings`. Of the client rows, the protocol configurations and the client version move
+        // to `clientConfig`. The client fetches or rebuilds the other client rows again. The PSWAP rows
+        // are dropped, as SQLite migration 4 drops them. PSWAP lineages get a store of their own.
+        this.dexie
+            .version(7)
+            .stores({
+            [Table.ClientConfig]: indexes("key"),
+            [Table.UserSettings]: indexes("key"),
+            [Table.PswapLineages]: indexes("orderId", "creatorAccountId", "[state+currentTipNoteId]"),
+        })
+            .upgrade(async (tx) => {
+            const rows = (await tx.table(Table.Settings).toArray());
+            const keyValue = ({ key, value }) => ({
+                key,
+                value,
+            });
+            await tx.userSettings.bulkPut(rows.filter((row) => row.scope === SETTING_SCOPE_USER).map(keyValue));
+            await tx.clientConfig.bulkPut(rows
+                .filter((row) => row.scope === SETTING_SCOPE_CLIENT &&
+                (row.key === CLIENT_VERSION_SETTING_KEY ||
+                    row.key.startsWith(PROTOCOL_CONFIG_KEY_PREFIX)))
+                .map(keyValue));
+        });
+        // v8: drop `settings`, after v7 copied the rows that it keeps.
+        this.dexie.version(8).stores({ [Table.Settings]: null });
         this.accountCodes = this.dexie.table(Table.AccountCode);
         this.latestAccountStorages = this.dexie.table(Table.LatestAccountStorage);
         this.historicalAccountStorages = this.dexie.table(Table.HistoricalAccountStorage);
@@ -243,8 +278,10 @@ export class MidenDatabase {
         this.partialBlockchainNodes = this.dexie.table(Table.PartialBlockchainNodes);
         this.tags = this.dexie.table(Table.Tags);
         this.foreignAccountCode = this.dexie.table(Table.ForeignAccountCode);
-        this.settings = this.dexie.table(Table.Settings);
         this.accountWitnesses = this.dexie.table(Table.AccountWitnesses);
+        this.clientConfig = this.dexie.table(Table.ClientConfig);
+        this.userSettings = this.dexie.table(Table.UserSettings);
+        this.pswapLineages = this.dexie.table(Table.PswapLineages);
         this.dexie.on("populate", () => {
             this.blockchainCheckpoint
                 .put({
@@ -304,21 +341,17 @@ export class MidenDatabase {
         await this.dexie.open();
         await this.persistClientVersion(clientVersion);
     }
-    // This store is the client, so its own bookkeeping belongs to the `Client` scope, which the
+    // The client version is client bookkeeping, so it lives in `clientConfig`, which the
     // user-facing settings API never reaches.
     async getStoredClientVersion() {
-        const record = await this.settings.get([
-            SETTING_SCOPE_CLIENT,
-            CLIENT_VERSION_SETTING_KEY,
-        ]);
+        const record = await this.clientConfig.get(CLIENT_VERSION_SETTING_KEY);
         if (!record) {
             return null;
         }
         return textDecoder.decode(record.value);
     }
     async persistClientVersion(clientVersion) {
-        await this.settings.put({
-            scope: SETTING_SCOPE_CLIENT,
+        await this.clientConfig.put({
             key: CLIENT_VERSION_SETTING_KEY,
             value: textEncoder.encode(clientVersion),
         });

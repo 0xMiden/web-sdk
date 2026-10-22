@@ -49,7 +49,7 @@ use miden_client::store::{
     TransactionFilter,
 };
 use miden_client::sync::{NoteTagRecord, StateSyncUpdate};
-use miden_client::transaction::{TransactionRecord, TransactionStoreUpdate};
+use miden_client::transaction::{BatchStoreUpdate, TransactionRecord, TransactionStoreUpdate};
 use miden_client::utils::RwLock;
 use miden_client::{Felt, Word};
 use miden_client_core::store::{
@@ -58,8 +58,6 @@ use miden_client_core::store::{
     ClientAccountType,
     InputNoteCursor,
     PartialBlockchainFilter,
-    SettingMutation,
-    SettingScope,
 };
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
@@ -177,9 +175,9 @@ impl Store for IdxdbStore {
 
     async fn apply_transaction_batch(
         &self,
-        tx_updates: Vec<TransactionStoreUpdate>,
+        batch_update: BatchStoreUpdate,
     ) -> Result<(), StoreError> {
-        self.apply_transaction_batch_atomic(tx_updates).await
+        self.apply_transaction_batch_atomic(batch_update).await
     }
 
     // NOTES
@@ -442,37 +440,20 @@ impl Store for IdxdbStore {
     // SETTINGS
     // --------------------------------------------------------------------------------------------
 
-    async fn set_setting(
-        &self,
-        scope: SettingScope,
-        key: String,
-        value: Vec<u8>,
-    ) -> Result<(), StoreError> {
-        self.set_setting(scope, key, value).await
+    async fn set_setting(&self, key: String, value: Vec<u8>) -> Result<(), StoreError> {
+        self.set_setting(key, value).await
     }
 
-    async fn get_setting(
-        &self,
-        scope: SettingScope,
-        key: String,
-    ) -> Result<Option<Vec<u8>>, StoreError> {
-        self.get_setting(scope, key).await
+    async fn get_setting(&self, key: String) -> Result<Option<Vec<u8>>, StoreError> {
+        self.get_setting(key).await
     }
 
-    async fn remove_setting(&self, scope: SettingScope, key: String) -> Result<bool, StoreError> {
-        self.remove_setting(scope, key).await
+    async fn remove_setting(&self, key: String) -> Result<bool, StoreError> {
+        self.remove_setting(key).await
     }
 
-    async fn list_setting_keys(&self, scope: SettingScope) -> Result<Vec<String>, StoreError> {
-        self.list_setting_keys(scope).await
-    }
-
-    async fn apply_settings_mutations(
-        &self,
-        scope: SettingScope,
-        mutations: Vec<SettingMutation>,
-    ) -> Result<(), StoreError> {
-        self.apply_settings_mutations(scope, mutations).await
+    async fn list_setting_keys(&self) -> Result<Vec<String>, StoreError> {
+        self.list_setting_keys().await
     }
 
     // PSWAP

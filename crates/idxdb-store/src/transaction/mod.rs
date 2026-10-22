@@ -4,9 +4,12 @@ use alloc::vec::Vec;
 
 use miden_client::Word;
 use miden_client::account::StorageSlotContent;
+use miden_client::note::BlockNumber;
 use miden_client::store::{StoreError, TransactionFilter};
-use miden_client::sync::NoteTagSource;
+use miden_client::sync::{NoteTagRecord, NoteTagSource};
 use miden_client::transaction::{
+    BatchStoreUpdate,
+    ExecutedTransaction,
     TransactionDetails,
     TransactionId,
     TransactionRecord,
@@ -15,6 +18,7 @@ use miden_client::transaction::{
     TransactionStoreUpdate,
 };
 use miden_client::utils::Serializable;
+use miden_client_core::store::NoteUpdateTracker;
 use miden_client_proto::{decode_unchecked, encode};
 use serde::Serialize;
 use wasm_bindgen::JsValue;
@@ -186,21 +190,44 @@ impl IdxdbStore {
         &self,
         tx_update: TransactionStoreUpdate,
     ) -> Result<(), StoreError> {
-        self.apply_transaction_batch_atomic(vec![tx_update]).await
+        self.apply_executed_transactions(
+            core::slice::from_ref(tx_update.executed_transaction()),
+            tx_update.submission_height(),
+            tx_update.note_updates(),
+            tx_update.new_tags(),
+        )
+        .await
     }
 
-    /// Applies multiple transaction updates atomically in a single Dexie transaction.
+    /// Applies a batch update atomically in a single Dexie transaction.
     pub async fn apply_transaction_batch_atomic(
         &self,
-        tx_updates: Vec<TransactionStoreUpdate>,
+        batch_update: BatchStoreUpdate,
     ) -> Result<(), StoreError> {
-        if tx_updates.is_empty() {
+        self.apply_executed_transactions(
+            batch_update.executed_transactions(),
+            batch_update.submission_height(),
+            batch_update.note_updates(),
+            batch_update.new_tags(),
+        )
+        .await
+    }
+
+    /// Writes the transactions in order, then the note updates and the tags, in a single Dexie
+    /// transaction.
+    async fn apply_executed_transactions(
+        &self,
+        transactions: &[ExecutedTransaction],
+        submission_height: BlockNumber,
+        note_updates: &NoteUpdateTracker,
+        new_tags: &[NoteTagRecord],
+    ) -> Result<(), StoreError> {
+        if transactions.is_empty() {
             return Ok(());
         }
         let mut expected = BTreeMap::new();
         // Read every persisted input before staging any forest updates.
-        for update in &tx_updates {
-            let tx = update.executed_transaction();
+        for tx in transactions {
             let id = tx.account_id();
             let commitment = if let Some(commitment) = expected.get(&id) {
                 *commitment
@@ -216,8 +243,22 @@ impl IdxdbStore {
         }
         let serializer = serde_wasm_bindgen::Serializer::new();
         let js_array = js_sys::Array::new();
-        for update in &tx_updates {
-            let payload = self.prepare_update_for_batch(update)?;
+        let last = transactions.len() - 1;
+        for (index, tx) in transactions.iter().enumerate() {
+            let mut payload = self.prepare_transaction_for_batch(tx, submission_height)?;
+            // The JS side writes the notes and tags of a payload after its account state, so the
+            // last payload carries them and they are written after every transaction.
+            if index == last {
+                payload.input_notes = note_updates
+                    .updated_input_notes()
+                    .map(|u| serialize_input_note(u.inner()))
+                    .collect();
+                payload.output_notes = note_updates
+                    .updated_output_notes()
+                    .map(|u| serialize_output_note(u.inner()))
+                    .collect();
+                payload.tags = new_tags.iter().map(batch_note_tag).collect();
+            }
             let value = payload.serialize(&serializer).map_err(|error| {
                 StoreError::DatabaseError(format!("serialization error: {error}"))
             })?;
@@ -228,20 +269,19 @@ impl IdxdbStore {
         crate::promise::await_ok(promise, "batch apply").await
     }
 
-    /// Pre-computes all SMT work for a single update and builds the serializable payload
-    /// for the batch JS call. Mirrors `apply_transaction` but without the JS writes.
-    #[allow(clippy::too_many_lines)]
-    fn prepare_update_for_batch(
+    /// Pre-computes all SMT work for a single transaction and builds the serializable payload
+    /// for the batch JS call, without notes or tags.
+    fn prepare_transaction_for_batch(
         &self,
-        update: &TransactionStoreUpdate,
+        executed_tx: &ExecutedTransaction,
+        submission_height: BlockNumber,
     ) -> Result<BatchUpdatePayload, StoreError> {
-        let executed_tx = update.executed_transaction();
         let patch = executed_tx.account_patch();
         let final_header = executed_tx.final_account();
         let account_id = executed_tx.account_id();
 
         // Build transaction record payload via the shared serializer.
-        let record = build_transaction_record(executed_tx, update.submission_height());
+        let record = build_transaction_record(executed_tx, submission_height);
         let transaction_record = serialize_transaction_record(&record);
 
         // Build the payload and advance the forest. Later updates in the batch read the forest, so
@@ -307,47 +347,30 @@ impl IdxdbStore {
             }
         };
 
-        let input_notes: Vec<SerializedInputNoteData> = update
-            .note_updates()
-            .updated_input_notes()
-            .map(|u| serialize_input_note(u.inner()))
-            .collect();
-
-        let output_notes: Vec<SerializedOutputNoteData> = update
-            .note_updates()
-            .updated_output_notes()
-            .map(|u| serialize_output_note(u.inner()))
-            .collect();
-
-        let tags: Vec<BatchNoteTag> = update
-            .new_tags()
-            .iter()
-            .map(|tag_record| {
-                let (source_note_id, source_account_id, source_subscription_key) =
-                    match &tag_record.source {
-                        NoteTagSource::Note(note_id) => (Some(note_id.to_hex()), None, None),
-                        NoteTagSource::Account(acc_id) => (None, Some(acc_id.to_hex()), None),
-                        NoteTagSource::Subscription(key) => (None, None, Some(key.to_hex())),
-                        NoteTagSource::User => (None, None, None),
-                    };
-                BatchNoteTag {
-                    tag: tag_record.tag.to_bytes(),
-                    source_note_id,
-                    source_account_id,
-                    source_subscription_key,
-                }
-            })
-            .collect();
-
         let payload = BatchUpdatePayload {
             initial_account_commitment: executed_tx.initial_account().to_commitment().to_string(),
             transaction_record,
             account_state,
-            input_notes,
-            output_notes,
-            tags,
+            input_notes: Vec::new(),
+            output_notes: Vec::new(),
+            tags: Vec::new(),
         };
 
         Ok(payload)
+    }
+}
+
+fn batch_note_tag(tag_record: &NoteTagRecord) -> BatchNoteTag {
+    let (source_note_id, source_account_id, source_subscription_key) = match &tag_record.source {
+        NoteTagSource::Note(note_id) => (Some(note_id.to_hex()), None, None),
+        NoteTagSource::Account(acc_id) => (None, Some(acc_id.to_hex()), None),
+        NoteTagSource::Subscription(key) => (None, None, Some(key.to_hex())),
+        NoteTagSource::User => (None, None, None),
+    };
+    BatchNoteTag {
+        tag: tag_record.tag.to_bytes(),
+        source_note_id,
+        source_account_id,
+        source_subscription_key,
     }
 }
