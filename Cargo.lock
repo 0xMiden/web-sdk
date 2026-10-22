@@ -2047,7 +2047,7 @@ dependencies = [
 
 [[package]]
 name = "js-export-macro"
-version = "0.17.5"
+version = "0.17.6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2419,9 +2419,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client"
-version = "0.17.4"
+version = "0.17.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ff5e4050ea84345783d60c38ce4d70ebeebf66d705d6e8c20feb0d1d2fad9fb"
+checksum = "a15e3ac7be77423651c7ba329e73aed1debe56e982cb82520641c4e8d0f886ac"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2461,9 +2461,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client-proto"
-version = "0.17.4"
+version = "0.17.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f98a92c2c4ce421891e79bb6a5721d12d1dfe1cde10191c036dac1edbe1a5f39"
+checksum = "37fbb58b7110b390d3cb56c23604af573697ff963892d4e48ecc541d570c9eca"
 dependencies = [
  "miden-client",
  "miden-objects",
@@ -2476,9 +2476,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client-sqlite-store"
-version = "0.17.3"
+version = "0.17.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ed14aea81ded38beb8f8759df00caef5721bcc3419d58469e10991f48e48371"
+checksum = "48ca5b8ccc1f06159e65f25e519f382233eda5774047b72af2d324af8145866d"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2497,7 +2497,7 @@ dependencies = [
 
 [[package]]
 name = "miden-client-web"
-version = "0.17.5"
+version = "0.17.6"
 dependencies = [
  "async-trait",
  "console_error_panic_hook",
@@ -2800,7 +2800,7 @@ dependencies = [
 
 [[package]]
 name = "miden-idxdb-store"
-version = "0.17.5"
+version = "0.17.6"
 dependencies = [
  "async-trait",
  "base64",
@@ -2962,7 +2962,7 @@ dependencies = [
 
 [[package]]
 name = "miden-mobile-prover"
-version = "0.17.5"
+version = "0.17.6"
 dependencies = [
  "miden-client",
 ]
@@ -4990,9 +4990,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.14"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0527518605e68109d875e248ea259b6758801cf165e4b2c2733ae3b51f12535a"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -5404,7 +5404,7 @@ dependencies = [
 
 [[package]]
 name = "strip-masp-debug"
-version = "0.17.5"
+version = "0.17.6"
 dependencies = [
  "miden-core 0.33.0",
  "miden-mast-package 0.33.0",

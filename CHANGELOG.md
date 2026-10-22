@@ -1,10 +1,16 @@
 # Changelog
 
-## 0.17.6 (TBD)
+## 0.17.7 (TBD)
 
 ### Enhancements
 
 * [FEATURE][web] Query transaction inclusion without a local store with `RpcClient.syncTransactions(blockFrom, blockTo, accountIds)`. Node.js and browser callers receive `RpcTransactionRecord[]` with `id()`, `accountId()` and `blockNum()` across all account chunks and pages in the inclusive range. Duplicate account IDs are scanned once. Callers maintain their own confirmation cursor and trust the configured RPC node's report of inclusion ([#498](https://github.com/0xMiden/web-sdk/issues/498), [#500](https://github.com/0xMiden/web-sdk/pull/500)).
+
+## 0.17.6 (2026-10-21)
+
+### Fixes
+
+* [FIX][node] Reject certificate chains that use compromised eMudhra intermediate keys in the native Node SDK ([RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382.html)).
 
 ## 0.17.5 (2026-10-20)
 
