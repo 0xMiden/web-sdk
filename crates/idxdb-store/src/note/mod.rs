@@ -11,7 +11,6 @@ use miden_client::note::{
     Nullifier,
 };
 use miden_client::store::{
-    InputNoteCursor,
     InputNoteRecord,
     InputNoteState,
     NoteFilter,
@@ -19,6 +18,7 @@ use miden_client::store::{
     OutputNoteState,
     StoreError,
 };
+use miden_client_core::store::InputNoteCursor;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::js_sys::{Array, Promise};
 
