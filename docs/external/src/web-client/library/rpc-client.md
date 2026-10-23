@@ -21,6 +21,16 @@ For a custom node, pass `new Endpoint(rpcUrl)`. The class is available from
 the same eager/lazy and ST/MT entry points as `MidenClient`. With a lazy entry,
 await `MidenClient.ready()` before constructing WASM objects.
 
+## Optional query results
+
+`await rpc.getNullifierCommitHeight(nullifier, blockNum)` returns a commit
+height or `undefined` when no commitment is found for the query.
+`await rpc.getNoteScriptByRoot(scriptRoot)` returns a `NoteScript` or
+`undefined` when the node has no script for that root. Both browser and
+Node.js entries use `undefined` for these missing results; RPC errors reject
+the Promise. Check `height !== undefined` rather than truthiness so a height
+of `0` remains a valid number.
+
 ## Find consumed notes
 
 `syncNullifiers(prefixes, blockFrom, blockTo)` returns every matching

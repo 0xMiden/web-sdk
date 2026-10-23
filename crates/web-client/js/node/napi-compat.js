@@ -222,6 +222,19 @@ function patchSdkPrototypes(rawSdk) {
     }
   }
 
+  // RPC Option<T> results must be normalized after their Promise resolves.
+  for (const method of ["getNullifierCommitHeight", "getNoteScriptByRoot"]) {
+    const prototype = rawSdk.RpcClient?.prototype;
+    const original = prototype?.[method];
+    if (typeof original === "function") {
+      prototype[method] = function (...args) {
+        return original
+          .apply(this, args)
+          .then((result) => (result === null ? undefined : result));
+      };
+    }
+  }
+
   // null -> undefined for Option<T> getters. napi-rs defines them as
   // configurable prototype accessors; any other shape is left as it is.
   for (const [cls, getters] of [
