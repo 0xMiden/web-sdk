@@ -51,6 +51,7 @@ export {
   OutputNoteRecord,
   OutputNotes,
   RpcClient,
+  RpcTransactionRecord,
   StorageMapPatchEntry,
   StorageMapSlotPatch,
   StoragePatchOperation,

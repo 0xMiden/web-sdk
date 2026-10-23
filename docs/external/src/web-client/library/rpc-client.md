@@ -61,6 +61,67 @@ current upper bound. An empty prefix array returns an empty array without
 contacting the node. After processing a completed range, start the next range
 at `blockTo + 1`.
 
+## Find included transactions
+
+`syncTransactions(blockFrom, blockTo, accountIds)` returns every matching
+`RpcTransactionRecord` in the inclusive block range. Each record exposes
+`id(): TransactionId`, `accountId(): AccountId` and `blockNum(): number`.
+These records come from the node and are distinct from the `TransactionRecord`
+objects a stateful client tracks locally. No local store is opened or updated.
+
+The SDK scans duplicate account IDs once and handles account-list chunking and
+all pagination, including pages with no matching transactions. `blockFrom` must
+be at most `blockTo`, and `blockTo`
+must not exceed the node's chain tip. An empty account list returns `[]` without
+contacting the node; a reversed range rejects.
+
+For confirmation, start at the admission chain tip returned by submission and
+look for the exact transaction ID. The caller retains its own polling cursor;
+`syncTransactions` scans the requested range once and does not wait for future
+blocks. After a successful scan, advance to `blockTo + 1`. If a scan fails,
+retry from the same cursor.
+
+```typescript
+import { AccountId, RpcClient } from "@miden-sdk/miden-sdk";
+
+async function pollForInclusion(
+  rpc: RpcClient,
+  accountIdHex: string,
+  txIdHex: string,
+  admissionTip: number,
+  timeoutMs = 60_000,
+): Promise<number | undefined> {
+  let cursor = admissionTip;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const tip = (await rpc.getBlockHeaderByNumber()).blockNum();
+    if (cursor <= tip) {
+      const records = await rpc.syncTransactions(
+        cursor, tip, [AccountId.fromHex(accountIdHex)],
+      );
+      const included = records.find((record) => record.id().toHex() === txIdHex);
+      if (included) return included.blockNum();
+      cursor = tip + 1;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+  }
+  return undefined; // Unconfirmed; the transaction may still be included later.
+}
+```
+
+Use the canonical hex transaction ID returned by `TransactionId.toHex()`.
+In the browser, `syncTransactions` consumes the `AccountId` wrappers even if it
+rejects, so construct fresh wrappers from saved strings for each array entry,
+poll or retry.
+The example's timeout stops scheduling new scans; it does not cancel an RPC
+already in flight. RPC errors propagate to the caller.
+
+Treating a matching record as confirmation assumes trust in the configured
+RPC node. The SDK checks that returned accounts were requested, but this
+response does not independently prove inclusion in the canonical chain.
+A polling timeout means **unconfirmed**, not failed.
+
 ## Submit a transaction proved elsewhere
 
 Submission needs both a `ProvenTransaction` and its complete

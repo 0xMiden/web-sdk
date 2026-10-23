@@ -76,6 +76,20 @@ The block range is inclusive; results are prefix matches, exposed as
 nullifier yourself and keep the upper bound at or below the node's chain tip.
 This client opens no local store.
 
+To find included transactions, call
+`rpc.syncTransactions(blockFrom, blockTo, accountIds)`. It returns every matching
+`RpcTransactionRecord` across all pages and account chunks, with `id()`,
+`accountId()` and `blockNum()` accessors. Both bounds are inclusive; a reversed
+range rejects and an empty account list returns `[]`. Duplicate account IDs are
+scanned once. Keep `blockTo` at or below the node's tip. In the browser, the call
+consumes the `AccountId` wrappers; recreate them from saved strings for each
+array entry, poll or retry.
+
+For confirmation, start at the admission tip returned by submission, match the
+exact transaction ID, and advance your own cursor to `blockTo + 1` only after a
+successful scan. Inclusion assumes trust in the RPC node. A polling timeout
+means unconfirmed, not failed; this method does not poll or track local state.
+
 To submit externally proved work, use `getTransactionEncryptionKey` with your
 trusted genesis commitment and trusted block header, then
 `submitProvenTx(proof, inputs, key)` or

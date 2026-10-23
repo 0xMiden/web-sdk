@@ -5,11 +5,16 @@ import {
   limits,
   nullifierPage,
   syncRequest,
+  transactionAccounts,
+  transactionIds,
+  transactionPage,
+  transactionRequest,
+  transactionAccount,
 } from "./rpc-client-fixture";
 
 // Exercise the published WASM binding and its real gRPC-web transport without
 // creating a WebClient, opening a store, or requiring a running Miden node.
-// The fixture implements the GetLimits and SyncNullifiers wire contracts from
+// The fixture implements the GetLimits, SyncNullifiers and SyncTransactions wire contracts from
 // miden-node-proto's rpc.proto and primitives.proto.
 const rpcUrl = "http://localhost:8080";
 const rpcRoutes = `${rpcUrl}/miden.node.v1.NodeService/*`;
@@ -28,6 +33,111 @@ async function respond(route: Route, message: Buffer) {
 test.beforeEach(async ({ page }) => {
   await page.goto(rpcUrl);
 });
+
+test("syncTransactions exposes typed records through the WASM gRPC-web binding", async ({
+  page,
+}) => {
+  await page.route(rpcRoutes, async (route) => {
+    if (route.request().url().endsWith("/GetLimits")) {
+      await respond(route, limits);
+      return;
+    }
+    expect(route.request().url()).toMatch(/\/SyncTransactions$/);
+    expect(transactionRequest(route.request().postDataBuffer()!)).toEqual({
+      blockFrom: 12,
+      blockTo: 12,
+      accountIds: [transactionAccount(transactionAccounts[0])],
+    });
+    await respond(
+      route,
+      transactionPage(12, [
+        {
+          accountId: transactionAccounts[0],
+          finalState: 1,
+          blockNum: 12,
+        },
+      ])
+    );
+  });
+
+  const result = await page.evaluate(async (accountId) => {
+    const sdk = await import("./index.js");
+    await sdk.MidenClient.ready();
+    const rpc = new sdk.RpcClient(new sdk.Endpoint(location.origin));
+    const records = await rpc.syncTransactions(12, 12, [
+      sdk.AccountId.fromHex(accountId),
+    ]);
+    return records.map((record) => ({
+      id: record.id().toHex(),
+      accountId: record.accountId().toString(),
+      blockNum: record.blockNum(),
+      isRpcRecord: record instanceof sdk.RpcTransactionRecord,
+    }));
+  }, transactionAccounts[0]);
+  expect(result).toEqual([
+    {
+      id: transactionIds[0],
+      accountId: transactionAccounts[0],
+      blockNum: 12,
+      isRpcRecord: true,
+    },
+  ]);
+});
+
+for (const { name, accountId, blockNum, message } of [
+  {
+    name: "an unrequested account",
+    accountId: transactionAccounts[1],
+    blockNum: 12,
+    message: `node returned transaction for account ${transactionAccounts[1]}`,
+  },
+  {
+    name: "a block below the requested range",
+    accountId: transactionAccounts[0],
+    blockNum: 11,
+    message:
+      "node returned transaction at block 11 outside requested range 12..=12",
+  },
+  {
+    name: "a block above the requested range",
+    accountId: transactionAccounts[0],
+    blockNum: 13,
+    message:
+      "node returned transaction at block 13 outside requested range 12..=12",
+  },
+]) {
+  test(`syncTransactions rejects a node response for ${name}`, async ({
+    page,
+  }) => {
+    await page.route(rpcRoutes, async (route) => {
+      await respond(
+        route,
+        route.request().url().endsWith("/GetLimits")
+          ? limits
+          : transactionPage(12, [
+              {
+                accountId,
+                finalState: 1,
+                blockNum,
+              },
+            ])
+      );
+    });
+
+    const error = await page.evaluate(async (accountId) => {
+      const sdk = await import("./index.js");
+      await sdk.MidenClient.ready();
+      const rpc = new sdk.RpcClient(new sdk.Endpoint(location.origin));
+      try {
+        await rpc.syncTransactions(12, 12, [sdk.AccountId.fromHex(accountId)]);
+      } catch (cause) {
+        return String(cause);
+      }
+    }, transactionAccounts[0]);
+    expect(error).toContain("failed to sync transactions");
+    expect(error).toContain(message);
+  });
+}
 
 test("syncNullifiers scans each unique prefix across every block page", async ({
   page,

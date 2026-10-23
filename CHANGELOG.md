@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.7 (TBD)
+
+### Enhancements
+
+* [FEATURE][web] Query transaction inclusion without a local store with `RpcClient.syncTransactions(blockFrom, blockTo, accountIds)`. Node.js and browser callers receive `RpcTransactionRecord[]` with `id()`, `accountId()` and `blockNum()` across all account chunks and pages in the inclusive range. Duplicate account IDs are scanned once. Callers maintain their own confirmation cursor and trust the configured RPC node's report of inclusion ([#498](https://github.com/0xMiden/web-sdk/issues/498), [#500](https://github.com/0xMiden/web-sdk/pull/500)).
+
 ## 0.17.6 (2026-10-21)
 
 ### Fixes

@@ -81,6 +81,37 @@ Prefixes are copied before asynchronous work and duplicates are scanned once;
 the caller's array is unchanged. Node.js requires an `ArrayBuffer`-backed
 `Uint16Array` and rejects `SharedArrayBuffer` backing during argument conversion.
 
+`rpc.syncTransactions(blockFrom, blockTo, accountIds: AccountId[])` returns
+`RpcTransactionRecord[]` for an inclusive range. Each record exposes
+`id(): TransactionId`, `accountId(): AccountId` and `blockNum(): number`.
+This is a node result, distinct from a locally tracked `TransactionRecord`.
+The SDK collects every page for every account chunk and verifies that returned
+accounts were requested. Duplicate account IDs are scanned once. An empty account
+list returns `[]` without RPC calls; a reversed range rejects. Keep `blockTo` at
+or below the node's chain tip. In the browser, create a fresh `AccountId` wrapper
+for each array entry because the call consumes them.
+
+```typescript
+const blockTo = (await rpc.getBlockHeaderByNumber()).blockNum();
+if (cursor <= blockTo) {
+  const records = await rpc.syncTransactions(
+    cursor, blockTo, [AccountId.fromHex(accountIdHex)],
+  );
+  const included = records.find((record) => record.id().toHex() === txIdHex);
+  if (included) console.log("Included in block", included.blockNum());
+  cursor = blockTo + 1;
+}
+```
+
+Import `AccountId` from `@miden-sdk/miden-sdk`. Initialize `cursor` to the
+admission tip returned by submission and retain it between polls. Advance it
+only after a successful scan. In the browser, the call consumes the account ID
+wrappers even on rejection, so construct fresh wrappers from saved strings on
+each poll or retry. Match the exact transaction ID, not merely any transaction
+for the account. Confirmation assumes trust in the configured RPC node; these
+records do not independently prove canonical inclusion. A polling timeout means
+unconfirmed, not failed. `syncTransactions` does not poll or update local state.
+
 For externally proved transactions:
 
 ```typescript
