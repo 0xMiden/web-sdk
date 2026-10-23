@@ -256,6 +256,9 @@ test.describe("import public account by id", () => {
       if (!integration2) return { skip: true };
       const { client: freshClient } = integration2;
 
+      // The import reads the account at the sync height, so the client must
+      // sync past the block that created the account.
+      await freshClient.syncState();
       const accountIdObj = sdk.AccountId.fromHex(initialWalletId.toString());
       await freshClient.importAccountById(accountIdObj);
       const restoredAccount = await freshClient.getAccount(accountIdObj);
