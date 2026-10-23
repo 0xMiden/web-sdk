@@ -337,6 +337,9 @@ impl RpcClient {
 
     // TODO: This can be generalized to retrieve multiple nullifiers
     /// Fetches the block height at which a nullifier was committed, if any.
+    ///
+    /// @returns Promise that resolves to the commit height, or `undefined` if no commitment
+    ///   is found for the query, on both browser and Node.js entries.
     #[js_export(js_name = "getNullifierCommitHeight")]
     pub async fn get_nullifier_commit_height(
         &self,
