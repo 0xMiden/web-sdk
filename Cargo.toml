@@ -48,10 +48,10 @@ js-export-macro = { path = "crates/js-export-macro", version = "0.18.0-rc.0" }
 # `miden-protocol` is the protocol crate `miden-client` itself resolves, needed directly only for
 # the items `miden-client` does not re-export. A requirement that drifts from `miden-client`'s would
 # resolve a second copy of the protocol types, so bump the three together.
-miden-client              = { branch = "sofiazcoaga-remove-unused-serializable", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
-miden-client-core         = { branch = "sofiazcoaga-remove-unused-serializable", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
-miden-client-proto        = { branch = "sofiazcoaga-remove-unused-serializable", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
-miden-client-sqlite-store = { branch = "sofiazcoaga-remove-unused-serializable", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
+miden-client              = { branch = "next", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
+miden-client-core         = { branch = "next", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
+miden-client-proto        = { branch = "next", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
+miden-client-sqlite-store = { branch = "next", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
 miden-protocol            = { default-features = false, version = "=0.17.1" }
 
 

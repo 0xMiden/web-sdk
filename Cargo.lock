@@ -2420,7 +2420,7 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.17.4"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=sofiazcoaga-remove-unused-serializable#af6bd8618416d298db6755dd9a27d9004c6241cf"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=next#eb7b4b793403323c61dd49630fb0fbf3b3ca9914"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2462,7 +2462,7 @@ dependencies = [
 [[package]]
 name = "miden-client-core"
 version = "0.17.4"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=sofiazcoaga-remove-unused-serializable#af6bd8618416d298db6755dd9a27d9004c6241cf"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=next#eb7b4b793403323c61dd49630fb0fbf3b3ca9914"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2476,7 +2476,7 @@ dependencies = [
 [[package]]
 name = "miden-client-grpc"
 version = "0.17.4"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=sofiazcoaga-remove-unused-serializable#af6bd8618416d298db6755dd9a27d9004c6241cf"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=next#eb7b4b793403323c61dd49630fb0fbf3b3ca9914"
 dependencies = [
  "async-trait",
  "gloo-timers",
@@ -2497,7 +2497,7 @@ dependencies = [
 [[package]]
 name = "miden-client-proto"
 version = "0.17.4"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=sofiazcoaga-remove-unused-serializable#af6bd8618416d298db6755dd9a27d9004c6241cf"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=next#eb7b4b793403323c61dd49630fb0fbf3b3ca9914"
 dependencies = [
  "miden-client-core",
  "miden-objects",
@@ -2511,7 +2511,7 @@ dependencies = [
 [[package]]
 name = "miden-client-sqlite-store"
 version = "0.17.4"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=sofiazcoaga-remove-unused-serializable#af6bd8618416d298db6755dd9a27d9004c6241cf"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=next#eb7b4b793403323c61dd49630fb0fbf3b3ca9914"
 dependencies = [
  "anyhow",
  "async-trait",
