@@ -1,11 +1,24 @@
 use miden_client::SliceReader;
 use miden_client::utils::{ByteReader, Deserializable, Serializable};
+use miden_client_proto::ProtobufValue;
 
 use crate::js_error_with_context;
 use crate::platform::{JsBytes, JsErr, bytes_to_js, from_str_err};
 
 #[cfg(all(feature = "testing", feature = "browser"))]
 pub mod test_utils;
+
+/// Encodes a value as its protobuf message, into the platform byte type.
+pub fn encode_proto<T: ProtobufValue>(value: &T) -> JsBytes {
+    bytes_to_js(&miden_client_proto::encode(value))
+}
+
+/// Decodes platform bytes that hold the protobuf message of `T`, with all the checks of `T`.
+pub fn decode_proto<T: ProtobufValue>(bytes: &JsBytes) -> Result<T, JsErr> {
+    let vec = crate::platform::js_to_bytes(bytes);
+    let context = alloc::format!("failed to deserialize {}", core::any::type_name::<T>());
+    miden_client_proto::decode(&vec).map_err(|e| js_error_with_context(e, &context))
+}
 
 /// Serializes any value that implements `Serializable` into the platform byte type.
 pub fn serialize_to_bytes<T: Serializable>(value: &T) -> JsBytes {
