@@ -1,15 +1,15 @@
 /**
  * Simple static server that serves both the test app and the SDK.
  * - /        -> test/test-app/
- * - /sdk/    -> ../../crates/web-client/dist/
+ * - /sdk/    -> ../../crates/web-client/dist/st/
  * - /react-sdk/ -> ../dist/
- * - /vendor/react/ -> ../node_modules/react/umd/
- * - /vendor/react-dom/ -> ../node_modules/react-dom/umd/
+ * - /vendor/react.js -> react + react-dom bundled at startup (see below)
  * - /vendor/zustand/ -> ../node_modules/zustand/
  */
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const esbuild = require("esbuild");
 
 const PORT = Number.parseInt(process.env.PORT, 10) || 8081;
 const MAX_URL_LENGTH = 2048;
@@ -34,24 +34,34 @@ const SDK_DIR = path.join(
   "..",
   "crates",
   "web-client",
-  "dist"
+  "dist",
+  "st"
 );
 const REACT_SDK_DIR = path.join(__dirname, "..", "dist");
-const REACT_UMD_DIR = path.join(
-  __dirname,
-  "..",
-  "node_modules",
-  "react",
-  "umd"
-);
-const REACT_DOM_UMD_DIR = path.join(
-  __dirname,
-  "..",
-  "node_modules",
-  "react-dom",
-  "umd"
-);
 const ZUSTAND_DIR = path.join(__dirname, "..", "node_modules", "zustand");
+
+// React 19 ships no UMD build, and the test apps reach React through the
+// window globals that the shims in test-app/ re-export. Bundle React and
+// ReactDOM (including react-dom/client) once at startup into a script that
+// sets those globals.
+const REACT_VENDOR_PATH = "/vendor/react.js";
+const REACT_VENDOR_SCRIPT = esbuild.buildSync({
+  stdin: {
+    contents: [
+      'import * as React from "react";',
+      'import * as ReactDOM from "react-dom";',
+      'import * as ReactDOMClient from "react-dom/client";',
+      "window.React = React;",
+      "window.ReactDOM = { ...ReactDOM, ...ReactDOMClient };",
+    ].join("\n"),
+    resolveDir: path.join(__dirname, ".."),
+  },
+  bundle: true,
+  format: "iife",
+  platform: "browser",
+  define: { "process.env.NODE_ENV": '"development"' },
+  write: false,
+}).outputFiles[0].contents;
 
 const SECURITY_HEADERS = {
   "Cross-Origin-Opener-Policy": "same-origin",
@@ -170,20 +180,6 @@ function resolveRequestPath(requestPath) {
     };
   }
 
-  if (requestPath.startsWith("/vendor/react-dom/")) {
-    return {
-      baseDir: REACT_DOM_UMD_DIR,
-      urlPath: requestPath.slice("/vendor/react-dom".length),
-    };
-  }
-
-  if (requestPath.startsWith("/vendor/react/")) {
-    return {
-      baseDir: REACT_UMD_DIR,
-      urlPath: requestPath.slice("/vendor/react".length),
-    };
-  }
-
   if (requestPath.startsWith("/vendor/zustand/")) {
     return {
       baseDir: ZUSTAND_DIR,
@@ -197,15 +193,11 @@ function resolveRequestPath(requestPath) {
 const TEST_APP_FILES = buildFileMap(TEST_APP_DIR);
 const SDK_FILES = buildFileMap(SDK_DIR);
 const REACT_SDK_FILES = buildFileMap(REACT_SDK_DIR);
-const REACT_UMD_FILES = buildFileMap(REACT_UMD_DIR);
-const REACT_DOM_UMD_FILES = buildFileMap(REACT_DOM_UMD_DIR);
 const ZUSTAND_FILES = buildFileMap(ZUSTAND_DIR);
 const FILE_MAPS = new Map([
   [TEST_APP_DIR, TEST_APP_FILES],
   [SDK_DIR, SDK_FILES],
   [REACT_SDK_DIR, REACT_SDK_FILES],
-  [REACT_UMD_DIR, REACT_UMD_FILES],
-  [REACT_DOM_UMD_DIR, REACT_DOM_UMD_FILES],
   [ZUSTAND_DIR, ZUSTAND_FILES],
 ]);
 
@@ -228,6 +220,16 @@ const server = http.createServer((req, res) => {
     requestPath = new URL(req.url, "http://localhost").pathname;
   } catch {
     sendPlain(res, 400, "Bad Request");
+    return;
+  }
+
+  if (requestPath === REACT_VENDOR_PATH) {
+    res.writeHead(200, {
+      "Content-Type": MIME_TYPES[".js"],
+      "Content-Length": REACT_VENDOR_SCRIPT.length,
+      "Cache-Control": "no-store",
+    });
+    res.end(req.method === "HEAD" ? undefined : REACT_VENDOR_SCRIPT);
     return;
   }
 

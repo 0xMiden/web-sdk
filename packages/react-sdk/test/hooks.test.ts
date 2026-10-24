@@ -77,36 +77,34 @@ async function waitForSdkLoaded(
   return readReactSdkState(page);
 }
 
-async function waitForReactSdk(page: Page): Promise<boolean> {
-  try {
-    const state = await waitForTestAppReady(page);
+/**
+ * Waits for the test app, the WASM SDK and the React SDK test API. Throws with
+ * the reason when any of them fails to come up, so a page that cannot load
+ * (a missing SDK build, a broken import) fails the test instead of skipping it.
+ */
+async function waitForReactSdk(page: Page): Promise<void> {
+  const state = await waitForTestAppReady(page);
+  if (state.testAppError) {
+    throw new Error(`Test app error: ${state.testAppError}`);
+  }
+  if (!state.testAppReady) {
+    throw new Error(
+      `Timed out waiting for test app to be ready: ${JSON.stringify(state)}`
+    );
+  }
 
-    if (!state.testAppReady) {
-      console.log("Timed out waiting for test app to be ready:", state);
-      return false;
-    }
+  const sdkState = await waitForSdkLoaded(page);
+  if (!sdkState.sdkLoaded) {
+    throw new Error(
+      `SDK not loaded: ${sdkState.sdkLoadError ?? sdkState.testAppError ?? "timed out"}`
+    );
+  }
 
-    if (state.testAppError) {
-      console.log("Test app error:", state.testAppError);
-      return false;
-    }
-
-    const sdkState = await waitForSdkLoaded(page);
-    if (!sdkState.sdkLoaded) {
-      console.log("SDK not loaded:", sdkState.sdkLoadError || "Unknown error");
-      return false;
-    }
-
-    const reactState = await waitForReactSdkReady(page);
-    if (!reactState.reactSdkReady || !reactState.hasApi) {
-      console.log("React SDK test API not available");
-      return false;
-    }
-
-    return true;
-  } catch (err) {
-    console.log("Timeout waiting for React SDK:", err);
-    return false;
+  const reactState = await waitForReactSdkReady(page);
+  if (!reactState.reactSdkReady || !reactState.hasApi) {
+    throw new Error(
+      `React SDK test API not available: ${JSON.stringify(reactState)}`
+    );
   }
 }
 
@@ -116,11 +114,7 @@ test.describe("React SDK Hooks (Playwright)", () => {
   });
 
   test("useTransaction executes a transaction", async ({ page }) => {
-    const sdkAvailable = await waitForReactSdk(page);
-    if (!sdkAvailable) {
-      test.skip();
-      return;
-    }
+    await waitForReactSdk(page);
 
     const result = await page.evaluate(async () => {
       const api = (window as any).__reactSdk;
@@ -139,11 +133,7 @@ test.describe("React SDK Hooks (Playwright)", () => {
   });
 
   test("useImportAccount imports account from file", async ({ page }) => {
-    const sdkAvailable = await waitForReactSdk(page);
-    if (!sdkAvailable) {
-      test.skip();
-      return;
-    }
+    await waitForReactSdk(page);
 
     const result = await page.evaluate(async () => {
       const api = (window as any).__reactSdk;

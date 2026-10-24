@@ -7,10 +7,9 @@ import {
   useMiden,
 } from "@miden-sdk/react";
 import {
-  WebClient,
+  WasmWebClient,
   MockWebClient,
   AccountStorageMode,
-  AuthScheme,
   NoteType,
 } from "@miden-sdk/miden-sdk";
 
@@ -47,6 +46,11 @@ const initSdk = async () => {
   try {
     const sdkExports = await import("@miden-sdk/miden-sdk");
     exposeSdk(sdkExports);
+    // Restore the WASM AuthScheme enum (the JS API shadows it with a
+    // simplified "falcon"/"ecdsa" string map that wasm-bindgen rejects with
+    // "invalid enum value passed"). Mirrors the workaround in bech32-app.js.
+    const wasm = await window.getWasmOrThrow();
+    window.AuthScheme = wasm.AuthScheme;
     window.sdkLoaded = true;
   } catch (err) {
     console.error("Failed to load SDK:", err);
@@ -54,10 +58,11 @@ const initSdk = async () => {
   }
 };
 
+// MidenProvider creates its client through `WasmWebClient.createClient`, so
+// that is the factory to replace. The args are not forwarded: the mock's
+// signature starts with a serialized mock chain, not an rpcUrl.
 const patchWebClient = () => {
-  if (typeof WebClient?.createClient === "function") {
-    WebClient.createClient = MockWebClient.createClient.bind(MockWebClient);
-  }
+  WasmWebClient.createClient = async () => MockWebClient.createClient();
 };
 
 const waitForClient = (isReady, client) => {
@@ -113,7 +118,7 @@ const TestHarness = () => {
         const readyClient = waitForClient(isReady, client);
         const wallet = await readyClient.newWallet(
           AccountStorageMode.private(),
-          AuthScheme.AuthRpoFalcon512
+          window.AuthScheme.AuthRpoFalcon512
         );
         const faucet = await readyClient.newFaucet(
           AccountStorageMode.private(),
@@ -122,7 +127,7 @@ const TestHarness = () => {
           "TEST",
           8,
           BigInt(1000000),
-          AuthScheme.AuthRpoFalcon512
+          window.AuthScheme.AuthRpoFalcon512
         );
 
         const request = readyClient.newMintTransactionRequest(
@@ -143,7 +148,7 @@ const TestHarness = () => {
         const readyClient = waitForClient(isReady, client);
         const wallet = await readyClient.newWallet(
           AccountStorageMode.private(),
-          AuthScheme.AuthRpoFalcon512
+          window.AuthScheme.AuthRpoFalcon512
         );
         const accountFile = await readyClient.exportAccountFile(wallet.id());
         const imported = await importAccount({
