@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.9 (TBD)
+
+### Fixes
+
+* [FIX][web] `MockWebClient` no longer fails `syncState()` intermittently with "chain tip block header 0 does not carry valid validator signatures". Its Web Worker built a second mock chain, with its own validator keys, in the same IndexedDB store, and whichever chain's genesis header was stored first won. The worker now starts from the main thread's mock chain ([#503](https://github.com/0xMiden/web-sdk/pull/503)).
+
 ## 0.17.8 (2026-10-28)
 
 ### Fixes
