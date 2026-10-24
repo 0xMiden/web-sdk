@@ -46,8 +46,17 @@ window.addEventListener("unhandledrejection", (event) => {
 // expects a Uint8Array — wasm-bindgen would crash. The tests don't need the
 // real rpcUrl on the client; they exercise inferNetworkId() via the store's
 // config.rpcUrl which MidenProvider sets independently of createClient.
+//
+// The client is also exposed as `window.__mockClient` for tests that need an
+// account. Every MockWebClient opens the same IndexedDB store, so a second
+// mock client on this page would read the chain this one wrote and reject it:
+// each mock chain has its own validator keys.
 const patchWebClient = () => {
-  WasmWebClient.createClient = () => MockWebClient.createClient();
+  WasmWebClient.createClient = async () => {
+    const client = await MockWebClient.createClient();
+    window.__mockClient = client;
+    return client;
+  };
 };
 
 // -- Load full WASM SDK exports onto window -----------------------------------

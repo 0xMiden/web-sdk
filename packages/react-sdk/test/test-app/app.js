@@ -7,7 +7,7 @@ import {
   useMiden,
 } from "@miden-sdk/react";
 import {
-  WebClient,
+  WasmWebClient,
   MockWebClient,
   AccountStorageMode,
   AuthScheme,
@@ -54,10 +54,11 @@ const initSdk = async () => {
   }
 };
 
+// MidenProvider creates its client through `WasmWebClient.createClient`, so
+// that is the factory to replace. The args are not forwarded: the mock's
+// signature starts with a serialized mock chain, not an rpcUrl.
 const patchWebClient = () => {
-  if (typeof WebClient?.createClient === "function") {
-    WebClient.createClient = MockWebClient.createClient.bind(MockWebClient);
-  }
+  WasmWebClient.createClient = async () => MockWebClient.createClient();
 };
 
 const waitForClient = (isReady, client) => {

@@ -4,7 +4,7 @@
  *
  * Prerequisites:
  * 1. Build the web-client: cd ../../crates/web-client && pnpm build
- * 2. The SDK will be served from ../../crates/web-client/dist/
+ * 2. The SDK will be served from ../../crates/web-client/dist/st/
  */
 import { test, expect, type Page } from "@playwright/test";
 
@@ -62,40 +62,34 @@ async function waitForSdkLoaded(
   return readTestAppState(page);
 }
 
-// Helper to wait for SDK to load
-async function waitForSdk(page: Page): Promise<boolean> {
-  try {
-    const state = await waitForTestAppReady(page);
-
-    if (!state.testAppReady) {
-      console.log("Timed out waiting for test app to be ready:", state);
-      return false;
-    }
-
-    if (state.testAppError) {
-      console.log("Test app error:", state.testAppError);
-      return false;
-    }
-
-    const sdkState = await waitForSdkLoaded(page);
-    if (!sdkState.sdkLoaded) {
-      console.log("SDK not loaded:", sdkState.sdkLoadError || "Unknown error");
-      return false;
-    }
-
-    // Verify MockWebClient is available
-    const hasMockClient = await page.evaluate(
-      () => typeof (window as any).MockWebClient !== "undefined"
+/**
+ * Waits for the test app, the WASM SDK and the MockWebClient export. Throws
+ * with the reason when any of them is missing, so a page that cannot load
+ * fails the test instead of skipping it.
+ */
+async function waitForSdk(page: Page): Promise<void> {
+  const state = await waitForTestAppReady(page);
+  if (state.testAppError) {
+    throw new Error(`Test app error: ${state.testAppError}`);
+  }
+  if (!state.testAppReady) {
+    throw new Error(
+      `Timed out waiting for test app to be ready: ${JSON.stringify(state)}`
     );
-    if (!hasMockClient) {
-      console.log("MockWebClient not found in SDK exports");
-      return false;
-    }
+  }
 
-    return true;
-  } catch (err) {
-    console.log("Timeout waiting for SDK:", err);
-    return false;
+  const sdkState = await waitForSdkLoaded(page);
+  if (!sdkState.sdkLoaded) {
+    throw new Error(
+      `SDK not loaded: ${sdkState.sdkLoadError ?? sdkState.testAppError ?? "timed out"}`
+    );
+  }
+
+  const hasMockClient = await page.evaluate(
+    () => typeof (window as any).MockWebClient !== "undefined"
+  );
+  if (!hasMockClient) {
+    throw new Error("MockWebClient not found in SDK exports");
   }
 }
 
@@ -106,11 +100,7 @@ test.describe("MockWebClient Integration", () => {
   });
 
   test("should create wallet with MockWebClient", async ({ page }) => {
-    const sdkAvailable = await waitForSdk(page);
-    if (!sdkAvailable) {
-      test.skip();
-      return;
-    }
+    await waitForSdk(page);
 
     const result = await page.evaluate(async () => {
       const client = await (window as any).MockWebClient.createClient();
@@ -141,11 +131,7 @@ test.describe("MockWebClient Integration", () => {
   });
 
   test("should create faucet with MockWebClient", async ({ page }) => {
-    const sdkAvailable = await waitForSdk(page);
-    if (!sdkAvailable) {
-      test.skip();
-      return;
-    }
+    await waitForSdk(page);
 
     const result = await page.evaluate(async () => {
       const client = await (window as any).MockWebClient.createClient();
@@ -181,11 +167,7 @@ test.describe("MockWebClient Integration", () => {
   });
 
   test("should list accounts after creation", async ({ page }) => {
-    const sdkAvailable = await waitForSdk(page);
-    if (!sdkAvailable) {
-      test.skip();
-      return;
-    }
+    await waitForSdk(page);
 
     const result = await page.evaluate(async () => {
       const client = await (window as any).MockWebClient.createClient();
@@ -221,11 +203,7 @@ test.describe("MockWebClient Integration", () => {
   test("should mint and consume tokens with MockWebClient", async ({
     page,
   }) => {
-    const sdkAvailable = await waitForSdk(page);
-    if (!sdkAvailable) {
-      test.skip();
-      return;
-    }
+    await waitForSdk(page);
 
     const finalBalance = await page.evaluate(async () => {
       const client = await (window as any).MockWebClient.createClient();
@@ -311,11 +289,7 @@ test.describe("MockWebClient Integration", () => {
   });
 
   test("should send tokens between wallets", async ({ page }) => {
-    const sdkAvailable = await waitForSdk(page);
-    if (!sdkAvailable) {
-      test.skip();
-      return;
-    }
+    await waitForSdk(page);
 
     const result = await page.evaluate(async () => {
       const client = await (window as any).MockWebClient.createClient();
@@ -439,11 +413,7 @@ test.describe("MockWebClient Integration", () => {
   });
 
   test("should sync state properly", async ({ page }) => {
-    const sdkAvailable = await waitForSdk(page);
-    if (!sdkAvailable) {
-      test.skip();
-      return;
-    }
+    await waitForSdk(page);
 
     const result = await page.evaluate(async () => {
       const client = await (window as any).MockWebClient.createClient();
