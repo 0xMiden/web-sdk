@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { DBCore } from "dexie";
 import {
   MidenDatabase,
   MIGRATION_BASELINE,
@@ -56,11 +57,11 @@ function interceptTransactions(
   db: MidenDatabase,
   install: (tx: BackendTransaction) => void
 ) {
-  const native = db.dexie.backendDB();
-  const transaction = native.transaction;
-  return vi.spyOn(native, "transaction").mockImplementation(function (
-    this: IDBDatabase,
-    ...args: Parameters<IDBDatabase["transaction"]>
+  const core = (db.dexie as unknown as { core: DBCore }).core;
+  const transaction = core.transaction;
+  return vi.spyOn(core, "transaction").mockImplementation(function (
+    this: DBCore,
+    ...args: Parameters<DBCore["transaction"]>
   ) {
     const tx = transaction.apply(this, args) as BackendTransaction;
     install(tx);
