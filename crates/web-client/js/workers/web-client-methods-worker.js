@@ -1,3 +1,4 @@
+import { indexedDbArgs } from "../indexeddb.js";
 import loadWasm from "../../dist/wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "../constants.js";
 
@@ -88,6 +89,7 @@ const serializeError = (error) => {
 
 // Global state variables.
 let wasmWebClient = null;
+let wasmIndexedDb;
 let wasmSeed = null; // Seed for the WASM WebClient, if needed.
 let ready = false; // Indicates if the worker is fully initialized.
 let messageQueue = []; // Queue for sequential processing.
@@ -339,7 +341,8 @@ methodHandlers[MethodName.SYNC_STATE_MOCK] = async (args) => {
   await wasmWebClient.createMockClient(
     wasmSeed,
     serializedMockChain,
-    serializedMockNoteTransportNode
+    serializedMockNoteTransportNode,
+    ...indexedDbArgs(wasmIndexedDb)
   );
 
   return await methodHandlers[MethodName.SYNC_STATE]();
@@ -354,7 +357,8 @@ methodHandlers[MethodName.SYNC_CHAIN_MOCK] = async (args) => {
   await wasmWebClient.createMockClient(
     wasmSeed,
     serializedMockChain,
-    serializedMockNoteTransportNode
+    serializedMockNoteTransportNode,
+    ...indexedDbArgs(wasmIndexedDb)
   );
 
   return await methodHandlers[MethodName.SYNC_CHAIN]();
@@ -369,7 +373,8 @@ methodHandlers[MethodName.SYNC_NOTE_TRANSPORT_MOCK] = async (args) => {
   await wasmWebClient.createMockClient(
     wasmSeed,
     serializedMockChain,
-    serializedMockNoteTransportNode
+    serializedMockNoteTransportNode,
+    ...indexedDbArgs(wasmIndexedDb)
   );
 
   return await methodHandlers[MethodName.SYNC_NOTE_TRANSPORT]();
@@ -388,7 +393,8 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_MOCK] = async (args) => {
   await wasmWebClient.createMockClient(
     wasmSeed,
     serializedMockChain,
-    serializedMockNoteTransportNode
+    serializedMockNoteTransportNode,
+    ...indexedDbArgs(wasmIndexedDb)
   );
 
   const result = await methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION](args);
@@ -423,7 +429,8 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK] = async (
   await wasmWebClient.createMockClient(
     wasmSeed,
     serializedMockChain,
-    serializedMockNoteTransportNode
+    serializedMockNoteTransportNode,
+    ...indexedDbArgs(wasmIndexedDb)
   );
 
   const result =
@@ -447,6 +454,17 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK] = async (
 /**
  * Process a single message event.
  */
+function storageOptions(policy) {
+  if (policy === undefined) return undefined;
+  return {
+    durability: policy.durability,
+    onFailure: policy.notify
+      ? (failure) =>
+          self.postMessage({ action: WorkerAction.STORAGE_FAILURE, failure })
+      : undefined,
+  };
+}
+
 async function processMessage(event) {
   const { action, args, methodName, requestId } = event.data;
   try {
@@ -464,7 +482,10 @@ async function processMessage(event) {
         feeFaucetId,
         noteTransportMaxRetries,
         noteTransportRetryIntervalMs,
+        storagePolicy,
       ] = args;
+      const indexedDb = storageOptions(storagePolicy);
+      wasmIndexedDb = indexedDb;
       const wasm = await getWasmOrThrow();
 
       if (logLevel) {
@@ -502,7 +523,8 @@ async function processMessage(event) {
           hasInsertKeyCb ? callbackProxies.insertKey : undefined,
           hasSignCb ? callbackProxies.sign : undefined,
           noteTransportMaxRetries,
-          noteTransportRetryIntervalMs
+          noteTransportRetryIntervalMs,
+          ...indexedDbArgs(indexedDb)
         );
       } else {
         await wasmWebClient.createClient(
@@ -512,7 +534,8 @@ async function processMessage(event) {
           storeName,
           feeFaucetId,
           noteTransportMaxRetries,
-          noteTransportRetryIntervalMs
+          noteTransportRetryIntervalMs,
+          ...indexedDbArgs(indexedDb)
         );
       }
 
@@ -521,7 +544,9 @@ async function processMessage(event) {
       self.postMessage({ ready: true });
       return;
     } else if (action === WorkerAction.INIT_MOCK) {
-      const [seed, logLevel, numThreads] = args;
+      const [seed, logLevel, numThreads, storagePolicy] = args;
+      const indexedDb = storageOptions(storagePolicy);
+      wasmIndexedDb = indexedDb;
       const wasm = await getWasmOrThrow();
 
       if (logLevel) {
@@ -540,7 +565,12 @@ async function processMessage(event) {
       }
 
       wasmWebClient = new wasm.WebClient();
-      await wasmWebClient.createMockClient(seed, undefined, undefined);
+      await wasmWebClient.createMockClient(
+        seed,
+        undefined,
+        undefined,
+        ...indexedDbArgs(indexedDb)
+      );
 
       wasmSeed = seed;
       ready = true;

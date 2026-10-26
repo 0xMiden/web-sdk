@@ -25,15 +25,33 @@ jobs:
       - name: Client unit and coverage gate
         if: '!cancelled()'
         run: make test-web-client-unit
+      - name: Check published Node helper inclusion
+        if: '!cancelled()'
+        working-directory: crates/web-client
+        run: |
+          npm pack --dry-run --json --ignore-scripts > pack-files.json
+          node --input-type=module -e 'import fs from "node:fs"; const files=JSON.parse(fs.readFileSync("pack-files.json", "utf8"))[0].files.map(file=>file.path); if(!files.includes("js/indexeddb.js")) throw new Error("IndexedDB option helper absent from package");'
+      - name: Install CI Rust formatter
+        if: '!cancelled()'
+        run: rustup toolchain install nightly --profile minimal --component rustfmt
+      - name: Format source through Makefile
+        if: '!cancelled()'
+        run: make format
       - name: Generate store bindings
         if: '!cancelled()'
         run: make rust-client-ts-build
+      - name: Capture source formatting and generated bindings
+        if: '!cancelled()'
+        run: |
+          git add -N crates/idxdb-store/src/js/storage-policy.js
+          git diff --binary > sdk-1948-source.patch
       - name: Upload exact generated bindings and coverage
         if: '!cancelled()'
         uses: actions/upload-artifact@v4
         with:
           name: sdk-1948-proof-${{ github.sha }}
           path: |
+            sdk-1948-source.patch
             crates/idxdb-store/src/js
             crates/idxdb-store/src/coverage/coverage-summary.json
             crates/web-client/coverage/coverage-summary.json

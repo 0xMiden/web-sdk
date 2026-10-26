@@ -207,7 +207,43 @@ export interface MidenObservation {
 // Client options
 // ════════════════════════════════════════════════════════════════
 
+/** Closed, payload-free notification from this client's IndexedDB connection. */
+export interface IndexedDbFailure {
+  /** Backend discriminator; SQLite never emits this event. */
+  backend: "indexeddb";
+  /** Routing only. A database name does not identify a database incarnation. */
+  storeName: string;
+  /** Native operation boundary, including commit after successful requests. */
+  phase: "open" | "read" | "write" | "commit";
+  /** Stable vocabulary; contains no table names, keys, messages or stored values. */
+  operation: "indexeddb.open" | "indexeddb.read" | "indexeddb.write" | "indexeddb.commit";
+  /** io classifies a native storage failure, not its physical hardware cause. */
+  kind: "quota" | "io" | "unavailable" | "unexpected-abort";
+  /** Allowlisted native error name. */
+  errorName: "QuotaExceededError" | "UnknownError" | "SecurityError" | "InvalidStateError" | "MissingAPIError" | "AbortError";
+  /** Connection-scoped deduplication ID; at most 128 characters. */
+  eventId: string;
+}
+
+/** Browser-only construction policy shared by live clients using one connection in one realm.
+ * Other workers or tabs have independent connections and must each opt in. */
+export interface IndexedDbOptions {
+  /** Browser durability hint. Omitted policy inherits an existing connection's policy.
+   * Explicit conflicting policies reject. Strict does not prevent eviction, corruption,
+   * rollback or data loss and cannot configure schema-upgrade transactions retroactively.
+   */
+  durability?: "default" | "strict" | "relaxed";
+  /** Synchronous callback before the failing operation settles. Exceptions are ignored.
+   * Receives no arbitrary messages or stored data. Deliberate rollback and validation
+   * failures are excluded. Subscription ends when this client terminates. Never export
+   * storeName or eventId to telemetry without your own privacy policy.
+   */
+  onFailure?: (failure: IndexedDbFailure) => void;
+}
+
 export interface ClientOptions {
+  /** Opt-in browser IndexedDB policy. Node SQLite rejects this before creating files. */
+  indexedDb?: IndexedDbOptions;
   /**
    * RPC endpoint. Accepts shorthands or a raw URL:
    * - `"testnet"` — Miden testnet RPC (`https://rpc.testnet.miden.io`)
@@ -1060,6 +1096,10 @@ export interface SendPrivateOutputOptions {
 }
 
 export interface MockOptions {
+  /** Browser IndexedDB policy, including the mock method worker. */
+  indexedDb?: IndexedDbOptions;
+  /** Set false to run the mock client on the current thread. */
+  useWorker?: boolean;
   seed?: string | Uint8Array;
   serializedMockChain?: Uint8Array;
   serializedNoteTransport?: Uint8Array;
@@ -2265,7 +2305,7 @@ export declare function isConsumableNow(
 ): boolean;
 
 /** Exports the entire contents of an IndexedDB store as a JSON string. */
-export declare function exportStore(storeName: string): Promise<string>;
+export declare function exportStore(storeName: string, indexedDb?: IndexedDbOptions): Promise<string>;
 
 /**
  * Imports store contents from a JSON string, replacing all existing data.
@@ -2276,7 +2316,8 @@ export declare function exportStore(storeName: string): Promise<string>;
  */
 export declare function importStore(
   storeName: string,
-  storeDump: string
+  storeDump: string,
+  indexedDb?: IndexedDbOptions
 ): Promise<void>;
 
 /** Returns the initialized WASM module. Throws if WASM is unavailable. */

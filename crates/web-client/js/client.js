@@ -1,3 +1,4 @@
+import { validateIndexedDbOptions, indexedDbArgs } from "./indexeddb.js";
 import { AccountsResource } from "./resources/accounts.js";
 import { TransactionsResource } from "./resources/transactions.js";
 import { NotesResource } from "./resources/notes.js";
@@ -141,6 +142,7 @@ export class MidenClient {
    * @returns {Promise<MidenClient>} A fully initialized client.
    */
   static async create(options) {
+    validateIndexedDbOptions(options?.indexedDb);
     validateNoteTransportRetryOptions(
       options?.noteTransportMaxRetries,
       options?.noteTransportRetryIntervalMs
@@ -188,7 +190,8 @@ export class MidenClient {
         options,
         options?.feeFaucetId,
         options?.noteTransportMaxRetries,
-        options?.noteTransportRetryIntervalMs
+        options?.noteTransportRetryIntervalMs,
+        ...indexedDbArgs(options?.indexedDb)
       );
     } else {
       inner = await WebClientClass.createClient(
@@ -201,7 +204,8 @@ export class MidenClient {
         options,
         options?.feeFaucetId,
         options?.noteTransportMaxRetries,
-        options?.noteTransportRetryIntervalMs
+        options?.noteTransportRetryIntervalMs,
+        ...indexedDbArgs(options?.indexedDb)
       );
     }
 
@@ -310,6 +314,7 @@ export class MidenClient {
    * @returns {Promise<MidenClient>} A mock client.
    */
   static async createMock(options) {
+    validateIndexedDbOptions(options?.indexedDb);
     const getWasm = MidenClient._getWasmOrThrow;
     const MockWebClientClass = MidenClient._MockWasmWebClient;
 
@@ -324,7 +329,10 @@ export class MidenClient {
     const inner = await MockWebClientClass.createClient(
       options?.serializedMockChain,
       options?.serializedNoteTransport,
-      seed
+      seed,
+      ...(options?.indexedDb !== undefined || options?.useWorker !== undefined
+        ? [undefined, options?.indexedDb, options?.useWorker]
+        : [])
     );
 
     const client = new MidenClient(inner, getWasm, null);

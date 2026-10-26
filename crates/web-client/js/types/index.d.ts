@@ -21,6 +21,7 @@ import type {
   GetKeyCallback,
   InsertKeyCallback,
   MidenObservation,
+  IndexedDbOptions,
   SignCallback,
 } from "./api-types";
 
@@ -167,7 +168,8 @@ export declare class WasmWebClient extends WasmWebClientBase {
     observability?: ClientObservabilityOptions,
     feeFaucetId?: string,
     noteTransportMaxRetries?: number,
-    noteTransportRetryIntervalMs?: number
+    noteTransportRetryIntervalMs?: number,
+    indexedDb?: IndexedDbOptions
   ): Promise<WasmWebClient>;
 
   static createClientWithExternalKeystore(
@@ -183,7 +185,8 @@ export declare class WasmWebClient extends WasmWebClientBase {
     observability?: ClientObservabilityOptions,
     feeFaucetId?: string,
     noteTransportMaxRetries?: number,
-    noteTransportRetryIntervalMs?: number
+    noteTransportRetryIntervalMs?: number,
+    indexedDb?: IndexedDbOptions
   ): Promise<WasmWebClient>;
 
   // The wrapper resolves a friendly scheme to the wasm enum and passes a
@@ -247,7 +250,9 @@ export declare class MockWasmWebClient extends WasmWebClient {
     serializedMockChain?: Uint8Array,
     serializedMockNoteTransportNode?: Uint8Array,
     seed?: Uint8Array,
-    logLevel?: LogLevel
+    logLevel?: LogLevel,
+    indexedDb?: IndexedDbOptions,
+    useWorker?: boolean
   ): Promise<MockWasmWebClient>;
 
   proveBlock(): Promise<void>;

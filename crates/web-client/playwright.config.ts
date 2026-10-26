@@ -104,6 +104,7 @@ const ciShardProjects = process.env.CI
         use: { ...devices["Desktop Chrome"] },
         testMatch: [
           "test/eager_entry.test.ts",
+          "test/indexeddb_safety.browser.test.ts",
           "test/fpi.test.ts",
           "test/explicit_input_note.test.ts",
           "test/compile_and_contract.test.ts",

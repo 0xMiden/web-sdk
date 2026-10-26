@@ -1,3 +1,10 @@
+import {
+  validateIndexedDbOptions,
+  indexedDbArgs,
+  workerIndexedDbOptions,
+  deliverIndexedDbFailure,
+  createIndexedDbFailureSubscription,
+} from "./indexeddb.js";
 import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
 import { coalesceRun, runUnderLock, withSyncLock } from "./syncLock.js";
@@ -487,12 +494,28 @@ class WebClient {
     observability,
     feeFaucetId,
     noteTransportMaxRetries,
-    noteTransportRetryIntervalMs
+    noteTransportRetryIntervalMs,
+    indexedDb
   ) {
     validateNoteTransportRetryOptions(
       noteTransportMaxRetries,
       noteTransportRetryIntervalMs
     );
+    const storageOptions = validateIndexedDbOptions(indexedDb);
+    const storageSubscription = createIndexedDbFailureSubscription(
+      storageOptions?.onFailure,
+      () => !this._terminated
+    );
+    this._releaseStorageCallback = storageSubscription.dispose;
+    this._indexedDb =
+      storageOptions === undefined
+        ? undefined
+        : {
+            durability: storageOptions.durability,
+            onFailure: storageOptions.onFailure
+              ? storageSubscription.notify
+              : undefined,
+          };
     this.rpcUrl = rpcUrl;
     this.noteTransportUrl = noteTransportUrl;
     this.seed = seed;
@@ -571,6 +594,11 @@ class WebClient {
       // Listen for messages from the worker.
       this.worker.addEventListener("message", async (event) => {
         const data = event.data;
+        if (data.action === WorkerAction.STORAGE_FAILURE) {
+          if (!this._terminated)
+            deliverIndexedDbFailure(this._indexedDb?.onFailure, data.failure);
+          return;
+        }
 
         // Worker script loaded.
         if (data.loaded) {
@@ -947,6 +975,7 @@ class WebClient {
         this._feeFaucetId,
         this._noteTransportMaxRetries,
         this._noteTransportRetryIntervalMs,
+        ...indexedDbArgs(workerIndexedDbOptions(this._indexedDb)),
       ],
     });
   }
@@ -1003,7 +1032,8 @@ class WebClient {
     observability,
     feeFaucetId,
     noteTransportMaxRetries,
-    noteTransportRetryIntervalMs
+    noteTransportRetryIntervalMs,
+    indexedDb
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -1019,7 +1049,8 @@ class WebClient {
       observability,
       feeFaucetId,
       noteTransportMaxRetries,
-      noteTransportRetryIntervalMs
+      noteTransportRetryIntervalMs,
+      indexedDb
     );
 
     try {
@@ -1043,7 +1074,8 @@ class WebClient {
         network,
         feeFaucetId,
         noteTransportMaxRetries,
-        noteTransportRetryIntervalMs
+        noteTransportRetryIntervalMs,
+        ...indexedDbArgs(instance._indexedDb)
       );
 
       // Wait for the worker to be ready
@@ -1094,7 +1126,8 @@ class WebClient {
     observability,
     feeFaucetId,
     noteTransportMaxRetries,
-    noteTransportRetryIntervalMs
+    noteTransportRetryIntervalMs,
+    indexedDb
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -1110,7 +1143,8 @@ class WebClient {
       observability,
       feeFaucetId,
       noteTransportMaxRetries,
-      noteTransportRetryIntervalMs
+      noteTransportRetryIntervalMs,
+      indexedDb
     );
 
     try {
@@ -1137,7 +1171,8 @@ class WebClient {
         insertKeyCb,
         signCb,
         noteTransportMaxRetries,
-        noteTransportRetryIntervalMs
+        noteTransportRetryIntervalMs,
+        ...indexedDbArgs(instance._indexedDb)
       );
 
       await instance.ready;
@@ -1662,6 +1697,7 @@ class WebClient {
       this.pendingRequests.clear();
     }
     this._afterQueuedWasmCalls(async () => {
+      this._releaseStorageCallback?.();
       const client = this.wasmWebClient;
       this.wasmWebClient = null;
       this.wasmWebClientPromise = null;
@@ -1723,7 +1759,7 @@ class WebClient {
 }
 
 class MockWebClient extends WebClient {
-  constructor(seed, logLevel) {
+  constructor(seed, logLevel, indexedDb, useWorker = true) {
     super(
       null,
       null,
@@ -1732,7 +1768,13 @@ class MockWebClient extends WebClient {
       undefined,
       undefined,
       undefined,
-      logLevel
+      logLevel,
+      useWorker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      indexedDb
     );
   }
 
@@ -1753,7 +1795,12 @@ class MockWebClient extends WebClient {
     } catch {}
     this.worker.postMessage({
       action: WorkerAction.INIT_MOCK,
-      args: [this.seed, this.logLevel, numThreads],
+      args: [
+        this.seed,
+        this.logLevel,
+        numThreads,
+        ...indexedDbArgs(workerIndexedDbOptions(this._indexedDb)),
+      ],
     });
   }
 
@@ -1769,10 +1816,12 @@ class MockWebClient extends WebClient {
     serializedMockChain,
     serializedMockNoteTransportNode,
     seed,
-    logLevel
+    logLevel,
+    indexedDb,
+    useWorker
   ) {
     // Construct the instance (synchronously).
-    const instance = new MockWebClient(seed, logLevel);
+    const instance = new MockWebClient(seed, logLevel, indexedDb, useWorker);
 
     try {
       // Set up logging on the main thread before creating the client.
@@ -1786,7 +1835,8 @@ class MockWebClient extends WebClient {
       await wasmWebClient.createMockClient(
         seed ?? null,
         serializedMockChain ?? null,
-        serializedMockNoteTransportNode ?? null
+        serializedMockNoteTransportNode ?? null,
+        ...indexedDbArgs(instance._indexedDb)
       );
 
       // Wait for the worker to be ready
@@ -1983,7 +2033,8 @@ class MockWebClient extends WebClient {
           await replacement.createMockClient(
             this.seed,
             newMockChain,
-            newMockNoteTransportNode
+            newMockNoteTransportNode,
+            ...indexedDbArgs(this._indexedDb)
           );
         } catch (error) {
           try {
@@ -2055,7 +2106,8 @@ class MockWebClient extends WebClient {
           await replacement.createMockClient(
             this.seed,
             newMockChain,
-            newMockNoteTransportNode
+            newMockNoteTransportNode,
+            ...indexedDbArgs(this._indexedDb)
           );
         } catch (error) {
           try {

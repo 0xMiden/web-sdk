@@ -1,4 +1,9 @@
 import Dexie, { type Transaction } from "dexie";
+import {
+  StoragePolicy,
+  validateIndexedDbOptions,
+  type IndexedDbOptions,
+} from "./storage-policy.js";
 import * as semver from "semver";
 import { logWebStoreError } from "./utils.js";
 
@@ -28,105 +33,98 @@ const textDecoder = new TextDecoder();
 
 interface RegistryEntry {
   db: MidenDatabase;
-  holders: number;
+  holders: Set<string>;
+  legacy: string[];
 }
-
 interface PendingOpen {
-  holders: number;
+  entry: RegistryEntry;
   opened: Promise<void>;
 }
-
-// Since we can't have a pointer to a JS Object from rust, we'll
-// use this instead to keep track of open DBs. A client can have
-// a DB for mainnet, devnet, testnet or a custom one, so this should be ok.
-// Each name has one connection, held by every live Rust `IdxdbStore` on it.
 const databaseRegistry = new Map<string, RegistryEntry>();
 const pendingOpens = new Map<string, PendingOpen>();
+let holderSequence = 0;
 
-/**
- * Get a database instance from the registry by its ID.
- * Throws if the database hasn't been opened yet.
- */
+/** Returns the connection shared by the live holders of a store name. */
 export function getDatabase(dbId: string): MidenDatabase {
   const entry = databaseRegistry.get(dbId);
-  if (!entry) {
+  if (!entry)
     throw new Error(
       `Database not found for id: ${dbId}. Call openDatabase first.`
     );
-  }
   return entry.db;
 }
 
-/**
- * Releases one holder of the database registered for `network`, closing and
- * unregistering it when the last holder is gone. No-op for an unknown name.
- */
-export function closeDatabase(network: string): void {
+/** Releases a tokenized holder, or one legacy acquisition when no token is supplied. */
+export function closeDatabase(network: string, holderToken?: string): void {
   const entry = databaseRegistry.get(network);
-  if (!entry) {
-    return;
+  if (!entry) return;
+  const token = holderToken ?? entry.legacy.pop();
+  if (!token || !entry.holders.delete(token)) return;
+  entry.db.storagePolicy.release(token);
+  if (entry.holders.size === 0) {
+    entry.db.dexie.close();
+    databaseRegistry.delete(network);
   }
-  entry.holders -= 1;
-  if (entry.holders > 0) {
-    return;
-  }
-  entry.db.dexie.close();
-  databaseRegistry.delete(network);
 }
 
-/**
- * Opens the database for `network`, or joins the connection already open or
- * opening under that name, and counts the caller as one holder until it calls
- * `closeDatabase`. Returns the database ID (network name) which can be used to
- * retrieve the database later.
- */
+/** Acquires an anonymous holder and preserves the legacy store-name return value. */
 export async function openDatabase(
   network: string,
   clientVersion: string
 ): Promise<string> {
-  const registered = databaseRegistry.get(network);
-  if (registered?.db.dexie.isOpen()) {
-    registered.holders += 1;
-    return network;
-  }
-  let pending = pendingOpens.get(network);
-  if (!pending) {
-    pending = { holders: 0, opened: Promise.resolve() };
-    pendingOpens.set(network, pending);
-    pending.opened = openAndRegister(network, clientVersion, pending);
-  }
-  pending.holders += 1;
-  await pending.opened;
+  const token = await openDatabaseWithOptions(network, clientVersion);
+  databaseRegistry.get(network)!.legacy.push(token);
   return network;
 }
 
-// Registers the connection and counts its waiting holders in one turn, so a
-// close landing in between cannot release it under them. An entry it replaces
-// was closed elsewhere, and that entry's holders now hold this connection.
-async function openAndRegister(
+/** Acquires a scoped subscription; release its returned token with closeDatabase. */
+export async function openDatabaseWithOptions(
   network: string,
   clientVersion: string,
-  pending: PendingOpen
-): Promise<void> {
-  const db = new MidenDatabase(network);
-  try {
-    const success = await db.open(clientVersion);
-    /* v8 ignore next 3 - open() only returns false after logWebStoreError re-throws, so !success is unreachable */
-    if (!success) {
-      throw new Error(`Failed to open IndexedDB database: ${network}`);
-    }
-  } catch (err) {
-    db.dexie.close();
-    throw err;
-  } finally {
-    pendingOpens.delete(network);
+  options?: IndexedDbOptions
+): Promise<string> {
+  const validated = validateIndexedDbOptions(options);
+  let pending = pendingOpens.get(network);
+  const registered = databaseRegistry.get(network);
+  const entry = pending?.entry ??
+    (registered?.db.dexie.isOpen() ? registered : undefined) ?? {
+      db: new MidenDatabase(
+        network,
+        { durability: validated.durability },
+        registered?.db.storagePolicy
+      ),
+      holders: registered?.holders ?? new Set<string>(),
+      legacy: registered?.legacy ?? [],
+    };
+  entry.db.storagePolicy.check(validated);
+  const token = `holder-${++holderSequence}`;
+  entry.holders.add(token);
+  entry.db.storagePolicy.subscribe(token, validated.onFailure);
+  if (!pending && entry.db.dexie.isOpen()) return token;
+  if (!pending) {
+    pending = { entry, opened: Promise.resolve() };
+    pendingOpens.set(network, pending);
+    pending.opened = (async () => {
+      try {
+        await entry.db.open(clientVersion);
+        registered?.db.dexie.close();
+        databaseRegistry.set(network, entry);
+      } catch (error) {
+        entry.db.dexie.close();
+        throw error;
+      } finally {
+        pendingOpens.delete(network);
+      }
+    })();
   }
-  const replaced = databaseRegistry.get(network);
-  replaced?.db.dexie.close();
-  databaseRegistry.set(network, {
-    db,
-    holders: (replaced?.holders ?? 0) + pending.holders,
-  });
+  try {
+    await pending.opened;
+    return token;
+  } catch (error) {
+    entry.holders.delete(token);
+    entry.db.storagePolicy.release(token);
+    throw error;
+  }
 }
 
 enum Table {
@@ -587,8 +585,18 @@ export class MidenDatabase {
   settings: Dexie.Table<ISetting, [number, string]>;
   accountWitnesses: Dexie.Table<IAccountWitness, string>;
 
-  constructor(network: string) {
-    this.dexie = new Dexie(network) as MidenDexie;
+  readonly storagePolicy: StoragePolicy;
+
+  constructor(
+    network: string,
+    options?: IndexedDbOptions,
+    sharedPolicy?: StoragePolicy
+  ) {
+    this.storagePolicy = sharedPolicy ?? new StoragePolicy(network, options);
+    this.dexie = new Dexie(network, {
+      chromeTransactionDurability: this.storagePolicy.durability,
+    }) as MidenDexie;
+    this.storagePolicy.install(this.dexie);
 
     // --- Schema versioning ---
     //
@@ -812,7 +820,10 @@ export class MidenDatabase {
     this.clientVersion = clientVersion;
     try {
       await this.refuseInstalledNewerStore();
-      await this.dexie.open();
+      await this.dexie.open().catch((error: unknown) => {
+        this.storagePolicy.report(error, "open");
+        throw error;
+      });
       await this.ensureClientVersion(clientVersion);
       console.log("Database opened successfully");
       return true;

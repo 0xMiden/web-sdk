@@ -469,6 +469,7 @@ impl WebClient {
         fee_faucet_id: Option<String>,
         note_transport_max_retries: Option<u32>,
         note_transport_retry_interval_ms: Option<u32>,
+        indexed_db: Option<JsValue>,
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_endpoint(node_url)?;
 
@@ -487,9 +488,12 @@ impl WebClient {
 
         let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
-            IdxdbStore::new(store_name.clone())
-                .await
-                .map_err(|err| idxdb_store_init_error(&err))?,
+            IdxdbStore::new_with_options(
+                store_name.clone(),
+                indexed_db.unwrap_or(JsValue::UNDEFINED),
+            )
+            .await
+            .map_err(|err| idxdb_store_init_error(&err))?,
         );
         let keystore = WebKeyStore::new_with_callbacks(
             StdRng::from_rng(&mut rng),
@@ -543,6 +547,7 @@ impl WebClient {
         sign_cb: Option<Function>,
         note_transport_max_retries: Option<u32>,
         note_transport_retry_interval_ms: Option<u32>,
+        indexed_db: Option<JsValue>,
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_endpoint(node_url)?;
 
@@ -561,9 +566,12 @@ impl WebClient {
 
         let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
-            IdxdbStore::new(store_name.clone())
-                .await
-                .map_err(|err| idxdb_store_init_error(&err))?,
+            IdxdbStore::new_with_options(
+                store_name.clone(),
+                indexed_db.unwrap_or(JsValue::UNDEFINED),
+            )
+            .await
+            .map_err(|err| idxdb_store_init_error(&err))?,
         );
         let keystore = WebKeyStore::new_with_callbacks(
             StdRng::from_rng(&mut rng),

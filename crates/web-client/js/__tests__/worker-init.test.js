@@ -4,11 +4,16 @@ import { WorkerAction } from "../constants.js";
 // The worker loads the built bindings from dist/; a stub stands in for them so
 // the INIT handler runs in node.
 const created = [];
+let initFailure;
 vi.mock("../../dist/wasm.js", () => ({
   default: async () => ({
     WebClient: class {
       async createClient(...args) {
         created.push({ method: "createClient", args });
+        if (initFailure) {
+          args.at(-1).onFailure(initFailure);
+          throw new Error("native open rejection");
+        }
       }
       async createClientWithExternalKeystore(...args) {
         created.push({ method: "createClientWithExternalKeystore", args });
@@ -83,4 +88,49 @@ describe("worker INIT", () => {
     expect(call.args[8]).toBe(0);
     expect(call.args[9]).toBe(60_000);
   });
+});
+
+it("forwards cloneable storage policy and posts open failure before init rejection", async () => {
+  const original = {
+    backend: "indexeddb",
+    storeName: "store",
+    phase: "open",
+    operation: "indexeddb.open",
+    kind: "unavailable",
+    errorName: "SecurityError",
+    eventId: "worker:1",
+  };
+  initFailure = original;
+  const start = posted.length;
+  self.onmessage({
+    data: {
+      action: WorkerAction.INIT,
+      args: [
+        "rpc",
+        undefined,
+        undefined,
+        "store",
+        false,
+        false,
+        false,
+        undefined,
+        1,
+        undefined,
+        undefined,
+        undefined,
+        { durability: "strict", notify: true },
+      ],
+    },
+  });
+  await vi.waitFor(() =>
+    expect(posted.slice(start).some((message) => message.error)).toBe(true)
+  );
+  const messages = posted.slice(start);
+  expect(created.at(-1).args.at(-1).durability).toBe("strict");
+  expect(messages[0]).toEqual({
+    action: WorkerAction.STORAGE_FAILURE,
+    failure: original,
+  });
+  expect(messages[1].error.message).toBe("native open rejection");
+  initFailure = undefined;
 });
