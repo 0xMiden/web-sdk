@@ -1,0 +1,52 @@
+name: SDK 1948 focused browser proof
+on:
+  push:
+    branches: [proof/wallet-1948-browser-58ccedd]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  browser-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      EXPECTED_SOURCE: 58cceddc5f984ca1eb7ee4fbbeb36fc60faaa541
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 58cceddc5f984ca1eb7ee4fbbeb36fc60faaa541
+      - name: Verify frozen source and artifact producer
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          test "$(gh api repos/0xMiden/web-sdk/actions/runs/40389890524 --jq .head_sha)" = "$EXPECTED_SOURCE"
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Fetch exact built ST and MT artifacts
+        run: gh run download 40389890524 --repo 0xMiden/web-sdk --name web-client-artifacts --dir crates/web-client/dist
+      - name: Install browser engines
+        run: pnpm --filter @miden-sdk/miden-sdk exec playwright install --with-deps chromium webkit
+      - name: Run named browser acceptance against frozen artifacts
+        run: pnpm --filter @miden-sdk/miden-sdk run test:ci indexeddb_safety.browser.test.ts --project=chromium --project=webkit --workers=2 --retries=0
+      - name: Preserve nonzero assertion evidence
+        if: '!cancelled()'
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const report=JSON.parse(fs.readFileSync('crates/web-client/playwright-report/results.json','utf8'));
+          if (!(report.stats.expected + report.stats.unexpected > 0)) throw new Error('No browser assertions executed');
+          console.log(JSON.stringify(report.stats));
+          JS
+      - uses: actions/upload-artifact@v4
+        if: '!cancelled()'
+        with:
+          name: sdk-1948-browser-proof-58ccedd
+          path: |
+            crates/web-client/playwright-report/results.json
+            crates/web-client/test-results
