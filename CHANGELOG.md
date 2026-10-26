@@ -4,6 +4,7 @@
 
 ### Enhancements
 
+* [FEATURE][web] Browser clients accept `indexedDb: { durability: "strict", onFailure }` to request transaction durability and receive bounded storage-failure notifications before operation settlement, including worker calls. Standalone `exportStore` / `importStore` and mock clients accept the same policy; explicit IndexedDB options reject on Node SQLite. Strict remains a browser hint; recovery and wallet write gating stay application-owned.
 * [FEATURE][web] Query transaction inclusion without a local store with `RpcClient.syncTransactions(blockFrom, blockTo, accountIds)`. Node.js and browser callers receive `RpcTransactionRecord[]` with `id()`, `accountId()` and `blockNum()` across all account chunks and pages in the inclusive range. Duplicate account IDs are scanned once. Callers maintain their own confirmation cursor and trust the configured RPC node's report of inclusion ([#498](https://github.com/0xMiden/web-sdk/issues/498), [#500](https://github.com/0xMiden/web-sdk/pull/500)).
 
 ### Fixes

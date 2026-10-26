@@ -587,3 +587,96 @@ it("reports post-open metadata quota failure once as write even when the callbac
     errorName: "QuotaExceededError",
   });
 });
+
+it.each(["read", "write"] as const)(
+  "reports native transaction creation failure as %s before rejection",
+  async (phase) => {
+    const failures: Failure[] = [];
+    const order: string[] = [];
+    const nativeError = new DOMException(
+      "private factory detail",
+      "UnknownError"
+    );
+    const transaction = IDBDatabase.prototype.transaction;
+    let armed = false;
+    let injectedMode: IDBTransactionMode | undefined;
+    // Dexie captures this factory while opening, before the fault is armed.
+    vi.spyOn(IDBDatabase.prototype, "transaction").mockImplementation(function (
+      this: IDBDatabase,
+      ...args: Parameters<IDBDatabase["transaction"]>
+    ) {
+      if (armed) {
+        armed = false;
+        injectedMode = args[1];
+        throw nativeError;
+      }
+      return transaction.apply(this, args);
+    });
+    const { db, name } = await open({
+      onFailure: (failure) => {
+        failures.push(failure);
+        order.push("failure");
+      },
+    });
+    armed = true;
+    const operation =
+      phase === "read"
+        ? db.settings.get([SETTING_SCOPE_USER, "key"])
+        : db.settings.put(setting);
+    const error = await operation.catch(
+      (reason: Error & { inner?: unknown }) => {
+        order.push("rejection");
+        return reason;
+      }
+    );
+    expect(injectedMode).toBe(phase === "read" ? "readonly" : "readwrite");
+    expect(error).toMatchObject({ name: "UnknownError" });
+    expect((error as Error & { inner?: unknown }).inner ?? error).toBe(
+      nativeError
+    );
+    expect(order).toEqual(["failure", "rejection"]);
+    expect(failures).toHaveLength(1);
+    expectFailure(failures[0], name, phase, "io", "UnknownError");
+  }
+);
+
+it.each(["QuotaExceededError", "ConstraintError"] as const)(
+  "classifies wrapped native open cause %s without relabeling validation as unexpected abort",
+  async (errorName) => {
+    const failures: Failure[] = [];
+    const order: string[] = [];
+    const cause = new DOMException("private inner detail", errorName);
+    const wrapped = Object.assign(
+      new DOMException("private wrapper", "AbortError"),
+      { inner: cause }
+    );
+    const nativeOpen = vi
+      .spyOn(indexedDB, "open")
+      .mockImplementationOnce(() => {
+        throw wrapped;
+      });
+    const name = uniqueDbName();
+    const db = new MidenDatabase(name, {
+      onFailure: (failure) => {
+        failures.push(failure);
+        order.push("failure");
+      },
+    });
+    databases.push(db);
+    const error = await db.open(MIGRATION_BASELINE).catch((reason: unknown) => {
+      order.push("rejection");
+      return reason;
+    });
+    expect(nativeOpen).toHaveBeenCalledTimes(1);
+    expect(error).toBe(wrapped);
+    expect(wrapped.inner).toBe(cause);
+    if (errorName === "QuotaExceededError") {
+      expect(order).toEqual(["failure", "rejection"]);
+      expect(failures).toHaveLength(1);
+      expectFailure(failures[0], name, "open", "quota", "QuotaExceededError");
+    } else {
+      expect(order).toEqual(["rejection"]);
+      expect(failures).toEqual([]);
+    }
+  }
+);

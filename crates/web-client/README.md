@@ -478,6 +478,58 @@ console.log(`Balance: ${balance}`); // 900n
 client.terminate();
 ```
 
+### IndexedDB Durability and Failure Notifications
+
+Browser clients can opt in per store with `indexedDb` on `create`,
+`createTestnet`, `createDevnet` or `createMock`:
+
+```typescript
+let localFailure;
+const client = await MidenClient.createTestnet({
+  feeFaucetId: FEE_FAUCET,
+  storeName: "my-wallet",
+  autoSync: false,
+  indexedDb: {
+    durability: "strict",
+    onFailure(failure) { localFailure = failure; },
+  },
+});
+const storeName = await client.storeIdentifier();
+const generation = await client.settings.get("wallet.generation");
+```
+
+`durability` is `"default" | "strict" | "relaxed"`. Omission inherits an existing
+shared connection's policy; explicit conflicts reject. Sharing is per connection
+and JavaScript realm. The SDK carries the policy into this client's method
+worker; unrelated clients in other tabs/workers must opt in separately. Strict is
+a browser hint, not protection against eviction, corruption, rollback or data
+loss, and cannot retroactively configure schema-upgrade transactions.
+
+`onFailure` runs synchronously before operation settlement; callback exceptions
+are isolated and returned promises are not awaited. Its closed envelope contains
+`backend`, `storeName`, `phase`, `operation`, `kind`, `errorName` and `eventId`.
+Phases are open/read/write/commit; kinds are quota/io/unavailable/unexpected-abort,
+not forensic proof of disk damage. It excludes arbitrary messages and payloads.
+Treat the routing name and event ID as private. No automatic telemetry, retry,
+reset or wallet financial policy is added. A transaction reports once; the client
+retains only its latest 64 event IDs for duplicate suppression, not a durable log.
+Callbacks end when the client terminates.
+
+`storeIdentifier()` names a namespace, not an incarnation. Wallet generation
+markers use existing byte-valued USER settings, for example
+`settings.set("wallet.generation", Array.from(new TextEncoder().encode(marker)))`
+during deliberate provisioning. The SDK never mutates such markers automatically.
+Full import/rollback copies them; missing markers or expected accounts require
+wallet-owned recovery. `autoSync: false` allows inspection before sync, but is not
+a write gate and does not suppress open-time migrations or metadata writes.
+
+`exportStore(storeName, indexedDb)` and
+`importStore(storeName, dump, indexedDb)` accept the same trailing options.
+`createMock({ indexedDb, useWorker: false })` selects direct execution. Explicit
+`indexedDb`, even `{}`, rejects with `TypeError` on Node SQLite before files are
+created. See [IndexedDB Safety](https://docs.miden.xyz/builder/tools/clients/web-client/library/indexeddb-safety/)
+for error mappings, callback privacy, raw-WASM arguments and recovery limits.
+
 ### Stateless RPC queries and submission
 
 Use `RpcClient` when your application keeps its own state or submits

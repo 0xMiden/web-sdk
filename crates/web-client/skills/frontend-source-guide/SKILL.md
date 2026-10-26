@@ -116,6 +116,44 @@ The browser storage layer for accounts, keys, notes, and transaction history.
 
 **Explore when**: Debugging data persistence issues, understanding what's stored in IndexedDB, investigating storage isolation for external signers.
 
+### IndexedDB construction and diagnostics
+
+Read `js/types/api-types.d.ts` for `IndexedDbOptions` and the closed
+`IndexedDbFailure` contract, `js/indexeddb.js` for option validation and bounded
+client deduplication, and `js/workers/web-client-methods-worker.js` for cloneable
+worker policy and notification ordering. `crates/idxdb-store/src/ts/storage-policy.ts`
+captures native request/commit failures; `schema.ts` owns per-connection policy
+and holder lifetimes. Callbacks stay in JavaScript, not Rust store state.
+
+Prefer `MidenClient.create({ indexedDb })` or `createMock({ indexedDb, useWorker })`.
+For the JS `WasmWebClient` wrapper, `createClient` and
+`createClientWithExternalKeystore` append `indexedDb` after
+`noteTransportRetryIntervalMs`; `MockWebClient.createClient` appends `indexedDb`
+and `useWorker` after `logLevel`. Earlier positional arguments do not move.
+A raw WASM `new (await getWasmOrThrow()).WebClient()` instead takes the trailing
+options as argument 8 of `createClient`, 11 of `createClientWithExternalKeystore`
+and 4 of `createMockClient`. Standalone `exportStore(storeName, indexedDb)` and
+`importStore(storeName, dump, indexedDb)` use the same options. Keep raw-client
+serialization and lifetime requirements.
+
+Omitted durability inherits an existing connection policy; explicit conflicts
+reject. Sharing is per realm; independent tabs/workers each opt in. Strict is a
+browser hint, not a guarantee against data loss, and cannot retroactively govern
+schema-upgrade transactions. Keep the synchronous callback local and short;
+exceptions are isolated and returned promises are not awaited. Treat routing
+`storeName`/`eventId` as private; events are not automatically sent to telemetry.
+Kinds classify native failures rather than proving physical damage. The SDK
+adds no retry, reset, wallet financial policy or generation API. Node SQLite
+rejects explicit `indexedDb` with `TypeError` before files/native construction.
+
+Wallet generation uses existing `storeIdentifier()` and byte-valued USER
+settings, never a new SDK generation API. Names are namespaces; full import or
+rollback copies markers, and partial loss can retain a marker while losing
+accounts. Missing markers or expected accounts require wallet-owned recovery.
+The SDK does not automatically mutate markers. Read `web-client-usage` and the
+[IndexedDB safety narrative](https://docs.miden.xyz/builder/tools/clients/web-client/library/indexeddb-safety/)
+for the startup example with `autoSync: false` and byte-array marker provisioning.
+
 ### `packages/adapter/` - MidenFi browser-extension wallet adapter
 
 `base/` (`@miden-sdk/miden-wallet-adapter-base`: `WalletAdapterNetwork`, `WalletReadyState`, `PrivateDataPermission`), `miden/` (`MidenWalletAdapter`, plus a conformance suite wallets import and run against their own providers), `react/` (`MidenFiSignerProvider`, `useWallet`), `reactui/`, `all/`.

@@ -254,6 +254,73 @@ returns the raw value your sign callback threw - is only meaningful with
 There is no `debugMode` option. It was removed in 0.16 along with upstream
 transaction debug mode.
 
+### IndexedDB safety and wallet recovery boundaries
+
+Browser `ClientOptions.indexedDb` and `MockOptions.indexedDb` accept
+`{ durability?: "default" | "strict" | "relaxed", onFailure?: callback }`.
+Keep the callback synchronous; it runs before the failing operation settles,
+throws are isolated, and returned promises are not awaited. Delivery includes
+method-worker failures and ends at termination. Node SQLite rejects an explicit
+option, including `{}`, with `TypeError` before creating files.
+
+```typescript
+let localFailure;
+const client = await MidenClient.createTestnet({
+  feeFaucetId: FEE_FAUCET,
+  storeName: "my-wallet",
+  autoSync: false,
+  indexedDb: {
+    durability: "strict",
+    onFailure(failure) { localFailure = failure; },
+  },
+});
+const storeName = await client.storeIdentifier();
+const marker = await client.settings.get<number[]>("wallet.generation");
+```
+
+Omitted durability inherits an existing shared/pending connection's policy;
+explicit conflicts reject without changing siblings. Sharing is per realm.
+The SDK forwards this client's policy to its method worker, but unrelated tabs
+and workers must each opt in. Strict is a browser durability hint, not a
+physical-integrity or data-loss guarantee; it cannot retroactively configure
+schema-upgrade transactions.
+
+`IndexedDbFailure` contains only `backend: "indexeddb"`, `storeName`,
+`phase: "open" | "read" | "write" | "commit"`, the matching
+`operation: "indexeddb.<phase>"`, `kind`, `errorName` and `eventId`.
+`QuotaExceededError` maps to `quota`; native `UnknownError` maps to `io`;
+`SecurityError`, `InvalidStateError` and `MissingAPIError` map to `unavailable`;
+a cause-free native `AbortError` maps to `unexpected-abort`. These classifications
+are not forensic proof. Native commit can fail after successful requests.
+Validation errors, deliberate rollback and unrelated aborts are excluded.
+Transactions report once; each wrapper retains only its latest 64 event IDs
+(each at most 128 characters) for duplicate suppression, not persistent delivery.
+
+There are no arbitrary messages, stacks, table names, record keys or values in
+the envelope, but `storeName` can identify a user namespace. Keep the name and
+event ID private unless your own policy permits export. There is no automatic
+telemetry, retry, reset, repair or wallet financial policy.
+
+`storeIdentifier()` is a namespace, not an incarnation. Use the existing USER
+settings for wallet-owned marker bytes, for example
+`settings.set("wallet.generation", Array.from(new TextEncoder().encode(marker)))`
+only during deliberate new-wallet provisioning or approved recovery. The SDK
+never automatically mutates the marker. Full-store import and rollback copy it;
+a matching marker cannot detect partial loss of expected accounts. Missing or
+changed markers and missing expected accounts require wallet-owned recovery,
+with expectations retained outside the affected store. `autoSync: false` permits
+inspection before sync but does not suppress open-time migrations/metadata writes
+or implement a write gate.
+
+Standalone `exportStore(storeName, indexedDb)` and
+`importStore(storeName, dump, indexedDb)` obey the same policy/conflict rules.
+Import explicitly replaces all data, including a marker; it is not an automatic
+repair action. Keep dumps private because they include stored key material.
+`createMock({ indexedDb, useWorker: false })` selects direct execution; omitting
+`useWorker` retains the mock's worker path. For raw-WASM argument positions,
+read the sibling `frontend-source-guide` skill. Full narrative:
+<https://docs.miden.xyz/builder/tools/clients/web-client/library/indexeddb-safety/>.
+
 ### Observability
 
 `ClientOptions.observer` is called once per underlying client operation with a

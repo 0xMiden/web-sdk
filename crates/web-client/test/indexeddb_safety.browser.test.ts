@@ -19,11 +19,19 @@ test.beforeAll(async () => {
       return;
     }
     const file = resolve(root, `.${pathname}`);
-    if (!file.startsWith(`${root}/`)) { response.writeHead(403).end(); return; }
+    if (!file.startsWith(`${root}/`)) {
+      response.writeHead(403).end();
+      return;
+    }
     try {
-      response.setHeader("Content-Type", extname(file) === ".wasm" ? "application/wasm" : "text/javascript");
+      response.setHeader(
+        "Content-Type",
+        extname(file) === ".wasm" ? "application/wasm" : "text/javascript"
+      );
       response.end(await readFile(file));
-    } catch { response.writeHead(404).end(); }
+    } catch {
+      response.writeHead(404).end();
+    }
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   origin = `http://127.0.0.1:${server.address().port}`;
@@ -44,49 +52,74 @@ IDBDatabase.prototype.transaction = function (...args) {
 `;
 
 async function prepare(page, build, entry, workerMode) {
-  await page.route("**/workers/web-client-methods-worker*.js", async (route) => {
-    const response = await route.fetch();
-    await route.fulfill({ response, body: workerProbe + await response.text() });
-  });
+  await page.route(
+    "**/workers/web-client-methods-worker*.js",
+    async (route) => {
+      const response = await route.fetch();
+      await route.fulfill({
+        response,
+        body: workerProbe + (await response.text()),
+      });
+    }
+  );
   await page.goto(origin);
-  return page.evaluate(async ({ build, entry, workerMode }) => {
-    const main = [];
-    const worker = [];
-    const transaction = IDBDatabase.prototype.transaction;
-    IDBDatabase.prototype.transaction = function (...args) {
-      const tx = transaction.apply(this, args);
-      if (tx.mode === "readwrite") main.push(tx.durability);
-      return tx;
-    };
-    const NativeWorker = Worker;
-    window.Worker = class extends NativeWorker {
-      constructor(...args) {
-        super(...args);
-        this.addEventListener("message", ({ data }) => {
-          if (data.storageProbe) worker.push(data.storageProbe.durability);
-        });
-      }
-    };
-    const sdk = await import(`/${build}/${entry}.js`);
-    sdk.WasmWebClient.workerMode = workerMode;
-    const order = [];
-    const failures = [];
-    const client = await sdk.MockWebClient.createClient(undefined, undefined, undefined, undefined, {
-      durability: "strict", onFailure: (failure) => { failures.push(failure); order.push("failure"); },
-    });
-    await client.setSetting("browser-durability", new Uint8Array([1, 2, 3]));
-    const stored = Array.from(await client.getSetting("browser-durability"));
-    await client.syncState();
-    window.storageTest = { client, sdk, main, worker, failures, order };
-    return { stored, main, worker, isolated: crossOriginIsolated };
-  }, { build, entry, workerMode });
+  return page.evaluate(
+    async ({ build, entry, workerMode }) => {
+      const main = [];
+      const worker = [];
+      const transaction = IDBDatabase.prototype.transaction;
+      IDBDatabase.prototype.transaction = function (...args) {
+        const tx = transaction.apply(this, args);
+        if (tx.mode === "readwrite") main.push(tx.durability);
+        return tx;
+      };
+      const NativeWorker = Worker;
+      window.Worker = class extends NativeWorker {
+        constructor(...args) {
+          super(...args);
+          this.addEventListener("message", ({ data }) => {
+            if (data.storageProbe) worker.push(data.storageProbe.durability);
+          });
+        }
+      };
+      const sdk = await import(`/${build}/${entry}.js`);
+      sdk.WasmWebClient.workerMode = workerMode;
+      const order = [];
+      const failures = [];
+      const client = await sdk.MockWebClient.createClient(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          durability: "strict",
+          onFailure: (failure) => {
+            failures.push(failure);
+            order.push("failure");
+          },
+        }
+      );
+      await client.setSetting("browser-durability", new Uint8Array([1, 2, 3]));
+      const stored = Array.from(await client.getSetting("browser-durability"));
+      await client.syncState();
+      window.storageTest = { client, sdk, main, worker, failures, order };
+      return { stored, main, worker, isolated: crossOriginIsolated };
+    },
+    { build, entry, workerMode }
+  );
 }
 
 for (const build of ["st", "mt"]) {
   for (const entry of ["index", "eager"]) {
     for (const workerMode of ["classic", "module"]) {
-      test(`${build}/${entry} ${workerMode}: strict main and worker transactions`, async ({ page, browserName }) => {
-        test.skip(build === "mt" && browserName === "webkit", "Threaded WASM requires the Chromium CI capability");
+      test(`${build}/${entry} ${workerMode}: strict main and worker transactions`, async ({
+        page,
+        browserName,
+      }) => {
+        test.skip(
+          build === "mt" && browserName === "webkit",
+          "Threaded WASM requires the Chromium CI capability"
+        );
         const result = await prepare(page, build, entry, workerMode);
         expect(result.stored).toEqual([1, 2, 3]);
         expect(result.main.length).toBeGreaterThan(0);
@@ -101,8 +134,15 @@ for (const build of ["st", "mt"]) {
 }
 
 for (const route of ["main", "worker"]) {
-  test(`native Chromium quota failure reaches ${route} callback before rejection`, async ({ page, context, browserName }) => {
-    test.skip(browserName !== "chromium", "CDP quota override is Chromium-only");
+  test(`native Chromium quota failure reaches ${route} callback before rejection`, async ({
+    page,
+    context,
+    browserName,
+  }) => {
+    test.skip(
+      browserName !== "chromium",
+      "CDP quota override is Chromium-only"
+    );
     await prepare(page, "st", "index", "module");
     await page.evaluate(async () => {
       await window.storageTest.client.proveBlock();
@@ -117,19 +157,32 @@ for (const route of ["main", "worker"]) {
         const { client, failures, order } = window.storageTest;
         let rejected = false;
         try {
-          if (route === "main") await client.setSetting("quota-growth", new Uint8Array(256 * 1024));
+          if (route === "main")
+            await client.setSetting("quota-growth", new Uint8Array(256 * 1024));
           else await client.syncState();
-        } catch { rejected = true; order.push("rejection"); }
+        } catch {
+          rejected = true;
+          order.push("rejection");
+        }
         return { rejected, failures, order };
       }, route);
       expect(result.rejected).toBe(true);
       expect(result.failures.length).toBeGreaterThan(0);
-      expect(result.failures.every((failure) => failure.kind === "quota")).toBe(true);
+      expect(result.failures.every((failure) => failure.kind === "quota")).toBe(
+        true
+      );
       expect(result.order[0]).toBe("failure");
       expect(result.order.at(-1)).toBe("rejection");
-      for (const failure of result.failures) expect(Object.keys(failure).sort()).toEqual([
-        "backend", "errorName", "eventId", "kind", "operation", "phase", "storeName",
-      ]);
+      for (const failure of result.failures)
+        expect(Object.keys(failure).sort()).toEqual([
+          "backend",
+          "errorName",
+          "eventId",
+          "kind",
+          "operation",
+          "phase",
+          "storeName",
+        ]);
     } finally {
       await cdp.send("Storage.overrideQuotaForOrigin", { origin });
       await page.evaluate(() => window.storageTest.client.terminate());
@@ -138,18 +191,27 @@ for (const route of ["main", "worker"]) {
   });
 }
 
-test("standalone export and import retain strict policy without live client holders", async ({ page }) => {
+test("standalone export and import retain strict policy without live client holders", async ({
+  page,
+}) => {
   await prepare(page, "st", "index", "module");
   const result = await page.evaluate(async () => {
     const { client, sdk, main } = window.storageTest;
-    const dump = await sdk.exportStore("mock_client_db", { durability: "strict" });
+    const dump = await sdk.exportStore("mock_client_db", {
+      durability: "strict",
+    });
     client.terminate();
     await client.waitForIdle();
     await new Promise((resolve) => setTimeout(resolve, 0));
     main.length = 0;
     await sdk.importStore("mock_client_db", dump, { durability: "strict" });
-    const restored = JSON.parse(await sdk.exportStore("mock_client_db", { durability: "strict" }));
-    return { restored: JSON.stringify(restored) === JSON.stringify(JSON.parse(dump)), transactions: main };
+    const restored = JSON.parse(
+      await sdk.exportStore("mock_client_db", { durability: "strict" })
+    );
+    return {
+      restored: JSON.stringify(restored) === JSON.stringify(JSON.parse(dump)),
+      transactions: main,
+    };
   });
   expect(result.restored).toBe(true);
   expect(result.transactions.length).toBeGreaterThan(0);

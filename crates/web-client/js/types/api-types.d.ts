@@ -207,42 +207,83 @@ export interface MidenObservation {
 // Client options
 // ════════════════════════════════════════════════════════════════
 
-/** Closed, payload-free notification from this client's IndexedDB connection. */
+/**
+ * Closed notification from a native IndexedDB storage boundary, including a final
+ * commit abort after successful requests. Normal validation errors, deliberate
+ * rollback and unrelated AbortErrors are excluded. These classifications are not
+ * forensic proof of physical damage; absence of events does not prove integrity.
+ *
+ * Contains no arbitrary messages, stacks, table names, record keys or stored data.
+ * The SDK does not automatically send these events to observations or telemetry.
+ */
 export interface IndexedDbFailure {
   /** Backend discriminator; SQLite never emits this event. */
   backend: "indexeddb";
-  /** Routing only. A database name does not identify a database incarnation. */
+  /**
+   * Private local routing name. It identifies a namespace, not a database
+   * incarnation; deletion and recreation can retain the same name.
+   */
   storeName: string;
   /** Native operation boundary, including commit after successful requests. */
   phase: "open" | "read" | "write" | "commit";
   /** Stable vocabulary; contains no table names, keys, messages or stored values. */
   operation: "indexeddb.open" | "indexeddb.read" | "indexeddb.write" | "indexeddb.commit";
-  /** io classifies a native storage failure, not its physical hardware cause. */
+  /**
+   * QuotaExceededError maps to quota; native UnknownError maps to io.
+   * SecurityError, InvalidStateError and MissingAPIError map to unavailable.
+   * A native abort without a more specific cause maps to unexpected-abort.
+   * These kinds classify the observation, not its physical hardware cause.
+   */
   kind: "quota" | "io" | "unavailable" | "unexpected-abort";
   /** Allowlisted native error name. */
   errorName: "QuotaExceededError" | "UnknownError" | "SecurityError" | "InvalidStateError" | "MissingAPIError" | "AbortError";
-  /** Connection-scoped deduplication ID; at most 128 characters. */
+  /**
+   * Private connection-scoped ID, at most 128 characters. A transaction reports
+   * once; the client wrapper retains its latest 64 IDs for duplicate suppression.
+   * Not a global ID, durable event log or permanent exactly-once guarantee.
+   */
   eventId: string;
 }
 
-/** Browser-only construction policy shared by live clients using one connection in one realm.
- * Other workers or tabs have independent connections and must each opt in. */
+/**
+ * Browser-only construction options for a shared connection in one realm.
+ * The SDK forwards the policy into this client's method worker. Unrelated clients
+ * in other workers or tabs have independent connections and must each opt in.
+ * Node SQLite rejects an explicit options value, even {}, with TypeError before
+ * creating files or constructing a native client.
+ *
+ * Adds no automatic retry, reset, repair, generation marker or wallet policy.
+ */
 export interface IndexedDbOptions {
-  /** Browser durability hint. Omitted policy inherits an existing connection's policy.
-   * Explicit conflicting policies reject. Strict does not prevent eviction, corruption,
-   * rollback or data loss and cannot configure schema-upgrade transactions retroactively.
+  /**
+   * Browser transaction durability hint. Omission inherits the shared or pending
+   * connection's policy; without one it preserves the browser default. An explicit
+   * conflicting value rejects with TypeError without changing sibling holders.
+   * "default" is explicit and conflicts with strict or relaxed on a live connection.
+   * Strict does not prevent eviction, corruption, rollback or data loss, and cannot
+   * configure schema-upgrade transactions retroactively.
    */
   durability?: "default" | "strict" | "relaxed";
-  /** Synchronous callback before the failing operation settles. Exceptions are ignored.
-   * Receives no arbitrary messages or stored data. Deliberate rollback and validation
-   * failures are excluded. Subscription ends when this client terminates. Never export
-   * storeName or eventId to telemetry without your own privacy policy.
+  /**
+   * Synchronous callback before the failing operation settles, including failures
+   * during creation. In worker mode, the main realm invokes it before delivering
+   * the worker's result. Keep it short: returned promises are not awaited.
+   * Exceptions cannot replace the operation's original result or rejection.
+   *
+   * Each holder owns its callback. Client delivery stops at termination without
+   * unsubscribing siblings; standalone import/export holders end with the call.
+   * Treat storeName and eventId as private routing state. Export them only under
+   * your own privacy policy; the SDK does not automatically export this envelope.
    */
   onFailure?: (failure: IndexedDbFailure) => void;
 }
 
 export interface ClientOptions {
-  /** Opt-in browser IndexedDB policy. Node SQLite rejects this before creating files. */
+  /**
+   * Opt-in browser storage options, also forwarded to this client's method worker.
+   * Node SQLite rejects any explicit value, including {}, with TypeError before
+   * creating database/keystore files or constructing the native client.
+   */
   indexedDb?: IndexedDbOptions;
   /**
    * RPC endpoint. Accepts shorthands or a raw URL:
@@ -1096,9 +1137,13 @@ export interface SendPrivateOutputOptions {
 }
 
 export interface MockOptions {
-  /** Browser IndexedDB policy, including the mock method worker. */
+  /**
+   * Browser IndexedDB policy, including the mock method worker. The chain is in
+   * memory, but the browser store uses IndexedDB. Node SQLite rejects an explicit
+   * value with TypeError before creating files or constructing the native client.
+   */
   indexedDb?: IndexedDbOptions;
-  /** Set false to run the mock client on the current thread. */
+  /** Browser only: defaults to true; set false to run on the current thread. */
   useWorker?: boolean;
   seed?: string | Uint8Array;
   serializedMockChain?: Uint8Array;
@@ -1905,16 +1950,20 @@ export interface TagsResource {
 
 export interface SettingsResource {
   /**
-   * Get a setting value by key. Returns `null` if not found.
+   * Get a USER-scoped byte setting by key. Returns `null` if not found.
+   * A wallet-owned generation marker is ordinary stored data: full-store import
+   * or rollback copies it and partial loss can leave it while accounts disappear.
    *
    * @param key - The setting key.
    */
   get<T = unknown>(key: string): Promise<T | null>;
   /**
-   * Set a setting value.
+   * Set a USER-scoped byte setting. Pass a byte array, for example
+   * `Array.from(new TextEncoder().encode(marker))`, rather than a plain string.
+   * The SDK does not automatically create or mutate wallet generation markers.
    *
    * @param key - The setting key.
-   * @param value - The value to store.
+   * @param value - The bytes to store.
    */
   set(key: string, value: unknown): Promise<void>;
   /**
@@ -2001,7 +2050,10 @@ export declare class MidenClient {
    * cover the endpoints, not the chain's fee asset.
    */
   static createDevnet(options?: ClientOptions): Promise<MidenClient>;
-  /** Creates a mock client for testing. */
+  /**
+   * Creates a mock-chain client for testing. Browser mocks accept indexedDb and
+   * useWorker controls; Node mocks use SQLite and reject explicit indexedDb.
+   */
   static createMock(options?: MockOptions): Promise<MidenClient>;
   /**
    * Resolves once the WASM module is initialized and safe to use.
@@ -2086,7 +2138,11 @@ export declare class MidenClient {
    */
   feeFaucetId(): Promise<AccountId>;
 
-  /** Returns the identifier of the underlying store (e.g. IndexedDB database name, file path). */
+  /**
+   * Returns the underlying store namespace (IndexedDB database name or file path),
+   * not an incarnation or data-integrity identifier. Recreated/restored stores can
+   * retain it. Wallet recovery must also check its own marker and expected accounts.
+   */
   storeIdentifier(): Promise<string>;
 
   /**
@@ -2304,11 +2360,28 @@ export declare function isConsumableNow(
   accountIdHex?: string
 ): boolean;
 
-/** Exports the entire contents of an IndexedDB store as a JSON string. */
+/**
+ * Browser only: exports the entire IndexedDB store as JSON, including USER
+ * settings and key material. Keep the dump private.
+ *
+ * @param storeName - Database namespace to export.
+ * @param indexedDb - Optional per-connection policy and synchronous failure callback.
+ * Omitted durability inherits a shared connection's policy; explicit conflicts
+ * reject. The helper's callback holder is released when the operation finishes.
+ */
 export declare function exportStore(storeName: string, indexedDb?: IndexedDbOptions): Promise<string>;
 
 /**
- * Imports store contents from a JSON string, replacing all existing data.
+ * Browser only: imports a JSON dump, replacing all existing store data.
+ * This explicit restore copies USER settings, including wallet generation markers;
+ * it does not create a fresh incarnation marker or implement wallet recovery.
+ * Coordinate other clients before replacing their store.
+ *
+ * @param storeName - Database namespace to replace.
+ * @param storeDump - Full private store dump, including key material.
+ * @param indexedDb - Optional policy and synchronous failure callback. Omitted
+ * durability inherits an existing connection; explicit conflicts reject. The
+ * helper's callback holder is released when the operation finishes.
  *
  * Rejects, leaving the store unchanged, a dump the store could not have kept: one with no client
  * version stamp, or stamped by a client older than 0.17.0 (its data belongs to networks that no

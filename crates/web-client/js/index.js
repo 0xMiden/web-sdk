@@ -477,6 +477,9 @@ class WebClient {
    *   60000. Defaults to 250. With the retries, the total computed backoff
    *   `interval * (2^retries - 1)`, an omitted value taken at its default, may
    *   not exceed 120000 ms.
+   * @param {import("./types/api-types").IndexedDbOptions} [indexedDb] - Browser
+   *   transaction durability hint and synchronous failure callback. Shared/pending
+   *   connections inherit omitted durability and reject explicit conflicts.
    * @throws {TypeError} If either retry option is out of range or their total
    *   backoff exceeds 120000 ms. Checked here, before any worker or WASM call,
    *   so every way of building a client rejects the same values.
@@ -1021,6 +1024,9 @@ class WebClient {
    *   after a transient transport failure; see the constructor.
    * @param {number | undefined} [noteTransportRetryIntervalMs] - Delay before the first such
    *   retry; see the constructor.
+   * @param {import("./types/api-types").IndexedDbOptions} [indexedDb] - Browser
+   *   durability hint and synchronous failure callback; appended after retry options.
+   *   Omission inherits a shared connection policy; explicit conflicts reject.
    */
   static async createClient(
     rpcUrl,
@@ -1112,6 +1118,9 @@ class WebClient {
    *   after a transient transport failure; see the constructor.
    * @param {number | undefined} [noteTransportRetryIntervalMs] - Delay before the first such
    *   retry; see the constructor.
+   * @param {import("./types/api-types").IndexedDbOptions} [indexedDb] - Browser
+   *   durability hint and synchronous failure callback; appended after retry options.
+   *   Omission inherits a shared connection policy; explicit conflicts reject.
    */
   static async createClientWithExternalKeystore(
     rpcUrl,
@@ -1810,6 +1819,10 @@ class MockWebClient extends WebClient {
    * @param serializedMockChain - Serialized mock chain data (optional). Will use an empty chain if not provided.
    * @param serializedMockNoteTransportNode - Serialized mock note transport node data (optional). Will use a new instance if not provided.
    * @param seed - The seed for the account (optional).
+   * @param logLevel - Optional log verbosity.
+   * @param {import("./types/api-types").IndexedDbOptions} [indexedDb] - Browser
+   *   store durability hint and synchronous failure callback.
+   * @param {boolean} [useWorker=true] - Set false for current-thread execution.
    * @returns A promise that resolves to a MockWebClient.
    */
   static async createClient(

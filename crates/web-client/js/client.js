@@ -138,6 +138,11 @@ export class MidenClient {
    * `noteTransportMaxRetries` and `noteTransportRetryIntervalMs` are checked
    * before anything is created; an out-of-range value throws a `TypeError`.
    *
+   * `indexedDb` opts browser stores into a durability hint and synchronous,
+   * exception-isolated failure callback, including method-worker operations.
+   * Node SQLite rejects an explicit value before creating files. See IndexedDbOptions
+   * for shared-connection conflicts, privacy and durability limits.
+   *
    * @param {ClientOptions} [options] - Client configuration options.
    * @returns {Promise<MidenClient>} A fully initialized client.
    */
@@ -308,7 +313,9 @@ export class MidenClient {
   }
 
   /**
-   * Creates a mock client for testing.
+   * Creates a mock client for testing. Browser mocks accept `indexedDb` and
+   * `useWorker: false` for direct execution; their store still uses IndexedDB.
+   * Node mocks reject explicit `indexedDb` before creating files.
    *
    * @param {MockOptions} [options] - Mock client options.
    * @returns {Promise<MidenClient>} A mock client.

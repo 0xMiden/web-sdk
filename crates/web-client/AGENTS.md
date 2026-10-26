@@ -125,6 +125,20 @@ transaction's execution input. A mismatch rejects before changing account state
 or transaction history. A submitted transaction may already be on-chain when
 local apply fails; check its status before submitting again.
 
+**IndexedDB safety is opt-in and per connection.** Browser `ClientOptions` and
+`MockOptions` accept `indexedDb: { durability: "strict", onFailure }`; Node
+SQLite rejects an explicit option with `TypeError` before creating files.
+Omitted durability inherits a shared connection's policy, while explicit conflicts
+reject. Other realms must opt in separately. Strict is a browser hint, not a
+data-loss guarantee. Keep `onFailure` synchronous: it runs before settlement,
+exceptions are isolated, and its closed routing envelope is not automatically
+sent to telemetry. Treat `storeName` and `eventId` as private. Read the usage skill
+before building a recovery path: store names are namespaces, full import/rollback
+copies wallet-owned byte-setting markers, and missing markers or expected accounts
+need wallet recovery. The SDK adds no generation API, retry, reset or financial
+policy. Use `autoSync: false` to inspect recovery state before sync; opening can
+still migrate or stamp the store.
+
 **Amounts are always `BigInt`.** Passing a `number` either throws at the WASM
 boundary or silently loses precision above 2^53. Convert at the edges of your
 own code, not in the middle of a transaction builder.
