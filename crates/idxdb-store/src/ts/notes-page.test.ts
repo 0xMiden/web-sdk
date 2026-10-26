@@ -144,6 +144,55 @@ describe("bounded input-note pages", () => {
     expect(reads.values).toBe(300);
   });
 
+  it("looks up sent notes by details commitment across states without requiring a script", async () => {
+    const { dbId, db } = await fixture([]);
+    await db.outputNotes.bulkPut(
+      [1, 2, 3].map((index) => ({
+        detailsCommitment: key(index),
+        noteId: key(100 + index),
+        recipientDigest: key(200 + index),
+        assets: bytes,
+        attachments: bytes,
+        metadata: bytes,
+        stateDiscriminant: index - 1,
+        expectedHeight: index,
+        scriptRoot: index === 1 ? key(900) : key(901),
+        state: bytes,
+      }))
+    );
+    const result = await notes.getOutputNotesFromDetailsCommitments(dbId, [
+      key(2),
+      key(1),
+      key(9),
+      key(1),
+    ]);
+    expect(result.map((note) => note.expectedHeight)).toEqual([1, 2]);
+    expect(result.map((note) => note.recipientDigest)).toEqual([
+      key(201),
+      key(202),
+    ]);
+    expect(result[0].serializedNoteScript).toBe("AQID");
+    expect(result[1].serializedNoteScript).toBeUndefined();
+    expect(await notes.getOutputNotesFromDetailsCommitments(dbId, [])).toEqual(
+      []
+    );
+  });
+
+  it.each([
+    { kind: "received", lookup: notes.getInputNotesFromDetailsCommitments },
+    { kind: "sent", lookup: notes.getOutputNotesFromDetailsCommitments },
+  ])(
+    "rejects a closed store for $kind details lookup instead of returning no notes",
+    async ({ lookup }) => {
+      const { dbId, db } = await fixture([row(1)]);
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      db.dexie.close();
+      await expect(lookup(dbId, [key(1)])).rejects.toMatchObject({
+        name: "DatabaseClosedError",
+      });
+    }
+  );
+
   it("bounds raw scans before filtering and advances empty pages beyond 256 rows", async () => {
     const rows = Array.from({ length: 300 }, (_, i) => row(i + 1));
     rows.push(row(301, 0));

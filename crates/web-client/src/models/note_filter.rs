@@ -28,7 +28,12 @@ impl NoteFilter {
         script_roots: Option<Vec<Word>>,
         details_commitments: Option<Vec<Word>>,
     ) -> NoteFilter {
-        NoteFilter { note_type, note_ids, script_roots, details_commitments }
+        NoteFilter {
+            note_type,
+            note_ids,
+            script_roots,
+            details_commitments,
+        }
     }
 }
 

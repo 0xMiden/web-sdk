@@ -40,7 +40,7 @@ impl WebClient {
             }
             let guard = self.get_mut_inner().await;
             let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
-            let page = miden_idxdb_store::note::get_input_notes_page_by_db_id(
+            let page = idxdb_store::note::get_input_notes_page_by_db_id(
                 client.store_identifier(),
                 states.unwrap_or_default(),
                 after_details_commitment,
