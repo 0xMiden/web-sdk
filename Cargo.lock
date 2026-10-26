@@ -2501,7 +2501,9 @@ version = "0.17.6"
 dependencies = [
  "async-trait",
  "console_error_panic_hook",
+ "h2",
  "hex",
+ "http",
  "js-export-macro",
  "js-sys",
  "miden-client",

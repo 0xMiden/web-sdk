@@ -310,6 +310,62 @@ mod tests {
 
     use super::*;
 
+    #[tokio::test]
+    async fn submissions_send_the_verified_genesis_in_rpc_headers() {
+        for batch in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}", listener.local_addr().unwrap());
+            let (headers_tx, headers_rx) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut connection = h2::server::handshake(socket).await.unwrap();
+                let (request, mut respond) = connection.accept().await.unwrap().unwrap();
+                headers_tx
+                    .send((request.uri().path().to_owned(), request.headers().clone()))
+                    .unwrap();
+                let response = http::Response::builder()
+                    .header("content-type", "application/grpc")
+                    .body(())
+                    .unwrap();
+                let mut response = respond.send_response(response, false).unwrap();
+                let mut trailers = http::HeaderMap::new();
+                trailers.insert("grpc-status", "3".parse().unwrap());
+                trailers.insert("grpc-message", "header captured".parse().unwrap());
+                response.send_trailers(trailers).unwrap();
+                while connection.accept().await.is_some() {}
+            });
+            let (_, _, proposal, proven, inputs) = batch_fixture();
+            let rpc =
+                RpcClient::new(crate::models::endpoint::Endpoint::new(endpoint).unwrap()).unwrap();
+            let genesis = NativeWord::from([11_u32; 4]);
+            let secret = KeyExchangeKey::with_rng(&mut create_rng(None).unwrap());
+            let key = TransactionEncryptionKey(
+                NativeTransactionEncryptionKey::new_unattested(
+                    vec![9],
+                    secret.public_key(),
+                    genesis,
+                ),
+                genesis,
+            );
+            let result = if batch {
+                rpc.submit_proven_tx_batch(&proven, &proposal, inputs, &key).await
+            } else {
+                let transaction = proposal.0.transactions()[0].as_ref().into();
+                rpc.submit_proven_tx(&transaction, &inputs[0], &key).await
+            };
+            assert!(result.unwrap_err().reason.contains("header captured"));
+            let (path, headers) = headers_rx.await.unwrap();
+            server.abort();
+            let method = if batch { "SubmitProvenTxBatch" } else { "SubmitProvenTx" };
+            assert!(path.ends_with(method), "unexpected RPC path: {path}");
+            let accept = headers.get("accept").unwrap().to_str().unwrap();
+            assert!(
+                accept.split("; ").any(|part| part == format!("genesis={}", genesis.to_hex())),
+                "{method} omitted the verified genesis: {accept}",
+            );
+        }
+    }
+
     fn batch_fixture()
     -> (RpcClient, Arc<MockRpcApi>, ProposedBatch, ProvenBatch, Vec<TransactionInputs>) {
         let chain = MockChain::new();
