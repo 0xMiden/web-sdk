@@ -73,7 +73,7 @@ impl_napi_from_value!(TransactionInputs);
 /// its key ID.
 #[derive(Clone)]
 #[js_export]
-pub struct TransactionEncryptionKey(NativeTransactionEncryptionKey);
+pub struct TransactionEncryptionKey(NativeTransactionEncryptionKey, miden_client::Word);
 
 #[js_export]
 impl TransactionEncryptionKey {
@@ -165,7 +165,7 @@ impl RpcClient {
         })?;
         attested
             .verify(genesis_commitment.into(), header.validator_config())
-            .map(TransactionEncryptionKey)
+            .map(|key| TransactionEncryptionKey(key, genesis_commitment.into()))
             .map_err(|err| {
                 js_error_with_context(err, "failed to verify transaction encryption key")
             })
@@ -196,6 +196,10 @@ impl RpcClient {
             &transaction_inputs.0,
         )
         .map_err(|err| js_error_with_context(err, "failed to seal transaction inputs"))?;
+        self.inner
+            .set_genesis_commitment(encryption_key.1)
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to configure RPC genesis"))?;
         self.inner
             .submit_proven_transaction(&proven, sealed)
             .await
@@ -245,6 +249,10 @@ impl RpcClient {
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(|err| js_error_with_context(err, "failed to seal batch transaction inputs"))?;
+        self.inner
+            .set_genesis_commitment(encryption_key.1)
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to configure RPC genesis"))?;
         self.inner
             .submit_proven_batch(&proven, &proposed_batch.0, sealed)
             .await
@@ -380,11 +388,10 @@ mod tests {
         let (rpc, transport, proposal, proven, inputs) = batch_fixture();
         let secret = KeyExchangeKey::with_rng(&mut create_rng(None).unwrap());
         let genesis = NativeWord::from([11_u32; 4]);
-        let key = TransactionEncryptionKey(NativeTransactionEncryptionKey::new_unattested(
-            vec![9],
-            secret.public_key(),
+        let key = TransactionEncryptionKey(
+            NativeTransactionEncryptionKey::new_unattested(vec![9], secret.public_key(), genesis),
             genesis,
-        ));
+        );
         let unsealing_key = UnsealingKey::X25519XChaCha20Poly1305(secret);
         let decoded_inputs: Vec<_> = inputs
             .iter()
