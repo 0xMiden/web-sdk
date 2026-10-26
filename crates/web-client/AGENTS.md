@@ -125,6 +125,18 @@ transaction's execution input. A mismatch rejects before changing account state
 or transaction history. A submitted transaction may already be on-chain when
 local apply fails; check its status before submitting again.
 
+**Bounded note pages count scanned rows.** Browser
+`notes.listPage({ states, afterDetailsCommitment, limit })` defaults to all states
+and a raw scan limit of 128 (maximum 256), before filtering. Continue until
+`exhausted`, including empty filtered pages, using the returned `nextCursor`.
+The exclusive cursor is a details commitment, not a note ID. Partial records need
+no metadata; pages are not a cross-page snapshot. Node rejects paging; worker
+clients use a serialized main-WASM fallback. For known commitments,
+`notes.list({ detailsCommitments: [hexOrWord] })` uses native indexed lookup across
+all states on browser and Node. This filter is exclusive with other query fields.
+Read the usage skill for the full contract; these reads add no acquisition gate
+or recovery journal.
+
 **IndexedDB safety is opt-in and per connection.** Browser `ClientOptions` and
 `MockOptions` accept `indexedDb: { durability: "strict", onFailure }`; Node
 SQLite rejects an explicit option with `TypeError` before creating files.

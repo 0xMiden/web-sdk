@@ -766,6 +766,43 @@ for (const record of all) {
 }
 ```
 
+### Query Input Notes with Bounded Browser Pages
+
+```typescript
+const page = await client.notes.listPage({
+  states: ["expected", "unverified", "committed", "processing"],
+  afterDetailsCommitment: savedCursor,
+  limit: 128,
+});
+savedCursor = page.nextCursor;
+const hasMore = !page.exhausted;
+
+const known = await client.notes.list({
+  detailsCommitments: [detailsCommitmentHex],
+});
+```
+
+`listPage` returns `{ notes, nextCursor, exhausted }`. Omitted `states` selects
+all states; explicit choices are consumed/committed/expected/processing/unverified,
+and `[]` rejects. `limit` defaults to 128 and accepts integers from 1 to 256,
+bounding raw rows **before** state filtering, with at most one lookahead key.
+Continue until `exhausted`, even when `notes` is empty: `nextCursor` is the last
+scanned raw details-commitment key. A raw-empty page retains the supplied cursor
+or `null`. Cursors are exclusive canonical lowercase `0x`-prefixed 32-byte details
+commitments, not note IDs; deleted cursor rows do not prevent continuation.
+Partial records need no metadata or `NoteId` to be enumerated.
+
+Pages are browser-only and use the serialized main-WASM fallback even with
+`useWorker: true`; Node SQLite rejects this API. There is no snapshot guarantee
+across pages. `notes.list({ detailsCommitments })` instead uses the existing
+native indexed lookup across all states on both browser and Node, accepts hex
+strings or `Word` instances, and matches none for `[]`. This filter cannot be
+combined with status/IDs/script roots and has no page limit.
+
+These read APIs add no acquisition gate or recovery journal. See
+[Input Note Queries](https://docs.miden.xyz/builder/tools/clients/web-client/library/input-note-queries/)
+for cursor semantics and baseline coordination.
+
 ### Check Balance
 
 ```typescript

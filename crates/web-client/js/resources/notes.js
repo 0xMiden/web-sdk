@@ -5,6 +5,14 @@ import {
   resolveNoteIdHex,
 } from "../utils.js";
 
+const PAGE_STATES = new Map([
+  ["expected", [0]],
+  ["unverified", [1]],
+  ["committed", [2]],
+  ["processing", [4, 5]],
+  ["consumed", [6, 7, 8]],
+]);
+
 export class NotesResource {
   #inner;
   #getWasm;
@@ -21,6 +29,60 @@ export class NotesResource {
     const wasm = await this.#getWasm();
     const filter = buildNoteFilter(query, wasm);
     return await this.#inner.getInputNotes(filter);
+  }
+
+  /**
+   * Scan at most limit raw input-note rows before selecting states. The cursor
+   * advances over unselected rows, so an empty result need not be exhausted.
+   * Uses the serialized main store even with useWorker:true; native Node rejects.
+   * @param {import("../types/api-types").InputNotePageQuery} [query]
+   * @returns {Promise<import("../types/api-types").InputNotePage>}
+   */
+  async listPage(query = {}) {
+    this.#client.assertNotTerminated();
+    if (!query || typeof query !== "object" || Array.isArray(query)) {
+      throw new Error("Input note page query must be an object");
+    }
+    const { states, afterDetailsCommitment, limit = 128 } = query;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 256) {
+      throw new Error(
+        "Input note page limit must be an integer between 1 and 256"
+      );
+    }
+    const selected = new Set();
+    if (states !== undefined) {
+      if (!Array.isArray(states) || states.length === 0) {
+        throw new Error("Input note page states must be a nonempty array");
+      }
+      for (const state of states) {
+        const values = PAGE_STATES.get(state);
+        if (!values) throw new Error("Unknown input note page state");
+        for (const value of values) selected.add(value);
+      }
+    }
+    if (
+      afterDetailsCommitment != null &&
+      (typeof afterDetailsCommitment !== "string" ||
+        !/^0x[0-9a-f]{64}$/.test(afterDetailsCommitment))
+    ) {
+      throw new Error(
+        "Input note page cursor must be a canonical details commitment"
+      );
+    }
+    const result = await this.#inner.getInputNotesPage(
+      new Uint8Array([...selected]),
+      afterDetailsCommitment ?? undefined,
+      limit
+    );
+    try {
+      return {
+        notes: result.notes(),
+        nextCursor: result.nextCursor() ?? null,
+        exhausted: result.exhausted(),
+      };
+    } finally {
+      result.free?.();
+    }
   }
 
   async get(noteId) {
@@ -123,6 +185,30 @@ export class NotesResource {
 function buildNoteFilter(query, wasm) {
   if (!query) {
     return new wasm.NoteFilter(wasm.NoteFilterTypes.All, undefined);
+  }
+
+  if (query.detailsCommitments !== undefined) {
+    if (
+      query.status !== undefined ||
+      query.ids !== undefined ||
+      query.scriptRoots !== undefined
+    ) {
+      throw new Error(
+        "detailsCommitments and other note filters are mutually exclusive"
+      );
+    }
+    if (!Array.isArray(query.detailsCommitments)) {
+      throw new Error("detailsCommitments must be an array");
+    }
+    const commitments = query.detailsCommitments.map((value) =>
+      typeof value === "string" ? wasm.Word.fromHex(value) : value
+    );
+    return new wasm.NoteFilter(
+      wasm.NoteFilterTypes.DetailsCommitments,
+      undefined,
+      undefined,
+      commitments
+    );
   }
 
   if (query.ids) {

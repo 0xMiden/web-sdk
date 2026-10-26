@@ -1077,24 +1077,75 @@ export type TransactionQuery =
 // Note types
 // ════════════════════════════════════════════════════════════════
 
+/** Named input-note states accepted by queries. */
+export type NoteStatus =
+  | "consumed"
+  | "committed"
+  | "expected"
+  | "processing"
+  | "unverified";
+
 /** Discriminated union for note queries. */
 export type NoteQuery =
   | {
-      status:
-        | "consumed"
-        | "committed"
-        | "expected"
-        | "processing"
-        | "unverified";
+      status: NoteStatus;
+      detailsCommitments?: never;
     }
-  | { ids: (string | NoteId)[] }
+  | { ids: (string | NoteId)[]; detailsCommitments?: never }
   /**
    * Filter received notes by note script root, given as hex strings or Word
    * instances (e.g. from `NoteScript.root()`). Notes match regardless of their
    * state. Only supported by `notes.list`; `notes.listSent` returns an empty
    * list for this query.
    */
-  | { scriptRoots: (string | Word)[] };
+  | { scriptRoots: (string | Word)[]; detailsCommitments?: never }
+  /**
+   * Indexed lookup by details commitment across every state, including partial
+   * records without metadata or a note ID. An empty array matches no notes.
+   * Mutually exclusive with status, ids and scriptRoots. Supported on browser
+   * and native Node for both received and sent notes.
+   */
+  | {
+      detailsCommitments: (string | Word)[];
+      status?: never;
+      ids?: never;
+      scriptRoots?: never;
+    };
+
+/** Options for a bounded browser input-note scan. */
+export interface InputNotePageQuery {
+  /**
+   * States selected after scanning the raw page. Omitted selects every state,
+   * matching list(). An explicit empty array or unknown state rejects; repeated
+   * states are harmless. Processing includes both processing variants and
+   * consumed includes every consumed variant.
+   */
+  states?: NoteStatus[];
+  /**
+   * Exclusive details-commitment primary-key cursor, in canonical lowercase
+   * 0x-prefixed 32-byte hex with valid native Word field elements. Omitted or
+   * null starts the scan. A deleted cursor remains valid. This is not a NoteId.
+   */
+  afterDetailsCommitment?: string | null;
+  /** Raw rows scanned before filtering: integer 1-256, default 128. */
+  limit?: number;
+}
+
+/** One bounded scan result. Separate pages do not form a consistent snapshot. */
+export interface InputNotePage {
+  /** Selected decoded records, including metadata-less partial records. */
+  notes: InputNoteRecord[];
+  /**
+   * Last scanned raw details commitment, even if no records matched. A raw-empty
+   * page retains the supplied cursor, or null when starting an empty store.
+   */
+  nextCursor: string | null;
+  /**
+   * No further primary key existed in this read transaction. An empty notes
+   * array can still have exhausted:false; continue from nextCursor.
+   */
+  exhausted: boolean;
+}
 
 /** Options for standalone note creation utilities. */
 export interface NoteOptions {
@@ -1693,6 +1744,20 @@ export interface NotesResource {
    * @param query - Optional filter by note status, note IDs, or script roots.
    */
   list(query?: NoteQuery): Promise<InputNoteRecord[]>;
+
+  /**
+   * Scan a bounded input-note page using the already-open browser store.
+   *
+   * Reads at most limit full raw rows plus one lookahead key, then filters states
+   * and decodes selected records with the native codec. An empty filtered page
+   * still advances nextCursor. This does not promise a snapshot across calls;
+   * coordinate mutations and validate application checkpoints separately.
+   *
+   * Uses the serialized main-WASM path with useWorker:true as well as direct
+   * clients. Native Node rejects this browser-only API. Does not sync or fetch.
+   * @throws If options are invalid, storage/decoding fails, or on native Node.
+   */
+  listPage(query?: InputNotePageQuery): Promise<InputNotePage>;
   /**
    * Retrieve a note by ID. Returns `null` if not found.
    *

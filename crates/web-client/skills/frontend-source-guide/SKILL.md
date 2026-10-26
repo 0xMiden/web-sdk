@@ -116,6 +116,29 @@ The browser storage layer for accounts, keys, notes, and transaction history.
 
 **Explore when**: Debugging data persistence issues, understanding what's stored in IndexedDB, investigating storage isolation for external signers.
 
+### Bounded input-note query sources
+
+`notes.listPage(query?: InputNotePageQuery): Promise<InputNotePage>` is the
+browser-only bounded scan in `js/resources/notes.js` and `src/notes.rs`, backed by
+`crates/idxdb-store/src/ts/notes.ts` and the existing note decoder. It uses the
+already-open store and the proxy's serialized main-WASM fallback, including with
+`useWorker: true`; native Node rejects it. The returned plain object has `notes`,
+`nextCursor` and `exhausted`. Default states is all; the raw scan limit defaults
+to 128, maximum 256, before filtering, with one bounded lookahead key. State names
+are consumed/committed/expected/processing/unverified; explicit `[]` rejects.
+
+The exclusive cursor is a canonical lowercase `0x`-prefixed 32-byte details
+commitment, not a `NoteId`. It records the last scanned key even when filtering
+returns no notes; a raw-empty page retains the input cursor or `null`. Deleted
+cursor rows do not block continuation. Partial metadata-less rows use the
+existing decoder. Pages do not provide a cross-page snapshot.
+
+`notes.list({ detailsCommitments: (string | Word)[] })` maps to native
+`NoteFilter::DetailsCommitments` on browser and Node for indexed all-state
+lookup. It is exclusive with other filters and `[]` matches none. Read
+`js/types/api-types.d.ts` and the sibling usage skill for validation and examples.
+These APIs do not implement acquisition gating, retention or a recovery journal.
+
 ### IndexedDB construction and diagnostics
 
 Read `js/types/api-types.d.ts` for `IndexedDbOptions` and the closed

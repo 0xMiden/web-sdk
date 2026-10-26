@@ -34,6 +34,46 @@ export async function getInputNotes(dbId, states) {
         logWebStoreError(err, "Failed to get input notes");
     }
 }
+/** Scans a bounded primary-key page before selecting states and joining scripts. */
+export async function getInputNotesPage(dbId, states, afterDetailsCommitment, limit = 128) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 256) {
+        throw new Error("Input note page limit must be an integer between 1 and 256");
+    }
+    if (!(states instanceof Uint8Array) || states.some((state) => state > 8)) {
+        throw new Error("Invalid input note page state");
+    }
+    if (afterDetailsCommitment != null &&
+        (typeof afterDetailsCommitment !== "string" ||
+            !/^0x[0-9a-f]{64}$/.test(afterDetailsCommitment))) {
+        throw new Error("Input note page cursor must be a canonical details commitment");
+    }
+    const db = getDatabase(dbId);
+    return db.dexie.transaction("r", db.inputNotes, db.notesScripts, async () => {
+        const query = afterDetailsCommitment == null
+            ? db.inputNotes.orderBy("detailsCommitment")
+            : db.inputNotes
+                .where("detailsCommitment")
+                .above(afterDetailsCommitment);
+        // Dexie filters run before its limit, so selection belongs on this bounded array.
+        const scanned = await query.limit(limit).toArray();
+        const nextCursor = scanned.at(-1)?.detailsCommitment ?? afterDetailsCommitment ?? null;
+        const more = scanned.length === limit
+            ? await db.inputNotes
+                .where("detailsCommitment")
+                .above(scanned[scanned.length - 1].detailsCommitment)
+                .limit(1)
+                .primaryKeys()
+            : [];
+        const selected = states.length === 0
+            ? scanned
+            : scanned.filter((note) => states.includes(note.stateDiscriminant));
+        return {
+            notes: await processInputNotes(dbId, selected),
+            nextCursor,
+            exhausted: more.length === 0,
+        };
+    });
+}
 export async function getInputNotesFromIds(dbId, noteIds) {
     try {
         const db = getDatabase(dbId);

@@ -239,9 +239,39 @@ describe("bounded input-note pages", () => {
     await expect(
       query(dbId, new Uint8Array(), "not-a-commitment", 1)
     ).rejects.toThrow(/cursor|commitment/i);
+    await expect(query(dbId, new Uint8Array(), 1, 1)).rejects.toThrow(
+      /cursor|commitment/i
+    );
     await expect(query(dbId, new Uint8Array([9]), null, 1)).rejects.toThrow(
       /state/i
     );
     expect(reads).toEqual({ values: 0, keys: 0 });
+  });
+
+  it("rejects raw state values that are not a byte array", async () => {
+    const { dbId } = await fixture([row(1)]);
+    const query = Reflect.get(notes, "getInputNotesPage");
+    for (const states of [undefined, null, [0], "expected"]) {
+      await expect(query(dbId, states)).rejects.toThrow(/state/i);
+    }
+  });
+
+  it("selects mixed states without duplicating rows and keeps missing scripts undecoded", async () => {
+    const missing = row(2, 8);
+    missing.scriptRoot = key(901);
+    const { dbId } = await fixture([row(1, 0), missing, row(3, 2)]);
+    const result = await page(dbId, new Uint8Array([0, 8, 0]));
+    expect(result.notes.map((note) => note.createdAt)).toEqual(["1", "2"]);
+    expect(result.notes[1].serializedNoteScript).toBeUndefined();
+    expect(result.exhausted).toBe(true);
+  });
+
+  it("propagates storage read failures instead of returning an empty exhausted page", async () => {
+    const { dbId } = await fixture([row(1)]);
+    const failure = new DOMException("read failed", "UnknownError");
+    vi.spyOn(IDBObjectStore.prototype, "getAll").mockImplementation(() => {
+      throw failure;
+    });
+    await expect(page(dbId)).rejects.toMatchObject({ name: "UnknownError" });
   });
 });

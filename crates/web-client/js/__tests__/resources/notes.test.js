@@ -182,6 +182,23 @@ describe("NotesResource", () => {
       );
     });
 
+    it("rejects malformed details selections and preserves native Word validation failures", async () => {
+      const notes = makeResource();
+      for (const detailsCommitments of [null, "invalid", {}]) {
+        await expect(notes.list({ detailsCommitments })).rejects.toThrow(
+          /array/i
+        );
+      }
+      const failure = new Error("invalid field element");
+      wasm.Word.fromHex.mockImplementation(() => {
+        throw failure;
+      });
+      await expect(
+        notes.list({ detailsCommitments: [`0x${"ff".repeat(32)}`] })
+      ).rejects.toBe(failure);
+      expect(inner.getInputNotes).not.toHaveBeenCalled();
+    });
+
     it.each([{ status: "consumed" }, { ids: [] }, { scriptRoots: [] }])(
       "rejects details commitments combined with %j before querying",
       async (other) => {
@@ -282,6 +299,59 @@ describe("NotesResource", () => {
         throw new Error("terminated");
       });
       await expect(notes.listPage()).rejects.toThrow("terminated");
+      expect(inner.getInputNotesPage).not.toHaveBeenCalled();
+    });
+
+    it("deduplicates all explicit states and releases the native page container", async () => {
+      const result = nativePage();
+      result.free = vi.fn();
+      inner.getInputNotesPage.mockResolvedValue(result);
+      await resource().listPage({
+        states: [
+          "expected",
+          "unverified",
+          "committed",
+          "processing",
+          "consumed",
+          "expected",
+        ],
+        afterDetailsCommitment: null,
+        limit: 256,
+      });
+      expect(inner.getInputNotesPage).toHaveBeenCalledWith(
+        new Uint8Array([0, 1, 2, 4, 5, 6, 7, 8]),
+        undefined,
+        256
+      );
+      expect(result.free).toHaveBeenCalledOnce();
+    });
+
+    it("releases the page container when extracting records fails", async () => {
+      const result = nativePage();
+      const failure = new Error("record extraction failed");
+      result.notes = () => {
+        throw failure;
+      };
+      result.free = vi.fn();
+      inner.getInputNotesPage.mockResolvedValue(result);
+      await expect(resource().listPage()).rejects.toBe(failure);
+      expect(result.free).toHaveBeenCalledOnce();
+    });
+
+    it("rejects invalid query shapes and hostile state names", async () => {
+      const notes = resource();
+      for (const query of [
+        null,
+        [],
+        1,
+        { states: "expected" },
+        { states: ["constructor"] },
+        { states: ["__proto__"] },
+        { limit: Infinity },
+        { afterDetailsCommitment: 1 },
+      ]) {
+        await expect(notes.listPage(query)).rejects.toThrow();
+      }
       expect(inner.getInputNotesPage).not.toHaveBeenCalled();
     });
   });

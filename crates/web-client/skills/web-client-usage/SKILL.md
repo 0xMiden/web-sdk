@@ -1201,6 +1201,54 @@ instance is required.
 unrelated notes. It is a received-note filter: `listSent` returns an empty list
 for it.
 
+### Bounded browser pages and details-commitment lookup
+
+```typescript
+const page = await client.notes.listPage({
+  states: ["expected", "unverified", "committed", "processing"],
+  afterDetailsCommitment: savedCursor,
+  limit: 128,
+});
+savedCursor = page.nextCursor;
+const continueScan = !page.exhausted;
+
+const known = await client.notes.list({
+  detailsCommitments: [detailsCommitmentHex, detailsCommitmentWord],
+});
+```
+
+`listPage(query?: InputNotePageQuery): Promise<InputNotePage>` returns plain
+`{ notes: InputNoteRecord[], nextCursor: string | null, exhausted: boolean }`.
+Omitted states selects all states, as `list()` does. Explicit `states` accepts
+consumed/committed/expected/processing/unverified; `processing` covers both
+processing states. Unknown values and `[]` reject; repeated states are harmless.
+
+`limit` is a safe integer from 1 to 256, default 128. It bounds raw rows scanned
+**before** state filtering, not the number of matching records to collect.
+Exhaustion uses at most one extra lookahead key. Empty filtered pages can be
+nonexhausted: continue from `nextCursor`, the last scanned raw key, rather than
+from a returned note ID. A page with no raw rows retains the supplied cursor or
+`null`. `afterDetailsCommitment` is an exclusive canonical lowercase
+`0x`-prefixed 32-byte details commitment; omitted/`null` starts at the beginning.
+Invalid encodings/field elements reject. Continuation works after deletion of
+the cursor row. Partial metadata-less rows do not require a `NoteId`.
+
+Pages are browser-only, use the already-open store and serialize through the
+main-WASM fallback even with `useWorker: true`. Native Node explicitly rejects
+them. Eager/lazy and ST/MT entries share the API. There is no cross-page snapshot:
+coordinate mutations and validate the application's generation/checkpoint before
+accepting a complete baseline. Do not infer completeness from an empty page.
+
+`detailsCommitments: (string | Word)[]` uses the existing native indexed lookup
+across all states, including consumed or metadata-less records, on browser and
+Node. It is exclusive with status/ids/scriptRoots; mixed queries reject and `[]`
+matches none. It does not materialize unrelated notes, but has no page limit;
+size requests according to the commitments the application needs.
+
+These APIs read stored notes. They do not add an awaited before-acquisition hook,
+a write gate, a recovery journal or automatic retention. Full narrative:
+<https://docs.miden.xyz/builder/tools/clients/web-client/library/input-note-queries/>.
+
 ### Private-note transport
 
 ```typescript

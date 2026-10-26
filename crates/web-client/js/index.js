@@ -155,6 +155,7 @@ const READ_METHODS = new Set([
   "getConsumableNotes",
   "getInputNote",
   "getInputNotes",
+  "getInputNotesPage",
   "getOutputNote",
   "getOutputNotes",
   "getPswapLineage",
