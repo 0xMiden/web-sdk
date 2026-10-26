@@ -81,6 +81,12 @@ extern "C" {
     fn log_web_store_error(error: JsValue, error_context: alloc::string::String);
 }
 
+#[wasm_bindgen(module = "/src/js/storage-policy.js")]
+extern "C" {
+    #[wasm_bindgen(catch, js_name = validateIndexedDbOptions)]
+    fn validate_indexed_db_options(options: JsValue) -> Result<JsValue, JsValue>;
+}
+
 // Initialize IndexedDB
 #[wasm_bindgen(module = "/src/js/schema.js")]
 extern "C" {
@@ -114,6 +120,7 @@ impl IdxdbStore {
         database_name: String,
         options: JsValue,
     ) -> Result<IdxdbStore, JsValue> {
+        let options = validate_indexed_db_options(options)?;
         // Built before the open: once the open counts this store as a holder, only `Drop`
         // releases it, so nothing after the open may fail.
         let smt_forest = AccountForest::new()
