@@ -8,6 +8,7 @@
 
 ### Fixes
 
+* [FIX][web] `RpcClient.submitProvenTx` and `submitProvenTxBatch` now include the verified genesis commitment in RPC headers, fixing submissions rejected with `genesis commitment: none` ([#504](https://github.com/0xMiden/web-sdk/pull/504)).
 * [FIX][web] On Node.js, `RpcClient.getNullifierCommitHeight` and `getNoteScriptByRoot` now resolve to `undefined` instead of `null` when no result is found, matching the browser entry and their TypeScript declarations.
 
 ## 0.17.6 (2026-10-21)
