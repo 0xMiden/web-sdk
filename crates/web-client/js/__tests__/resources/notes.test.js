@@ -11,6 +11,7 @@ function makeWasm(overrides = {}) {
     Unverified: "Unverified",
     List: "List",
     ScriptRoots: "ScriptRoots",
+    DetailsCommitments: "DetailsCommitments",
   };
   const filterInstance = { type: "filter" };
   return {
@@ -38,6 +39,7 @@ function makeWasm(overrides = {}) {
 function makeInner() {
   return {
     getInputNotes: vi.fn(),
+    getInputNotesPage: vi.fn(),
     getInputNote: vi.fn(),
     getOutputNotes: vi.fn(),
     getConsumableNotes: vi.fn(),
@@ -148,6 +150,139 @@ describe("NotesResource", () => {
       const resource = makeResource();
       await resource.list({});
       expect(wasm.NoteFilter).toHaveBeenCalledWith("All", undefined);
+    });
+
+    it("maps details commitments to the native filter across note states", async () => {
+      const commitment = `0x${"01".repeat(32)}`;
+      const word = { word: true };
+      const records = [{ id: () => undefined, state: "consumed" }];
+      inner.getInputNotes.mockResolvedValue(records);
+      const result = await makeResource().list({
+        detailsCommitments: [commitment, word],
+      });
+      expect(result).toBe(records);
+      expect(wasm.Word.fromHex).toHaveBeenCalledWith(commitment);
+      expect(wasm.NoteId.fromHex).not.toHaveBeenCalled();
+      expect(wasm.NoteFilter).toHaveBeenCalledWith(
+        "DetailsCommitments",
+        undefined,
+        undefined,
+        [{ hex: commitment }, word]
+      );
+    });
+
+    it("preserves an empty details selection instead of selecting all notes", async () => {
+      inner.getInputNotes.mockResolvedValue([]);
+      await makeResource().list({ detailsCommitments: [] });
+      expect(wasm.NoteFilter).toHaveBeenCalledWith(
+        "DetailsCommitments",
+        undefined,
+        undefined,
+        []
+      );
+    });
+
+    it.each([{ status: "consumed" }, { ids: [] }, { scriptRoots: [] }])(
+      "rejects details commitments combined with %j before querying",
+      async (other) => {
+        await expect(
+          makeResource().list({ detailsCommitments: [], ...other })
+        ).rejects.toThrow(/mutually exclusive/i);
+        expect(inner.getInputNotes).not.toHaveBeenCalled();
+      }
+    );
+  });
+
+  describe("listPage", () => {
+    function resource() {
+      const result = makeResource();
+      expect(
+        result.listPage,
+        "bounded input-note resource must be exposed"
+      ).toBeTypeOf("function");
+      return result;
+    }
+
+    function nativePage(records = [], cursor = null, exhausted = true) {
+      return {
+        notes: () => records,
+        nextCursor: () => cursor,
+        exhausted: () => exhausted,
+      };
+    }
+
+    it("defaults to all states and 128 raw rows and preserves decoded record identity", async () => {
+      const records = [{ id: () => undefined }];
+      inner.getInputNotesPage.mockResolvedValue(nativePage(records));
+      const result = await resource().listPage();
+      expect(client.assertNotTerminated).toHaveBeenCalledOnce();
+      expect(inner.getInputNotesPage).toHaveBeenCalledWith(
+        new Uint8Array(),
+        undefined,
+        128
+      );
+      expect(result).toEqual({
+        notes: records,
+        nextCursor: null,
+        exhausted: true,
+      });
+      expect(result.notes).toBe(records);
+      expect(inner.getInputNotes).not.toHaveBeenCalled();
+    });
+
+    it("expands processing and consumed states and preserves empty-page cursor progress", async () => {
+      const before = `0x${"01".repeat(32)}`;
+      const after = `0x${"02".repeat(32)}`;
+      inner.getInputNotesPage.mockResolvedValue(nativePage([], after, false));
+      const result = await resource().listPage({
+        states: ["processing", "consumed"],
+        afterDetailsCommitment: before,
+        limit: 2,
+      });
+      expect(inner.getInputNotesPage).toHaveBeenCalledWith(
+        new Uint8Array([4, 5, 6, 7, 8]),
+        before,
+        2
+      );
+      expect(result).toEqual({
+        notes: [],
+        nextCursor: after,
+        exhausted: false,
+      });
+    });
+
+    it("rejects invalid options before touching the native store", async () => {
+      const notes = resource();
+      for (const query of [
+        { states: [] },
+        { states: ["invalid"] },
+        { limit: 0 },
+        { limit: 257 },
+        { limit: 1.5 },
+        { afterDetailsCommitment: "not-a-commitment" },
+      ]) {
+        await expect(notes.listPage(query)).rejects.toThrow();
+      }
+      expect(inner.getInputNotesPage).not.toHaveBeenCalled();
+      expect(inner.getInputNotes).not.toHaveBeenCalled();
+    });
+
+    it("propagates native unsupported errors without falling back to an unbounded query", async () => {
+      const failure = new Error(
+        "Input note paging is browser-only; native Node is unsupported"
+      );
+      inner.getInputNotesPage.mockRejectedValue(failure);
+      await expect(resource().listPage()).rejects.toBe(failure);
+      expect(inner.getInputNotes).not.toHaveBeenCalled();
+    });
+
+    it("rejects terminated clients before querying", async () => {
+      const notes = resource();
+      client.assertNotTerminated.mockImplementation(() => {
+        throw new Error("terminated");
+      });
+      await expect(notes.listPage()).rejects.toThrow("terminated");
+      expect(inner.getInputNotesPage).not.toHaveBeenCalled();
     });
   });
 
