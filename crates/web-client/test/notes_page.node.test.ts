@@ -16,6 +16,9 @@ test("native Node rejects bounded browser paging but supports details commitment
     expect(
       await client.notes.list({ detailsCommitments: [`0x${"00".repeat(32)}`] })
     ).toEqual([]);
+    console.info(
+      "notes_page.node: paging refusal and details lookup assertions passed"
+    );
   } finally {
     client.terminate();
   }

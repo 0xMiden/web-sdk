@@ -38,13 +38,16 @@ impl WebClient {
                     "Input note page limit must be an integer between 1 and 256",
                 ));
             }
+            // The range and integer checks above restrict this value to 1-256.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let limit = limit as u32;
             let guard = self.get_mut_inner().await;
             let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
             let page = idxdb_store::note::get_input_notes_page_by_db_id(
                 client.store_identifier(),
                 states.unwrap_or_default(),
                 after_details_commitment,
-                limit as u32,
+                limit,
             )
             .await
             .map_err(|err| js_error_with_context(err, "failed to get input note page"))?;
