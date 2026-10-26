@@ -1,0 +1,39 @@
+name: SDK 1948 storage proof
+on:
+  push:
+    branches: [fix/wallet-1948-indexeddb-safety]
+permissions:
+  contents: read
+jobs:
+  storage-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Record exact source
+        run: git rev-parse HEAD
+      - name: Storage regression and coverage gate
+        run: make test-idxdb-store
+      - name: Client unit and coverage gate
+        if: '!cancelled()'
+        run: make test-web-client-unit
+      - name: Generate store bindings
+        if: '!cancelled()'
+        run: make rust-client-ts-build
+      - name: Upload exact generated bindings and coverage
+        if: '!cancelled()'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-1948-proof-${{ github.sha }}
+          path: |
+            crates/idxdb-store/src/js
+            crates/idxdb-store/src/coverage/coverage-summary.json
+            crates/web-client/coverage/coverage-summary.json
