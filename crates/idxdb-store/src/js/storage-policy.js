@@ -114,9 +114,9 @@ export class StoragePolicy {
                         count: (req) => read(req.trans, table.count(req)),
                         openCursor: (req) => read(req.trans, table.openCursor(req)).then((cursor) => {
                             if (cursor) {
-                                const start = cursor.start;
+                                const start = cursor.start.bind(cursor);
                                 cursor.start = function (callback) {
-                                    return read(req.trans, start.call(this, callback));
+                                    return read(req.trans, start(callback));
                                 };
                             }
                             return cursor;
@@ -148,10 +148,10 @@ export class StoragePolicy {
                         intentional: false,
                     };
                     states.set(tx, state);
-                    const abort = tx.abort;
+                    const abort = tx.abort.bind(tx);
                     tx.abort = function () {
                         state.intentional = true;
-                        return abort.call(this);
+                        return abort();
                     };
                     // Capture before Dexie handles the request error and deliberately rolls back.
                     tx.addEventListener("error", (event) => {
