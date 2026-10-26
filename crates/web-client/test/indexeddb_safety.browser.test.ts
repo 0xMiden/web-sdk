@@ -84,12 +84,27 @@ async function prepare(page, build, entry, workerMode) {
       };
       const sdk = await import(`/${build}/${entry}.js`);
       sdk.WasmWebClient.workerMode = workerMode;
+      const seed = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
+      // Mock validator keys are independent of the client seed. Persist one
+      // genesis before the worker's independently created mock can race it.
+      const bootstrap = await sdk.MockWebClient.createClient(
+        undefined,
+        undefined,
+        seed,
+        undefined,
+        { durability: "strict" },
+        false
+      );
+      const chain = await bootstrap.serializeMockChain();
+      const transport = await bootstrap.serializeMockNoteTransportNode();
+      bootstrap.terminate();
+      await bootstrap.waitForIdle();
       const order = [];
       const failures = [];
       const client = await sdk.MockWebClient.createClient(
-        undefined,
-        undefined,
-        undefined,
+        chain,
+        transport,
+        seed,
         undefined,
         {
           durability: "strict",
@@ -149,10 +164,49 @@ for (const route of ["main", "worker"]) {
       await window.storageTest.client.proveBlock();
       window.storageTest.failures.length = 0;
       window.storageTest.order.length = 0;
+      window.storageTest.quotaProbe = await new Promise((resolve, reject) => {
+        const request = indexedDB.open("quota-calibration", 1);
+        request.onupgradeneeded = () =>
+          request.result.createObjectStore("probe");
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
     });
     const cdp = await context.newCDPSession(page);
     await cdp.send("Storage.overrideQuotaForOrigin", { origin, quotaSize: 1 });
     try {
+      const quota = await cdp.send("Storage.getUsageAndQuota", { origin });
+      expect(quota.overrideActive).toBe(true);
+      expect(quota.quota).toBe(1);
+      // Chromium caches bucket headroom for 30 seconds. Wait for native quota
+      // enforcement with at most 40 KiB of payload, without faking errors.
+      const calibration = await page.evaluate(async () => {
+        const db = window.storageTest.quotaProbe;
+        for (let attempt = 0; attempt < 40; attempt++) {
+          const errorName = await new Promise((resolve) => {
+            const tx = db.transaction("probe", "readwrite");
+            let cause;
+            const request = tx
+              .objectStore("probe")
+              .add(crypto.getRandomValues(new Uint8Array(1024)), attempt);
+            request.onerror = () => {
+              cause = request.error?.name;
+            };
+            tx.oncomplete = () => resolve(undefined);
+            tx.onabort = () => resolve(cause ?? tx.error?.name ?? "AbortError");
+          });
+          if (errorName) return { errorName, attempts: attempt + 1 };
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+        return { errorName: "QuotaNotEnforced", attempts: 40 };
+      });
+      expect(calibration.errorName).toBe("QuotaExceededError");
+      expect(
+        await page.evaluate(() => ({
+          failures: window.storageTest.failures,
+          order: window.storageTest.order,
+        }))
+      ).toEqual({ failures: [], order: [] });
       const result = await page.evaluate(async (route) => {
         const { client, failures, order } = window.storageTest;
         let rejected = false;
@@ -185,7 +239,10 @@ for (const route of ["main", "worker"]) {
         ]);
     } finally {
       await cdp.send("Storage.overrideQuotaForOrigin", { origin });
-      await page.evaluate(() => window.storageTest.client.terminate());
+      await page.evaluate(() => {
+        window.storageTest.quotaProbe.close();
+        window.storageTest.client.terminate();
+      });
       await cdp.detach();
     }
   });
