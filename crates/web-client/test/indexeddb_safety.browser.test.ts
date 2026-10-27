@@ -459,3 +459,49 @@ for (const build of ["st", "mt"]) {
     });
   }
 }
+
+for (const useWorker of [false, true]) {
+  test(`native acquisition refusal preserves input notes worker=${useWorker}`, async ({ page }) => {
+    await prepare(page, "st", "index", "module");
+    const result = await page.evaluate(async (useWorker) => {
+      const { client: previous, sdk } = window.storageTest;
+      const serializedMockChain = await previous.serializeMockChain();
+      const serializedNoteTransport = await previous.serializeMockNoteTransportNode();
+      previous.terminate();
+      await previous.waitForIdle();
+      let candidate;
+      const client = await sdk.MidenClient.createMock({
+        serializedMockChain, serializedNoteTransport, useWorker,
+        beforeNoteAcquisition: async (item) => {
+          candidate = item;
+          throw new Error("private retention diagnostic must not escape");
+        },
+        noteAcquisitionLimits: { maxNotes: 1, maxNoteFileBytes: 65536, maxTotalNoteFileBytes: 65536 },
+      });
+      const recipient = new sdk.NoteRecipient(
+        new sdk.Word(new BigUint64Array([91n, 0n, 0n, 0n])),
+        sdk.NoteScript.p2id(), new sdk.NoteStorage(new sdk.FeltArray())
+      );
+      const file = sdk.NoteFile.fromNoteDetails(new sdk.NoteDetails(new sdk.NoteAssets(), recipient));
+      let error;
+      try { await client.notes.import(file); } catch (value) {
+        error = { code: value.code, message: value.message };
+      }
+      const notes = await client.notes.list();
+      client.terminate();
+      await client.waitForIdle();
+      return { error, count: notes.length, candidate: candidate && {
+        variant: candidate.variant, source: candidate.source,
+        bytes: candidate.noteFileBytes instanceof Uint8Array,
+        metadataAbsent: candidate.metadata === undefined,
+        noteIdAbsent: candidate.noteId === undefined,
+        batchIndex: candidate.batchIndex, batchCount: candidate.batchCount,
+      }};
+    }, useWorker);
+    expect(result.error?.code).toBe("NOTE_ACQUISITION_REJECTED");
+    expect(result.error?.message).not.toContain("private retention diagnostic");
+    expect(result.count).toBe(0);
+    expect(result.candidate).toEqual({ variant: "expectedNote", source: "import", bytes: true,
+      metadataAbsent: true, noteIdAbsent: true, batchIndex: 0, batchCount: 1 });
+  });
+}
