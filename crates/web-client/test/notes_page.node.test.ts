@@ -1,5 +1,9 @@
 // @ts-nocheck
-import { test, expect } from "./test-setup";
+import { test, expect, loadNodeSdk } from "./test-setup";
+import {
+  createWasmWebClient,
+  createMockWasmWebClient,
+} from "../js/node/client-factory.js";
 import { createMidenClient } from "./test-helpers";
 
 test("native Node rejects bounded browser paging but supports details commitment queries", async ({
@@ -24,11 +28,8 @@ test("native Node rejects bounded browser paging but supports details commitment
   }
 });
 
-test("native Node explicitly refuses acquisition callbacks during initialization", async ({
-  sdk,
-}) => {
-  const MidenClient = await createMidenClient(sdk);
-  expect(MidenClient).not.toBeNull();
+test("native Node explicitly refuses acquisition callbacks during initialization", async () => {
+  const rawSdk = loadNodeSdk();
   const options = {
     beforeNoteAcquisition: async () => {},
     noteAcquisitionLimits: {
@@ -37,13 +38,29 @@ test("native Node explicitly refuses acquisition callbacks during initialization
       maxTotalNoteFileBytes: 65536,
     },
   };
-  await expect(MidenClient.createMock(options)).rejects.toThrow(
-    /unsupported.*native Node/i
-  );
   await expect(
-    MidenClient.create({ rpcUrl: "localhost", ...options })
+    createMockWasmWebClient(rawSdk).createClient(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      options
+    )
+  ).rejects.toThrow(/unsupported.*native Node/i);
+  await expect(
+    createWasmWebClient(rawSdk).createClient(
+      "http://localhost:57291",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      options
+    )
   ).rejects.toThrow(/unsupported.*native Node/i);
   console.info(
-    "note acquisition native Node: both explicit unsupported-option assertions passed"
+    "note acquisition native Node: both production-factory unsupported-option assertions passed"
   );
 });
