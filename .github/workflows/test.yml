@@ -11,6 +11,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  NODE_OPTIONS: --use-openssl-ca
+  SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
   CARGO_PROFILE_DEV_DEBUG: 0
   RUST_CACHE_KEY: rust-cache-2026.02.18
   # Pin the miden-client version used for test infrastructure.
@@ -26,8 +28,8 @@ env:
   # Re-pin whenever Cargo.lock moves, and to the release tag once one ships.
   # A `Client PR:` marker overrides this for the test-node jobs
   # (resolve-client-ref); this value stays the fallback for pushes to next.
-  # v0.17.4
-  MIDEN_CLIENT_REF: 96c539fe6d55a6e00d31fd56ad987b79df1a3747
+  # v0.17.5
+  MIDEN_CLIENT_REF: 9cd4e62cb9948fd4e2fce196bd355f1158f336cc
   # Sequencer 0.17.0-rc.2 will not start without a batch-builder wallet. The
   # binary reads this variable; the node repo's local runner uses the same
   # placeholder. A node that does not know it ignores the variable.
@@ -53,6 +55,17 @@ jobs:
       non_docs: ${{ steps.linked.outputs.found == 'true' && 'true' || steps.filter.outputs.non_docs }}
       release_wasm: ${{ steps.linked.outputs.found == 'true' && 'true' || steps.filter.outputs.release_wasm }}
     steps:
+      - &update-ca-certificates
+        name: Update CA certificates
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ca-certificates
+          ubuntu_version="$(awk -F= '$1 == "VERSION_ID" {gsub(/"/, "", $2); print $2}' /etc/os-release)"
+          dpkg --compare-versions "$(dpkg-query -W -f='${Version}' ca-certificates)" \
+            ge "20260816ubuntu0.${ubuntu_version}.1"
       - uses: actions/checkout@v6
       - uses: ./.github/actions/detect-linked-pr-markers
         id: linked
@@ -98,6 +111,7 @@ jobs:
       # for a cache-only optimization.
       SCCACHE_GHA_ENABLED: "true"
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       # Auto-patch miden-client dep against any "Client PR: #N" marker in
       # the PR description. Sticky comment is owned by build.yml's
@@ -263,6 +277,7 @@ jobs:
       # for a cache-only optimization.
       SCCACHE_GHA_ENABLED: "true"
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       # Auto-patch miden-client dep against any "Client PR: #N" marker in
       # the PR description. Sticky comment is owned by build.yml's
@@ -373,6 +388,7 @@ jobs:
     needs: [changes, build-web-client-dist-folder]
     if: needs.changes.outputs.non_docs == 'true'
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       - name: Fetch web client dist
         uses: actions/download-artifact@v4
@@ -409,6 +425,7 @@ jobs:
     needs: [changes, build-web-client-dist-folder]
     if: needs.changes.outputs.non_docs == 'true'
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       - name: Fetch web client dist
         uses: actions/download-artifact@v4
@@ -443,6 +460,7 @@ jobs:
     needs: [changes, build-web-client-dist-folder]
     if: needs.changes.outputs.non_docs == 'true'
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       - name: Check for bypass label
         if: github.event_name == 'pull_request'
@@ -490,6 +508,7 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.non_docs == 'true'
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       - name: Install pnpm
         uses: pnpm/action-setup@v3
@@ -516,6 +535,7 @@ jobs:
     needs: [changes, build-web-client-dist-folder]
     if: needs.changes.outputs.non_docs == 'true'
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       - name: Fetch web client dist
         uses: actions/download-artifact@v4
@@ -584,6 +604,7 @@ jobs:
       REACT_18: 18.3.1
       TYPES_REACT_18: ^18.3.0
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       # vitest aliases @miden-sdk/miden-sdk to a mock and doesn't need the
       # dist, but `tsc --noEmit` resolves the SDK's generated .d.ts files.
@@ -650,6 +671,7 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.non_docs == 'true'
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       - name: Install pnpm
         uses: pnpm/action-setup@v3
@@ -677,6 +699,7 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.non_docs == 'true'
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       - name: Install pnpm
         uses: pnpm/action-setup@v3
@@ -702,6 +725,7 @@ jobs:
     name: linked client script unit tests
     runs-on: ubuntu-24.04
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
@@ -720,6 +744,7 @@ jobs:
     # never blocks a merge. A break in the sanitizer or the verdict logic could
     # merge freely. Cheap enough (node --test, no build) to run unconditionally.
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -744,6 +769,7 @@ jobs:
       ACTIONLINT_VERSION: "1.7.12"
       ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       - name: Install actionlint
         run: |
@@ -764,6 +790,7 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.non_docs == 'true'
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       - name: Install pnpm
         uses: pnpm/action-setup@v3
@@ -791,6 +818,7 @@ jobs:
     needs: [changes, build-web-client-dist-folder]
     if: needs.changes.outputs.non_docs == 'true'
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       - name: Fetch web client dist
         uses: actions/download-artifact@v4
@@ -819,6 +847,7 @@ jobs:
     needs: [changes, build-web-client-dist-folder]
     if: needs.changes.outputs.non_docs == 'true'
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       - name: Fetch web client dist
         uses: actions/download-artifact@v4
@@ -855,6 +884,7 @@ jobs:
     outputs:
       ref: ${{ steps.out.outputs.ref }}
     steps:
+      - *update-ca-certificates
       - id: out
         env:
           GH_TOKEN: ${{ github.token }}
@@ -885,6 +915,7 @@ jobs:
     env:
       MIDEN_CLIENT_REF: ${{ needs.resolve-client-ref.outputs.ref }}
     steps:
+      - *update-ca-certificates
       - name: Checkout miden-client for test infra
         uses: actions/checkout@v6
         with:
@@ -959,6 +990,7 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
       MIDEN_CLIENT_REF: ${{ needs.resolve-client-ref.outputs.ref }}
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       # Auto-patch miden-client dep against any "Client PR: #N" marker in
       # the PR description. Required for changes that depend on Rust-side
@@ -1123,6 +1155,7 @@ jobs:
           - ci-shard-3-accounts-and-keys
           - ci-shard-4-compile-and-misc
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
@@ -1241,6 +1274,7 @@ jobs:
         contains(github.event.pull_request.labels.*.name, 'run-remote-prover')
       )
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
@@ -1353,6 +1387,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       # The adopted packages need `@miden-sdk/miden-sdk` only for its *types*, which
       # resolve to crates/web-client/dist. Take that dist from the artifact this
@@ -1515,6 +1550,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - *update-ca-certificates
       - uses: actions/checkout@v6
       - name: Download react-sdk coverage
         uses: actions/download-artifact@v4

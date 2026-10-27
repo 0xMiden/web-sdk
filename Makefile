@@ -144,6 +144,16 @@ test-web-client-rpc: ## Run native RPC contract tests (no node or local store re
 	# Dynamic symbols let the Rust test executable link without a Node.js host.
 	cargo test -p miden-client-web --no-default-features --features nodejs,testing,napi/dyn-symbols --profile $(RUST_TEST_PROFILE) --lib rpc_client::
 
+.PHONY: test-web-client-rpc-nodejs
+test-web-client-rpc-nodejs: ## Run native RPC binding tests (no Miden node or local store required)
+	cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
+	cd ./crates/web-client && SKIP_WEB_SERVER=1 pnpm exec playwright test rpc_client.node.test.ts --project=nodejs --workers=1
+
+.PHONY: test-web-client-rpc-browser
+test-web-client-rpc-browser: build-web-client ## Run browser RPC binding tests (no Miden node required)
+	pnpm --filter @miden-sdk/miden-sdk exec playwright install chromium webkit
+	pnpm --filter @miden-sdk/miden-sdk exec playwright test rpc_client.browser.test.ts --project=chromium --project=webkit
+
 .PHONY: integration-test-web-client
 SHARD_PARAMETER ?= ""
 # Local "clean" run: ensure deps are installed, do a debug WASM build, install

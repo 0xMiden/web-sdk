@@ -1,5 +1,31 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createSdkWrapper } from "../node/napi-compat.js";
+
+describe("Node optional RPC results", () => {
+  it.each([
+    ["getNullifierCommitHeight", [{}, 12], 0],
+    ["getNoteScriptByRoot", [{}], { script: true }],
+  ])("%s matches the browser absence contract", async (method, args, value) => {
+    class RpcClient {
+      result = null;
+    }
+    const nativeMethod = vi.fn(function () {
+      return Promise.resolve(this.result);
+    });
+    RpcClient.prototype[method] = nativeMethod;
+    const sdk = createSdkWrapper({ RpcClient });
+    const rpc = new sdk.RpcClient();
+
+    await expect(rpc[method](...args)).resolves.toBeUndefined();
+    expect(nativeMethod).toHaveBeenLastCalledWith(...args);
+    rpc.result = value;
+    await expect(rpc[method](...args)).resolves.toBe(value);
+
+    const error = new Error("RPC unavailable");
+    nativeMethod.mockRejectedValueOnce(error);
+    await expect(rpc[method](...args)).rejects.toBe(error);
+  });
+});
 
 // napi-rs puts a getter on the prototype as an enumerable, configurable
 // accessor and returns null for Option::None, where wasm-bindgen returns

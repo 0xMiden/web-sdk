@@ -504,6 +504,36 @@ Prefixes are copied before asynchronous work, and duplicates are scanned once
 without modifying your array. On Node.js, pass an `ArrayBuffer`-backed
 `Uint16Array`; `SharedArrayBuffer` backing is rejected during argument conversion.
 
+To find included transactions, use
+`rpc.syncTransactions(blockFrom, blockTo, accountIds)`. It returns
+`RpcTransactionRecord[]` with `id(): TransactionId`, `accountId(): AccountId`
+and `blockNum(): number`, collecting every page and account chunk in the
+inclusive range. Duplicate account IDs are scanned once. An empty account list
+returns `[]`; a reversed range rejects.
+Keep `blockTo` at or below the node's tip.
+
+```typescript
+import { AccountId } from "@miden-sdk/miden-sdk";
+
+const tip = (await rpc.getBlockHeaderByNumber()).blockNum();
+const records = await rpc.syncTransactions(
+  admissionTip, tip, [AccountId.fromHex(accountIdHex)],
+);
+const included = records.find((record) => record.id().toHex() === txIdHex);
+if (included) console.log("Included in block", included.blockNum());
+```
+
+Start a confirmation scan at the admission tip returned by submission and match
+the exact transaction ID. Keep your own cursor, advancing to `blockTo + 1` after
+a successful scan and waiting for the tip to reach that cursor before scanning
+again. In the browser, each call consumes its `AccountId` wrappers even on
+rejection; construct fresh wrappers from saved strings for each array entry,
+poll or retry.
+Confirmation assumes trust in the configured RPC node's report of inclusion.
+A polling timeout means unconfirmed, not failed. See the
+[stateless RPC guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/rpc-client.md#find-included-transactions)
+for a polling example.
+
 For submission, supply the proof and its complete execution inputs, plus a
 key verified against your trusted network and block header:
 

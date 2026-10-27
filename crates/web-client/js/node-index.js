@@ -296,6 +296,9 @@ export const PswapLineageRecord =
 export const PswapLineageState = /* @__PURE__ */ _reexport("PswapLineageState");
 export const PublicKey = /* @__PURE__ */ _reexport("PublicKey");
 export const RpcClient = /* @__PURE__ */ _reexport("RpcClient");
+export const RpcTransactionRecord = /* @__PURE__ */ _reexport(
+  "RpcTransactionRecord"
+);
 export const Rpo256 = /* @__PURE__ */ _reexport("Rpo256");
 export const Signature = /* @__PURE__ */ _reexport("Signature");
 export const SigningInputs = /* @__PURE__ */ _reexport("SigningInputs");
