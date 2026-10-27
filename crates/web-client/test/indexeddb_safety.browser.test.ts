@@ -760,10 +760,14 @@ test("raw worker awaits a copied candidate decision before import writes", async
     const source = `
       self.onmessage = async ({ data }) => {
         if (!data.moduleUrl) return;
+        let phase = "initialize";
+        try {
         const sdk = await import(data.moduleUrl);
         await sdk.MidenClient.ready();
+        phase = "create";
         const client = new sdk.WebClient();
         await client.createMockClient(undefined, data.chain, data.transport);
+        phase = "install";
         await client.installNoteAcquisitionGate((candidate) => new Promise((resolve) => {
           self.addEventListener("message", function acknowledge({ data }) {
             if (data.operationId !== "raw-import-1") return;
@@ -779,9 +783,11 @@ test("raw worker awaits a copied candidate decision before import writes", async
         const file = sdk.NoteFile.fromNoteDetails(new sdk.NoteDetails(new sdk.NoteAssets(), recipient));
         let code;
         try { await client.importNoteFile(file); } catch (error) { code = error.code; }
+        phase = "readback";
         const count = (await client.getInputNotes(new sdk.NoteFilter(sdk.NoteFilterTypes.All))).length;
         client.free();
         self.postMessage({ kind: "done", code, count });
+        } catch { self.postMessage({ kind: "failed", phase }); }
       };
     `;
     const url = URL.createObjectURL(
@@ -799,6 +805,8 @@ test("raw worker awaits a copied candidate decision before import writes", async
               operationId: data.operationId,
               decision: "rejected",
             });
+          } else if (data.kind === "failed") {
+            reject(new Error(`Raw worker fixture failed during ${data.phase}`));
           } else resolve({ candidate, code: data.code, count: data.count });
         };
         worker.postMessage({
