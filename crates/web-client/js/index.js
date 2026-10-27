@@ -1014,8 +1014,9 @@ class WebClient {
         this._feeFaucetId,
         this._noteTransportMaxRetries,
         this._noteTransportRetryIntervalMs,
-        workerIndexedDbOptions(this._indexedDb),
-        this._acquisition?.limits,
+        ...(this._acquisition
+          ? [workerIndexedDbOptions(this._indexedDb), this._acquisition.limits]
+          : indexedDbArgs(workerIndexedDbOptions(this._indexedDb))),
       ],
     });
   }
@@ -1856,8 +1857,9 @@ class MockWebClient extends WebClient {
         this.seed,
         this.logLevel,
         numThreads,
-        workerIndexedDbOptions(this._indexedDb),
-        this._acquisition?.limits,
+        ...(this._acquisition
+          ? [workerIndexedDbOptions(this._indexedDb), this._acquisition.limits]
+          : indexedDbArgs(workerIndexedDbOptions(this._indexedDb))),
       ],
     });
   }
