@@ -66,6 +66,7 @@ use wasm_bindgen_futures::{JsFuture, js_sys};
 
 pub mod account;
 pub mod auth;
+mod bytes;
 pub mod chain_data;
 pub mod export;
 mod forest;

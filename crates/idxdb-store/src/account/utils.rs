@@ -16,7 +16,6 @@ use miden_client::account::{
 };
 use miden_client::asset::AssetVault;
 use miden_client::store::{AccountStatus, StoreError};
-use miden_client::utils::{Deserializable, Serializable};
 use miden_client::{Felt, Word};
 use miden_client_core::store::ClientAccountType;
 use miden_client_proto::encode;
@@ -37,6 +36,7 @@ use super::js_bindings::{
 };
 use crate::account::js_bindings::idxdb_insert_account_address;
 use crate::account::models::{AccountRecordIdxdbObject, AddressIdxdbObject};
+use crate::bytes::{FromStoreBytes, ToStoreBytes};
 use crate::sync::JsAccountUpdate;
 
 pub async fn upsert_account_code(db_id: &str, account_code: &AccountCode) -> Result<(), JsValue> {
@@ -95,7 +95,7 @@ pub async fn upsert_account_record(
     let vault_root = account.vault().root().to_string();
     let committed = account.is_public();
     let nonce = account.nonce().to_string();
-    let account_seed = account.seed().map(|seed| seed.to_bytes());
+    let account_seed = account.seed().map(|seed| seed.to_store_bytes());
     let commitment = account.to_commitment().to_string();
     let watched = matches!(client_account_type, ClientAccountType::Watched);
 
@@ -122,7 +122,7 @@ pub async fn insert_account_address(
     address: Address,
 ) -> Result<(), JsValue> {
     let account_id_str = account_id.to_string();
-    let serialized_address = address.to_bytes();
+    let serialized_address = address.to_store_bytes();
     let promise = idxdb_insert_account_address(db_id, account_id_str, serialized_address);
     JsFuture::from(promise).await?;
 
@@ -132,7 +132,7 @@ pub async fn insert_account_address(
 /// Resolves to whether the address was tracked, which `Store::remove_address`
 /// reports to its caller.
 pub async fn remove_account_address(db_id: &str, address: Address) -> Result<bool, JsValue> {
-    let serialized_address = address.to_bytes();
+    let serialized_address = address.to_store_bytes();
     let promise = crate::account::js_bindings::idxdb_remove_account_address(
         db_id,
         serialized_address.clone(),
@@ -156,7 +156,7 @@ pub fn parse_account_record_idxdb_object(
         .map_err(|err| StoreError::ParsingError(format!("invalid account nonce: {err}")))?;
     let account_seed = account_header_idxdb
         .account_seed
-        .map(|seed| Word::read_from_bytes(&seed))
+        .map(|seed| Word::from_store_bytes(&seed))
         .transpose()?;
 
     let account_header = AccountHeader::new(
@@ -187,7 +187,7 @@ pub fn parse_account_address_idxdb_object(
 ) -> Result<(Address, AccountId), StoreError> {
     let native_account_id: AccountId = AccountId::from_hex(&account_address_idxdb.id)?;
 
-    let address = Address::read_from_bytes(&account_address_idxdb.address)?;
+    let address = Address::from_store_bytes(&account_address_idxdb.address)?;
 
     Ok((address, native_account_id))
 }

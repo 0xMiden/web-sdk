@@ -17,7 +17,6 @@ use miden_client::transaction::{
     TransactionStatus,
     TransactionStoreUpdate,
 };
-use miden_client::utils::Serializable;
 use miden_client_core::store::NoteUpdateTracker;
 use miden_client_proto::{decode_unchecked, encode};
 use serde::Serialize;
@@ -37,6 +36,7 @@ use super::note::utils::{
     serialize_input_note,
     serialize_output_note,
 };
+use crate::bytes::ToStoreBytes;
 use crate::promise::await_js;
 
 mod js_bindings;
@@ -321,7 +321,7 @@ impl IdxdbStore {
                     vault_root: account.vault().root().to_string(),
                     committed: account.is_public(),
                     account_commitment: account.to_commitment().to_string(),
-                    account_seed: account.seed().map(|seed| seed.to_bytes()),
+                    account_seed: account.seed().map(|seed| seed.to_store_bytes()),
                     code: encode(account.code()),
                 },
             }
@@ -368,7 +368,7 @@ fn batch_note_tag(tag_record: &NoteTagRecord) -> BatchNoteTag {
         NoteTagSource::User => (None, None, None),
     };
     BatchNoteTag {
-        tag: tag_record.tag.to_bytes(),
+        tag: tag_record.tag.to_store_bytes(),
         source_note_id,
         source_account_id,
         source_subscription_key,

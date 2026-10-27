@@ -2420,7 +2420,7 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.17.4"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=next#eb7b4b793403323c61dd49630fb0fbf3b3ca9914"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-remove-client-serializable#9e9189a3805096712ab6f85e3ec9582776e68641"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2462,7 +2462,7 @@ dependencies = [
 [[package]]
 name = "miden-client-core"
 version = "0.17.4"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=next#eb7b4b793403323c61dd49630fb0fbf3b3ca9914"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-remove-client-serializable#9e9189a3805096712ab6f85e3ec9582776e68641"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2476,7 +2476,7 @@ dependencies = [
 [[package]]
 name = "miden-client-grpc"
 version = "0.17.4"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=next#eb7b4b793403323c61dd49630fb0fbf3b3ca9914"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-remove-client-serializable#9e9189a3805096712ab6f85e3ec9582776e68641"
 dependencies = [
  "async-trait",
  "gloo-timers",
@@ -2497,8 +2497,9 @@ dependencies = [
 [[package]]
 name = "miden-client-proto"
 version = "0.17.4"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=next#eb7b4b793403323c61dd49630fb0fbf3b3ca9914"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-remove-client-serializable#9e9189a3805096712ab6f85e3ec9582776e68641"
 dependencies = [
+ "miden-client",
  "miden-client-core",
  "miden-objects",
  "miden-protocol",
@@ -2511,7 +2512,7 @@ dependencies = [
 [[package]]
 name = "miden-client-sqlite-store"
 version = "0.17.4"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=next#eb7b4b793403323c61dd49630fb0fbf3b3ca9914"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-remove-client-serializable#9e9189a3805096712ab6f85e3ec9582776e68641"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2546,6 +2547,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "prost",
  "rand 0.10.2",
  "rayon",
  "serde",
@@ -2842,6 +2844,7 @@ dependencies = [
  "miden-client",
  "miden-client-core",
  "miden-client-proto",
+ "miden-protocol",
  "miette",
  "serde",
  "serde-wasm-bindgen",
@@ -3000,6 +3003,7 @@ name = "miden-mobile-prover"
 version = "0.18.0-rc.0"
 dependencies = [
  "miden-client",
+ "miden-protocol",
 ]
 
 [[package]]

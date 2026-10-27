@@ -3,13 +3,13 @@ use alloc::vec::Vec;
 
 use miden_client::Word;
 use miden_client::account::{Account, StorageSlotContent};
-use miden_client::utils::Serializable;
 use miden_client_proto::encode;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::js_sys;
 
 use super::flattened_vec::FlattenedU8Vec;
 use crate::account::{JsStorageMapEntry, JsStorageSlot, JsVaultAsset};
+use crate::bytes::ToStoreBytes;
 use crate::note::utils::{SerializedInputNoteData, SerializedOutputNoteData};
 use crate::transaction::utils::SerializedTransactionData;
 
@@ -228,7 +228,7 @@ impl JsAccountUpdate {
             committed: account.is_public(),
             nonce: account.nonce().to_string(),
             account_commitment: account.to_commitment().to_string(),
-            account_seed: account_seed.map(|seed| seed.to_bytes()),
+            account_seed: account_seed.map(|seed| seed.to_store_bytes()),
             code: encode(account.code()),
         }
     }

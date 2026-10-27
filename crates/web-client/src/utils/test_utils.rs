@@ -1,8 +1,8 @@
-use miden_client::Serializable;
 use miden_client::account::AccountId as NativeAccountId;
 use miden_client::assembly::Assembler as NativeAssembler;
 use miden_client::testing::account_id::ACCOUNT_ID_REGULAR_PRIVATE_ACCOUNT_UPDATABLE_CODE;
 use miden_client::vm::TargetType as NativeTargetType;
+use miden_protocol::utils::serde::Serializable;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::js_sys::Uint8Array;
 

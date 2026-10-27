@@ -5,8 +5,8 @@ use miden_client::auth::{
     SigningInputs as NativeSigningInputs,
 };
 use miden_client::keystore::KeyStoreError;
-use miden_client::utils::Deserializable;
 use miden_client::{AuthenticationError, Word as NativeWord};
+use miden_protocol::utils::serde::Deserializable;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use wasm_bindgen_futures::js_sys::{Function, Promise, Uint8Array};

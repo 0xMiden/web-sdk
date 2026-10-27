@@ -72,7 +72,7 @@ mt-threads = ["dep:rayon", "dep:wasm-bindgen-rayon", "miden-client/concurrent"]
 [dependencies]
 # Workspace dependencies
 miden-client       = { features = ["testing"], workspace = true }
-miden-client-proto = { workspace = true }
+miden-client-proto = { features = ["client", "testing"], workspace = true }
 miden-protocol     = { workspace = true }
 
 # Feature-only dependency: nothing in this crate uses it directly. Enabling its
@@ -121,6 +121,7 @@ wasm-bindgen-rayon = { optional = true, version = "1.3" }
 # Common external dependencies
 async-trait         = { workspace = true }
 hex                 = { version = "0.4" }
+prost               = { workspace = true }
 rand                = { workspace = true }
 serde               = { features = ["derive"], workspace = true }
 thiserror.workspace = true

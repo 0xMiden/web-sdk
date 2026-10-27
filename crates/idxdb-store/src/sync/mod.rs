@@ -13,7 +13,6 @@ use miden_client::sync::{
     PublicAccountUpdate,
     StateSyncUpdate,
 };
-use miden_client::utils::{Deserializable, Serializable};
 use miden_client_proto::{decode_mmr_peaks, encode, encode_mmr_peaks};
 
 use super::IdxdbStore;
@@ -24,6 +23,7 @@ use super::chain_data::utils::{
 };
 use super::note::utils::{serialize_input_note, serialize_output_note};
 use super::transaction::utils::serialize_transaction_record;
+use crate::bytes::{FromStoreBytes, ToStoreBytes};
 use crate::promise::{await_js, await_js_value};
 
 mod js_bindings;
@@ -79,7 +79,7 @@ impl IdxdbStore {
                     };
 
                 Ok(NoteTagRecord {
-                    tag: NoteTag::read_from_bytes(&t.tag)?,
+                    tag: NoteTag::from_store_bytes(&t.tag)?,
                     source,
                 })
             })
@@ -105,9 +105,11 @@ impl IdxdbStore {
             return Ok(MmrPeaks::new(Forest::empty(), Vec::new())?);
         }
 
-        let forest = Forest::new(
-            usize::try_from(peaks_idxdb.block_num).expect("u32 block_num should fit in usize"),
-        )?;
+        let forest_size =
+            usize::try_from(peaks_idxdb.block_num).expect("u32 block_num should fit in usize");
+        let forest = Forest::new(forest_size).map_err(|err| {
+            StoreError::ParsingError(format!("invalid forest size {forest_size}: {err}"))
+        })?;
         Ok(decode_mmr_peaks(forest, &peaks_idxdb.peaks)?)
     }
 
@@ -121,7 +123,7 @@ impl IdxdbStore {
 
         let promise = idxdb_add_note_tag(
             self.db_id(),
-            tag.tag.to_bytes(),
+            tag.tag.to_store_bytes(),
             source_note_id,
             source_account_id,
             source_subscription_key,
@@ -137,7 +139,7 @@ impl IdxdbStore {
 
         let promise = idxdb_remove_note_tag(
             self.db_id(),
-            tag.tag.to_bytes(),
+            tag.tag.to_store_bytes(),
             source_note_id,
             source_account_id,
             source_subscription_key,
