@@ -83,3 +83,15 @@ module_name_repetitions     = "allow"                           # Many triggers,
 must_use_candidate          = "allow"                           # This marks many fn's which isn't helpful.
 should_panic_without_expect = "allow"                           # We don't care about the specific panic message.
 # End of pedantic lints.
+
+[patch.crates-io.miden-client]
+git = "https://github.com/0xMiden/rust-sdk"
+rev = "9a9b58a598a71801199d69309e1fb8e4ef27293c"
+
+[patch.crates-io.miden-client-proto]
+git = "https://github.com/0xMiden/rust-sdk"
+rev = "9a9b58a598a71801199d69309e1fb8e4ef27293c"
+
+[patch.crates-io.miden-client-sqlite-store]
+git = "https://github.com/0xMiden/rust-sdk"
+rev = "9a9b58a598a71801199d69309e1fb8e4ef27293c"

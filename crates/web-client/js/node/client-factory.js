@@ -1,3 +1,4 @@
+import { rejectNativeNoteAcquisition } from "../noteAcquisition.js";
 /**
  * Node.js-specific client factories that match the browser SDK's interface.
  *
@@ -70,6 +71,7 @@ export function createWasmWebClient(rawSdk, options) {
       noteTransportRetryIntervalMs,
       indexedDb
     ) => {
+      rejectNativeNoteAcquisition(_observability);
       if (indexedDb !== undefined)
         throw new TypeError("indexedDb requires the browser IndexedDB backend");
       validateNoteTransportRetryOptions(
@@ -97,6 +99,7 @@ export function createWasmWebClient(rawSdk, options) {
     },
 
     createClientWithExternalKeystore: async (...args) => {
+      rejectNativeNoteAcquisition(args[9]);
       if (args[13] !== undefined)
         throw new TypeError("indexedDb requires the browser IndexedDB backend");
       throw new Error(
@@ -122,8 +125,11 @@ export function createMockWasmWebClient(rawSdk) {
       serializedNoteTransport,
       seed,
       _logLevel,
-      indexedDb
+      indexedDb,
+      _useWorker,
+      acquisitionOptions
     ) => {
+      rejectNativeNoteAcquisition(acquisitionOptions);
       if (indexedDb !== undefined)
         throw new TypeError("indexedDb requires the browser IndexedDB backend");
       const dir = createTempDir("mock");

@@ -1260,3 +1260,27 @@ Both binding packages then require the disclosure a *second* time — `includeSe
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+
+### Awaited browser note retention
+
+`MidenClient.create` and `createMock` accept `beforeNoteAcquisition` together with
+`noteAcquisitionLimits` (`maxNotes`, `maxNoteFileBytes`, `maxTotalNoteFileBytes`, each a
+nonnegative u32). Direct and method-worker clients await the callback's `Promise<void>`
+before native import writes or transport cursor advancement. Native Node refuses the pair.
+Raw browser WASM clients can install the corresponding `installNoteAcquisitionGate` decision
+adapter before exposing the client; it resolves `accepted`, `rejected`, or `retentionFailed`.
+
+The copied `NoteAcquisitionCandidate` carries NoteFile bytes and actual optional identity,
+metadata and hints. ExpectedNote never invents a note ID or metadata. This is syntactic
+candidate data, not authenticated protocol proof. Retain it in independent encrypted durable
+storage, preserve previous good generations and check vault, network and epoch before
+retention and acknowledgement. Never re-enter the locked client from the callback.
+Throw `NoteAcquisitionRetentionError` only for a known independent storage failure; ordinary
+refusal maps to `NOTE_ACQUISITION_REJECTED`. Limits map to
+`NOTE_ACQUISITION_LIMIT_EXCEEDED`, and explicit storage failure maps to
+`NOTE_ACQUISITION_RETENTION_FAILED`. Callback diagnostics are not serialized.
+
+The limits bound per-item and aggregate delivered encoded bytes. The existing native
+encoder allocates before checking encoded size, so these are not strict pre-allocation
+bounds. See `NoteAcquisitionOptions` and `NoteAcquisitionCandidate` for the field contract.

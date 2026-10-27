@@ -58,6 +58,8 @@ pub mod mock;
 pub mod models;
 pub mod new_account;
 pub mod new_transactions;
+#[cfg(feature = "browser")]
+mod note_acquisition;
 pub mod note_transport;
 pub mod notes;
 pub(crate) mod platform;
@@ -862,7 +864,21 @@ fn hint_from_error(err: &(dyn Error + 'static)) -> Option<String> {
 /// returns `None`.
 #[cfg(feature = "browser")]
 fn code_from_error(err: &(dyn Error + 'static)) -> Option<&'static str> {
+    if let Some(acquisition) = err.downcast_ref::<miden_client::note::NoteAcquisitionError>() {
+        return Some(match acquisition {
+            miden_client::note::NoteAcquisitionError::LimitExceeded => {
+                "NOTE_ACQUISITION_LIMIT_EXCEEDED"
+            },
+            miden_client::note::NoteAcquisitionError::RetentionFailed => {
+                "NOTE_ACQUISITION_RETENTION_FAILED"
+            },
+            miden_client::note::NoteAcquisitionError::Rejected => "NOTE_ACQUISITION_REJECTED",
+        });
+    }
     if let Some(client_error) = err.downcast_ref::<ClientError>() {
+        if let ClientError::NoteAcquisition(acquisition) = client_error {
+            return code_from_error(acquisition);
+        }
         return match client_error {
             ClientError::AccountNotFoundOnChain(_) => Some("ACCOUNT_NOT_FOUND_ON_CHAIN"),
             ClientError::AccountAlreadyTracked(_) => Some("ACCOUNT_ALREADY_TRACKED"),

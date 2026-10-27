@@ -231,3 +231,27 @@ the asset back in the vault. The amount-based `send` helper remains fungible-onl
 If there is no application yet, [`0xMiden/agentic-template`](https://github.com/0xMiden/agentic-template)
 scaffolds the full stack: Rust contracts, MockChain tests, local-node
 validation, and a React frontend already wired to this SDK.
+
+
+### Awaited browser note retention
+
+`MidenClient.create` and `createMock` accept `beforeNoteAcquisition` together with
+`noteAcquisitionLimits` (`maxNotes`, `maxNoteFileBytes`, `maxTotalNoteFileBytes`, each a
+nonnegative u32). Direct and method-worker clients await the callback's `Promise<void>`
+before native import writes or transport cursor advancement. Native Node refuses the pair.
+Raw browser WASM clients can install the corresponding `installNoteAcquisitionGate` decision
+adapter before exposing the client; it resolves `accepted`, `rejected`, or `retentionFailed`.
+
+The copied `NoteAcquisitionCandidate` carries NoteFile bytes and actual optional identity,
+metadata and hints. ExpectedNote never invents a note ID or metadata. This is syntactic
+candidate data, not authenticated protocol proof. Retain it in independent encrypted durable
+storage, preserve previous good generations and check vault, network and epoch before
+retention and acknowledgement. Never re-enter the locked client from the callback.
+Throw `NoteAcquisitionRetentionError` only for a known independent storage failure; ordinary
+refusal maps to `NOTE_ACQUISITION_REJECTED`. Limits map to
+`NOTE_ACQUISITION_LIMIT_EXCEEDED`, and explicit storage failure maps to
+`NOTE_ACQUISITION_RETENTION_FAILED`. Callback diagnostics are not serialized.
+
+The limits bound per-item and aggregate delivered encoded bytes. The existing native
+encoder allocates before checking encoded size, so these are not strict pre-allocation
+bounds. See `NoteAcquisitionOptions` and `NoteAcquisitionCandidate` for the field contract.

@@ -1,3 +1,5 @@
+import { createNoteAcquisitionOwner } from "./noteAcquisition.js";
+export { NoteAcquisitionRetentionError } from "./noteAcquisition.js";
 import {
   validateIndexedDbOptions,
   indexedDbArgs,
@@ -117,6 +119,7 @@ const WRITE_METHODS = new Set([
   "importAccountFile",
   "importNoteFile",
   "insertAccountAddress",
+  "installNoteAcquisitionGate",
   "newAccount",
   "newB2AggTransactionRequest",
   "newConsumeTransactionRequest",
@@ -505,6 +508,10 @@ class WebClient {
       noteTransportMaxRetries,
       noteTransportRetryIntervalMs
     );
+    this._acquisition = createNoteAcquisitionOwner(
+      observability,
+      () => !this._terminated
+    );
     const storageOptions = validateIndexedDbOptions(indexedDb);
     const storageSubscription = createIndexedDbFailureSubscription(
       storageOptions?.onFailure,
@@ -598,6 +605,32 @@ class WebClient {
       // Listen for messages from the worker.
       this.worker.addEventListener("message", async (event) => {
         const data = event.data;
+        if (data.action === "noteAcquisition") {
+          const { acquisitionId, operationId, candidate } = data;
+          const owns = () =>
+            !this._terminated && this.pendingRequests.has(operationId);
+          const operation = this.pendingRequests.get(operationId);
+          const seen = operation && (operation.acquisitionIds ??= new Set());
+          const valid =
+            owns() &&
+            Number.isSafeInteger(acquisitionId) &&
+            acquisitionId > 0 &&
+            !seen.has(acquisitionId) &&
+            seen.size < (this._acquisition?.limits.maxNotes ?? 0);
+          if (valid) seen.add(acquisitionId);
+          const decision =
+            valid && this._acquisition
+              ? await this._acquisition.decide(candidate, operationId)
+              : "rejected";
+          if (!this._terminated)
+            this.worker.postMessage({
+              action: "noteAcquisitionAck",
+              acquisitionId,
+              operationId,
+              decision: owns() ? decision : "rejected",
+            });
+          return;
+        }
         if (data.action === WorkerAction.STORAGE_FAILURE) {
           if (!this._terminated)
             deliverIndexedDbFailure(this._indexedDb?.onFailure, data.failure);
@@ -680,6 +713,8 @@ class WebClient {
         }
       });
 
+      this.worker.addEventListener("error", () => this.terminate());
+      this.worker.addEventListener("messageerror", () => this.terminate());
       // Once the worker script has loaded, initialize the worker.
       this.loaded.then(() => this.initializeWorker());
     } else {
@@ -979,7 +1014,8 @@ class WebClient {
         this._feeFaucetId,
         this._noteTransportMaxRetries,
         this._noteTransportRetryIntervalMs,
-        ...indexedDbArgs(workerIndexedDbOptions(this._indexedDb)),
+        workerIndexedDbOptions(this._indexedDb),
+        this._acquisition?.limits,
       ],
     });
   }
@@ -1086,6 +1122,7 @@ class WebClient {
       );
 
       // Wait for the worker to be ready
+      await instance._installAcquisition(wasmWebClient);
       await instance.ready;
     } catch (error) {
       // Never handed to the caller, so nothing else would terminate it.
@@ -1185,6 +1222,7 @@ class WebClient {
         ...indexedDbArgs(instance._indexedDb)
       );
 
+      await instance._installAcquisition(wasmWebClient);
       await instance.ready;
     } catch (error) {
       // Never handed to the caller, so nothing else would terminate it.
@@ -1192,6 +1230,14 @@ class WebClient {
       throw error;
     }
     return createClientProxy(instance);
+  }
+
+  async _installAcquisition(client) {
+    if (this._acquisition)
+      await client.installNoteAcquisitionGate(
+        (candidate) => this._acquisition.decide(candidate),
+        this._acquisition.limits
+      );
   }
 
   /**
@@ -1696,6 +1742,7 @@ class WebClient {
    */
   terminate() {
     this._terminated = true;
+    this._acquisition?.retire();
     if (this.worker) {
       this.worker.terminate();
       // The stopped worker answers nothing, so a call still waiting on it
@@ -1769,7 +1816,7 @@ class WebClient {
 }
 
 class MockWebClient extends WebClient {
-  constructor(seed, logLevel, indexedDb, useWorker = true) {
+  constructor(seed, logLevel, indexedDb, useWorker = true, acquisitionOptions) {
     super(
       null,
       null,
@@ -1780,7 +1827,7 @@ class MockWebClient extends WebClient {
       undefined,
       logLevel,
       useWorker,
-      undefined,
+      acquisitionOptions,
       undefined,
       undefined,
       undefined,
@@ -1809,7 +1856,8 @@ class MockWebClient extends WebClient {
         this.seed,
         this.logLevel,
         numThreads,
-        ...indexedDbArgs(workerIndexedDbOptions(this._indexedDb)),
+        workerIndexedDbOptions(this._indexedDb),
+        this._acquisition?.limits,
       ],
     });
   }
@@ -1832,10 +1880,17 @@ class MockWebClient extends WebClient {
     seed,
     logLevel,
     indexedDb,
-    useWorker
+    useWorker,
+    acquisitionOptions
   ) {
     // Construct the instance (synchronously).
-    const instance = new MockWebClient(seed, logLevel, indexedDb, useWorker);
+    const instance = new MockWebClient(
+      seed,
+      logLevel,
+      indexedDb,
+      useWorker,
+      acquisitionOptions
+    );
 
     try {
       // Set up logging on the main thread before creating the client.
@@ -1854,6 +1909,7 @@ class MockWebClient extends WebClient {
       );
 
       // Wait for the worker to be ready
+      await instance._installAcquisition(wasmWebClient);
       await instance.ready;
     } catch (error) {
       // Never handed to the caller, so nothing else would terminate it.
@@ -2050,6 +2106,7 @@ class MockWebClient extends WebClient {
             newMockNoteTransportNode,
             ...indexedDbArgs(this._indexedDb)
           );
+          await this._installAcquisition(replacement);
         } catch (error) {
           try {
             replacement.free();
@@ -2123,6 +2180,7 @@ class MockWebClient extends WebClient {
             newMockNoteTransportNode,
             ...indexedDbArgs(this._indexedDb)
           );
+          await this._installAcquisition(replacement);
         } catch (error) {
           try {
             replacement.free();

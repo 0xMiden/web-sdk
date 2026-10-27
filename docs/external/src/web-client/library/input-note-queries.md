@@ -105,8 +105,9 @@ Existing `notes.list()` defaults and other filters remain unchanged.
 
 ## Recovery boundaries
 
-These are enumeration and lookup APIs. They do not add an awaited pre-acquisition
-callback, an acquisition write gate, an encrypted journal or backup promotion.
+These enumeration and lookup APIs are separate from the opt-in
+[awaited acquisition gate](./note-acquisition.md). They do not provide an encrypted
+journal or backup promotion.
 Bounded pages let an application inspect a large public-note population before
 applying its own retention rules, but the SDK does not decide which records are
 recovery-critical or whether an incomplete scan is safe to accept.

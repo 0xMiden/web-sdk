@@ -1,3 +1,4 @@
+import { createAcquisitionChannel } from "../noteAcquisition.js";
 import { indexedDbArgs } from "../indexeddb.js";
 import loadWasm from "../../dist/wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "../constants.js";
@@ -90,6 +91,19 @@ const serializeError = (error) => {
 // Global state variables.
 let wasmWebClient = null;
 let wasmIndexedDb;
+let acquisitionLimits;
+let acquisitionOperation;
+const acquisitionChannel = createAcquisitionChannel((message) =>
+  self.postMessage(message)
+);
+async function installAcquisition() {
+  if (acquisitionLimits)
+    await wasmWebClient.installNoteAcquisitionGate(
+      (candidate) =>
+        acquisitionChannel.request(candidate, acquisitionOperation),
+      acquisitionLimits
+    );
+}
 let wasmSeed = null; // Seed for the WASM WebClient, if needed.
 let ready = false; // Indicates if the worker is fully initialized.
 let messageQueue = []; // Queue for sequential processing.
@@ -344,6 +358,7 @@ methodHandlers[MethodName.SYNC_STATE_MOCK] = async (args) => {
     serializedMockNoteTransportNode,
     ...indexedDbArgs(wasmIndexedDb)
   );
+  await installAcquisition();
 
   return await methodHandlers[MethodName.SYNC_STATE]();
 };
@@ -360,6 +375,7 @@ methodHandlers[MethodName.SYNC_CHAIN_MOCK] = async (args) => {
     serializedMockNoteTransportNode,
     ...indexedDbArgs(wasmIndexedDb)
   );
+  await installAcquisition();
 
   return await methodHandlers[MethodName.SYNC_CHAIN]();
 };
@@ -376,6 +392,7 @@ methodHandlers[MethodName.SYNC_NOTE_TRANSPORT_MOCK] = async (args) => {
     serializedMockNoteTransportNode,
     ...indexedDbArgs(wasmIndexedDb)
   );
+  await installAcquisition();
 
   return await methodHandlers[MethodName.SYNC_NOTE_TRANSPORT]();
 };
@@ -396,6 +413,7 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_MOCK] = async (args) => {
     serializedMockNoteTransportNode,
     ...indexedDbArgs(wasmIndexedDb)
   );
+  await installAcquisition();
 
   const result = await methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION](args);
 
@@ -432,6 +450,7 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK] = async (
     serializedMockNoteTransportNode,
     ...indexedDbArgs(wasmIndexedDb)
   );
+  await installAcquisition();
 
   const result =
     await methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER](args);
@@ -483,7 +502,9 @@ async function processMessage(event) {
         noteTransportMaxRetries,
         noteTransportRetryIntervalMs,
         storagePolicy,
+        limits,
       ] = args;
+      acquisitionLimits = limits;
       const indexedDb = storageOptions(storagePolicy);
       wasmIndexedDb = indexedDb;
       const wasm = await getWasmOrThrow();
@@ -539,12 +560,14 @@ async function processMessage(event) {
         );
       }
 
+      await installAcquisition();
       wasmSeed = seed;
       ready = true;
       self.postMessage({ ready: true });
       return;
     } else if (action === WorkerAction.INIT_MOCK) {
-      const [seed, logLevel, numThreads, storagePolicy] = args;
+      const [seed, logLevel, numThreads, storagePolicy, limits] = args;
+      acquisitionLimits = limits;
       const indexedDb = storageOptions(storagePolicy);
       wasmIndexedDb = indexedDb;
       const wasm = await getWasmOrThrow();
@@ -572,6 +595,7 @@ async function processMessage(event) {
         ...indexedDbArgs(indexedDb)
       );
 
+      await installAcquisition();
       wasmSeed = seed;
       ready = true;
       self.postMessage({ ready: true });
@@ -588,7 +612,13 @@ async function processMessage(event) {
       if (!handler) {
         throw new Error(`Unsupported method: ${methodName}`);
       }
-      const result = await handler(args);
+      acquisitionOperation = requestId;
+      let result;
+      try {
+        result = await handler(args);
+      } finally {
+        acquisitionOperation = undefined;
+      }
       self.postMessage({ requestId, result, methodName });
       return;
     } else {
@@ -622,6 +652,7 @@ async function processQueue() {
 
 // Enqueue incoming messages and process them sequentially.
 self.onmessage = (event) => {
+  if (acquisitionChannel.receive(event.data)) return;
   if (
     event.data.callbackRequestId &&
     pendingCallbacks.has(event.data.callbackRequestId)

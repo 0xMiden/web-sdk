@@ -461,47 +461,288 @@ for (const build of ["st", "mt"]) {
 }
 
 for (const useWorker of [false, true]) {
-  test(`native acquisition refusal preserves input notes worker=${useWorker}`, async ({ page }) => {
+  test(`native acquisition refusal preserves input notes worker=${useWorker}`, async ({
+    page,
+  }) => {
     await prepare(page, "st", "index", "module");
     const result = await page.evaluate(async (useWorker) => {
       const { client: previous, sdk } = window.storageTest;
       const serializedMockChain = await previous.serializeMockChain();
-      const serializedNoteTransport = await previous.serializeMockNoteTransportNode();
+      const serializedNoteTransport =
+        await previous.serializeMockNoteTransportNode();
       previous.terminate();
       await previous.waitForIdle();
       let candidate;
       const client = await sdk.MidenClient.createMock({
-        serializedMockChain, serializedNoteTransport, useWorker,
+        serializedMockChain,
+        serializedNoteTransport,
+        useWorker,
         beforeNoteAcquisition: async (item) => {
           candidate = item;
           throw new Error("private retention diagnostic must not escape");
         },
-        noteAcquisitionLimits: { maxNotes: 1, maxNoteFileBytes: 65536, maxTotalNoteFileBytes: 65536 },
+        noteAcquisitionLimits: {
+          maxNotes: 1,
+          maxNoteFileBytes: 65536,
+          maxTotalNoteFileBytes: 65536,
+        },
       });
       const recipient = new sdk.NoteRecipient(
         new sdk.Word(new BigUint64Array([91n, 0n, 0n, 0n])),
-        sdk.NoteScript.p2id(), new sdk.NoteStorage(new sdk.FeltArray())
+        sdk.NoteScript.p2id(),
+        new sdk.NoteStorage(new sdk.FeltArray())
       );
-      const file = sdk.NoteFile.fromNoteDetails(new sdk.NoteDetails(new sdk.NoteAssets(), recipient));
+      const file = sdk.NoteFile.fromNoteDetails(
+        new sdk.NoteDetails(new sdk.NoteAssets(), recipient)
+      );
       let error;
-      try { await client.notes.import(file); } catch (value) {
+      try {
+        await client.notes.import(file);
+      } catch (value) {
         error = { code: value.code, message: value.message };
       }
       const notes = await client.notes.list();
       await client.waitForIdle();
       client.terminate();
-      return { error, count: notes.length, candidate: candidate && {
-        variant: candidate.variant, source: candidate.source,
-        bytes: candidate.noteFileBytes instanceof Uint8Array,
-        metadataAbsent: candidate.metadata === undefined,
-        noteIdAbsent: candidate.noteId === undefined,
-        batchIndex: candidate.batchIndex, batchCount: candidate.batchCount,
-      }};
+      return {
+        error,
+        count: notes.length,
+        candidate: candidate && {
+          variant: candidate.variant,
+          source: candidate.source,
+          bytes: candidate.noteFileBytes instanceof Uint8Array,
+          metadataAbsent: candidate.metadata === undefined,
+          noteIdAbsent: candidate.noteId === undefined,
+          batchIndex: candidate.batchIndex,
+          batchCount: candidate.batchCount,
+        },
+      };
     }, useWorker);
     expect(result.error?.code).toBe("NOTE_ACQUISITION_REJECTED");
     expect(result.error?.message).not.toContain("private retention diagnostic");
     expect(result.count).toBe(0);
-    expect(result.candidate).toEqual({ variant: "expectedNote", source: "import", bytes: true,
-      metadataAbsent: true, noteIdAbsent: true, batchIndex: 0, batchCount: 1 });
+    expect(result.candidate).toEqual({
+      variant: "expectedNote",
+      source: "import",
+      bytes: true,
+      metadataAbsent: true,
+      noteIdAbsent: true,
+      batchIndex: 0,
+      batchCount: 1,
+    });
+  });
+}
+
+for (const build of ["st", "mt"]) {
+  test(`awaited worker transport retention preserves cursors ${build}`, async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(
+      build === "mt" && browserName === "webkit",
+      "Threaded WASM requires the Chromium CI capability"
+    );
+    await prepare(page, build, "index", "module");
+    const result = await page.evaluate(async () => {
+      const { client: previous, sdk } = window.storageTest;
+      const serializedMockChain = await previous.serializeMockChain();
+      const serializedNoteTransport =
+        await previous.serializeMockNoteTransportNode();
+      previous.terminate();
+      await previous.waitForIdle();
+      const receipts = [];
+      let accept = false;
+      let release;
+      const receipt = new Promise((resolve) => {
+        release = resolve;
+      });
+      let entered;
+      const observed = new Promise((resolve) => {
+        entered = resolve;
+      });
+      const client = await sdk.MidenClient.createMock({
+        serializedMockChain,
+        serializedNoteTransport,
+        useWorker: true,
+        beforeNoteAcquisition: async (candidate) => {
+          receipts.push({
+            operationId: candidate.operationId,
+            source: candidate.source,
+            variant: candidate.variant,
+            bytes: candidate.noteFileBytes instanceof Uint8Array,
+            metadataAbsent: candidate.metadata === undefined,
+          });
+          entered();
+          await receipt;
+          if (!accept) throw new Error("refused");
+        },
+        noteAcquisitionLimits: {
+          maxNotes: 2,
+          maxNoteFileBytes: 65536,
+          maxTotalNoteFileBytes: 131072,
+        },
+      });
+      const sender = await client.accounts.create({
+        seed: new Uint8Array(32).fill(1),
+      });
+      const recipient = await client.accounts.create({
+        seed: new Uint8Array(32).fill(2),
+      });
+      const faucet = await client.accounts.create({
+        type: sdk.FaucetType.FungibleFaucet,
+        storage: "private",
+        symbol: "DAG",
+        decimals: 8,
+        maxSupply: 10000000n,
+      });
+      await client._withInnerWebClient(async (inner) => {
+        const note = sdk.Note.createP2IDNote(
+          sender.id(),
+          recipient.id(),
+          new sdk.NoteAssets([new sdk.FungibleAsset(faucet.id(), 1n)]),
+          sdk.NoteType.Private,
+          new sdk.NoteAttachment()
+        );
+        await inner.sendPrivateNote(
+          note,
+          sdk.Address.fromAccountId(recipient.id(), "BasicWallet"),
+          sdk.NoteInclusionProof.mockAtBlock(0)
+        );
+      });
+      let settled = false;
+      const pending = client
+        .syncNoteTransport()
+        .then(
+          () => "accepted",
+          (error) => error.code
+        )
+        .finally(() => {
+          settled = true;
+        });
+      await observed;
+      // Inspect IndexedDB directly instead of re-entering the locked client.
+      const db = await new Promise((resolve, reject) => {
+        const request = indexedDB.open("mock_client_db");
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const count = await new Promise((resolve, reject) => {
+        const request = db
+          .transaction("inputNotes")
+          .objectStore("inputNotes")
+          .count();
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      db.close();
+      const beforeAck = { settled, count };
+      release();
+      const refusal = await pending;
+      const afterRefusal = (await client.notes.list()).length;
+      accept = true;
+      await client.syncNoteTransport();
+      const afterRetry = (await client.notes.list()).length;
+      await client.waitForIdle();
+      client.terminate();
+      return { beforeAck, refusal, afterRefusal, afterRetry, receipts };
+    });
+    expect(result.beforeAck).toEqual({ settled: false, count: 0 });
+    expect(result.refusal).toBe("NOTE_ACQUISITION_REJECTED");
+    expect(result.afterRefusal).toBe(0);
+    expect(result.afterRetry).toBe(1);
+    expect(result.receipts).toHaveLength(2);
+    for (const receipt of result.receipts) {
+      expect(receipt.operationId).toContain("syncNoteTransportMock-");
+      expect(receipt.source).toBe("noteTransport");
+      expect(receipt.bytes).toBe(true);
+      expect(receipt.variant).toBe("expectedNote");
+      expect(receipt.metadataAbsent).toBe(true);
+    }
+    expect(result.receipts[0].operationId).not.toBe(
+      result.receipts[1].operationId
+    );
+  });
+}
+
+for (const mode of ["limit", "retention", "invalid", "retired"]) {
+  test(`direct acquisition boundary ${mode}`, async ({ page }) => {
+    await prepare(page, "st", "index", "module");
+    const result = await page.evaluate(async (mode) => {
+      const { client: previous, sdk } = window.storageTest;
+      const serializedMockChain = await previous.serializeMockChain();
+      const serializedNoteTransport =
+        await previous.serializeMockNoteTransportNode();
+      previous.terminate();
+      await previous.waitForIdle();
+      let calls = 0;
+      let entered;
+      const observed = new Promise((resolve) => {
+        entered = resolve;
+      });
+      const client = await sdk.MidenClient.createMock({
+        serializedMockChain,
+        serializedNoteTransport,
+        useWorker: false,
+        beforeNoteAcquisition: (candidate) => {
+          calls++;
+          if (!(candidate.noteFileBytes instanceof Uint8Array))
+            throw new Error("not copied");
+          if (mode === "invalid") return;
+          if (mode === "retention")
+            return Promise.reject(new sdk.NoteAcquisitionRetentionError());
+          entered();
+          return new Promise(() => {});
+        },
+        noteAcquisitionLimits: {
+          maxNotes: mode === "limit" ? 0 : 1,
+          maxNoteFileBytes: 65536,
+          maxTotalNoteFileBytes: 65536,
+        },
+      });
+      const recipient = new sdk.NoteRecipient(
+        new sdk.Word(new BigUint64Array([93n, 0n, 0n, 0n])),
+        sdk.NoteScript.p2id(),
+        new sdk.NoteStorage(new sdk.FeltArray())
+      );
+      const file = sdk.NoteFile.fromNoteDetails(
+        new sdk.NoteDetails(new sdk.NoteAssets(), recipient)
+      );
+      const pending = client.notes.import(file).then(
+        () => "accepted",
+        (error) => error.code
+      );
+      if (mode === "retired") {
+        await observed;
+        client.terminate();
+      }
+      const code = await pending;
+      const db = await new Promise((resolve, reject) => {
+        const request = indexedDB.open("mock_client_db");
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const count = await new Promise((resolve) => {
+        const request = db
+          .transaction("inputNotes")
+          .objectStore("inputNotes")
+          .count();
+        request.onsuccess = () => resolve(request.result);
+      });
+      db.close();
+      if (mode !== "retired") {
+        await client.waitForIdle();
+        client.terminate();
+      }
+      return { code, count, calls };
+    }, mode);
+    expect(result.count).toBe(0);
+    expect(result.calls).toBe(mode === "limit" ? 0 : 1);
+    expect(result.code).toBe(
+      mode === "limit"
+        ? "NOTE_ACQUISITION_LIMIT_EXCEEDED"
+        : mode === "retention"
+          ? "NOTE_ACQUISITION_RETENTION_FAILED"
+          : "NOTE_ACQUISITION_REJECTED"
+    );
   });
 }

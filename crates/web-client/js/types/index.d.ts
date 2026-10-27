@@ -22,6 +22,7 @@ import type {
   InsertKeyCallback,
   MidenObservation,
   IndexedDbOptions,
+  NoteAcquisitionOptions,
   SignCallback,
 } from "./api-types";
 
@@ -151,7 +152,7 @@ export declare function wordToBigInt(word: Word): bigint;
  * @internal Observability fields `MidenClient.create` forwards to the low-level
  * factories. Mirrors the pair on {@link ClientOptions}; both are construction-only.
  */
-export interface ClientObservabilityOptions {
+export interface ClientObservabilityOptions extends NoteAcquisitionOptions {
   observer?: (observation: MidenObservation) => void;
   observeSensitive?: boolean;
 }
@@ -252,7 +253,8 @@ export declare class MockWasmWebClient extends WasmWebClient {
     seed?: Uint8Array,
     logLevel?: LogLevel,
     indexedDb?: IndexedDbOptions,
-    useWorker?: boolean
+    useWorker?: boolean,
+    acquisitionOptions?: NoteAcquisitionOptions
   ): Promise<MockWasmWebClient>;
 
   proveBlock(): Promise<void>;

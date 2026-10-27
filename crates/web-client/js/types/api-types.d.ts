@@ -278,7 +278,53 @@ export interface IndexedDbOptions {
   onFailure?: (failure: IndexedDbFailure) => void;
 }
 
-export interface ClientOptions {
+/** A syntactic candidate, not an authenticated proof of network inclusion. */
+export interface NoteAcquisitionCandidate {
+  readonly operationId: string;
+  readonly noteFileBytes: Uint8Array;
+  readonly variant: "noteId" | "expectedNote" | "committed";
+  readonly source: "import" | "noteTransport";
+  readonly batchIndex: number;
+  readonly batchCount: number;
+  readonly detailsCommitment?: string;
+  readonly noteId?: string;
+  readonly nullifier?: string;
+  readonly metadata?: {
+    readonly sender: string;
+    readonly noteType: 0 | 1;
+    readonly tag: number;
+    readonly attachmentsCommitment: string;
+  };
+  readonly tag?: number;
+  readonly afterBlockNum?: number;
+}
+
+export interface NoteAcquisitionOptions {
+  /**
+   * Browser only. Await an independent durable receipt before any native import writes or
+   * transport cursor advancement. Must return Promise<void>. Never re-enter this client.
+   * Check vault, network and epoch before retention and again before resolving. Preserve good
+   * retained generations when refusing a later candidate. Generic throws reject without implying
+   * storage corruption; throw NoteAcquisitionRetentionError only for a known storage failure.
+   */
+  beforeNoteAcquisition?: (candidate: NoteAcquisitionCandidate) => Promise<void>;
+  /**
+   * Required together with the callback. Nonnegative u32 limits on delivered candidates;
+   * these do not bound initial native encoder allocation. Zero refuses nonempty input.
+   */
+  noteAcquisitionLimits?: {
+    maxNotes: number;
+    maxNoteFileBytes: number;
+    maxTotalNoteFileBytes: number;
+  };
+}
+
+/** Deliberate signal of a known independent retention failure, with no sensitive diagnostics. */
+export declare class NoteAcquisitionRetentionError extends Error {
+  constructor();
+}
+
+export interface ClientOptions extends NoteAcquisitionOptions {
   /**
    * Opt-in browser storage options, also forwarded to this client's method worker.
    * Node SQLite rejects any explicit value, including {}, with TypeError before
@@ -1187,7 +1233,7 @@ export interface SendPrivateOutputOptions {
   to: AccountRef;
 }
 
-export interface MockOptions {
+export interface MockOptions extends NoteAcquisitionOptions {
   /**
    * Browser IndexedDB policy, including the mock method worker. The chain is in
    * memory, but the browser store uses IndexedDB. Node SQLite rejects an explicit

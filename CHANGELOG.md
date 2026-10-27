@@ -2,6 +2,8 @@
 
 ## 0.17.7 (TBD)
 
+- Add optional awaited browser note-acquisition retention before import writes and transport cursor advancement, including method workers.
+
 ### Enhancements
 
 * [FEATURE][web] Page browser input notes with `notes.listPage({ states, afterDetailsCommitment, limit })`, scanning at most 128 raw rows by default (maximum 256) before state filtering and returning an advancing cursor even for empty filtered pages. Omitted states includes all states. Look up known notes across all states on browser and Node with `notes.list({ detailsCommitments: [hexOrWord] })` ([#505](https://github.com/0xMiden/web-sdk/pull/505)).

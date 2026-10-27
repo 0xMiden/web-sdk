@@ -1,3 +1,4 @@
+export { NoteAcquisitionRetentionError } from "./noteAcquisition.js";
 /**
  * Node.js entry point for @miden-sdk/miden-sdk.
  *

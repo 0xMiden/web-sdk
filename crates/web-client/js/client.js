@@ -1,3 +1,4 @@
+import { validateNoteAcquisitionOptions } from "./noteAcquisition.js";
 import { validateIndexedDbOptions, indexedDbArgs } from "./indexeddb.js";
 import { AccountsResource } from "./resources/accounts.js";
 import { TransactionsResource } from "./resources/transactions.js";
@@ -147,6 +148,7 @@ export class MidenClient {
    * @returns {Promise<MidenClient>} A fully initialized client.
    */
   static async create(options) {
+    validateNoteAcquisitionOptions(options);
     validateIndexedDbOptions(options?.indexedDb);
     validateNoteTransportRetryOptions(
       options?.noteTransportMaxRetries,
@@ -321,6 +323,7 @@ export class MidenClient {
    * @returns {Promise<MidenClient>} A mock client.
    */
   static async createMock(options) {
+    validateNoteAcquisitionOptions(options);
     validateIndexedDbOptions(options?.indexedDb);
     const getWasm = MidenClient._getWasmOrThrow;
     const MockWebClientClass = MidenClient._MockWasmWebClient;
@@ -337,8 +340,10 @@ export class MidenClient {
       options?.serializedMockChain,
       options?.serializedNoteTransport,
       seed,
-      ...(options?.indexedDb !== undefined || options?.useWorker !== undefined
-        ? [undefined, options?.indexedDb, options?.useWorker]
+      ...(options?.indexedDb !== undefined ||
+      options?.useWorker !== undefined ||
+      options?.beforeNoteAcquisition !== undefined
+        ? [undefined, options?.indexedDb, options?.useWorker, options]
         : [])
     );
 

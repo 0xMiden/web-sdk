@@ -1583,3 +1583,18 @@ while (true) {
     the wrong request rather than failing. Split it into two calls.
 19. **Dereferencing `consumeAll().txId` unconditionally.** It is `null`, with
     zero counts, when the account had nothing consumable.
+
+
+### Awaited candidate retention
+
+Browser `create` and `createMock` accept paired `beforeNoteAcquisition` and
+`noteAcquisitionLimits` options. The callback returns `Promise<void>` after an independent
+durable receipt; direct and method-worker operations await it before import writes and
+transport cursor advancement. Never re-enter the locked client. Bind vault, network and
+epoch before retention and acknowledgement, and preserve prior good retained generations.
+`NoteAcquisitionCandidate` carries copied NoteFile bytes and actual optional metadata;
+ExpectedNote has no invented note ID, metadata or nullifier. Candidate typing does not
+authenticate inclusion. Delivered u32 count/byte limits do not bound initial encoder
+allocation. Native Node refuses the options. Generic refusal is `NOTE_ACQUISITION_REJECTED`;
+only a deliberate `NoteAcquisitionRetentionError` signals a known independent storage
+failure. See the note-acquisition narrative and `js/types/api-types.d.ts`.
