@@ -319,6 +319,7 @@ jobs:
       needs.check-version.outputs.adopted_count != '0'
     runs-on: ubuntu-24.04
     steps:
+      - *update-ca-certificates
       - name: Check out code
         uses: actions/checkout@v6
         with:

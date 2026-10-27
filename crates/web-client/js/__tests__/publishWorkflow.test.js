@@ -97,6 +97,9 @@ describe("release publication contracts", () => {
     expect(commands(publish)).not.toContain(coreBuild);
     expect(commands(publish)).not.toContain(reactBuild);
     expect(commands(build)).toContain("git diff --exit-code -- Cargo.lock");
+    expect(build.steps.map((step) => step.name)).toContain(
+      "Update CA certificates"
+    );
     expect(commands(build)).toContain("./scripts/install-binaryen.sh");
     expect(commands(build)).toContain("./scripts/verify-wasm-size.sh");
     expect(commands(build)).not.toMatch(/MIDEN_(FAST_BUILD|WEB_DEV)=true/);
