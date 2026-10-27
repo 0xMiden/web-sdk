@@ -761,6 +761,7 @@ test("raw worker awaits a copied candidate decision before import writes", async
       self.onmessage = async ({ data }) => {
         if (!data.moduleUrl) return;
         const sdk = await import(data.moduleUrl);
+        await sdk.MidenClient.ready();
         const client = new sdk.WebClient();
         await client.createMockClient(undefined, data.chain, data.transport);
         await client.installNoteAcquisitionGate((candidate) => new Promise((resolve) => {
