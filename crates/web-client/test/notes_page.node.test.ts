@@ -23,3 +23,27 @@ test("native Node rejects bounded browser paging but supports details commitment
     client.terminate();
   }
 });
+
+test("native Node explicitly refuses acquisition callbacks during initialization", async ({
+  sdk,
+}) => {
+  const MidenClient = await createMidenClient(sdk);
+  expect(MidenClient).not.toBeNull();
+  const options = {
+    beforeNoteAcquisition: async () => {},
+    noteAcquisitionLimits: {
+      maxNotes: 1,
+      maxNoteFileBytes: 65536,
+      maxTotalNoteFileBytes: 65536,
+    },
+  };
+  await expect(MidenClient.createMock(options)).rejects.toThrow(
+    /unsupported.*native Node/i
+  );
+  await expect(
+    MidenClient.create({ rpcUrl: "localhost", ...options })
+  ).rejects.toThrow(/unsupported.*native Node/i);
+  console.info(
+    "note acquisition native Node: both explicit unsupported-option assertions passed"
+  );
+});
