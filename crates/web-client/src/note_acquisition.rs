@@ -53,11 +53,14 @@ impl NoteAcquisitionGate for BrowserGate {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 struct Limits {
-    max_notes: u32,
-    max_note_file_bytes: u32,
-    max_total_note_file_bytes: u32,
+    #[serde(rename = "maxNotes")]
+    notes: u32,
+    #[serde(rename = "maxNoteFileBytes")]
+    note_file_bytes: u32,
+    #[serde(rename = "maxTotalNoteFileBytes")]
+    total_note_file_bytes: u32,
 }
 
 #[wasm_bindgen]
@@ -74,18 +77,30 @@ impl WebClient {
     ) -> Result<(), JsValue> {
         let limits: Limits = serde_wasm_bindgen::from_value(limits)
             .map_err(|_| JsValue::from_str("Invalid note acquisition limits"))?;
-        let id = NEXT_CALLBACK
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-            .map_err(|_| JsValue::from_str("Note acquisition registration exhausted"))?;
+        let mut id = NEXT_CALLBACK.load(Ordering::Relaxed);
+        let id = loop {
+            let next = id
+                .checked_add(1)
+                .ok_or_else(|| JsValue::from_str("Note acquisition registration exhausted"))?;
+            match NEXT_CALLBACK.compare_exchange_weak(
+                id,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break id,
+                Err(current) => id = current,
+            }
+        };
         let mut guard = self.inner.lock().await;
         let client = guard.take().ok_or_else(|| JsValue::from_str("Client not initialized"))?;
         CALLBACKS.with(|callbacks| callbacks.borrow_mut().insert(id, callback));
         *guard = Some(client.with_note_acquisition_gate(
             Arc::new(BrowserGate(id)),
             NoteAcquisitionLimits {
-                max_notes: limits.max_notes as usize,
-                max_note_file_bytes: limits.max_note_file_bytes as usize,
-                max_total_note_file_bytes: limits.max_total_note_file_bytes as usize,
+                max_notes: limits.notes as usize,
+                max_note_file_bytes: limits.note_file_bytes as usize,
+                max_total_note_file_bytes: limits.total_note_file_bytes as usize,
             },
         ));
         Ok(())
