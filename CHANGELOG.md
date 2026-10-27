@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.17.7 (TBD)
+
+### Enhancements
+
+* [FEATURE][web] Query transaction inclusion without a local store with `RpcClient.syncTransactions(blockFrom, blockTo, accountIds)`. Node.js and browser callers receive `RpcTransactionRecord[]` with `id()`, `accountId()` and `blockNum()` across all account chunks and pages in the inclusive range. Duplicate account IDs are scanned once. Callers maintain their own confirmation cursor and trust the configured RPC node's report of inclusion ([#498](https://github.com/0xMiden/web-sdk/issues/498), [#500](https://github.com/0xMiden/web-sdk/pull/500)).
+
+### Fixes
+
+* [FIX][web] `RpcClient.submitProvenTx` and `submitProvenTxBatch` now include the verified genesis commitment in RPC headers, fixing submissions rejected with `genesis commitment: none` ([#504](https://github.com/0xMiden/web-sdk/pull/504)).
+* [FIX][web] On Node.js, `RpcClient.getNullifierCommitHeight` and `getNoteScriptByRoot` now resolve to `undefined` instead of `null` when no result is found, matching the browser entry and their TypeScript declarations.
+
+## 0.17.6 (2026-10-21)
+
+### Fixes
+
+* [FIX][node] Reject certificate chains that use compromised eMudhra intermediate keys in the native Node SDK ([RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382.html)).
+
 ## 0.17.5 (2026-10-20)
 
 ### Enhancements
