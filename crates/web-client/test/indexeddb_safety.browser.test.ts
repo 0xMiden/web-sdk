@@ -488,8 +488,8 @@ for (const useWorker of [false, true]) {
         error = { code: value.code, message: value.message };
       }
       const notes = await client.notes.list();
-      client.terminate();
       await client.waitForIdle();
+      client.terminate();
       return { error, count: notes.length, candidate: candidate && {
         variant: candidate.variant, source: candidate.source,
         bytes: candidate.noteFileBytes instanceof Uint8Array,
