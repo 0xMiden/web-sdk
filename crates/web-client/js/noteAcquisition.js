@@ -105,6 +105,7 @@ export function createNoteAcquisitionOwner(options, isActive) {
     },
     retire() {
       active = false;
+      config.callback = undefined;
       for (const resolve of pending) resolve();
       pending.clear();
     },
