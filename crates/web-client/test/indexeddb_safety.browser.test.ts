@@ -746,3 +746,78 @@ for (const mode of ["limit", "retention", "invalid", "retired"]) {
     );
   });
 }
+
+test("raw worker awaits a copied candidate decision before import writes", async ({
+  page,
+}) => {
+  await prepare(page, "st", "index", "module");
+  const result = await page.evaluate(async () => {
+    const { client: previous } = window.storageTest;
+    const chain = await previous.serializeMockChain();
+    const transport = await previous.serializeMockNoteTransportNode();
+    previous.terminate();
+    await previous.waitForIdle();
+    const source = `
+      self.onmessage = async ({ data }) => {
+        if (!data.moduleUrl) return;
+        const sdk = await import(data.moduleUrl);
+        const client = new sdk.WebClient();
+        await client.createMockClient(undefined, data.chain, data.transport);
+        await client.installNoteAcquisitionGate((candidate) => new Promise((resolve) => {
+          self.addEventListener("message", function acknowledge({ data }) {
+            if (data.operationId !== "raw-import-1") return;
+            self.removeEventListener("message", acknowledge);
+            resolve(data.decision);
+          });
+          self.postMessage({ kind: "candidate", operationId: "raw-import-1",
+            bytes: candidate.noteFileBytes instanceof Uint8Array, variant: candidate.variant,
+            metadataAbsent: candidate.metadata === undefined });
+        }), { maxNotes: 1, maxNoteFileBytes: 65536, maxTotalNoteFileBytes: 65536 });
+        const recipient = new sdk.NoteRecipient(new sdk.Word(new BigUint64Array([95n, 0n, 0n, 0n])),
+          sdk.NoteScript.p2id(), new sdk.NoteStorage(new sdk.FeltArray()));
+        const file = sdk.NoteFile.fromNoteDetails(new sdk.NoteDetails(new sdk.NoteAssets(), recipient));
+        let code;
+        try { await client.importNoteFile(file); } catch (error) { code = error.code; }
+        const count = (await client.getInputNotes(new sdk.NoteFilter(sdk.NoteFilterTypes.All))).length;
+        client.free();
+        self.postMessage({ kind: "done", code, count });
+      };
+    `;
+    const url = URL.createObjectURL(
+      new Blob([source], { type: "text/javascript" })
+    );
+    const worker = new Worker(url, { type: "module" });
+    try {
+      return await new Promise((resolve, reject) => {
+        let candidate;
+        worker.onerror = (event) => reject(new Error(event.message));
+        worker.onmessage = ({ data }) => {
+          if (data.kind === "candidate") {
+            candidate = data;
+            worker.postMessage({
+              operationId: data.operationId,
+              decision: "rejected",
+            });
+          } else resolve({ candidate, code: data.code, count: data.count });
+        };
+        worker.postMessage({
+          moduleUrl: `${location.origin}/st/index.js`,
+          chain,
+          transport,
+        });
+      });
+    } finally {
+      worker.terminate();
+      URL.revokeObjectURL(url);
+    }
+  });
+  expect(result.candidate).toEqual({
+    kind: "candidate",
+    operationId: "raw-import-1",
+    bytes: true,
+    variant: "expectedNote",
+    metadataAbsent: true,
+  });
+  expect(result.code).toBe("NOTE_ACQUISITION_REJECTED");
+  expect(result.count).toBe(0);
+});
