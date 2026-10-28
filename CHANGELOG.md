@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.8 (TBD)
+
+### Fixes
+
+* [FIX][web] `RpcClient.registerAccount(accountId, invitationCode)` now configures the genesis commitment before registering an account on a fresh Node.js or browser RPC client, fixing `genesis commitment: none` rejections without requiring a prior sync or encryption-key fetch.
+
 ## 0.17.7 (2026-10-27)
 
 ### Enhancements
