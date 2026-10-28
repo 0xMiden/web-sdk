@@ -164,8 +164,9 @@ impl RpcClient {
     /// Public accounts include all storage map entries and vault assets. When the node's inline
     /// limits are exceeded, fetches the remaining state through pagination bounded to the original
     /// account proof's block. A failed page rejects the request without returning a partial
-    /// account. Private accounts return commitment and block metadata without full account
-    /// data.
+    /// account. A reconstructed public account is returned only when its commitment equals the
+    /// proof, and a mismatch fails the call and returns no account. Private accounts return
+    /// commitment and block metadata without full account data.
     #[js_export(js_name = "getAccountDetails")]
     pub async fn get_account_details(
         &self,
@@ -174,7 +175,8 @@ impl RpcClient {
         let native_id: miden_client::account::AccountId = account_id.into();
 
         // Keep the proof's commitment and block height for `FetchedAccount`, and resolve any
-        // oversized state at that same block before reconstructing the full account.
+        // oversized state at that same block before reconstructing the full account. `from_proof`
+        // enforces that the reconstructed commitment matches the proof.
         let request = GetAccountRequest::new()
             .with_storage(StorageMapFetch::All)
             .with_vault(VaultFetch::Always);
