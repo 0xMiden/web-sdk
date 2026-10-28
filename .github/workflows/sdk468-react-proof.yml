@@ -1,0 +1,63 @@
+name: Session account current-main React proof
+on:
+  push:
+    branches: [ci/sdk468-react-proof]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      MIDEN_FAST_BUILD: "true"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 3
+      - name: Bind immutable candidate
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/sdk468-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/sdk468-evidence/workflow-sha.txt"
+          test "$(git rev-parse HEAD^)" = 650106c5c45b30c48747e2ec9780b60ea9b8d7bb
+          cp -R .github/sdk468-proof "$RUNNER_TEMP/sdk468-packet"
+          git checkout --detach 650106c5c45b30c48747e2ec9780b60ea9b8d7bb
+          cp "$RUNNER_TEMP/sdk468-packet/source.json" "$RUNNER_TEMP/sdk468-evidence/"
+      - name: Verify reusable artifact source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/0xMiden/web-sdk/actions/runs/40734373608 --jq '.head_sha + " " + .conclusion')" = '3a0f2d0f53ae02861e43043b264fc45cf400bdb2 success'
+          test "$(gh api repos/0xMiden/web-sdk/git/commits/3a0f2d0f53ae02861e43043b264fc45cf400bdb2 --jq .tree.sha)" = d7375524c8ff1b9fb3e10878fc69ccbbd5a8b356
+          test "$(git rev-parse 6e4fb102a53c0b91feba0341714987f0ae2ad610^{tree})" = d7375524c8ff1b9fb3e10878fc69ccbbd5a8b356
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-client-artifacts
+          run-id: 40734373608
+          github-token: ${{ github.token }}
+          path: crates/web-client/dist
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Frozen dependencies
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile 2>&1 | tee "$RUNNER_TEMP/sdk468-evidence/install.log"
+      - name: Rust formatting toolchain
+        run: |
+          rustup update --no-self-update nightly
+          rustup +nightly component add rustfmt
+      - name: Format, types, named tests and full React coverage
+        run: python3 "$RUNNER_TEMP/sdk468-packet/proof.py"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sdk468-react-proof
+          path: ${{ runner.temp }}/sdk468-evidence
+          if-no-files-found: error

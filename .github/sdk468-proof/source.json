@@ -1,0 +1,11 @@
+{
+  "source": "650106c5c45b30c48747e2ec9780b60ea9b8d7bb",
+  "tree": "d14b542b3f65d5407ec6f9df7cf27d71b31380d8",
+  "base": "6e4fb102a53c0b91feba0341714987f0ae2ad610",
+  "artifact_run": 40734373608,
+  "artifact_head": "3a0f2d0f53ae02861e43043b264fc45cf400bdb2",
+  "artifact_tree": "d7375524c8ff1b9fb3e10878fc69ccbbd5a8b356",
+  "file": "packages/react-sdk/src/__tests__/hooks/useSessionAccount.test.tsx",
+  "sha256": "84985024815cc7b76bc192c325b844ce88bff5def7023fb0532cb4ec52d5e1e9",
+  "purpose": "Full React coverage/type/lint/format with current-main artifact reused only after exact runtime tree equivalence proof"
+}
