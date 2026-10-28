@@ -4,7 +4,7 @@
 
 ### Fixes
 
-* [FIX][web] `RpcClient.getAccountDetails(accountId)` now fetches oversized storage maps and vaults through pagination instead of failing with "storage map ... has too many entries" or "vault has too many assets". All pages use the account proof's block as their upper bound.
+* [FIX][web] `RpcClient.getAccountDetails(accountId)` now fetches oversized storage maps and vaults through pagination instead of failing with "storage map ... has too many entries" or "vault has too many assets". All pages use the account proof's block as their upper bound ([#509](https://github.com/0xMiden/web-sdk/pull/509)).
 
 ## 0.17.7 (2026-10-27)
 
