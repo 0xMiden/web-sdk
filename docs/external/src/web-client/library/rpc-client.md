@@ -21,27 +21,6 @@ For a custom node, pass `new Endpoint(rpcUrl)`. The class is available from
 the same eager/lazy and ST/MT entry points as `MidenClient`. With a lazy entry,
 await `MidenClient.ready()` before constructing WASM objects.
 
-## Read a complete public account
-
-`getAccountDetails(accountId)` returns a `FetchedAccount` with the account ID,
-commitment and block number from the node's account proof. For a public account,
-`account()` contains the full account, including storage maps and vault assets:
-
-```typescript
-import { AccountId } from "@miden-sdk/miden-sdk";
-
-const fetched = await rpc.getAccountDetails(AccountId.fromHex(accountIdHex));
-const account = fetched.account();
-console.log(fetched.commitment().toHex(), fetched.lastBlockNum());
-```
-
-When maps or the vault exceed the node's inline response limit, the SDK fetches
-their history through pagination, bounded to the original proof's block. No
-manual `syncStorageMaps` call is needed. A failed page rejects the request;
-no partial account is returned. Private accounts return commitment metadata
-without full account data. For only slot values or selected map keys, use
-`getAccountProof` to avoid fetching the complete state.
-
 ## Optional query results
 
 `await rpc.getNullifierCommitHeight(nullifier, blockNum)` returns a commit

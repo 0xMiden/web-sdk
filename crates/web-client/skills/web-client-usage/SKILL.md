@@ -67,14 +67,6 @@ Use `new RpcClient(new Endpoint(rpcUrl))` for an application that manages its
 own account and note state. It opens no local store. On a lazy entry, await
 `MidenClient.ready()` before constructing WASM objects.
 
-`await rpc.getAccountDetails(accountId)` returns a `FetchedAccount` with
-`accountId()`, `commitment()`, `lastBlockNum()` and `account()`. Public accounts
-include their full storage and vault; oversized maps and vaults paginate
-automatically with the original proof's block as the upper bound. Do not
-manually call `syncStorageMaps` to complete this result. A failed page rejects
-instead of returning a partial account. Private accounts have no full account
-data. Use `getAccountProof` when only slot values or selected map keys are needed.
-
 `rpc.syncNullifiers(prefixes: Uint16Array, blockFrom, blockTo)` returns
 `NullifierUpdate[]` for the inclusive range, handling request chunking and
 pagination internally. Each update exposes `nullifier(): Word` and
