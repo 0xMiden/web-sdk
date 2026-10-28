@@ -66,6 +66,13 @@ const rpc = new RpcClient(Endpoint.testnet());
 const updates = await rpc.syncNullifiers(new Uint16Array([0x1234]), 100, 200);
 ```
 
+`await rpc.getAccountDetails(accountId)` returns a `FetchedAccount`; `account()`
+contains the full public account. Oversized storage maps and vaults paginate
+automatically at the original proof's block, so do not manually call
+`syncStorageMaps` to complete it. A failed page rejects the request. Private
+accounts return commitment metadata without full account data. Use
+`getAccountProof` for slot values or selected map keys only.
+
 `syncNullifiers` copies prefixes before asynchronous work and scans duplicate
 prefixes once without changing the input array. On Node.js, use an
 `ArrayBuffer`-backed `Uint16Array`; shared backing memory is rejected during

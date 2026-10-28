@@ -494,6 +494,13 @@ for (const update of updates) {
 }
 ```
 
+`await rpc.getAccountDetails(accountId)` returns account commitment and block
+metadata plus the full public account through `account()`. Oversized storage
+maps and vaults are fetched automatically through pagination, bounded to the
+original account proof's block. A failed page rejects the request; private
+accounts return metadata without full account data. Use `getAccountProof` when
+you only need slot values or selected map keys.
+
 `syncNullifiers(prefixes, blockFrom, blockTo)` includes both range bounds and
 handles chunking and pagination internally. It returns prefix matches, so
 filter by the full nullifier when tracking particular notes. Keep `blockTo`
