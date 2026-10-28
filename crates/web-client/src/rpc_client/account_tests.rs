@@ -250,6 +250,50 @@ async fn account_details_reject_a_failed_storage_page() {
 }
 
 #[tokio::test]
+async fn account_details_reject_when_pagination_stops_before_the_proof_block() {
+    for (oversize_maps, oversize_vault) in [(true, false), (false, true)] {
+        let (expected, proof) = account_fixture(oversize_maps, oversize_vault);
+        let (endpoint, page) = if oversize_maps {
+            let mut page =
+                proto::SyncAccountStorageMapsResponse::decode(map_page(5, &[(1, 1)]).as_slice())
+                    .unwrap();
+            page.pagination_info = Some(proto::PaginationInfo { chain_tip: 5, block_num: 5 });
+            ("/SyncAccountStorageMaps", page.encode_to_vec())
+        } else {
+            let asset = expected.vault().assets().next().unwrap();
+            let old_asset = FungibleAsset::new(asset.id().faucet_id(), 1).unwrap().into();
+            let mut page =
+                proto::SyncAccountVaultResponse::decode(vault_page(5, old_asset).as_slice())
+                    .unwrap();
+            page.pagination_info = Some(proto::PaginationInfo { chain_tip: 5, block_num: 5 });
+            ("/SyncAccountVault", page.encode_to_vec())
+        };
+        let (rpc, mut requests, server) =
+            account_server(vec![("/GetAccount", proof.encode_to_vec()), (endpoint, page)]).await;
+        let result = rpc.get_account_details(&expected.id().into()).await;
+        server.abort();
+        let error = result.err().expect("incomplete state must not return an account");
+        assert!(
+            error
+                .reason
+                .contains("reconstructed account commitment does not match the account proof")
+        );
+        assert!(requests.try_recv().unwrap().0.ends_with("/GetAccount"));
+        let (path, bytes) = requests.try_recv().unwrap();
+        assert!(path.ends_with(endpoint));
+        let range = if oversize_maps {
+            proto::SyncAccountStorageMapsRequest::decode(bytes.as_slice())
+                .unwrap()
+                .block_range
+        } else {
+            proto::SyncAccountVaultRequest::decode(bytes.as_slice()).unwrap().block_range
+        };
+        assert_eq!(range.unwrap().block_to, 12);
+        assert!(requests.try_recv().is_err());
+    }
+}
+
+#[tokio::test]
 async fn private_account_details_preserve_metadata_without_fetching_state() {
     use miden_client::account::{AccountId as NativeAccountId, AccountIdVersion, AccountType};
 
