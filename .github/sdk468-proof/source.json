@@ -1,0 +1,10 @@
+{
+  "source": "3c9bb2e9ee766628cb86e2114fcc2589f55bf300",
+  "tree": "989baf53a344f80bb702bc73886c98b6d3846612",
+  "base": "07b734066f2ee2a7d28cb418aae88315387e67e6",
+  "artifact_run": 40766381356,
+  "artifact_head": "07b734066f2ee2a7d28cb418aae88315387e67e6",
+  "file": "packages/react-sdk/src/__tests__/hooks/useSessionAccount.test.tsx",
+  "sha256": "84985024815cc7b76bc192c325b844ce88bff5def7023fb0532cb4ec52d5e1e9",
+  "purpose": "Full React coverage/type/lint/format using exact current-main runtime artifact"
+}
