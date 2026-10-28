@@ -36,6 +36,11 @@ mod nullifier;
 mod submission;
 mod transaction;
 
+#[cfg(all(test, feature = "nodejs"))]
+mod account_tests;
+#[cfg(all(test, feature = "nodejs"))]
+mod tests;
+
 /// RPC Client for interacting with Miden nodes directly.
 #[js_export]
 pub struct RpcClient {
@@ -154,7 +159,14 @@ impl RpcClient {
         Ok(header.into())
     }
 
-    /// Fetches account details for a specific account ID.
+    /// Fetches complete account details for a specific account ID.
+    ///
+    /// Public accounts include all storage map entries and vault assets. When the node's inline
+    /// limits are exceeded, fetches the remaining state through pagination bounded to the original
+    /// account proof's block. A failed page rejects the request without returning a partial
+    /// account. A reconstructed public account is returned only when its commitment equals the
+    /// proof, and a mismatch fails the call and returns no account. Private accounts return
+    /// commitment and block metadata without full account data.
     #[js_export(js_name = "getAccountDetails")]
     pub async fn get_account_details(
         &self,
@@ -162,18 +174,31 @@ impl RpcClient {
     ) -> Result<FetchedAccount, JsErr> {
         let native_id: miden_client::account::AccountId = account_id.into();
 
-        // `get_account_details` returns only `Option<Account>`, without the commitment or block
-        // height. Issue the underlying `get_account` request directly (full storage maps + vault)
-        // so `FetchedAccount` can report the account commitment and last block height.
+        // Keep the proof's commitment and block height for `FetchedAccount`, and resolve any
+        // oversized state at that same block before reconstructing the full account. `from_proof`
+        // enforces that the reconstructed commitment matches the proof.
         let request = GetAccountRequest::new()
             .with_storage(StorageMapFetch::All)
             .with_vault(VaultFetch::Always);
 
-        let (block_num, proof) = self
+        let (block_num, mut proof) = self
             .inner
             .get_account(native_id, request)
             .await
             .map_err(|err| js_error_with_context(err, "failed to get account details"))?;
+
+        if let Some(details) = proof.details_mut() {
+            self.inner
+                .resolve_oversize_vault(native_id, block_num, details)
+                .await
+                .map_err(|err| js_error_with_context(err, "failed to fetch account vault"))?;
+            self.inner
+                .resolve_oversize_storage_maps(native_id, block_num, details)
+                .await
+                .map_err(|err| {
+                    js_error_with_context(err, "failed to fetch account storage maps")
+                })?;
+        }
 
         FetchedAccount::from_proof(block_num, proof)
     }
@@ -379,12 +404,33 @@ impl RpcClient {
     /// When the network operator runs a funding service, the node pays the registered account a
     /// public P2ID note and answers once that note is committed, so this call can take a few
     /// blocks.
+    ///
+    /// If the RPC transport has no genesis commitment, fetches block zero from the configured
+    /// endpoint and sets its commitment in the RPC headers before sending the invitation code.
+    /// An already configured commitment is reused. No local store, sync, or encryption-key
+    /// fetch is required. This bootstrap trusts the configured endpoint; it does not
+    /// independently authenticate genesis. A failed genesis fetch or decode leaves the code
+    /// unsent.
     #[js_export(js_name = "registerAccount")]
     pub async fn register_account(
         &self,
         account_id: &AccountId,
         invitation_code: String,
     ) -> Result<(), JsErr> {
+        if self.inner.has_genesis_commitment().is_none() {
+            let (genesis, _) = self
+                .inner
+                .get_block_header_by_number(Some(BlockNumber::GENESIS), false)
+                .await
+                .map_err(|err| {
+                    js_error_with_context(err, "failed to get genesis for account registration")
+                })?;
+            self.inner
+                .set_genesis_commitment(genesis.commitment())
+                .await
+                .map_err(|err| js_error_with_context(err, "failed to configure RPC genesis"))?;
+        }
+
         self.inner
             .register_account(&invitation_code, account_id.into())
             .await
