@@ -1,0 +1,37 @@
+name: SDK 505 Node feature expected red
+on:
+  push:
+    branches: [ci/sdk505-node-feature-red]
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - run: test "$(git rev-parse HEAD^)" = eac86fbe2aa71b88208a812e0d5626b75ea2f397
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-08-06
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: sdk505-node-feature-proof
+          save-if: false
+      - name: Verify the Node-only build regression
+        shell: bash
+        run: |
+          mkdir -p proof
+          set +e
+          cargo build -p miden-client-web --no-default-features --features nodejs --release --locked 2>&1 | tee proof/build.log
+          status=${PIPESTATUS[0]}
+          test "$status" -ne 0 || exit 1
+          grep -F 'cannot find value `mock_at_block_c_callback`' proof/build.log
+          grep -F 'note_inclusion_proof.rs' proof/build.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sdk505-node-feature-red
+          path: proof/
