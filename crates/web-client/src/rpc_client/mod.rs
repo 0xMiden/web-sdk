@@ -37,6 +37,8 @@ mod submission;
 mod transaction;
 
 #[cfg(all(test, feature = "nodejs"))]
+mod account_tests;
+#[cfg(all(test, feature = "nodejs"))]
 mod tests;
 
 /// RPC Client for interacting with Miden nodes directly.
@@ -157,7 +159,14 @@ impl RpcClient {
         Ok(header.into())
     }
 
-    /// Fetches account details for a specific account ID.
+    /// Fetches complete account details for a specific account ID.
+    ///
+    /// Public accounts include all storage map entries and vault assets. When the node's inline
+    /// limits are exceeded, fetches the remaining state through pagination bounded to the original
+    /// account proof's block. A failed page rejects the request without returning a partial
+    /// account. A reconstructed public account is returned only when its commitment equals the
+    /// proof, and a mismatch fails the call and returns no account. Private accounts return
+    /// commitment and block metadata without full account data.
     #[js_export(js_name = "getAccountDetails")]
     pub async fn get_account_details(
         &self,
@@ -165,18 +174,31 @@ impl RpcClient {
     ) -> Result<FetchedAccount, JsErr> {
         let native_id: miden_client::account::AccountId = account_id.into();
 
-        // `get_account_details` returns only `Option<Account>`, without the commitment or block
-        // height. Issue the underlying `get_account` request directly (full storage maps + vault)
-        // so `FetchedAccount` can report the account commitment and last block height.
+        // Keep the proof's commitment and block height for `FetchedAccount`, and resolve any
+        // oversized state at that same block before reconstructing the full account. `from_proof`
+        // enforces that the reconstructed commitment matches the proof.
         let request = GetAccountRequest::new()
             .with_storage(StorageMapFetch::All)
             .with_vault(VaultFetch::Always);
 
-        let (block_num, proof) = self
+        let (block_num, mut proof) = self
             .inner
             .get_account(native_id, request)
             .await
             .map_err(|err| js_error_with_context(err, "failed to get account details"))?;
+
+        if let Some(details) = proof.details_mut() {
+            self.inner
+                .resolve_oversize_vault(native_id, block_num, details)
+                .await
+                .map_err(|err| js_error_with_context(err, "failed to fetch account vault"))?;
+            self.inner
+                .resolve_oversize_storage_maps(native_id, block_num, details)
+                .await
+                .map_err(|err| {
+                    js_error_with_context(err, "failed to fetch account storage maps")
+                })?;
+        }
 
         FetchedAccount::from_proof(block_num, proof)
     }
