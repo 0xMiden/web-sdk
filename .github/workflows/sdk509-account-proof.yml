@@ -1,0 +1,52 @@
+name: Account reconstruction regression proof
+on:
+  push:
+    branches: [ci/sdk509-account-proof]
+permissions:
+  contents: read
+jobs:
+  rpc-contract-proof:
+    runs-on: warp-ubuntu-latest-x64-8x
+    timeout-minutes: 45
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_BUILD_JOBS: 2
+      RAYON_NUM_THREADS: 2
+      RUST_TEST_THREADS: 2
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+      - name: Bind frozen regression source
+        env:
+          EXPECTED_SOURCE: d2545969ecc386d8f7995f0f483ba0926b7238ec
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_SOURCE"
+          git checkout --detach "$EXPECTED_SOURCE"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          git status --porcelain
+      - name: Update CA certificates
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ca-certificates
+      - name: Install pinned Rust
+        run: rustup update --no-self-update
+      - name: Restore native Rust cache
+        uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1
+        with:
+          shared-key: rust-nodejs
+          prefix-key: rust-cache-2026.02.18
+          save-if: 'false'
+      - name: Run native RPC contract tests (expected regression failure)
+        run: |
+          set -euo pipefail
+          make test-web-client-rpc RUST_TEST_PROFILE=release 2>&1 | tee /tmp/sdk509-rpc-proof.log
+      - name: Preserve complete proof log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk509-rpc-regression-proof
+          path: /tmp/sdk509-rpc-proof.log
+          if-no-files-found: error
