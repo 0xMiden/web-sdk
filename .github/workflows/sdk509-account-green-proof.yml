@@ -1,0 +1,51 @@
+name: Account reconstruction green and mutation proof
+on:
+  push:
+    branches: [ci/sdk509-account-green-proof-v2]
+permissions:
+  contents: read
+jobs:
+  rpc-contract-proof:
+    runs-on: warp-ubuntu-latest-x64-8x
+    timeout-minutes: 45
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_BUILD_JOBS: 2
+      RAYON_NUM_THREADS: 2
+      RUST_TEST_THREADS: 2
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+      - name: Bind frozen regression source
+        env:
+          EXPECTED_SOURCE: 99017e0fa6a8af10996a3595cd555a0c07465adb
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_SOURCE"
+          cp -R .github/sdk509-proof "$RUNNER_TEMP/sdk509-proof-packet"
+          git checkout --detach "$EXPECTED_SOURCE"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          git status --porcelain
+      - name: Update CA certificates
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ca-certificates
+      - name: Install pinned Rust
+        run: rustup update --no-self-update
+      - name: Restore native Rust cache
+        uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1
+        with:
+          shared-key: rust-nodejs
+          prefix-key: rust-cache-2026.02.18
+          save-if: 'false'
+      - name: Prove native RPC green, guard mutation, and restored green
+        run: bash "$RUNNER_TEMP/sdk509-proof-packet/proof.sh"
+      - name: Preserve complete proof logs and counts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk509-rpc-green-mutation-proof
+          path: ${{ runner.temp }}/sdk509-proof-evidence
+          if-no-files-found: error
