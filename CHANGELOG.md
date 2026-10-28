@@ -6,6 +6,7 @@
 
 * [FIX][web] `RpcClient.getAccountDetails(accountId)` now fetches oversized storage maps and vaults through pagination instead of failing with "storage map ... has too many entries" or "vault has too many assets". All pages use the account proof's block as their upper bound ([#509](https://github.com/0xMiden/web-sdk/pull/509)).
 * [FIX][web] `RpcClient.getAccountDetails(accountId)` rejects a public account when the reconstructed vault or storage does not commit to the account proof, including assets and storage-map entries fetched in pages, and the call returns no account ([#509](https://github.com/0xMiden/web-sdk/pull/509)).
+* [FIX][web] `RpcClient.registerAccount(accountId, invitationCode)` now configures the genesis commitment before registering an account on a fresh Node.js or browser RPC client, fixing `genesis commitment: none` rejections without requiring a prior sync or encryption-key fetch ([#508](https://github.com/0xMiden/web-sdk/pull/508)).
 
 ## 0.17.7 (2026-10-27)
 
