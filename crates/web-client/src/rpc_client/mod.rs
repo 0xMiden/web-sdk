@@ -38,6 +38,8 @@ mod transaction;
 
 #[cfg(all(test, feature = "nodejs"))]
 mod account_tests;
+#[cfg(all(test, feature = "nodejs"))]
+mod tests;
 
 /// RPC Client for interacting with Miden nodes directly.
 #[js_export]
@@ -400,12 +402,33 @@ impl RpcClient {
     /// When the network operator runs a funding service, the node pays the registered account a
     /// public P2ID note and answers once that note is committed, so this call can take a few
     /// blocks.
+    ///
+    /// If the RPC transport has no genesis commitment, fetches block zero from the configured
+    /// endpoint and sets its commitment in the RPC headers before sending the invitation code.
+    /// An already configured commitment is reused. No local store, sync, or encryption-key
+    /// fetch is required. This bootstrap trusts the configured endpoint; it does not
+    /// independently authenticate genesis. A failed genesis fetch or decode leaves the code
+    /// unsent.
     #[js_export(js_name = "registerAccount")]
     pub async fn register_account(
         &self,
         account_id: &AccountId,
         invitation_code: String,
     ) -> Result<(), JsErr> {
+        if self.inner.has_genesis_commitment().is_none() {
+            let (genesis, _) = self
+                .inner
+                .get_block_header_by_number(Some(BlockNumber::GENESIS), false)
+                .await
+                .map_err(|err| {
+                    js_error_with_context(err, "failed to get genesis for account registration")
+                })?;
+            self.inner
+                .set_genesis_commitment(genesis.commitment())
+                .await
+                .map_err(|err| js_error_with_context(err, "failed to configure RPC genesis"))?;
+        }
+
         self.inner
             .register_account(&invitation_code, account_id.into())
             .await
