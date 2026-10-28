@@ -162,8 +162,9 @@ impl RpcClient {
     /// Public accounts include all storage map entries and vault assets. When the node's inline
     /// limits are exceeded, fetches the remaining state through pagination bounded to the original
     /// account proof's block. A failed page rejects the request without returning a partial
-    /// account. Private accounts return commitment and block metadata without full account
-    /// data.
+    /// account. A public account is returned only when the reconstructed state commits to the proof
+    /// commitment, and a mismatch rejects the request and returns no account. Private accounts
+    /// return commitment and block metadata without full account data.
     #[js_export(js_name = "getAccountDetails")]
     pub async fn get_account_details(
         &self,

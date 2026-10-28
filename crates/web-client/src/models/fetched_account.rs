@@ -26,7 +26,8 @@ impl FetchedAccount {
         self.account_id
     }
 
-    /// Returns the account commitment reported by the node.
+    /// Returns the account commitment reported by the node. A returned public account commits to
+    /// that witness value.
     pub fn commitment(&self) -> Word {
         self.commitment.clone()
     }
@@ -71,11 +72,16 @@ impl FetchedAccount {
         let account_id = proof.account_id();
         let commitment = proof.account_commitment();
         let account = match proof.into_details() {
-            Some(details) => Some(
-                NativeAccount::try_from(&details)
-                    .map_err(|err| from_str_err(&err.to_string()))?
-                    .into(),
-            ),
+            Some(details) => {
+                let native = NativeAccount::try_from(&details)
+                    .map_err(|err| from_str_err(&err.to_string()))?;
+                if native.to_commitment() != commitment {
+                    return Err(from_str_err(
+                        "reconstructed account commitment does not match the account proof",
+                    ));
+                }
+                Some(native.into())
+            },
             None => None,
         };
 
