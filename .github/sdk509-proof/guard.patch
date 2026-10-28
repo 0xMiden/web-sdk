@@ -1,0 +1,20 @@
+diff --git a/crates/web-client/src/models/fetched_account.rs b/crates/web-client/src/models/fetched_account.rs
+index 4cbaee3..04bc297 100644
+--- a/crates/web-client/src/models/fetched_account.rs
++++ b/crates/web-client/src/models/fetched_account.rs
+@@ -74,5 +75,10 @@ impl FetchedAccount {
+-            Some(details) => Some(
+-                NativeAccount::try_from(&details)
+-                    .map_err(|err| from_str_err(&err.to_string()))?
+-                    .into(),
+-            ),
++            Some(details) => {
++                let native = NativeAccount::try_from(&details)
++                    .map_err(|err| from_str_err(&err.to_string()))?;
++                if native.to_commitment() != commitment {
++                    return Err(from_str_err(
++                        "reconstructed account commitment does not match the account proof",
++                    ));
++                }
++                Some(native.into())
++            },
