@@ -226,6 +226,65 @@ async fn account_details_reconstruct_oversized_state_at_the_proof_block() {
 }
 
 #[tokio::test]
+async fn account_details_reject_a_reconstruction_that_misses_the_proof_commitment() {
+    use proto::account_storage_details::account_storage_map_details::Result as MapResult;
+
+    for case in ["inline vault", "inline map", "vault page", "map page"] {
+        let (expected, mut proof) = account_fixture(case == "map page", case == "vault page");
+        let asset = expected.vault().assets().next().unwrap();
+        let wrong_asset: Asset = FungibleAsset::new(asset.id().faucet_id(), 50).unwrap().into();
+        match case {
+            "inline vault" => {
+                proof.details.as_mut().unwrap().vault_details.as_mut().unwrap().assets =
+                    vec![wrong_asset.into()];
+            },
+            "inline map" => {
+                let map = proof
+                    .details
+                    .as_mut()
+                    .unwrap()
+                    .storage_details
+                    .as_mut()
+                    .unwrap()
+                    .map_details
+                    .iter_mut()
+                    .find(|map| map.slot_name == "test::large")
+                    .unwrap();
+                let MapResult::AllEntries(entries) = map.result.as_mut().unwrap() else {
+                    panic!("inline map fixture must contain all entries");
+                };
+                let entry = entries
+                    .entries
+                    .iter_mut()
+                    .find(|entry| entry.key == Some(NativeWord::from([1u32; 4]).into()))
+                    .unwrap();
+                entry.value = Some(NativeWord::from([11u32; 4]).into());
+            },
+            _ => {},
+        }
+        let mut responses = vec![("/GetAccount", proof.encode_to_vec())];
+        match case {
+            "vault page" => responses.push(("/SyncAccountVault", vault_page(12, wrong_asset))),
+            "map page" => {
+                responses.push(("/SyncAccountStorageMaps", map_page(12, &[(1, 11), (2, 20)])));
+            },
+            _ => {},
+        }
+        let (rpc, _requests, server) = account_server(responses).await;
+        let result = rpc.get_account_details(&expected.id().into()).await;
+        server.abort();
+        let error = result.err().expect("mismatched reconstruction must not return an account");
+        assert!(
+            error
+                .reason
+                .contains("reconstructed account commitment does not match the account proof"),
+            "{case}: {}",
+            error.reason
+        );
+    }
+}
+
+#[tokio::test]
 async fn account_details_reject_a_failed_storage_page() {
     let (expected, proof) = account_fixture(true, false);
     let (rpc, _requests, server) = account_server(vec![
