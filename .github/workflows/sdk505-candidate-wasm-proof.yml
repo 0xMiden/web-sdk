@@ -11,7 +11,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Verify exact candidate
-        run: test "$(git rev-parse HEAD^)" = ec780d2ce0dfdb4c9922a6592894ce3f6e009465
+        run: |
+          git fetch --no-tags origin ec780d2ce0dfdb4c9922a6592894ce3f6e009465
+          git checkout --detach ec780d2ce0dfdb4c9922a6592894ce3f6e009465
+          test "$(git rev-parse HEAD)" = ec780d2ce0dfdb4c9922a6592894ce3f6e009465
       - name: Install Rust targets
         run: |
           rustup update --no-self-update
