@@ -1,0 +1,45 @@
+name: SDK 505 Node feature verification
+on:
+  push:
+    branches: [ci/sdk505-node-feature-green]
+permissions:
+  contents: read
+jobs:
+  verification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: test "$(git rev-parse HEAD^)" = ec780d2ce0dfdb4c9922a6592894ce3f6e009465
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-08-06
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: sdk505-node-feature-proof
+          save-if: false
+      - name: Build and inspect the production Node addon
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p proof
+          cargo build -p miden-client-web --no-default-features --features nodejs --release --locked 2>&1 | tee proof/nodejs.log
+          cp target/release/libmiden_client_web.so "$RUNNER_TEMP/production.node"
+          node crates/web-client/test/note_inclusion_proof_exports.cjs "$RUNNER_TEMP/production.node" production
+      - name: Build and inspect the testing Node addon
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build -p miden-client-web --no-default-features --features nodejs,testing --release --locked 2>&1 | tee proof/testing.log
+          cp target/release/libmiden_client_web.so "$RUNNER_TEMP/testing.node"
+          node crates/web-client/test/note_inclusion_proof_exports.cjs "$RUNNER_TEMP/testing.node" testing
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sdk505-node-feature-green
+          path: proof/
