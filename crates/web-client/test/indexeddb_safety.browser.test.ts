@@ -664,7 +664,7 @@ for (const build of ["st", "mt"]) {
   });
 }
 
-for (const mode of ["limit", "retention", "invalid", "retired"]) {
+for (const mode of ["limit", "retention", "invalid", "rejected", "retired"]) {
   test(`direct acquisition boundary ${mode}`, async ({ page }) => {
     await prepare(page, "st", "index", "module");
     const result = await page.evaluate(async (mode) => {
@@ -688,6 +688,8 @@ for (const mode of ["limit", "retention", "invalid", "retired"]) {
           if (!(candidate.noteFileBytes instanceof Uint8Array))
             throw new Error("not copied");
           if (mode === "invalid") return;
+          if (mode === "rejected")
+            return Promise.reject(new Error("private-retention-detail"));
           if (mode === "retention")
             return Promise.reject(new sdk.NoteAcquisitionRetentionError());
           entered();
@@ -708,14 +710,14 @@ for (const mode of ["limit", "retention", "invalid", "retired"]) {
         new sdk.NoteDetails(new sdk.NoteAssets(), recipient)
       );
       const pending = client.notes.import(file).then(
-        () => "accepted",
-        (error) => error.code
+        () => ({ code: "accepted", message: "" }),
+        (error) => ({ code: error.code, message: error.message })
       );
       if (mode === "retired") {
         await observed;
         client.terminate();
       }
-      const code = await pending;
+      const { code, message } = await pending;
       const db = await new Promise((resolve, reject) => {
         const request = indexedDB.open("mock_client_db");
         request.onsuccess = () => resolve(request.result);
@@ -733,10 +735,11 @@ for (const mode of ["limit", "retention", "invalid", "retired"]) {
         await client.waitForIdle();
         client.terminate();
       }
-      return { code, count, calls };
+      return { code, message, count, calls };
     }, mode);
     expect(result.count).toBe(0);
     expect(result.calls).toBe(mode === "limit" ? 0 : 1);
+    expect(result.message).not.toContain("private-retention-detail");
     expect(result.code).toBe(
       mode === "limit"
         ? "NOTE_ACQUISITION_LIMIT_EXCEEDED"
