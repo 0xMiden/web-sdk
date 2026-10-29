@@ -169,7 +169,8 @@ export class MidenClient {
         undefined,
         useWorker,
         options,
-        options?.feeFaucetId
+        options?.feeFaucetId,
+        options?.callbackTimeoutMs
       );
     } else {
       inner = await WebClientClass.createClient(

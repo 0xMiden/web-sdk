@@ -171,7 +171,8 @@ export declare class WasmWebClient extends WasmWebClientBase {
     logLevel?: LogLevel,
     useWorker?: boolean,
     observability?: ClientObservabilityOptions,
-    feeFaucetId?: string
+    feeFaucetId?: string,
+    callbackTimeoutMs?: number
   ): Promise<WasmWebClient>;
 
   syncState(): Promise<SyncSummary>;

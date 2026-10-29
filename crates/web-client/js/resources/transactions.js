@@ -699,14 +699,10 @@ export class TransactionsResource {
    *   In the browser the batch runs in the client's Web Worker where it has
    *   one, so the page's main thread stays responsive; see `batch()` for when
    *   it runs in-thread instead.
-   *   With an external keystore and a worker, each of the batch's signature
-   *   callbacks has the worker's 30s ceiling, and since signing happens at
-   *   push time and this wrapper treats a failed push as fatal, one timeout
-   *   fails the whole batch. A rejection thrown as a non-nullish value with no
-   *   truthy `.message` (a bare string, `{ code }`)
-   *   loses its reason and surfaces as the generic
-   *   `sign callback must return a Uint8Array`. Both are shared with every
-   *   worker-forwarded method; tracked in #316. Relatedly, `lastAuthError()`
+   *   With an external keystore and a worker, signing happens at push time
+   *   and this wrapper treats a failed push as fatal, so one failed or timed
+   *   out signature callback fails the whole batch. `sign` has no time limit
+   *   unless `callbackTimeoutMs` sets one. Relatedly, `lastAuthError()`
    *   reads the main-thread instance, so it does not report a forwarded
    *   batch's auth error.
    * @returns {Promise<BatchSubmitResult>} The node's chain tip as of

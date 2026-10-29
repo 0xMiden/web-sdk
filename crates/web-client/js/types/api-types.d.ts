@@ -244,6 +244,24 @@ export interface ClientOptions {
     sign: SignCallback;
   };
   /**
+   * How long, in milliseconds, the client waits for each `keystore` callback
+   * (`getKey`, `insertKey`, `sign`) before the call that needed it fails with
+   * `Callback <id> timed out after <n>ms`.
+   *
+   * Applies only when the callbacks run through the Web Worker (the browser
+   * default; see `useWorker`). Left unset, `sign` waits without a limit, since
+   * it can wait on a person approving in a wallet or on a hardware device, and
+   * `getKey` and `insertKey` time out after 30 seconds. A positive value applies
+   * to all three callbacks, and `0` removes the limit for all three. Throws a
+   * `TypeError` at creation for a negative or non-finite value.
+   *
+   * Under the Web Worker, a callback that throws counts as a failure whatever
+   * it throws: an `Error`, a string, an object such as `{ code: 4001 }`, or
+   * `null`. A failed `sign` fails the call with an error that includes the
+   * thrown value's message.
+   */
+  callbackTimeoutMs?: number;
+  /**
    * Enable the Web Worker shim that runs WASM calls off the main thread.
    * Defaults to `true` — leave it that way in browsers/extensions so the UI
    * stays responsive while WASM is busy.
@@ -1463,13 +1481,10 @@ export interface TransactionsResource {
    *   In the browser the batch runs in the client's Web Worker where it has
    *   one; see {@link batch} for when it runs in-thread instead.
    *
-   *   With an external keystore and a worker, each of the batch's signature
-   *   callbacks has the worker's fixed 30s ceiling, and since signing happens
-   *   at push time and this wrapper treats a failed push as fatal, one timeout
-   *   fails the whole batch. A rejection thrown as a non-nullish value with no
-   *   truthy `.message` (a bare string, `{ code }`) loses its reason and surfaces as
-   *   the generic `sign callback must return a Uint8Array`. Both are shared
-   *   with every worker-forwarded method; tracked in #316. Relatedly,
+   *   With an external keystore and a worker, signing happens at push time
+   *   and this wrapper treats a failed push as fatal, so one failed or timed
+   *   out signature callback fails the whole batch. `sign` has no time limit
+   *   unless `callbackTimeoutMs` sets one. Relatedly,
    *   `lastAuthError()` reads the main-thread instance, so it does not report
    *   a forwarded batch's auth error.
    */
