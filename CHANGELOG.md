@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.17.7 (TBD)
+## 0.17.8 (2026-10-28)
+
+### Fixes
+
+* [FIX][web] `RpcClient.getAccountDetails(accountId)` now fetches oversized storage maps and vaults through pagination instead of failing with "storage map ... has too many entries" or "vault has too many assets". All pages use the account proof's block as their upper bound. The call fails and returns no account when the reconstructed account commitment differs from the proof ([#509](https://github.com/0xMiden/web-sdk/pull/509)).
+* [FIX][web] `RpcClient.registerAccount(accountId, invitationCode)` now configures the genesis commitment before registering an account on a fresh Node.js or browser RPC client, fixing `genesis commitment: none` rejections without requiring a prior sync or encryption-key fetch ([#508](https://github.com/0xMiden/web-sdk/pull/508)).
+
+## 0.17.7 (2026-10-27)
 
 - Add optional awaited browser note-acquisition retention before import writes and transport cursor advancement, including method workers.
 
@@ -12,6 +19,7 @@
 
 ### Fixes
 
+* [FIX][web] `RpcClient.submitProvenTx` and `submitProvenTxBatch` now include the verified genesis commitment in RPC headers, fixing submissions rejected with `genesis commitment: none` ([#504](https://github.com/0xMiden/web-sdk/pull/504)).
 * [FIX][web] On Node.js, `RpcClient.getNullifierCommitHeight` and `getNoteScriptByRoot` now resolve to `undefined` instead of `null` when no result is found, matching the browser entry and their TypeScript declarations.
 
 ## 0.17.6 (2026-10-21)

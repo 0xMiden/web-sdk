@@ -118,5 +118,10 @@ web-sys = { features = ["console"], optional = true, version = "0.3" }
 [build-dependencies]
 napi-build = { optional = true, workspace = true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+h2    = "0.4"
+http  = "1"
+tokio = { features = ["net", "sync", "time"], workspace = true }
+
 [lints]
 workspace = true
