@@ -876,7 +876,7 @@ fn code_from_error(err: &(dyn Error + 'static)) -> Option<&'static str> {
         });
     }
     if let Some(client_error) = err.downcast_ref::<ClientError>() {
-        if let ClientError::NoteAcquisition(acquisition) = client_error {
+        if let Some(acquisition) = client_error.note_acquisition_error() {
             return code_from_error(acquisition);
         }
         return match client_error {
