@@ -85,9 +85,9 @@ export function createNoteAcquisitionOwner(options, isActive) {
         const result = config.callback(
           Object.freeze({ ...candidate, operationId: id })
         );
-        if (!(result instanceof Promise)) return "rejected";
+        if (typeof result?.then !== "function") return "rejected";
         const decision = await Promise.race([
-          result.then(
+          Promise.resolve(result).then(
             (value) => (value === undefined ? "accepted" : "rejected"),
             (error) =>
               retentionFailures.has(error) ? "retentionFailed" : "rejected"

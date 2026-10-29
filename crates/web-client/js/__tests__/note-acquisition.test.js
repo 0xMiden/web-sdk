@@ -76,6 +76,14 @@ describe("independent retention acknowledgements", () => {
     expect(receipt).not.toBeInstanceOf(Promise);
     expect(await owner(() => receipt).decide(candidate())).toBe("accepted");
   });
+  it("rejects a receipt whose then accessor throws", async () => {
+    const receipt = {
+      get then() {
+        throw new Error("private");
+      },
+    };
+    expect(await owner(() => receipt).decide(candidate())).toBe("rejected");
+  });
   it("waits for the receipt and copies operation metadata", async () => {
     let receipt;
     let delivered;
