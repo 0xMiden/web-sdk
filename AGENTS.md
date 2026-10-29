@@ -185,7 +185,7 @@ or, for forks / cross-repo,
 Client PR: 0xMiden/rust-sdk#2080
 ```
 
-CI picks up the marker via `.github/actions/inject-linked-client-pr`, appends a `[patch]` block to `Cargo.toml` (runner-local — never committed) pointing the workspace `miden-client` dep at the linked PR's head, refreshes `Cargo.lock`, and posts a sticky comment on the web-sdk PR summarizing what was patched. There is at most one such comment per PR (the action deletes it if the marker is later removed).
+CI picks up the marker via `.github/actions/inject-linked-client-pr`, rewrites every `miden-client*` dep line in `Cargo.toml` (runner-local, never committed) to the linked PR's head sha, refreshes `Cargo.lock`, and posts a sticky comment on the web-sdk PR summarizing what was patched. There is at most one such comment per PR (the action deletes it if the marker is later removed).
 
 Local-dev parity:
 

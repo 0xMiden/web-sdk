@@ -4,6 +4,8 @@ import {
   getNoteTags,
   getSyncHeight,
   getCurrentBlockchainPeaks,
+  getBlockchainPeaksByBlockNum,
+  pruneChainAnchors,
   addNoteTag,
   removeNoteTag,
   applyStateSync,
@@ -116,19 +118,22 @@ describe("sync", () => {
       expect(result).toEqual({ blockNum: 0 });
     });
 
-    it("returns the persisted blockNum after updating blockchainCheckpoint", async () => {
+    it("returns the highest chain anchor block number", async () => {
       const dbId = await openTestDb();
       const db = getDatabase(dbId);
-      // Manually bump blockNum to verify getSyncHeight reads it back
-      await db.blockchainCheckpoint.update(1, { blockNum: 42 });
+      // The sync height is the highest anchor, whatever order the rows were written in.
+      await db.chainAnchors.bulkAdd([
+        { blockNum: 42, peaks: new Uint8Array() },
+        { blockNum: 7, peaks: new Uint8Array() },
+      ]);
       const result = await getSyncHeight(dbId);
       expect(result).toEqual({ blockNum: 42 });
     });
 
-    it("returns null when no blockchainCheckpoint record exists (deleted)", async () => {
+    it("returns null when the chainAnchors table is empty", async () => {
       const dbId = await openTestDb();
       const db = getDatabase(dbId);
-      await db.blockchainCheckpoint.delete(1);
+      await db.chainAnchors.clear();
       const result = await getSyncHeight(dbId);
       expect(result).toBeNull();
     });
@@ -150,10 +155,10 @@ describe("sync", () => {
       expect(result).toEqual({ blockNum: 0, peaks: "" });
     });
 
-    it("returns blockNum 0 and empty peaks when no checkpoint record exists", async () => {
+    it("returns blockNum 0 and empty peaks when the chainAnchors table is empty", async () => {
       const dbId = await openTestDb();
       const db = getDatabase(dbId);
-      await db.blockchainCheckpoint.delete(1);
+      await db.chainAnchors.clear();
       const result = await getCurrentBlockchainPeaks(dbId);
       expect(result).toEqual({ blockNum: 0, peaks: "" });
     });
@@ -161,12 +166,9 @@ describe("sync", () => {
     it("reports the on-disk blockNum even when peaks are empty", async () => {
       const dbId = await openTestDb();
       const db = getDatabase(dbId);
-      // A checkpoint advanced to height 50 but with no peaks yet must still
-      // report blockNum 50 (not 0) — the on-disk height is real information.
-      await db.blockchainCheckpoint.update(1, {
-        blockNum: 50,
-        partialBlockchainPeaks: new Uint8Array(),
-      });
+      // An anchor at height 50 with no peak bytes must still report blockNum 50 (not 0):
+      // the on-disk height is real information.
+      await db.chainAnchors.add({ blockNum: 50, peaks: new Uint8Array() });
       const result = await getCurrentBlockchainPeaks(dbId);
       expect(result).toEqual({ blockNum: 50, peaks: "" });
     });
@@ -175,18 +177,115 @@ describe("sync", () => {
       const dbId = await openTestDb();
       const db = getDatabase(dbId);
       const peaksBytes = new Uint8Array([0x01, 0x02, 0x03]);
-      await db.blockchainCheckpoint.update(1, {
-        blockNum: 42,
-        partialBlockchainPeaks: peaksBytes,
-      });
+      await db.chainAnchors.add({ blockNum: 42, peaks: peaksBytes });
       const result = await getCurrentBlockchainPeaks(dbId);
       expect(result).toEqual({ blockNum: 42, peaks: toBase64(peaksBytes) });
+    });
+
+    it("returns the peaks of the highest anchor, not of an earlier one", async () => {
+      const dbId = await openTestDb();
+      const db = getDatabase(dbId);
+      const olderPeaks = new Uint8Array([0x0a]);
+      const newerPeaks = new Uint8Array([0x0b]);
+      await db.chainAnchors.bulkAdd([
+        { blockNum: 20, peaks: newerPeaks },
+        { blockNum: 10, peaks: olderPeaks },
+      ]);
+      const result = await getCurrentBlockchainPeaks(dbId);
+      expect(result).toEqual({ blockNum: 20, peaks: toBase64(newerPeaks) });
     });
 
     it("rejects when db is not opened (logWebStoreError re-throws)", async () => {
       await expect(
         getCurrentBlockchainPeaks("never-opened-sync")
       ).rejects.toThrow();
+      expect(errorSpy).toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // getBlockchainPeaksByBlockNum
+  // -------------------------------------------------------------------------
+
+  describe("getBlockchainPeaksByBlockNum", () => {
+    it("returns the genesis anchor with empty peaks on a fresh DB", async () => {
+      const dbId = await openTestDb();
+      const result = await getBlockchainPeaksByBlockNum(dbId, 0);
+      expect(result).toEqual({ blockNum: 0, peaks: "" });
+    });
+
+    it("returns the peaks of the requested anchor, not of the sync height", async () => {
+      const dbId = await openTestDb();
+      const db = getDatabase(dbId);
+      const peaksAt10 = new Uint8Array([0x10]);
+      await db.chainAnchors.bulkAdd([
+        { blockNum: 10, peaks: peaksAt10 },
+        { blockNum: 20, peaks: new Uint8Array([0x20]) },
+      ]);
+      const result = await getBlockchainPeaksByBlockNum(dbId, 10);
+      expect(result).toEqual({ blockNum: 10, peaks: toBase64(peaksAt10) });
+    });
+
+    it("returns null when no sync reached the block", async () => {
+      const dbId = await openTestDb();
+      expect(await getBlockchainPeaksByBlockNum(dbId, 7)).toBeNull();
+    });
+
+    it("rejects when db is not opened (logWebStoreError re-throws)", async () => {
+      await expect(
+        getBlockchainPeaksByBlockNum("never-opened-sync", 0)
+      ).rejects.toThrow();
+      expect(errorSpy).toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // pruneChainAnchors
+  // -------------------------------------------------------------------------
+
+  describe("pruneChainAnchors", () => {
+    async function seedAnchors(dbId: string, blockNums: number[]) {
+      await getDatabase(dbId).chainAnchors.bulkAdd(
+        blockNums.map((blockNum) => ({
+          blockNum,
+          peaks: new Uint8Array([blockNum]),
+        }))
+      );
+    }
+
+    async function anchorBlockNums(dbId: string) {
+      return getDatabase(dbId).chainAnchors.toCollection().primaryKeys();
+    }
+
+    it("deletes the anchors up to the bound, inclusive, and returns their count", async () => {
+      const dbId = await openTestDb();
+      await seedAnchors(dbId, [3, 7, 10, 15]);
+      expect(await pruneChainAnchors(dbId, 7)).toBe(2);
+      expect(await anchorBlockNums(dbId)).toEqual([0, 10, 15]);
+    });
+
+    it("keeps the genesis and sync height anchors for a bound above the sync height", async () => {
+      const dbId = await openTestDb();
+      await seedAnchors(dbId, [3, 7, 10, 15]);
+      expect(await pruneChainAnchors(dbId, 100)).toBe(3);
+      expect(await anchorBlockNums(dbId)).toEqual([0, 15]);
+    });
+
+    it("deletes nothing for a bound of 0", async () => {
+      const dbId = await openTestDb();
+      await seedAnchors(dbId, [3, 15]);
+      expect(await pruneChainAnchors(dbId, 0)).toBe(0);
+      expect(await anchorBlockNums(dbId)).toEqual([0, 3, 15]);
+    });
+
+    it("deletes nothing when only the genesis anchor exists", async () => {
+      const dbId = await openTestDb();
+      expect(await pruneChainAnchors(dbId, 50)).toBe(0);
+      expect(await anchorBlockNums(dbId)).toEqual([0]);
+    });
+
+    it("rejects when db is not opened (logWebStoreError re-throws)", async () => {
+      await expect(pruneChainAnchors("never-opened-sync", 1)).rejects.toThrow();
       expect(errorSpy).toHaveBeenCalled();
     });
   });
@@ -532,6 +631,31 @@ describe("sync", () => {
       const result = await getSyncHeight(dbId);
       expect(result).toEqual({ blockNum: 30 });
     });
+
+    it("keeps an anchor for every sync height it reached", async () => {
+      const dbId = await openTestDb();
+      const peaksAt10 = new Uint8Array([0x10]);
+      const peaksAt30 = new Uint8Array([0x30]);
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({ blockNum: 10, newPeaks: peaksAt10 })
+      );
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({ blockNum: 30, newPeaks: peaksAt30 })
+      );
+      // A backward-going sync adds no anchor.
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({ blockNum: 5, newPeaks: new Uint8Array([0x05]) })
+      );
+      const db = getDatabase(dbId);
+      expect(await db.chainAnchors.toArray()).toEqual([
+        { blockNum: 0, peaks: new Uint8Array() },
+        { blockNum: 10, peaks: peaksAt10 },
+        { blockNum: 30, peaks: peaksAt30 },
+      ]);
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -561,12 +685,12 @@ describe("sync", () => {
       expect(header!.blockNum).toBe(7);
       expect(header!.hasClientNotes).toBe("false");
 
-      // Peaks travel on the blockchainCheckpoint row, not the block header.
-      // Assert they round-trip — this is what proves the write path actually
+      // Peaks travel on the chainAnchors row of the sync height, not the block header.
+      // Assert they round-trip: this is what proves the write path actually
       // persists `newPeaks` (and would catch a fixture/field-name drift).
-      const checkpoint = await db.blockchainCheckpoint.get(1);
-      expect(checkpoint!.blockNum).toBe(7);
-      expect(checkpoint!.partialBlockchainPeaks).toEqual(peaksBytes);
+      const anchor = await db.chainAnchors.get(7);
+      expect(anchor!.peaks).toEqual(peaksBytes);
+      expect(await getSyncHeight(dbId)).toEqual({ blockNum: 7 });
     });
 
     it("marks block header hasClientNotes=true when blockHasRelevantNotes[i] === 1", async () => {

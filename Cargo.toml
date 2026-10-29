@@ -46,12 +46,14 @@ js-export-macro = { path = "crates/js-export-macro", version = "0.18.0-rc.0" }
 
 # Client crates
 # `miden-protocol` is the protocol crate `miden-client` itself resolves, needed directly only for
-# the items `miden-client` does not re-export. A requirement that drifts from `miden-client`'s would
-# resolve a second copy of the protocol types, so bump the three together.
-miden-client              = { branch = "next", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
-miden-client-core         = { branch = "next", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
-miden-client-proto        = { branch = "next", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
-miden-client-sqlite-store = { branch = "next", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
+# the items `miden-client` does not re-export. `miden-objects` holds the protobuf messages of the
+# protocol types, which `miden-client-proto` resolves. A requirement that drifts from
+# `miden-client`'s would resolve a second copy of the protocol types, so bump the four together.
+miden-client              = { branch = "jmunoz-remove-client-serializable", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
+miden-client-core         = { branch = "jmunoz-remove-client-serializable", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
+miden-client-proto        = { branch = "jmunoz-remove-client-serializable", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
+miden-client-sqlite-store = { branch = "jmunoz-remove-client-serializable", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
+miden-objects             = { default-features = false, version = "=0.17.1" }
 miden-protocol            = { default-features = false, version = "=0.17.1" }
 
 
@@ -72,6 +74,7 @@ miette      = { features = ["fancy"], version = "7.6" }
 napi        = { default-features = false, features = ["async", "napi8"], version = "3" }
 napi-build  = { version = "2" }
 napi-derive = { default-features = false, version = "3" }
+prost       = { default-features = false, version = "0.14" }
 rand        = { version = "0.10" }
 serde       = { features = ["derive"], version = "1.0" }
 thiserror   = { default-features = false, version = "2.0" }

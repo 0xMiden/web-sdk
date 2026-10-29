@@ -386,38 +386,126 @@ test.describe("Account.getPublicKeyCommitments", () => {
         .storageMode(sdk.AccountStorageMode.public())
         .build().account;
 
-      // The threshold config slot serializes as its name (length byte, then bytes),
-      // the value slot type 0, and the [threshold, approvers, 0, 0] word as
-      // little-endian u64s. Raise the approver count far above the three stored keys.
-      const bytes = Uint8Array.from(honest.serialize());
-      const view = new DataView(bytes.buffer);
-      const name = new TextEncoder().encode(
-        "miden::standards::auth::multisig::threshold_config"
-      );
-      const configWords = [];
-      for (let i = 0; i + name.length + 18 <= bytes.length; i++) {
-        const word = i + name.length + 2;
-        if (
-          bytes[i] === name.length &&
-          name.every((byte, j) => bytes[i + 1 + j] === byte) &&
-          bytes[word - 1] === 0 &&
-          view.getBigUint64(word, true) === 2n &&
-          view.getBigUint64(word + 8, true) === 3n
-        ) {
-          configWords.push(word);
+      // Protobuf wire helpers, enough to rewrite the fields of a miden-objects message.
+      const readVarint = (bytes, pos) => {
+        let value = 0n;
+        let shift = 0n;
+        for (;;) {
+          const byte = bytes[pos++];
+          value |= BigInt(byte & 0x7f) << shift;
+          if ((byte & 0x80) === 0) return [value, pos];
+          shift += 7n;
         }
-      }
-      if (configWords.length === 1) {
-        view.setBigUint64(configWords[0] + 8, 1000000000n, true);
-      }
+      };
+      const varint = (value) => {
+        const out = [];
+        let rest = BigInt(value);
+        do {
+          let byte = Number(rest & 0x7fn);
+          rest >>= 7n;
+          if (rest > 0n) byte |= 0x80;
+          out.push(byte);
+        } while (rest > 0n);
+        return out;
+      };
+      // Splits a message into its fields. `payload` is the field's bytes without the tag and
+      // the length, `raw` is the field as encoded.
+      const fields = (bytes) => {
+        const out = [];
+        let pos = 0;
+        while (pos < bytes.length) {
+          const start = pos;
+          const [tag, afterTag] = readVarint(bytes, pos);
+          const num = Number(tag >> 3n);
+          const wire = Number(tag & 7n);
+          let payloadStart = afterTag;
+          let end = afterTag;
+          if (wire === 0) {
+            end = readVarint(bytes, afterTag)[1];
+          } else if (wire === 1) {
+            end = afterTag + 8;
+          } else if (wire === 2) {
+            const [length, afterLength] = readVarint(bytes, afterTag);
+            payloadStart = afterLength;
+            end = afterLength + Number(length);
+          } else if (wire === 5) {
+            end = afterTag + 4;
+          } else {
+            throw new Error(`unsupported wire type ${wire}`);
+          }
+          out.push({
+            num,
+            payload: bytes.slice(payloadStart, end),
+            raw: bytes.slice(start, end),
+          });
+          pos = end;
+        }
+        return out;
+      };
+      const concat = (parts) =>
+        Uint8Array.from(parts.flatMap((part) => Array.from(part)));
+      const lengthDelimited = (num, payload) =>
+        concat([varint((num << 3) | 2), varint(payload.length), payload]);
 
-      // The account ends with the nonce (a u64) and the seed Option (tag 1, then a
-      // 32-byte word). A non-zero nonce with no seed is how an account already on
-      // chain serializes, and deserialize then skips the seed check.
-      const seedTag = bytes[bytes.length - 33];
-      const crafted = bytes.slice(0, bytes.length - 32);
-      new DataView(crafted.buffer).setBigUint64(crafted.length - 9, 1n, true);
-      crafted[crafted.length - 1] = 0;
+      // Field numbers of the miden-objects messages: Account { 3 nonce, 5 storage, 7 seed },
+      // AccountStorage { 1 slots }, StorageSlot { 1 slot_name, 2 value }, Word { 1 encoded }
+      // and Felt { 1 value, a fixed64 }.
+      const accountFields = fields(Uint8Array.from(honest.serialize()));
+      const hadSeed = accountFields.some((field) => field.num === 7);
+
+      // Raise the approver count of the threshold config slot far above the three stored
+      // keys. The word keeps its 32 bytes, so every enclosing length stays valid.
+      const name = "miden::standards::auth::multisig::threshold_config";
+      let configSlots = 0;
+      const storage = accountFields.find((field) => field.num === 5);
+      const slots = fields(storage.payload).map((slotField) => {
+        const slot = fields(slotField.payload);
+        const slotName = new TextDecoder().decode(
+          slot.find((field) => field.num === 1).payload
+        );
+        if (slotName !== name) return slotField.raw;
+        configSlots += 1;
+        const value = slot.find((field) => field.num === 2);
+        const word = fields(value.payload).find(
+          (field) => field.num === 1
+        ).payload;
+        const view = new DataView(
+          word.buffer,
+          word.byteOffset,
+          word.byteLength
+        );
+        if (
+          view.getBigUint64(0, true) !== 2n ||
+          view.getBigUint64(8, true) !== 3n
+        ) {
+          throw new Error("unexpected threshold config word");
+        }
+        view.setBigUint64(8, 1000000000n, true);
+        const craftedValue = lengthDelimited(2, lengthDelimited(1, word));
+        return lengthDelimited(
+          slotField.num,
+          concat(
+            slot.map((field) => (field.num === 2 ? craftedValue : field.raw))
+          )
+        );
+      });
+      const craftedStorage = lengthDelimited(5, concat(slots));
+
+      // A non-zero nonce with no seed is how an account already on chain encodes, and
+      // deserialize then skips the seed check.
+      const nonce = lengthDelimited(
+        3,
+        Uint8Array.from([0x09, 1, 0, 0, 0, 0, 0, 0, 0])
+      );
+      const crafted = concat(
+        accountFields
+          .filter((field) => field.num !== 7)
+          .map((field) => {
+            if (field.num === 3) return nonce;
+            if (field.num === 5) return craftedStorage;
+            return field.raw;
+          })
+      );
 
       let account = null;
       let deserializeError = null;
@@ -437,17 +525,11 @@ test.describe("Account.getPublicKeyCommitments", () => {
         }
       }
 
-      return {
-        configWords: configWords.length,
-        seedTag,
-        deserializeError,
-        keys,
-        error,
-      };
+      return { configSlots, hadSeed, deserializeError, keys, error };
     });
 
-    expect(result.configWords).toBe(1);
-    expect(result.seedTag).toBe(1);
+    expect(result.configSlots).toBe(1);
+    expect(result.hadSeed).toBe(true);
     expect(result.deserializeError).toBeNull();
     expect(result.keys).toBeNull();
     expect(result.error).toContain("declares 1000000000 approvers");

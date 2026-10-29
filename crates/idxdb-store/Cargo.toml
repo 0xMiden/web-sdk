@@ -16,6 +16,7 @@ crate-type = ["cdylib", "rlib"]
 miden-client       = { workspace = true }
 miden-client-core  = { workspace = true }
 miden-client-proto = { workspace = true }
+miden-protocol     = { workspace = true }
 
 # Workspace dependencies
 async-trait = { workspace = true }

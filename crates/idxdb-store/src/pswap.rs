@@ -13,7 +13,6 @@ use miden_client::Felt;
 use miden_client::note::NoteId;
 use miden_client::pswap::{PswapLineageFilter, PswapLineageRecord};
 use miden_client::store::StoreError;
-use miden_client::utils::DeserializationError;
 use miden_client_proto::{decode_unchecked, encode};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::js_sys;
@@ -52,9 +51,9 @@ fn order_id_key(order_id: Felt) -> String {
 }
 
 fn decode_record(record: &str) -> Result<PswapLineageRecord, StoreError> {
-    let bytes = general_purpose::STANDARD.decode(record).map_err(|err| {
-        StoreError::DataDeserializationError(DeserializationError::InvalidValue(err.to_string()))
-    })?;
+    let bytes = general_purpose::STANDARD
+        .decode(record)
+        .map_err(|err| StoreError::ParsingError(err.to_string()))?;
     Ok(decode_unchecked(&bytes)?)
 }
 

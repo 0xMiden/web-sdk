@@ -4,6 +4,7 @@ use miden_client::asset::Asset as NativeAsset;
 use miden_client::block::BlockNumber as NativeBlockNumber;
 use miden_client::note::{Note as NativeNote, NoteAssets as NativeNoteAssets, P2idNote, P2ideNote};
 use miden_client::{Felt as NativeFelt, Word as NativeWord};
+use miden_objects::proto;
 use miden_protocol::crypto::rand::RandomCoin;
 use rand::RngExt;
 
@@ -19,7 +20,7 @@ use super::note_script::NoteScript;
 use super::word::Word;
 use crate::js_error_with_context;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::utils::{decode_message, encode_message};
 
 /// A note bundles public metadata with private details: assets, script, inputs, and a serial number
 /// grouped into a recipient. The public identifier (`NoteId`) commits to those
@@ -52,14 +53,16 @@ impl Note {
         Note(NativeNote::new(note_assets.into(), partial, note_recipient.into()))
     }
 
-    /// Serializes the note into bytes.
+    /// Serializes the note into the bytes of its `miden-objects` protobuf message.
     pub fn serialize(&self) -> JsBytes {
-        serialize_to_bytes(&self.0)
+        encode_message(&proto::note::Note::from(&self.0))
     }
 
-    /// Deserializes a note from its byte representation.
+    /// Deserializes a note from the bytes that [`Self::serialize`] returns.
+    ///
+    /// Bytes that an earlier SDK version wrote with the Winterfell encoding do not decode.
     pub fn deserialize(bytes: JsBytes) -> Result<Note, JsErr> {
-        deserialize_from_bytes::<NativeNote>(&bytes).map(Note)
+        decode_message::<proto::note::Note>(&bytes).map(Note)
     }
 
     /// Returns the unique identifier of the note.

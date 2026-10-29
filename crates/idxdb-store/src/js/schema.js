@@ -68,6 +68,7 @@ var Table;
     Table["ClientConfig"] = "clientConfig";
     Table["UserSettings"] = "userSettings";
     Table["PswapLineages"] = "pswapLineages";
+    Table["ChainAnchors"] = "chainAnchors";
 })(Table || (Table = {}));
 /** Scope of a row of the `settings` table, which version 8 removes. Version 7 reads it. */
 export const SETTING_SCOPE_CLIENT = 0;
@@ -123,7 +124,7 @@ export class MidenDatabase {
     inputNotes;
     outputNotes;
     notesScripts;
-    blockchainCheckpoint;
+    chainAnchors;
     blockHeaders;
     partialBlockchainNodes;
     tags;
@@ -256,6 +257,36 @@ export class MidenDatabase {
         });
         // v8: drop `settings`, after v7 copied the rows that it keeps.
         this.dexie.version(8).stores({ [Table.Settings]: null });
+        // v9 (miden-client 0.18): keep the chain MMR peaks of every sync height, as the SQLite
+        // `chain_anchors` table does. `blockchainCheckpoint` held one row with the peaks at the
+        // current sync height. That row moves to `chainAnchors`, keyed by block number, next to the
+        // genesis row that every store has. The sync height is the highest block number in the table.
+        this.dexie
+            .version(9)
+            .stores({ [Table.ChainAnchors]: indexes("blockNum") })
+            .upgrade(async (tx) => {
+            const checkpoint = (await tx
+                .table(Table.BlockchainCheckpoint)
+                .get(1));
+            const anchors = [
+                { blockNum: 0, peaks: new Uint8Array() },
+            ];
+            if (checkpoint) {
+                const anchor = {
+                    blockNum: checkpoint.blockNum,
+                    peaks: checkpoint.partialBlockchainPeaks,
+                };
+                if (anchor.blockNum === 0) {
+                    anchors[0] = anchor;
+                }
+                else {
+                    anchors.push(anchor);
+                }
+            }
+            await tx.chainAnchors.bulkPut(anchors);
+        });
+        // v10: drop `blockchainCheckpoint`, after v9 moved its row.
+        this.dexie.version(10).stores({ [Table.BlockchainCheckpoint]: null });
         this.accountCodes = this.dexie.table(Table.AccountCode);
         this.latestAccountStorages = this.dexie.table(Table.LatestAccountStorage);
         this.historicalAccountStorages = this.dexie.table(Table.HistoricalAccountStorage);
@@ -273,7 +304,7 @@ export class MidenDatabase {
         this.inputNotes = this.dexie.table(Table.InputNotes);
         this.outputNotes = this.dexie.table(Table.OutputNotes);
         this.notesScripts = this.dexie.table(Table.NotesScripts);
-        this.blockchainCheckpoint = this.dexie.table(Table.BlockchainCheckpoint);
+        this.chainAnchors = this.dexie.table(Table.ChainAnchors);
         this.blockHeaders = this.dexie.table(Table.BlockHeaders);
         this.partialBlockchainNodes = this.dexie.table(Table.PartialBlockchainNodes);
         this.tags = this.dexie.table(Table.Tags);
@@ -283,13 +314,9 @@ export class MidenDatabase {
         this.userSettings = this.dexie.table(Table.UserSettings);
         this.pswapLineages = this.dexie.table(Table.PswapLineages);
         this.dexie.on("populate", () => {
-            this.blockchainCheckpoint
-                .put({
-                id: 1,
-                blockNum: 0,
-                partialBlockchainPeaks: new Uint8Array(),
-            })
-                /* v8 ignore next 2 — populate blockchainCheckpoint failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
+            this.chainAnchors
+                .put({ blockNum: 0, peaks: new Uint8Array() })
+                /* v8 ignore next 2: populate chainAnchors failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
                 .catch((err) => logWebStoreError(err, "Failed to populate DB"));
         });
     }

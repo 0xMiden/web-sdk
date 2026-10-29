@@ -4,7 +4,6 @@ import {
   JsStorageSlot,
   JsStorageMapEntry,
   IBlockHeader,
-  IBlockchainCheckpoint,
 } from "./schema.js";
 
 import {
@@ -50,7 +49,7 @@ export async function getNoteTags(dbId: string) {
 export async function getSyncHeight(dbId: string) {
   try {
     const db = getDatabase(dbId);
-    const record = await db.blockchainCheckpoint.get(1);
+    const record = await db.chainAnchors.orderBy("blockNum").last();
     if (record) {
       let data = {
         blockNum: record.blockNum,
@@ -67,8 +66,8 @@ export async function getSyncHeight(dbId: string) {
 export async function getCurrentBlockchainPeaks(dbId: string) {
   try {
     const db = getDatabase(dbId);
-    const record = await db.blockchainCheckpoint.get(1);
-    if (!record || record.partialBlockchainPeaks.length === 0) {
+    const record = await db.chainAnchors.orderBy("blockNum").last();
+    if (!record || record.peaks.length === 0) {
       return {
         blockNum: record?.blockNum ?? 0,
         peaks: uint8ArrayToBase64(new Uint8Array()),
@@ -76,10 +75,51 @@ export async function getCurrentBlockchainPeaks(dbId: string) {
     }
     return {
       blockNum: record.blockNum,
-      peaks: uint8ArrayToBase64(record.partialBlockchainPeaks),
+      peaks: uint8ArrayToBase64(record.peaks),
     };
   } catch (error) {
     logWebStoreError(error, "Error fetching current blockchain peaks");
+  }
+}
+
+/** Returns the chain MMR peaks committed by the header of `blockNum`, or `null` when no state
+ *  sync reached that block or `pruneChainAnchors` removed its row. */
+export async function getBlockchainPeaksByBlockNum(
+  dbId: string,
+  blockNum: number
+) {
+  try {
+    const db = getDatabase(dbId);
+    const record = await db.chainAnchors.get(blockNum);
+    if (!record) {
+      return null;
+    }
+    return {
+      blockNum: record.blockNum,
+      peaks: uint8ArrayToBase64(record.peaks),
+    };
+  } catch (error) {
+    logWebStoreError(error, "Error fetching blockchain peaks by block number");
+  }
+}
+
+/** Deletes the chain anchors at the past sync heights up to `upToBlock`, inclusive. The genesis
+ *  anchor and the anchor at the current sync height are kept. Returns the number of deleted
+ *  anchors. */
+export async function pruneChainAnchors(dbId: string, upToBlock: number) {
+  try {
+    const db = getDatabase(dbId);
+    return await db.dexie.transaction("rw", db.chainAnchors, async () => {
+      const current = await db.chainAnchors.orderBy("blockNum").last();
+      const syncHeight = current?.blockNum ?? 0;
+      return await db.chainAnchors
+        .where("blockNum")
+        .between(0, upToBlock, false, true)
+        .and((anchor) => anchor.blockNum < syncHeight)
+        .delete();
+    });
+  } catch (error) {
+    logWebStoreError(error, "Error pruning chain anchors");
   }
 }
 
@@ -242,7 +282,7 @@ export async function applyStateSync(
   const newBlockHeaders = reconstructFlattenedVec(flattenedNewBlockHeaders);
 
   const tablesToAccess = [
-    db.blockchainCheckpoint,
+    db.chainAnchors,
     db.inputNotes,
     db.outputNotes,
     db.notesScripts,
@@ -356,7 +396,7 @@ export async function applyStateSync(
           updateAccountWitness(dbId, entry.accountId, entry.witness)
         )
       ),
-      updateSyncHeight(tx, blockNum, newPeaks),
+      insertChainAnchor(tx, blockNum, newPeaks),
       updatePartialBlockchainNodes(tx, serializedNodeIds, serializedNodes),
       updateCommittedNoteTags(tx, committedNoteTagSources),
       Promise.all(
@@ -373,35 +413,22 @@ export async function applyStateSync(
   });
 }
 
-async function updateSyncHeight(
+async function insertChainAnchor(
   tx: Transaction,
   blockNum: number,
-  newPeaks: Uint8Array
+  peaks: Uint8Array
 ) {
   try {
-    // Only update if moving forward to prevent race conditions.
-    // Peaks travel with blockNum: skipping the height update also skips the
-    // peaks update, by design — a backward-going sync must not overwrite the
-    // newer peaks with older ones.
-    const current = await (
-      tx as Transaction & {
-        blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
-      }
-    ).blockchainCheckpoint.get(1);
+    // Only insert when moving forward, so a backward-going sync cannot make an older block the
+    // sync height. Each row keeps the peaks of its own block, so the earlier anchors stay.
+    const current = await tx.chainAnchors.orderBy("blockNum").last();
     if (!current || current.blockNum < blockNum) {
-      await (
-        tx as Transaction & {
-          blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
-        }
-      ).blockchainCheckpoint.update(1, {
-        blockNum: blockNum,
-        partialBlockchainPeaks: newPeaks,
-      });
+      await tx.chainAnchors.add({ blockNum, peaks });
     }
   } catch (error) {
     // logWebStoreError always re-throws, so a failure here aborts the whole
     // Dexie rw transaction rather than silently committing a partial update.
-    logWebStoreError(error, "Failed to update sync height");
+    logWebStoreError(error, "Failed to insert chain anchor");
   }
 }
 

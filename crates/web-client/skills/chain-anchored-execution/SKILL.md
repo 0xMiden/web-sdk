@@ -193,8 +193,8 @@ Two things to get right:
 ### R5 - Validate an anchor that arrives from an untrusted party
 
 Malformed anchors are impossible: the chain-length and peak-hash invariants are
-enforced natively on construction and on `deserialize`, and trailing bytes are
-rejected. What remains possible is an anchor pinned to the **wrong** block, or to a
+enforced natively on construction and on `deserialize`, and bytes that the
+message does not use are rejected. What remains possible is an anchor pinned to the **wrong** block, or to a
 block that never existed.
 
 1. Compare `anchor.commitment()` against `summary.blockCommitment()`.
@@ -273,6 +273,7 @@ Map an observed symptom to its cause before proposing a fix.
 | `TRANSACTION_ALREADY_AUTHORIZED` from `preview` | Nothing is awaiting authorization. Submit with `useTransaction` instead |
 | Error thrown naming a falsy anchor | `anchor` was passed as `null`/`undefined`-adjacent, typically hook state read before the capture resolved. Await it, or omit the option |
 | Generic deserialization failure on a received anchor | SDK version skew between parties. The encoding carries no version tag |
+| `the message has unused bytes` from `ChainAnchor.deserialize` | Usually SDK version skew: the sender's SDK encodes a field this one does not know. Otherwise the bytes were padded or altered in transit. Put both parties on the same SDK version and recapture. Do not strip the extra bytes to make it decode (R5) |
 | Execution fails deep in the executor after a network switch | An anchor was carried across a client/chain swap. Anchors are chain-bound |
 
 **Node.js note:** codes originating in the client (`INVALID_CHAIN_ANCHOR`,

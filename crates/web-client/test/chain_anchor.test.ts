@@ -252,8 +252,12 @@ test.describe("chain anchor", () => {
       );
 
       const bytes = (await client.chainAnchorForRequest(request)).serialize();
-      const padded = new Uint8Array(bytes.length + 1);
+      // A valid protobuf field that the anchor message does not define: field
+      // 1000 as a varint with value 1. A plain decoder skips it.
+      const unknownField = [0xc0, 0x3e, 0x01];
+      const padded = new Uint8Array(bytes.length + unknownField.length);
       padded.set(bytes);
+      padded.set(unknownField, bytes.length);
 
       let errorMessage = null;
       try {
@@ -266,7 +270,7 @@ test.describe("chain anchor", () => {
       return { errorMessage, cleanBlockNum };
     });
 
-    expect(result.errorMessage).toMatch(/trailing bytes/);
+    expect(result.errorMessage).toMatch(/unused bytes/);
     expect(result.cleanBlockNum).toBeGreaterThanOrEqual(0);
   });
 

@@ -3,13 +3,13 @@ use alloc::vec::Vec;
 
 use miden_client::Word;
 use miden_client::account::{Account, StorageSlotContent};
-use miden_client::utils::Serializable;
 use miden_client_proto::encode;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::js_sys;
 
 use super::flattened_vec::FlattenedU8Vec;
 use crate::account::{JsStorageMapEntry, JsStorageSlot, JsVaultAsset};
+use crate::bytes::ToStoreBytes;
 use crate::note::utils::{SerializedInputNoteData, SerializedOutputNoteData};
 use crate::transaction::utils::SerializedTransactionData;
 
@@ -24,6 +24,9 @@ extern "C" {
 
     #[wasm_bindgen(js_name = getCurrentBlockchainPeaks)]
     pub fn idxdb_get_current_blockchain_peaks(db_id: &str) -> js_sys::Promise;
+
+    #[wasm_bindgen(js_name = getBlockchainPeaksByBlockNum)]
+    pub fn idxdb_get_blockchain_peaks_by_block_num(db_id: &str, block_num: u32) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = getNoteTags)]
     pub fn idxdb_get_note_tags(db_id: &str) -> js_sys::Promise;
@@ -56,6 +59,9 @@ extern "C" {
 
     #[wasm_bindgen(js_name = discardTransactions)]
     pub fn idxdb_discard_transactions(db_id: &str, transactions: Vec<String>) -> js_sys::Promise;
+
+    #[wasm_bindgen(js_name = pruneChainAnchors)]
+    pub fn idxdb_prune_chain_anchors(db_id: &str, up_to_block: u32) -> js_sys::Promise;
 }
 
 /// An object that contains data for a sync update,
@@ -78,8 +84,9 @@ pub struct JsStateSyncUpdate {
     #[wasm_bindgen(js_name = "newBlockNums")]
     pub new_block_nums: Vec<u32>,
 
-    /// Serialized MMR peaks at the new sync height. The only peaks persisted by the
-    /// client (peaks for intermediate note blocks are never read, so they are not stored).
+    /// Serialized MMR peaks at the new sync height. The store keeps the peaks of every sync
+    /// height in `chainAnchors`, so the peaks of a past sync height stay available after its
+    /// block header is pruned.
     #[wasm_bindgen(js_name = "newPeaks")]
     pub new_peaks: Vec<u8>,
 
@@ -228,7 +235,7 @@ impl JsAccountUpdate {
             committed: account.is_public(),
             nonce: account.nonce().to_string(),
             account_commitment: account.to_commitment().to_string(),
-            account_seed: account_seed.map(|seed| seed.to_bytes()),
+            account_seed: account_seed.map(|seed| seed.to_store_bytes()),
             code: encode(account.code()),
         }
     }

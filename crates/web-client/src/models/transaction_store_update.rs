@@ -6,7 +6,7 @@ use crate::models::executed_transaction::ExecutedTransaction;
 use crate::models::output_notes::OutputNotes;
 use crate::models::transaction_request::note_details_and_tag::NoteDetailsAndTag;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::utils::{decode_proto, encode_proto};
 
 /// Represents the changes that need to be applied to the client store as a result of a transaction
 /// execution.
@@ -53,12 +53,12 @@ impl TransactionStoreUpdate {
 
     /// Serializes the update into bytes.
     pub fn serialize(&self) -> JsBytes {
-        serialize_to_bytes(&self.0)
+        encode_proto(&self.0)
     }
 
     /// Deserializes an update from bytes.
     pub fn deserialize(bytes: JsBytes) -> Result<TransactionStoreUpdate, JsErr> {
-        deserialize_from_bytes::<NativeTransactionStoreUpdate>(&bytes).map(TransactionStoreUpdate)
+        decode_proto::<NativeTransactionStoreUpdate>(&bytes).map(TransactionStoreUpdate)
     }
 }
 

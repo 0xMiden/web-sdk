@@ -3,7 +3,6 @@ use alloc::vec::Vec;
 
 use miden_client::account::{StorageMap, StorageSlot};
 use miden_client::asset::Asset;
-use miden_client::utils::Serializable;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::js_sys;
@@ -237,7 +236,7 @@ impl JsStorageSlot {
         Self {
             slot_name: slot.name().to_string(),
             slot_value: slot.value().to_hex(),
-            slot_type: slot.slot_type().to_bytes()[0],
+            slot_type: slot.slot_type() as u8,
             patch_operation: 0,
         }
     }
