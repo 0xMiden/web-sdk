@@ -46,12 +46,14 @@ js-export-macro = { path = "crates/js-export-macro", version = "0.18.0-rc.0" }
 
 # Client crates
 # `miden-protocol` is the protocol crate `miden-client` itself resolves, needed directly only for
-# the items `miden-client` does not re-export. A requirement that drifts from `miden-client`'s would
-# resolve a second copy of the protocol types, so bump the three together.
+# the items `miden-client` does not re-export. `miden-objects` holds the protobuf messages of the
+# protocol types, which `miden-client-proto` resolves. A requirement that drifts from
+# `miden-client`'s would resolve a second copy of the protocol types, so bump the four together.
 miden-client              = { branch = "jmunoz-remove-client-serializable", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
 miden-client-core         = { branch = "jmunoz-remove-client-serializable", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
 miden-client-proto        = { branch = "jmunoz-remove-client-serializable", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
 miden-client-sqlite-store = { branch = "jmunoz-remove-client-serializable", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
+miden-objects             = { default-features = false, version = "=0.17.1" }
 miden-protocol            = { default-features = false, version = "=0.17.1" }
 
 

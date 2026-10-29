@@ -1,4 +1,5 @@
 use miden_client_proto::ProtobufValue;
+use miden_objects::{DecodeMessageExt, Verify};
 use miden_protocol::utils::serde::{ByteReader, Deserializable, Serializable, SliceReader};
 use prost::Message;
 
@@ -37,6 +38,28 @@ pub fn decode_untrusted_proto<T: ProtobufValue>(bytes: &JsBytes) -> Result<T, Js
         return Err(from_str_err(&alloc::format!("{context}: the message has unused bytes")));
     }
     T::from_proto(message).map_err(|e| js_error_with_context(e, &context))
+}
+
+/// Encodes a `miden-objects` protobuf message, the canonical encoding of a protocol value, into the
+/// platform byte type.
+pub fn encode_message<M: Message>(message: &M) -> JsBytes {
+    bytes_to_js(&message.encode_to_vec())
+}
+
+/// Decodes platform bytes that hold the `miden-objects` protobuf message `M`, with all the checks
+/// of the protocol value the message carries.
+pub fn decode_message<M>(bytes: &JsBytes) -> Result<<M::Decoded as Verify>::Verified, JsErr>
+where
+    M: Message + Default + DecodeMessageExt,
+    M::Decoded: Verify,
+{
+    let vec = crate::platform::js_to_bytes(bytes);
+    let context = alloc::format!(
+        "failed to deserialize {}",
+        core::any::type_name::<<M::Decoded as Verify>::Verified>()
+    );
+    let message = M::decode(vec.as_slice()).map_err(|e| js_error_with_context(e, &context))?;
+    message.decode_and_verify().map_err(|e| js_error_with_context(e, &context))
 }
 
 /// Serializes any value that implements `Serializable` into the platform byte type.

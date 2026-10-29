@@ -2542,6 +2542,7 @@ dependencies = [
  "miden-client-proto",
  "miden-client-sqlite-store",
  "miden-idxdb-store",
+ "miden-objects",
  "miden-precompiles-air",
  "miden-protocol",
  "napi",
