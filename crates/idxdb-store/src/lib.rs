@@ -259,6 +259,13 @@ impl Store for IdxdbStore {
         self.get_current_blockchain_peaks().await
     }
 
+    async fn get_blockchain_peaks_by_block_num(
+        &self,
+        block_num: BlockNumber,
+    ) -> Result<Option<MmrPeaks>, StoreError> {
+        self.get_blockchain_peaks_by_block_num(block_num).await
+    }
+
     async fn untrack_and_prune_irrelevant_blocks(
         &self,
         blocks_to_untrack: &[BlockNumber],
@@ -273,6 +280,10 @@ impl Store for IdxdbStore {
         up_to_nonce: Felt,
     ) -> Result<usize, StoreError> {
         self.prune_account_history(account_id, up_to_nonce).await
+    }
+
+    async fn prune_chain_anchors(&self, up_to_block: BlockNumber) -> Result<usize, StoreError> {
+        self.prune_chain_anchors(up_to_block).await
     }
 
     // ACCOUNTS

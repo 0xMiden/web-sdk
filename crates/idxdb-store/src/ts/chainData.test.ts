@@ -385,11 +385,7 @@ describe("pruneIrrelevantBlocks", () => {
     const db = getDatabase(dbId);
 
     // Insert sync height = 10 (default populate gives block 0)
-    await db.blockchainCheckpoint.put({
-      id: 1,
-      blockNum: 10,
-      partialBlockchainPeaks: new Uint8Array(),
-    });
+    await db.chainAnchors.put({ blockNum: 10, peaks: new Uint8Array() });
 
     // Block 0 (genesis), block 5 (irrelevant), block 10 (sync height), block 20 (tracked)
     await insertBlockHeader(dbId, 0, HEADER_V1, false, [], []);
@@ -411,11 +407,7 @@ describe("pruneIrrelevantBlocks", () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
 
-    await db.blockchainCheckpoint.put({
-      id: 1,
-      blockNum: 10,
-      partialBlockchainPeaks: new Uint8Array(),
-    });
+    await db.chainAnchors.put({ blockNum: 10, peaks: new Uint8Array() });
     await insertBlockHeader(dbId, 0, HEADER_V1, false, [], []);
     await insertBlockHeader(dbId, 7, HEADER_V1, true, [], []); // tracked, will untrack
     await insertBlockHeader(dbId, 10, HEADER_V1, false, [], []);
@@ -433,11 +425,7 @@ describe("pruneIrrelevantBlocks", () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
 
-    await db.blockchainCheckpoint.put({
-      id: 1,
-      blockNum: 10,
-      partialBlockchainPeaks: new Uint8Array(),
-    });
+    await db.chainAnchors.put({ blockNum: 10, peaks: new Uint8Array() });
     await insertPartialBlockchainNodes(
       dbId,
       ["1", "2", "3"],
@@ -453,12 +441,39 @@ describe("pruneIrrelevantBlocks", () => {
     expect(ids).not.toContain(3);
   });
 
-  it("rejects when blockchainCheckpoint is undefined", async () => {
+  it("keeps the chain anchors of the heights it prunes", async () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
 
-    // Delete the default blockchainCheckpoint entry that was populated by the 'populate' hook
-    await db.blockchainCheckpoint.clear();
+    const peaksAt5 = new Uint8Array([5]);
+    const peaksAt10 = new Uint8Array([10]);
+    await db.chainAnchors.bulkPut([
+      { blockNum: 5, peaks: peaksAt5 },
+      { blockNum: 10, peaks: peaksAt10 },
+    ]);
+    await insertBlockHeader(dbId, 0, HEADER_V1, false, [], []);
+    await insertBlockHeader(dbId, 5, HEADER_V1, false, [], []); // past sync height, pruned
+    await insertBlockHeader(dbId, 10, HEADER_V1, false, [], []);
+
+    await pruneIrrelevantBlocks(dbId, [], []);
+
+    const blockNums = (await db.blockHeaders.toArray()).map((r) => r.blockNum);
+    expect(blockNums).toEqual([0, 10]);
+    // The peaks of a past sync height cannot be rebuilt from the headers, so header pruning
+    // leaves them alone.
+    expect(await db.chainAnchors.toArray()).toEqual([
+      { blockNum: 0, peaks: new Uint8Array() },
+      { blockNum: 5, peaks: peaksAt5 },
+      { blockNum: 10, peaks: peaksAt10 },
+    ]);
+  });
+
+  it("rejects when the chainAnchors table is empty", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+
+    // Delete the genesis anchor that the 'populate' hook seeded.
+    await db.chainAnchors.clear();
 
     // logWebStoreError re-throws, so the promise rejects
     await expect(pruneIrrelevantBlocks(dbId, [], [])).rejects.toThrow(

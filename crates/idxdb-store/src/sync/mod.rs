@@ -33,9 +33,11 @@ use js_bindings::{
     JsStateSyncUpdate,
     idxdb_add_note_tag,
     idxdb_apply_state_sync,
+    idxdb_get_blockchain_peaks_by_block_num,
     idxdb_get_current_blockchain_peaks,
     idxdb_get_note_tags,
     idxdb_get_sync_height,
+    idxdb_prune_chain_anchors,
     idxdb_remove_note_tag,
 };
 
@@ -101,16 +103,26 @@ impl IdxdbStore {
         let peaks_idxdb: PartialBlockchainPeaksIdxdbObject =
             await_js(promise, "failed to get current blockchain peaks").await?;
 
-        if peaks_idxdb.peaks.is_empty() {
-            return Ok(MmrPeaks::new(Forest::empty(), Vec::new())?);
-        }
+        parse_blockchain_peaks(&peaks_idxdb)
+    }
 
-        let forest_size =
-            usize::try_from(peaks_idxdb.block_num).expect("u32 block_num should fit in usize");
-        let forest = Forest::new(forest_size).map_err(|err| {
-            StoreError::ParsingError(format!("invalid forest size {forest_size}: {err}"))
-        })?;
-        Ok(decode_mmr_peaks(forest, &peaks_idxdb.peaks)?)
+    pub(crate) async fn get_blockchain_peaks_by_block_num(
+        &self,
+        block_num: BlockNumber,
+    ) -> Result<Option<MmrPeaks>, StoreError> {
+        let promise = idxdb_get_blockchain_peaks_by_block_num(self.db_id(), block_num.as_u32());
+        let peaks_idxdb: Option<PartialBlockchainPeaksIdxdbObject> =
+            await_js(promise, "failed to get blockchain peaks by block number").await?;
+
+        peaks_idxdb.as_ref().map(parse_blockchain_peaks).transpose()
+    }
+
+    pub(crate) async fn prune_chain_anchors(
+        &self,
+        up_to_block: BlockNumber,
+    ) -> Result<usize, StoreError> {
+        let promise = idxdb_prune_chain_anchors(self.db_id(), up_to_block.as_u32());
+        await_js(promise, "failed to prune chain anchors").await
     }
 
     pub(super) async fn add_note_tag(&self, tag: NoteTagRecord) -> Result<bool, StoreError> {
@@ -173,17 +185,16 @@ impl IdxdbStore {
 
         let new_peaks_bytes = encode_mmr_peaks(&partial_blockchain_updates.new_peaks);
 
-        let (serialized_input_notes, serialized_output_notes): (Vec<_>, Vec<_>) = {
-            let input_notes = note_updates.updated_input_notes();
-            let output_notes = note_updates.updated_output_notes();
-            (
-                input_notes.into_iter().map(|note| serialize_input_note(note.inner())).collect(),
-                output_notes
-                    .into_iter()
-                    .map(|note| serialize_output_note(note.inner()))
-                    .collect(),
-            )
-        };
+        let serialized_input_notes: Vec<_> = note_updates
+            .input_notes()
+            .iter()
+            .map(|note| serialize_input_note(note.inner()))
+            .collect();
+        let serialized_output_notes: Vec<_> = note_updates
+            .output_notes()
+            .iter()
+            .map(|note| serialize_output_note(note.inner()))
+            .collect();
 
         // Tags for tracked expected notes are keyed by the note's details
         // commitment (`NoteTagSource::Note`), which `encode_tag_source` writes
@@ -191,7 +202,8 @@ impl IdxdbStore {
         // notes commit, collect the details-commitment hex of every committed
         // input note so the JS layer can delete the matching rows.
         let committed_note_tag_sources: Vec<String> = note_updates
-            .updated_input_notes()
+            .input_notes()
+            .iter()
             .filter(|update| update.inner().is_committed())
             .map(|update| update.inner().details_commitment().to_hex())
             .collect();
@@ -304,6 +316,23 @@ impl IdxdbStore {
 
         Ok(())
     }
+}
+
+/// Decodes the peaks of a `chainAnchors` row. The genesis row holds no peak bytes, which decode
+/// as an MMR without peaks.
+fn parse_blockchain_peaks(
+    peaks_idxdb: &PartialBlockchainPeaksIdxdbObject,
+) -> Result<MmrPeaks, StoreError> {
+    if peaks_idxdb.peaks.is_empty() {
+        return Ok(MmrPeaks::new(Forest::empty(), Vec::new())?);
+    }
+
+    let forest_size =
+        usize::try_from(peaks_idxdb.block_num).expect("u32 block_num should fit in usize");
+    let forest = Forest::new(forest_size).map_err(|err| {
+        StoreError::ParsingError(format!("invalid forest size {forest_size}: {err}"))
+    })?;
+    Ok(decode_mmr_peaks(forest, &peaks_idxdb.peaks)?)
 }
 
 /// Encodes a [`NoteTagSource`] into the three optional hex-string columns the

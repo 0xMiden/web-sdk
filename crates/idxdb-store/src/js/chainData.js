@@ -163,9 +163,9 @@ export async function pruneIrrelevantBlocks(dbId, blocksToUntrack, nodeIdsToRemo
     try {
         const db = getDatabase(dbId);
         const numericNodeIds = nodeIdsToRemove.map(Number);
-        const syncHeight = await db.blockchainCheckpoint.get(1);
+        const syncHeight = await db.chainAnchors.orderBy("blockNum").last();
         if (syncHeight == undefined) {
-            throw Error("SyncHeight is undefined -- is the blockchain_checkpoint table empty?");
+            throw Error("SyncHeight is undefined -- is the chainAnchors table empty?");
         }
         await db.dexie.transaction("rw", db.blockHeaders, db.partialBlockchainNodes, async () => {
             // 1. Delete stale MMR authentication nodes.

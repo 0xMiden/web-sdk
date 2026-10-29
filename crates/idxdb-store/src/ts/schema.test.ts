@@ -238,6 +238,70 @@ describe("MidenDatabase migrations", () => {
     );
   });
 
+  // v9/v10: the peaks of every sync height live in `chainAnchors`, keyed by block number. The
+  // `blockchainCheckpoint` row moves there next to the genesis anchor, then the table is dropped.
+  it("v9/v10 migration moves the blockchain checkpoint into chainAnchors", async () => {
+    const name = uniqueDbName();
+
+    const dbV1 = trackDb(new Dexie(name));
+    dbV1.version(1).stores(V1_STORES);
+    await dbV1.open();
+    const peaks = new Uint8Array([1, 2, 3]);
+    await dbV1.table("blockchainCheckpoint").put({
+      id: 1,
+      blockNum: 42,
+      partialBlockchainPeaks: peaks,
+    });
+    dbV1.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.18.0")).toBe(true);
+
+    expect(await mdb.chainAnchors.toArray()).toEqual([
+      { blockNum: 0, peaks: new Uint8Array() },
+      { blockNum: 42, peaks },
+    ]);
+    expect(mdb.dexie.tables.map((table) => table.name)).not.toContain(
+      "blockchainCheckpoint"
+    );
+  });
+
+  it("v9 migration keeps one genesis anchor when the checkpoint is at block 0", async () => {
+    const name = uniqueDbName();
+
+    const dbV1 = trackDb(new Dexie(name));
+    dbV1.version(1).stores(V1_STORES);
+    await dbV1.open();
+    const peaks = new Uint8Array([9]);
+    await dbV1.table("blockchainCheckpoint").put({
+      id: 1,
+      blockNum: 0,
+      partialBlockchainPeaks: peaks,
+    });
+    dbV1.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.18.0")).toBe(true);
+
+    expect(await mdb.chainAnchors.toArray()).toEqual([{ blockNum: 0, peaks }]);
+  });
+
+  it("v9 migration seeds the genesis anchor when there is no checkpoint row", async () => {
+    const name = uniqueDbName();
+
+    const dbV1 = trackDb(new Dexie(name));
+    dbV1.version(1).stores(V1_STORES);
+    await dbV1.open();
+    dbV1.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.18.0")).toBe(true);
+
+    expect(await mdb.chainAnchors.toArray()).toEqual([
+      { blockNum: 0, peaks: new Uint8Array() },
+    ]);
+  });
+
   // v6: account witness registry. A null witness is a registered account the sync has not
   // refreshed yet.
   it("v6 migration adds accountWitnesses", async () => {

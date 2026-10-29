@@ -25,6 +25,9 @@ extern "C" {
     #[wasm_bindgen(js_name = getCurrentBlockchainPeaks)]
     pub fn idxdb_get_current_blockchain_peaks(db_id: &str) -> js_sys::Promise;
 
+    #[wasm_bindgen(js_name = getBlockchainPeaksByBlockNum)]
+    pub fn idxdb_get_blockchain_peaks_by_block_num(db_id: &str, block_num: u32) -> js_sys::Promise;
+
     #[wasm_bindgen(js_name = getNoteTags)]
     pub fn idxdb_get_note_tags(db_id: &str) -> js_sys::Promise;
 
@@ -56,6 +59,9 @@ extern "C" {
 
     #[wasm_bindgen(js_name = discardTransactions)]
     pub fn idxdb_discard_transactions(db_id: &str, transactions: Vec<String>) -> js_sys::Promise;
+
+    #[wasm_bindgen(js_name = pruneChainAnchors)]
+    pub fn idxdb_prune_chain_anchors(db_id: &str, up_to_block: u32) -> js_sys::Promise;
 }
 
 /// An object that contains data for a sync update,
@@ -78,8 +84,9 @@ pub struct JsStateSyncUpdate {
     #[wasm_bindgen(js_name = "newBlockNums")]
     pub new_block_nums: Vec<u32>,
 
-    /// Serialized MMR peaks at the new sync height. The only peaks persisted by the
-    /// client (peaks for intermediate note blocks are never read, so they are not stored).
+    /// Serialized MMR peaks at the new sync height. The store keeps the peaks of every sync
+    /// height in `chainAnchors`, so the peaks of a past sync height stay available after its
+    /// block header is pruned.
     #[wasm_bindgen(js_name = "newPeaks")]
     pub new_peaks: Vec<u8>,
 

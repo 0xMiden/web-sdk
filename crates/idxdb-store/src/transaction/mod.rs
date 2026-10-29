@@ -17,7 +17,7 @@ use miden_client::transaction::{
     TransactionStatus,
     TransactionStoreUpdate,
 };
-use miden_client_core::store::NoteUpdateTracker;
+use miden_client_core::store::NoteUpdates;
 use miden_client_proto::{decode_unchecked, encode};
 use serde::Serialize;
 use wasm_bindgen::JsValue;
@@ -219,7 +219,7 @@ impl IdxdbStore {
         &self,
         transactions: &[ExecutedTransaction],
         submission_height: BlockNumber,
-        note_updates: &NoteUpdateTracker,
+        note_updates: &NoteUpdates,
         new_tags: &[NoteTagRecord],
     ) -> Result<(), StoreError> {
         if transactions.is_empty() {
@@ -250,11 +250,13 @@ impl IdxdbStore {
             // last payload carries them and they are written after every transaction.
             if index == last {
                 payload.input_notes = note_updates
-                    .updated_input_notes()
+                    .input_notes()
+                    .iter()
                     .map(|u| serialize_input_note(u.inner()))
                     .collect();
                 payload.output_notes = note_updates
-                    .updated_output_notes()
+                    .output_notes()
+                    .iter()
                     .map(|u| serialize_output_note(u.inner()))
                     .collect();
                 payload.tags = new_tags.iter().map(batch_note_tag).collect();

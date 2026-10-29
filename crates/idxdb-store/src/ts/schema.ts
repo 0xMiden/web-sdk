@@ -81,6 +81,7 @@ enum Table {
   ClientConfig = "clientConfig",
   UserSettings = "userSettings",
   PswapLineages = "pswapLineages",
+  ChainAnchors = "chainAnchors",
 }
 
 /** Scope of a row of the `settings` table, which version 8 removes. Version 7 reads it. */
@@ -227,10 +228,19 @@ export interface INotesScript {
   serializedNoteScript: Uint8Array;
 }
 
+// Row of the `blockchainCheckpoint` table that v10 drops. The v9 upgrade reads it to seed
+// `chainAnchors`.
 export interface IBlockchainCheckpoint {
   id: number;
   blockNum: number;
   partialBlockchainPeaks: Uint8Array;
+}
+
+// The chain MMR peaks committed by the header of a block that a state sync reached. The row with
+// the highest `blockNum` is the current sync height.
+export interface IChainAnchor {
+  blockNum: number;
+  peaks: Uint8Array;
 }
 
 export interface IBlockHeader {
@@ -396,7 +406,7 @@ declare module "dexie" {
     accountAuths: Table<IAccountAuth, string>;
     accountKeyMappings: Table<IAccountKeyMapping, string>;
     addresses: Table<IAddress, string>;
-    blockchainCheckpoint: Table<IBlockchainCheckpoint, number>;
+    chainAnchors: Table<IChainAnchor, number>;
     blockHeaders: Table<IBlockHeader, number>;
     partialBlockchainNodes: Table<IPartialBlockchainNode, number>;
     foreignAccountCode: Table<IForeignAccountCode, string>;
@@ -425,7 +435,7 @@ export type MidenDexie = Dexie & {
   inputNotes: Dexie.Table<IInputNote, string>;
   outputNotes: Dexie.Table<IOutputNote, string>;
   notesScripts: Dexie.Table<INotesScript, string>;
-  blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
+  chainAnchors: Dexie.Table<IChainAnchor, number>;
   blockHeaders: Dexie.Table<IBlockHeader, number>;
   partialBlockchainNodes: Dexie.Table<IPartialBlockchainNode, number>;
   tags: Dexie.Table<ITag, number>;
@@ -455,7 +465,7 @@ export class MidenDatabase {
   inputNotes: Dexie.Table<IInputNote, string>;
   outputNotes: Dexie.Table<IOutputNote, string>;
   notesScripts: Dexie.Table<INotesScript, string>;
-  blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
+  chainAnchors: Dexie.Table<IChainAnchor, number>;
   blockHeaders: Dexie.Table<IBlockHeader, number>;
   partialBlockchainNodes: Dexie.Table<IPartialBlockchainNode, number>;
   tags: Dexie.Table<ITag, number>;
@@ -622,6 +632,37 @@ export class MidenDatabase {
     // v8: drop `settings`, after v7 copied the rows that it keeps.
     this.dexie.version(8).stores({ [Table.Settings]: null });
 
+    // v9 (miden-client 0.18): keep the chain MMR peaks of every sync height, as the SQLite
+    // `chain_anchors` table does. `blockchainCheckpoint` held one row with the peaks at the
+    // current sync height. That row moves to `chainAnchors`, keyed by block number, next to the
+    // genesis row that every store has. The sync height is the highest block number in the table.
+    this.dexie
+      .version(9)
+      .stores({ [Table.ChainAnchors]: indexes("blockNum") })
+      .upgrade(async (tx) => {
+        const checkpoint = (await tx
+          .table(Table.BlockchainCheckpoint)
+          .get(1)) as IBlockchainCheckpoint | undefined;
+        const anchors: IChainAnchor[] = [
+          { blockNum: 0, peaks: new Uint8Array() },
+        ];
+        if (checkpoint) {
+          const anchor = {
+            blockNum: checkpoint.blockNum,
+            peaks: checkpoint.partialBlockchainPeaks,
+          };
+          if (anchor.blockNum === 0) {
+            anchors[0] = anchor;
+          } else {
+            anchors.push(anchor);
+          }
+        }
+        await tx.chainAnchors.bulkPut(anchors);
+      });
+
+    // v10: drop `blockchainCheckpoint`, after v9 moved its row.
+    this.dexie.version(10).stores({ [Table.BlockchainCheckpoint]: null });
+
     this.accountCodes = this.dexie.table<IAccountCode, string>(
       Table.AccountCode
     );
@@ -673,8 +714,8 @@ export class MidenDatabase {
     this.notesScripts = this.dexie.table<INotesScript, string>(
       Table.NotesScripts
     );
-    this.blockchainCheckpoint = this.dexie.table<IBlockchainCheckpoint, number>(
-      Table.BlockchainCheckpoint
+    this.chainAnchors = this.dexie.table<IChainAnchor, number>(
+      Table.ChainAnchors
     );
     this.blockHeaders = this.dexie.table<IBlockHeader, number>(
       Table.BlockHeaders
@@ -697,13 +738,9 @@ export class MidenDatabase {
     );
 
     this.dexie.on("populate", () => {
-      this.blockchainCheckpoint
-        .put({
-          id: 1,
-          blockNum: 0,
-          partialBlockchainPeaks: new Uint8Array(),
-        } as IBlockchainCheckpoint)
-        /* v8 ignore next 2 — populate blockchainCheckpoint failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
+      this.chainAnchors
+        .put({ blockNum: 0, peaks: new Uint8Array() })
+        /* v8 ignore next 2: populate chainAnchors failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
         .catch((err: unknown) =>
           logWebStoreError(err, "Failed to populate DB")
         );
