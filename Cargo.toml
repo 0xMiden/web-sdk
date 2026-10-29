@@ -86,12 +86,12 @@ should_panic_without_expect = "allow"                           # We don't care 
 
 [patch.crates-io.miden-client]
 git = "https://github.com/0xMiden/rust-sdk"
-rev = "58dcec6663a1afd08331c6b3b5510f043925d7de"
+rev = "c10a9ac275f0751d32ec20a3829f9d40aa4eb3b3"
 
 [patch.crates-io.miden-client-proto]
 git = "https://github.com/0xMiden/rust-sdk"
-rev = "58dcec6663a1afd08331c6b3b5510f043925d7de"
+rev = "c10a9ac275f0751d32ec20a3829f9d40aa4eb3b3"
 
 [patch.crates-io.miden-client-sqlite-store]
 git = "https://github.com/0xMiden/rust-sdk"
-rev = "58dcec6663a1afd08331c6b3b5510f043925d7de"
+rev = "c10a9ac275f0751d32ec20a3829f9d40aa4eb3b3"
