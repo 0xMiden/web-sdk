@@ -138,6 +138,41 @@ describe("IndexedDB construction boundaries", () => {
     expect(order).toHaveLength(2);
   });
 
+  it("preserves TypeError when worker initialization fails", async () => {
+    let receive;
+    vi.stubGlobal(
+      "Worker",
+      class {
+        addEventListener(type, callback) {
+          if (type === "message") receive = callback;
+        }
+        postMessage() {}
+        terminate() {}
+      }
+    );
+    const client = new WasmWebClient("rpc");
+    const ready = client.ready;
+    await receive({ data: { loaded: true } });
+    await receive({
+      data: {
+        error: {
+          name: "TypeError",
+          message: "Conflicting IndexedDB durability for shared store",
+          cause: { name: "TypeError", message: "original cause" },
+        },
+      },
+    });
+    await expect(ready).rejects.toBeInstanceOf(TypeError);
+    await expect(ready).rejects.toMatchObject({
+      message: "Conflicting IndexedDB durability for shared store",
+      cause: expect.objectContaining({
+        name: "TypeError",
+        message: "original cause",
+      }),
+    });
+    client.terminate();
+  });
+
   it.each([null, [], { durability: "strong" }, { onFailure: 1 }])(
     "rejects malformed construction policy before creating backend: %j",
     async (indexedDb) => {

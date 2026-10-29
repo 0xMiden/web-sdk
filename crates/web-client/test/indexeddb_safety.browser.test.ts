@@ -248,28 +248,66 @@ for (const route of ["main", "worker"]) {
   });
 }
 
-test("standalone export and import retain strict policy without live client holders", async ({
+test("conflicting same-realm clients and helpers preserve TypeError", async ({
   page,
 }) => {
   await prepare(page, "st", "index", "module");
   const result = await page.evaluate(async () => {
-    const { client, sdk, main } = window.storageTest;
+    const { client: previous, sdk, main } = window.storageTest;
+    const serializedMockChain = await previous.serializeMockChain();
+    const serializedNoteTransport =
+      await previous.serializeMockNoteTransportNode();
+    previous.terminate();
+    await previous.waitForIdle();
+    main.length = 0;
+    const client = await sdk.MidenClient.createMock({
+      serializedMockChain,
+      serializedNoteTransport,
+      useWorker: false,
+      seed: new Uint8Array(32).fill(1),
+      indexedDb: { durability: "strict" },
+    });
+    await client.setSetting("same-realm-durability", new Uint8Array([1]));
+    const rejectsTypeError = async (operation) => {
+      try {
+        await operation();
+        return false;
+      } catch (error) {
+        return error instanceof TypeError;
+      }
+    };
+    const createConflict = await rejectsTypeError(() =>
+      sdk.MidenClient.createMock({
+        serializedMockChain,
+        serializedNoteTransport,
+        useWorker: false,
+        seed: new Uint8Array(32).fill(2),
+        indexedDb: { durability: "relaxed" },
+      })
+    );
+    const exportConflict = await rejectsTypeError(() =>
+      sdk.exportStore("mock_client_db", { durability: "relaxed" })
+    );
+    const importConflict = await rejectsTypeError(() =>
+      sdk.importStore("mock_client_db", "{}", { durability: "relaxed" })
+    );
     const dump = await sdk.exportStore("mock_client_db", {
       durability: "strict",
     });
+    const restored = JSON.parse(dump);
     client.terminate();
     await client.waitForIdle();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    main.length = 0;
-    await sdk.importStore("mock_client_db", dump, { durability: "strict" });
-    const restored = JSON.parse(
-      await sdk.exportStore("mock_client_db", { durability: "strict" })
-    );
     return {
+      createConflict,
+      exportConflict,
+      importConflict,
       restored: JSON.stringify(restored) === JSON.stringify(JSON.parse(dump)),
       transactions: main,
     };
   });
+  expect(result.createConflict).toBe(true);
+  expect(result.exportConflict).toBe(true);
+  expect(result.importConflict).toBe(true);
   expect(result.restored).toBe(true);
   expect(result.transactions.length).toBeGreaterThan(0);
   expect(result.transactions.every((value) => value === "strict")).toBe(true);
