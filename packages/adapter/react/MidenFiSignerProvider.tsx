@@ -837,6 +837,4 @@ export function useMidenFiWallet(): WalletContextState {
   return context;
 }
 
-// Re-export for backward compatibility
-export { WalletContext };
 export type { WalletContextState as MidenFiWalletContextState };
