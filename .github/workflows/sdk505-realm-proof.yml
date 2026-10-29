@@ -1,0 +1,25 @@
+name: SDK 505 realm proof
+on:
+  push:
+    branches: [ci/sdk505-realm-red]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --no-frozen-lockfile
+      - name: Check frozen source
+        run: |
+          git checkout --detach e15b4d0076064b84f6ca85f72f01f06ca8459376
+          test "$(git rev-parse HEAD)" = e15b4d0076064b84f6ca85f72f01f06ca8459376
+      - name: Run acquisition tests (expected red)
+        working-directory: crates/web-client
+        run: pnpm exec vitest run js/__tests__/note-acquisition.test.js
