@@ -1,0 +1,40 @@
+name: SDK 505 acquisition accessor acf
+on:
+  push:
+    branches: [ci/sdk505-accessor-acf]
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: warp-ubuntu-latest-x64-8x
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Check frozen source
+        run: |
+          git checkout --detach 5bd32b1a217ee70bf8b54536604f997e0e67b53e
+          test "$(git rev-parse HEAD)" = 5bd32b1a217ee70bf8b54536604f997e0e67b53e
+      - run: pnpm install --no-frozen-lockfile
+      - name: Install Rust and WASM targets
+        run: |
+          rustup update --no-self-update
+          rustup target add wasm32-unknown-unknown
+          rustup install stable --no-self-update
+          rustup target add wasm32-unknown-unknown --toolchain stable
+      - run: ./scripts/install-binaryen.sh
+      - name: Build exact web client
+        run: MIDEN_FAST_BUILD=true pnpm --filter @miden-sdk/miden-sdk run build
+      - name: Install Chromium
+        run: pnpm --filter @miden-sdk/miden-sdk exec playwright install --with-deps chromium
+      - name: Verify acquisition error categories and privacy
+        env:
+          SKIP_WEB_SERVER: 1
+        run: pnpm --filter @miden-sdk/miden-sdk exec playwright test indexeddb_safety.browser.test.ts --project=chromium --workers=1 --retries=0 -g 'direct acquisition boundary'
