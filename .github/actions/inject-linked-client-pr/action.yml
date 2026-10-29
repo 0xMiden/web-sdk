@@ -1,8 +1,8 @@
 name: Inject linked miden-client PR
 description: >
-  If the current PR's body contains a "Client PR: #N" marker, append a
-  [patch] block to Cargo.toml that points the miden-client dep at the
-  linked PR's head branch. Runs only on `pull_request` events (silent
+  If the current PR's body contains a "Client PR: #N" marker, rewrite the
+  `miden-client*` dep lines in Cargo.toml (every rust-sdk crate the
+  workspace pins) to the linked PR's head sha. Runs only on `pull_request` events (silent
   no-op on `push`). On the first run per PR, posts a sticky comment
   describing what was patched. Fails fast and loudly if the linked PR
   is closed without merge.
@@ -142,8 +142,13 @@ runs:
       run: |
         set -euo pipefail
 
-        # We rewrite the miden-client (and miden-client-sqlite-store, if
-        # present) dep lines IN PLACE rather than emitting a [patch] block.
+        # We rewrite every `miden-client*` dep line (`miden-client`, `-core`,
+        # `-proto`, and `-sqlite-store` on `next`) IN PLACE rather than
+        # emitting a [patch] block. All of them have to move together: cargo
+        # treats a `?branch=` and a `?rev=` pin of the same repo as two
+        # sources even at the same commit, so a crate left on the branch pin
+        # drags a second copy of `miden-client-core` into the graph and the
+        # idxdb-store build fails on trait mismatches between the two.
         #
         # Why not [patch]? Cargo's [patch."<url>"] section needs the patch
         # source to be DIFFERENT from the original source. Web-sdk's `next`
@@ -180,12 +185,20 @@ runs:
         with open(path) as f:
             lines = f.readlines()
 
-        dep_re = re.compile(r'^(?P<name>miden-client(?:-sqlite-store)?)\s*=\s*(?P<rhs>.+)$')
+        dep_re = re.compile(r'^(?P<name>miden-client(?:-[a-z0-9-]+)?)\s*=\s*(?P<rhs>.+)$')
+
+        def pinned(ln):
+            # A path dep is a workspace member, not a rust-sdk crate. No
+            # backticks here: this heredoc is unquoted and bash would run them.
+            m = dep_re.match(ln)
+            if m and re.search(r'\bpath\s*=', m.group('rhs')):
+                return None
+            return m
 
         captured = []
         patched_lines = []
         for ln in lines:
-            m = dep_re.match(ln)
+            m = pinned(ln)
             if not m:
                 continue
             captured.append(ln.rstrip('\n'))
@@ -198,7 +211,7 @@ runs:
         out = []
         inserted = False
         for ln in lines:
-            if not inserted and dep_re.match(ln):
+            if not inserted and pinned(ln):
                 out.append(mark_begin + "\n")
                 out.append(f"# Source: PR description marker \"Client PR: ${REPO}#${NUM}\".\n")
                 out.append(f"# Pin tip: ${HEAD_SHA} on ${HEAD_OWNER}/${HEAD_REPO}@${HEAD_REF}.\n")
@@ -211,7 +224,7 @@ runs:
                     out.append(p + "\n")
                 inserted = True
                 continue
-            if dep_re.match(ln):
+            if pinned(ln):
                 continue
             out.append(ln)
 
@@ -283,14 +296,17 @@ runs:
         PY
         rm -f "$upstream_toml"
 
-        # cargo update -p X requires X to be in the dep tree. main only
-        # pins miden-client (crates.io until the rewrite above swaps it
-        # to git+branch); next adds miden-client-sqlite-store. Build the
-        # -p list dynamically so this works on both branches.
+        # cargo update -p X requires X to be in the dep tree. `miden-client`
+        # is always pinned. The other rewritten crates (`-core`, `-proto`,
+        # and `-sqlite-store` on `next`) join the list when cargo can
+        # resolve them, so this works on both branches. A rewritten line is
+        # a `miden-client-*` key that is not a `path =` dep.
         update_args="-p miden-client"
-        if cargo pkgid -p miden-client-sqlite-store >/dev/null 2>&1; then
-          update_args="$update_args -p miden-client-sqlite-store"
-        fi
+        for name in $(grep -E '^miden-client-[a-z0-9-]+[[:space:]]*=' Cargo.toml | grep -vE 'path[[:space:]]*=' | sed -E 's/[[:space:]]*=.*//'); do
+          if cargo pkgid -p "$name" >/dev/null 2>&1; then
+            update_args="$update_args -p $name"
+          fi
+        done
         # shellcheck disable=SC2086
         bash scripts/cargo-update-linked-patches.sh $update_args
 

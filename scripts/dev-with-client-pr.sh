@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Local-dev mirror of .github/actions/inject-linked-client-pr.
 #
-# Appends a [patch] block to Cargo.toml that retargets miden-client (and
-# miden-client-sqlite-store) at a linked rust-sdk PR's head branch,
-# wrapped in begin/end markers so it can be removed cleanly with --clear.
+# Rewrites every `miden-client*` dep line in Cargo.toml (`miden-client`,
+# `-core`, `-proto`, and `-sqlite-store` on `next`) to a linked rust-sdk
+# PR's head sha, wrapped in begin/end markers so it can be removed cleanly
+# with --clear. All of them move together: cargo treats a `?branch=` and a
+# `?rev=` pin of the same repo as two sources, and a crate left behind
+# drags a second copy of `miden-client-core` into the graph.
 # A pre-commit hook (lefthook.yml) blocks committing while the marked
 # block is present, so you can't accidentally ship the patch.
 #
@@ -79,19 +82,30 @@ clear_block() {
   mv "$CARGO_TOML.tmp" "$CARGO_TOML"
 }
 
+# Every rust-sdk crate the workspace pins: `miden-client` plus any other
+# `miden-client-*` dep line that is not a `path =` dep on a workspace member.
+# Reads Cargo.toml as it is now, so it sees the originals after --clear and
+# the rewritten lines after an apply.
+pinned_client_crates() {
+  grep -E '^miden-client(-[a-z0-9-]+)?[[:space:]]*=' "$CARGO_TOML" \
+    | grep -vE 'path[[:space:]]*=' \
+    | sed -E 's/[[:space:]]*=.*//'
+}
+
 # cargo update with -p needs the package to actually be in the dep tree.
-# main pins only `miden-client` (crates.io); next pins `miden-client` and
-# `miden-client-sqlite-store` (git+branch). Build the `-p` list dynamically
-# so the same script works on both branches.
+# `miden-client` is always pinned. The other pinned crates (`-core`,
+# `-proto`, and `-sqlite-store` on `next`) join the list when cargo can
+# resolve them, so the same script works on both branches.
 build_cargo_update_args() {
-  local args=""
+  local args="" name
   if cargo metadata --format-version=1 --no-deps 2>/dev/null \
       | grep -qE '"name":"(miden-client|miden-client-web|miden-idxdb-store)"'; then
-    # Always try miden-client; only add sqlite-store if it's resolvable.
     args="-p miden-client"
-    if cargo pkgid -p miden-client-sqlite-store >/dev/null 2>&1; then
-      args="$args -p miden-client-sqlite-store"
-    fi
+    for name in $(pinned_client_crates); do
+      if [ "$name" != "miden-client" ] && cargo pkgid -p "$name" >/dev/null 2>&1; then
+        args="$args -p $name"
+      fi
+    done
   fi
   printf '%s' "$args"
 }
@@ -149,7 +163,7 @@ url="https://github.com/${head_owner}/${head_repo}.git"
 # Sanity-check there's a miden-client dep line at all. The Python block
 # below does the actual capture + rewrite; we exit early here only if
 # the file is structurally not what we expect.
-if ! grep -qE '^miden-client(-sqlite-store)?[^a-z-]' "$CARGO_TOML"; then
+if ! grep -qE '^miden-client[[:space:]]*=' "$CARGO_TOML"; then
   echo "Could not find a miden-client dep line in $CARGO_TOML." >&2
   exit 1
 fi
@@ -165,12 +179,21 @@ mark_end = """$MARK_END"""
 with open(path) as f:
     lines = f.readlines()
 
-dep_re = re.compile(r'^(?P<name>miden-client(?:-sqlite-store)?)\s*=\s*(?P<rhs>.+)$')
+dep_re = re.compile(r'^(?P<name>miden-client(?:-[a-z0-9-]+)?)\s*=\s*(?P<rhs>.+)$')
+
+def pinned(ln):
+    # A path dep is a workspace member, not a rust-sdk crate. No backticks
+    # here: this heredoc is unquoted and bash would run them.
+    m = dep_re.match(ln)
+    if m and re.search(r'\bpath\s*=', m.group('rhs')):
+        return None
+    return m
+
 captured = []
 patched = []
 out = []
 for ln in lines:
-    m = dep_re.match(ln)
+    m = pinned(ln)
     if not m:
         out.append(ln)
         continue
@@ -192,7 +215,7 @@ for ln in lines:
 out2 = []
 inserted = False
 for ln in lines:
-    if not inserted and dep_re.match(ln):
+    if not inserted and pinned(ln):
         out2.append(mark_begin + "\n")
         out2.append("# Source: ${repo}#${num} (head: ${head_owner}/${head_repo}@${head_ref}, ${head_sha:0:8}).\n")
         out2.append("# Original lines (do not edit):\n")
@@ -204,7 +227,7 @@ for ln in lines:
         inserted = True
         # Skip ALL captured dep lines on the way through.
         continue
-    if dep_re.match(ln):
+    if pinned(ln):
         # Skip subsequent captured lines (already replaced above).
         continue
     out2.append(ln)
@@ -274,6 +297,6 @@ rm -f "$upstream_toml"
 # shellcheck disable=SC2086
 bash "$(git rev-parse --show-toplevel)/scripts/cargo-update-linked-patches.sh" $(build_cargo_update_args)
 
-echo "✓ Cargo.toml dep rewritten: miden-client → ${head_owner}/${head_repo}@${head_ref} (${head_sha:0:8})"
+echo "✓ Cargo.toml deps rewritten: $(pinned_client_crates | tr '\n' ' ')→ ${head_owner}/${head_repo}@${head_ref} (${head_sha:0:8})"
 echo "  Originals stashed in a marker block; restore with: $0 --clear"
 echo "  (lefthook's pre-commit hook will block the commit while the marker block is present.)"
