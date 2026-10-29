@@ -2420,7 +2420,7 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.17.5"
-source = "git+https://github.com/0xMiden/rust-sdk?rev=c10a9ac275f0751d32ec20a3829f9d40aa4eb3b3#c10a9ac275f0751d32ec20a3829f9d40aa4eb3b3"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=acf71437519fd1ff903fb18bc2c35f46a3cbad95#acf71437519fd1ff903fb18bc2c35f46a3cbad95"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2461,7 +2461,7 @@ dependencies = [
 [[package]]
 name = "miden-client-proto"
 version = "0.17.5"
-source = "git+https://github.com/0xMiden/rust-sdk?rev=c10a9ac275f0751d32ec20a3829f9d40aa4eb3b3#c10a9ac275f0751d32ec20a3829f9d40aa4eb3b3"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=acf71437519fd1ff903fb18bc2c35f46a3cbad95#acf71437519fd1ff903fb18bc2c35f46a3cbad95"
 dependencies = [
  "miden-client",
  "miden-objects",
@@ -2475,7 +2475,7 @@ dependencies = [
 [[package]]
 name = "miden-client-sqlite-store"
 version = "0.17.5"
-source = "git+https://github.com/0xMiden/rust-sdk?rev=c10a9ac275f0751d32ec20a3829f9d40aa4eb3b3#c10a9ac275f0751d32ec20a3829f9d40aa4eb3b3"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=acf71437519fd1ff903fb18bc2c35f46a3cbad95#acf71437519fd1ff903fb18bc2c35f46a3cbad95"
 dependencies = [
  "anyhow",
  "async-trait",
