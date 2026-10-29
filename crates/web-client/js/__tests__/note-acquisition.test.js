@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { runInNewContext } from "node:vm";
 import {
   NoteAcquisitionRetentionError,
   validateNoteAcquisitionOptions,
@@ -70,6 +71,11 @@ describe("acquisition options", () => {
 });
 
 describe("independent retention acknowledgements", () => {
+  it("accepts a successful receipt returned as a Promise from another realm", async () => {
+    const receipt = runInNewContext("Promise.resolve(undefined)");
+    expect(receipt).not.toBeInstanceOf(Promise);
+    expect(await owner(() => receipt).decide(candidate())).toBe("accepted");
+  });
   it("waits for the receipt and copies operation metadata", async () => {
     let receipt;
     let delivered;
