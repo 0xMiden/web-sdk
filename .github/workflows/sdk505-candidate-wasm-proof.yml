@@ -1,0 +1,49 @@
+name: SDK 505 candidate WASM proof
+on:
+  push:
+    branches: [ci/sdk505-candidate-wasm]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: warp-ubuntu-latest-x64-8x
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify exact candidate
+        run: test "$(git rev-parse HEAD^)" = ec780d2ce0dfdb4c9922a6592894ce3f6e009465
+      - name: Install Rust targets
+        run: |
+          rustup update --no-self-update
+          rustup target add wasm32-unknown-unknown
+          rustup install stable --no-self-update
+          rustup target add wasm32-unknown-unknown --toolchain stable
+      - name: Install binaryen
+        run: ./scripts/install-binaryen.sh
+      - uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1
+        with:
+          shared-key: rust-wasm
+          save-if: false
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+      - run: pnpm install --no-frozen-lockfile
+      - name: Build candidate WASM dist
+        run: MIDEN_FAST_BUILD=true pnpm --filter @miden-sdk/miden-sdk run build
+      - name: Verify dist outputs
+        run: |
+          test -d crates/web-client/dist
+          test -n "$(find crates/web-client/dist -name '*.wasm' -type f -print -quit)"
+          find crates/web-client/dist -type f -print0 | sort -z | xargs -0 sha256sum > wasm-SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk505-candidate-wasm
+          path: |
+            crates/web-client/dist
+            wasm-SHA256SUMS
+          if-no-files-found: error
+          retention-days: 3
