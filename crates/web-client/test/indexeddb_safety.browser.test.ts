@@ -293,8 +293,6 @@ test("conflicting same-realm clients and helpers preserve TypeError", async ({
       durability: "strict",
     });
     const restored = JSON.parse(dump);
-    client.terminate();
-    await client.waitForIdle();
     return {
       createConflict,
       exportConflict,
