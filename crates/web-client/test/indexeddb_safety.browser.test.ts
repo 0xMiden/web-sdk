@@ -257,8 +257,6 @@ test("conflicting same-realm clients and helpers preserve TypeError", async ({
     const serializedMockChain = await previous.serializeMockChain();
     const serializedNoteTransport =
       await previous.serializeMockNoteTransportNode();
-    previous.terminate();
-    await previous.waitForIdle();
     main.length = 0;
     const client = await sdk.MidenClient.createMock({
       serializedMockChain,
