@@ -124,6 +124,146 @@ describe("a callback that throws", () => {
     expect(error.cause.message).toBe("vault sealed");
   });
 
+  it("rejects when a sign callback throws an error with a circular cause", async () => {
+    vi.useFakeTimers();
+    const error = new Error("wallet locked");
+    error.cause = error;
+    const forwarder = bridgeTo(
+      () => {
+        throw error;
+      },
+      { timeoutMs: 10 }
+    );
+
+    const result = forwarder.forward("sign", []).catch((error) => error);
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(result).resolves.toMatchObject({
+      message: "wallet locked",
+      cause: { message: "sign callback threw a circular cause" },
+    });
+  });
+
+  it("rejects when two callback errors have a circular cause", async () => {
+    vi.useFakeTimers();
+    const outer = new Error("wallet locked");
+    const inner = new Error("vault sealed");
+    outer.cause = inner;
+    inner.cause = outer;
+    const forwarder = bridgeTo(
+      () => {
+        throw outer;
+      },
+      { timeoutMs: 10 }
+    );
+
+    const result = forwarder.forward("sign", []).catch((error) => error);
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(result).resolves.toMatchObject({
+      message: "wallet locked",
+      cause: {
+        message: "vault sealed",
+        cause: { message: "sign callback threw a circular cause" },
+      },
+    });
+  });
+
+  it("replies with a fallback when all thrown value properties are unreadable", async () => {
+    vi.useFakeTimers();
+    const thrown = Object.defineProperties(
+      {},
+      {
+        name: {
+          get() {
+            throw new Error("name unreadable");
+          },
+        },
+        message: {
+          get() {
+            throw new Error("message unreadable");
+          },
+        },
+        code: {
+          get() {
+            throw new Error("code unreadable");
+          },
+        },
+        reason: {
+          get() {
+            throw new Error("reason unreadable");
+          },
+        },
+        cause: {
+          get() {
+            throw new Error("cause unreadable");
+          },
+        },
+      }
+    );
+    const forwarder = bridgeTo(
+      () => {
+        throw thrown;
+      },
+      { timeoutMs: 10 }
+    );
+
+    const result = forwarder.forward("sign", []).catch((error) => error);
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(result).resolves.toMatchObject({
+      message: "sign callback threw an unreadable value",
+    });
+    expect(() =>
+      structuredClone(serializeCallbackError(thrown, "sign"))
+    ).not.toThrow();
+  });
+
+  it("keeps a readable message when later error properties throw", () => {
+    const thrown = Object.defineProperties(
+      { message: "wallet locked" },
+      {
+        code: {
+          get() {
+            throw new Error("code unreadable");
+          },
+        },
+        cause: {
+          get() {
+            throw new Error("cause unreadable");
+          },
+        },
+      }
+    );
+
+    const serialized = serializeCallbackError(thrown, "sign");
+
+    expect(serialized).toEqual({ message: "wallet locked" });
+    expect(() => structuredClone(serialized)).not.toThrow();
+  });
+
+  it("uses a fallback when a value cannot be converted to text", () => {
+    const thrown = {
+      message: "",
+      toJSON() {
+        throw new Error("json conversion failed");
+      },
+      [Symbol.toPrimitive]() {
+        throw new Error("string conversion failed");
+      },
+    };
+
+    expect(serializeCallbackError(thrown, "sign")).toEqual({
+      message: "sign callback threw an unreadable value",
+    });
+  });
+
   it("drops a code that cannot be structured-cloned instead of failing the reply", () => {
     const serialized = serializeCallbackError(
       { message: "no", code: () => {} },

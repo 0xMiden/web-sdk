@@ -253,12 +253,14 @@ export interface ClientOptions {
    * it can wait on a person approving in a wallet or on a hardware device, and
    * `getKey` and `insertKey` time out after 30 seconds. A positive value applies
    * to all three callbacks, and `0` removes the limit for all three. Throws a
-   * `TypeError` at creation for a negative or non-finite value.
+   * `TypeError` at creation for a negative, non-finite, or greater-than-2147483647
+   * value.
    *
    * Under the Web Worker, a callback that throws counts as a failure whatever
    * it throws: an `Error`, a string, an object such as `{ code: 4001 }`, or
-   * `null`. A failed `sign` fails the call with an error that includes the
-   * thrown value's message.
+   * `null`. Cyclic causes are reported as a finite cause chain, and unreadable
+   * thrown properties use a safe fallback message. A failed `sign` fails the
+   * call with an error that includes the thrown value's message.
    */
   callbackTimeoutMs?: number;
   /**

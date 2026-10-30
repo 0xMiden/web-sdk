@@ -144,9 +144,11 @@ Under the worker, `keystore` callbacks run on the main thread and the worker
 waits for each one. `callbackTimeoutMs` sets that wait: left unset, `sign` has
 no limit (a wallet or hardware approval can take minutes) and `getKey` and
 `insertKey` fail after 30 seconds; a positive value applies to all three and `0`
-removes the limit. Whatever a callback throws counts as a failure, including a
-bare string, `{ code: 4001 }` or `null`, and a failed `sign` fails the call with
-an error that includes the thrown value's message.
+removes the limit. A value greater than 2147483647 is rejected at creation.
+Whatever a callback throws counts as a failure, including a
+bare string, `{ code: 4001 }` or `null`; cyclic causes and unreadable thrown
+properties are converted to finite, safe error replies. A failed `sign` fails
+the call with an error that includes the thrown value's message.
 
 There is no `debugMode` option. It was removed in 0.16 along with upstream
 transaction debug mode.

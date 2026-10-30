@@ -37,37 +37,76 @@ const describeThrown = (thrown) => {
  * @returns {{name?: string, message: string, code?: string | number | boolean | bigint, reason?: string, cause?: object}}
  */
 export function serializeCallbackError(thrown, callbackType) {
-  if (typeof thrown !== "object" || thrown === null) {
-    const message =
-      typeof thrown === "string" && thrown !== ""
-        ? thrown
-        : `${callbackType} callback threw ${describeThrown(thrown)}`;
-    return { message };
-  }
+  const unreadable = {
+    message: `${callbackType} callback threw an unreadable value`,
+  };
 
-  const serialized = {};
-  if (typeof thrown.name === "string" && thrown.name !== "") {
-    serialized.name = thrown.name;
+  const serialize = (value, seen) => {
+    if (typeof value !== "object" || value === null) {
+      const message =
+        typeof value === "string" && value !== ""
+          ? value
+          : describeThrown(value);
+      return {
+        message:
+          message === undefined
+            ? unreadable.message
+            : typeof value === "string" && value !== ""
+              ? message
+              : `${callbackType} callback threw ${message}`,
+      };
+    }
+
+    if (seen.has(value)) {
+      return { message: `${callbackType} callback threw a circular cause` };
+    }
+    seen.add(value);
+
+    const read = (key) => {
+      try {
+        return { ok: true, value: value[key] };
+      } catch {
+        return { ok: false };
+      }
+    };
+    const name = read("name");
+    const message = read("message");
+    const code = read("code");
+    const reason = read("reason");
+    const cause = read("cause");
+    if (!message.ok) return unreadable;
+
+    const serialized = {};
+    if (name.ok && typeof name.value === "string" && name.value !== "") {
+      serialized.name = name.value;
+    }
+    if (typeof message.value === "string" && message.value !== "") {
+      serialized.message = message.value;
+    } else {
+      const what =
+        value instanceof Error
+          ? (serialized.name ?? "an Error")
+          : describeThrown(value);
+      if (what === undefined) return unreadable;
+      serialized.message = `${callbackType} callback threw ${what} with no message`;
+    }
+    if (code.ok && isTransferableCode(code.value)) {
+      serialized.code = code.value;
+    }
+    if (reason.ok && typeof reason.value === "string") {
+      serialized.reason = reason.value;
+    }
+    if (cause.ok && cause.value !== undefined) {
+      serialized.cause = serialize(cause.value, seen);
+    }
+    return serialized;
+  };
+
+  try {
+    return serialize(thrown, new WeakSet());
+  } catch {
+    return unreadable;
   }
-  if (typeof thrown.message === "string" && thrown.message !== "") {
-    serialized.message = thrown.message;
-  } else {
-    const what =
-      thrown instanceof Error
-        ? (serialized.name ?? "an Error")
-        : describeThrown(thrown);
-    serialized.message = `${callbackType} callback threw ${what} with no message`;
-  }
-  if (isTransferableCode(thrown.code)) {
-    serialized.code = thrown.code;
-  }
-  if (typeof thrown.reason === "string") {
-    serialized.reason = thrown.reason;
-  }
-  if (thrown.cause !== undefined) {
-    serialized.cause = serializeCallbackError(thrown.cause, callbackType);
-  }
-  return serialized;
 }
 
 /**

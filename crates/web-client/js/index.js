@@ -549,7 +549,8 @@ class WebClient {
           } catch (error) {
             // A callback may throw any value, including one with no `.message`
             // (a string, `{ code: 4001 }`, `null`), so send an explicit failure
-            // flag and the fields the worker needs to rebuild the error.
+            // flag and the cloneable fields the worker needs to rebuild the
+            // error, including when causes cycle or properties are unreadable.
             this.worker.postMessage({
               callbackOk: false,
               callbackError: serializeCallbackError(error, callbackType),
