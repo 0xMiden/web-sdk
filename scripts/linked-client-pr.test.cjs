@@ -503,7 +503,7 @@ test("the precise refresh keeps the main update output ahead of its own", (t) =>
   f.write("Cargo.toml", '[package]\nname = "fixture"\nversion = "1.0.0"\n');
   f.write(
     "Cargo.lock",
-    '[[package]]\nname = "miden-objects"\nversion = "0.17.0"\n\n[[patch.unused]]\nname = "miden-objects"\nversion = "0.18.0"\n'
+    '[[package]]\nname = "miden-objects"\nversion = "0.17.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n\n[[patch.unused]]\nname = "miden-objects"\nversion = "0.18.0"\n'
   );
   f.write(
     "bin/cargo",
@@ -554,7 +554,9 @@ test("an unused registry patch does not retarget a git-sourced package by versio
     .trim()
     .split("\n")
     .map(JSON.parse);
-  assert.deepEqual(calls, [["update", "-p", "fixture"]]);
+  assert.deepEqual(calls, [
+    ["update", "-p", "fixture", "-p", "miden-client-sqlite-store"],
+  ]);
   assert.doesNotMatch(result.stdout + result.stderr, /PRECISE-MARKER/);
 });
 
@@ -581,7 +583,7 @@ for (const [kind, error] of [
     f.write("Cargo.toml", '[package]\nname = "fixture"\nversion = "1.0.0"\n');
     f.write(
       "Cargo.lock",
-      '[[package]]\nname = "miden-objects"\nversion = "0.17.0"\n\n[[patch.unused]]\nname = "miden-objects"\nversion = "0.18.0"\n'
+      '[[package]]\nname = "miden-objects"\nversion = "0.17.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n\n[[patch.unused]]\nname = "miden-objects"\nversion = "0.18.0"\n'
     );
     f.write(
       "bin/cargo",
