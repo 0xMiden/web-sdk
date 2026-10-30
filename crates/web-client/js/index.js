@@ -203,7 +203,9 @@ const deserializeError = (errorLike) => {
     return new Error("Unknown error received from worker");
   }
   const { name, message, stack, cause, ...rest } = errorLike;
-  const reconstructedError = new Error(message ?? "Unknown worker error");
+  const text = message ?? "Unknown worker error";
+  const reconstructedError =
+    name === "TypeError" ? new TypeError(text) : new Error(text);
   reconstructedError.name = name ?? reconstructedError.name;
   if (stack) {
     reconstructedError.stack = stack;

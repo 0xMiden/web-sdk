@@ -141,7 +141,14 @@ pub async fn import_store(
         indexed_db.unwrap_or(JsValue::UNDEFINED),
     )
     .await
-    .map_err(|err| JsValue::from_str(&format!("failed to open store: {err:?}")))?;
+    .map_err(|err| {
+        if let Some(error) = err.dyn_ref::<js_sys::TypeError>() {
+            let cause = String::from(error.message());
+            JsValue::from(js_sys::TypeError::new(&format!("failed to open store: {cause}")))
+        } else {
+            JsValue::from_str(&format!("failed to open store: {err:?}"))
+        }
+    })?;
 
     store
         .import_store(store_dump.to_string())
