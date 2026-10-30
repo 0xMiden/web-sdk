@@ -58,6 +58,8 @@ pub mod mock;
 pub mod models;
 pub mod new_account;
 pub mod new_transactions;
+#[cfg(feature = "browser")]
+mod note_acquisition;
 pub mod note_transport;
 pub mod notes;
 pub(crate) mod platform;
@@ -469,6 +471,7 @@ impl WebClient {
         fee_faucet_id: Option<String>,
         note_transport_max_retries: Option<u32>,
         note_transport_retry_interval_ms: Option<u32>,
+        indexed_db: Option<JsValue>,
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_endpoint(node_url)?;
 
@@ -487,9 +490,12 @@ impl WebClient {
 
         let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
-            IdxdbStore::new(store_name.clone())
-                .await
-                .map_err(|err| idxdb_store_init_error(&err))?,
+            IdxdbStore::new_with_options(
+                store_name.clone(),
+                indexed_db.unwrap_or(JsValue::UNDEFINED),
+            )
+            .await
+            .map_err(|err| idxdb_store_init_error(&err))?,
         );
         let keystore = WebKeyStore::new_with_callbacks(
             StdRng::from_rng(&mut rng),
@@ -543,6 +549,7 @@ impl WebClient {
         sign_cb: Option<Function>,
         note_transport_max_retries: Option<u32>,
         note_transport_retry_interval_ms: Option<u32>,
+        indexed_db: Option<JsValue>,
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_endpoint(node_url)?;
 
@@ -561,9 +568,12 @@ impl WebClient {
 
         let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
-            IdxdbStore::new(store_name.clone())
-                .await
-                .map_err(|err| idxdb_store_init_error(&err))?,
+            IdxdbStore::new_with_options(
+                store_name.clone(),
+                indexed_db.unwrap_or(JsValue::UNDEFINED),
+            )
+            .await
+            .map_err(|err| idxdb_store_init_error(&err))?,
         );
         let keystore = WebKeyStore::new_with_callbacks(
             StdRng::from_rng(&mut rng),
@@ -787,9 +797,17 @@ pub(crate) fn create_rng(seed: Option<Vec<u8>>) -> Result<StdRng, JsErr> {
 // ================================================================================================
 
 /// The error a client constructor reports when the browser store fails to open, carrying the
-/// store's own reason, such as a store written by a newer client.
+/// store's own reason, such as a store written by a newer client. A rejected `TypeError`,
+/// including conflicting `IndexedDB` durability, stays a `TypeError`. Every other failure stays a
+/// string.
 #[cfg(feature = "browser")]
 pub(crate) fn idxdb_store_init_error(err: &JsValue) -> JsErr {
+    if let Some(error) = err.dyn_ref::<js_sys::TypeError>() {
+        let cause = String::from(error.message());
+        return JsValue::from(js_sys::TypeError::new(&format!(
+            "Failed to initialize IdxdbStore: {cause}"
+        )));
+    }
     let cause = match err.dyn_ref::<js_sys::Error>() {
         Some(error) => String::from(error.message()),
         None => err.as_string().unwrap_or_else(|| format!("{err:?}")),
@@ -854,7 +872,21 @@ fn hint_from_error(err: &(dyn Error + 'static)) -> Option<String> {
 /// returns `None`.
 #[cfg(feature = "browser")]
 fn code_from_error(err: &(dyn Error + 'static)) -> Option<&'static str> {
+    if let Some(acquisition) = err.downcast_ref::<miden_client::note::NoteAcquisitionError>() {
+        return Some(match acquisition {
+            miden_client::note::NoteAcquisitionError::LimitExceeded => {
+                "NOTE_ACQUISITION_LIMIT_EXCEEDED"
+            },
+            miden_client::note::NoteAcquisitionError::RetentionFailed => {
+                "NOTE_ACQUISITION_RETENTION_FAILED"
+            },
+            miden_client::note::NoteAcquisitionError::Rejected => "NOTE_ACQUISITION_REJECTED",
+        });
+    }
     if let Some(client_error) = err.downcast_ref::<ClientError>() {
+        if let Some(acquisition) = client_error.note_acquisition_error() {
+            return code_from_error(acquisition);
+        }
         return match client_error {
             ClientError::AccountNotFoundOnChain(_) => Some("ACCOUNT_NOT_FOUND_ON_CHAIN"),
             ClientError::AccountAlreadyTracked(_) => Some("ACCOUNT_ALREADY_TRACKED"),

@@ -1,3 +1,5 @@
+import { validateNoteAcquisitionOptions } from "./noteAcquisition.js";
+import { validateIndexedDbOptions, indexedDbArgs } from "./indexeddb.js";
 import { AccountsResource } from "./resources/accounts.js";
 import { TransactionsResource } from "./resources/transactions.js";
 import { NotesResource } from "./resources/notes.js";
@@ -137,10 +139,17 @@ export class MidenClient {
    * `noteTransportMaxRetries` and `noteTransportRetryIntervalMs` are checked
    * before anything is created; an out-of-range value throws a `TypeError`.
    *
+   * `indexedDb` opts browser stores into a durability hint and synchronous,
+   * exception-isolated failure callback, including method-worker operations.
+   * Node SQLite rejects an explicit value before creating files. See IndexedDbOptions
+   * for shared-connection conflicts, privacy and durability limits.
+   *
    * @param {ClientOptions} [options] - Client configuration options.
    * @returns {Promise<MidenClient>} A fully initialized client.
    */
   static async create(options) {
+    validateNoteAcquisitionOptions(options);
+    validateIndexedDbOptions(options?.indexedDb);
     validateNoteTransportRetryOptions(
       options?.noteTransportMaxRetries,
       options?.noteTransportRetryIntervalMs
@@ -188,7 +197,8 @@ export class MidenClient {
         options,
         options?.feeFaucetId,
         options?.noteTransportMaxRetries,
-        options?.noteTransportRetryIntervalMs
+        options?.noteTransportRetryIntervalMs,
+        ...indexedDbArgs(options?.indexedDb)
       );
     } else {
       inner = await WebClientClass.createClient(
@@ -201,7 +211,8 @@ export class MidenClient {
         options,
         options?.feeFaucetId,
         options?.noteTransportMaxRetries,
-        options?.noteTransportRetryIntervalMs
+        options?.noteTransportRetryIntervalMs,
+        ...indexedDbArgs(options?.indexedDb)
       );
     }
 
@@ -304,12 +315,16 @@ export class MidenClient {
   }
 
   /**
-   * Creates a mock client for testing.
+   * Creates a mock client for testing. Browser mocks accept `indexedDb` and
+   * `useWorker: false` for direct execution; their store still uses IndexedDB.
+   * Node mocks reject explicit `indexedDb` before creating files.
    *
    * @param {MockOptions} [options] - Mock client options.
    * @returns {Promise<MidenClient>} A mock client.
    */
   static async createMock(options) {
+    validateNoteAcquisitionOptions(options);
+    validateIndexedDbOptions(options?.indexedDb);
     const getWasm = MidenClient._getWasmOrThrow;
     const MockWebClientClass = MidenClient._MockWasmWebClient;
 
@@ -324,7 +339,12 @@ export class MidenClient {
     const inner = await MockWebClientClass.createClient(
       options?.serializedMockChain,
       options?.serializedNoteTransport,
-      seed
+      seed,
+      ...(options?.indexedDb !== undefined ||
+      options?.useWorker !== undefined ||
+      options?.beforeNoteAcquisition !== undefined
+        ? [undefined, options?.indexedDb, options?.useWorker, options]
+        : [])
     );
 
     const client = new MidenClient(inner, getWasm, null);

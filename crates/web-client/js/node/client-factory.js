@@ -1,3 +1,4 @@
+import { rejectNativeNoteAcquisition } from "../noteAcquisition.js";
 /**
  * Node.js-specific client factories that match the browser SDK's interface.
  *
@@ -67,8 +68,12 @@ export function createWasmWebClient(rawSdk, options) {
       _observability,
       feeFaucetId,
       noteTransportMaxRetries,
-      noteTransportRetryIntervalMs
+      noteTransportRetryIntervalMs,
+      indexedDb
     ) => {
+      rejectNativeNoteAcquisition(_observability);
+      if (indexedDb !== undefined)
+        throw new TypeError("indexedDb requires the browser IndexedDB backend");
       validateNoteTransportRetryOptions(
         noteTransportMaxRetries,
         noteTransportRetryIntervalMs
@@ -93,7 +98,10 @@ export function createWasmWebClient(rawSdk, options) {
       return wrapClient(client, storeName, rawSdk);
     },
 
-    createClientWithExternalKeystore: async () => {
+    createClientWithExternalKeystore: async (...args) => {
+      rejectNativeNoteAcquisition(args[9]);
+      if (args[13] !== undefined)
+        throw new TypeError("indexedDb requires the browser IndexedDB backend");
       throw new Error(
         "External keystores are not supported on Node.js. " +
           "The Node.js backend uses a filesystem keystore automatically."
@@ -115,8 +123,15 @@ export function createMockWasmWebClient(rawSdk) {
     createClient: async (
       serializedMockChain,
       serializedNoteTransport,
-      seed
+      seed,
+      _logLevel,
+      indexedDb,
+      _useWorker,
+      acquisitionOptions
     ) => {
+      rejectNativeNoteAcquisition(acquisitionOptions);
+      if (indexedDb !== undefined)
+        throw new TypeError("indexedDb requires the browser IndexedDB backend");
       const dir = createTempDir("mock");
       const client = new rawSdk.WebClient();
       await client.createMockClient(

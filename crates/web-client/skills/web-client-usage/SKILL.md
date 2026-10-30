@@ -254,6 +254,73 @@ returns the raw value your sign callback threw - is only meaningful with
 There is no `debugMode` option. It was removed in 0.16 along with upstream
 transaction debug mode.
 
+### IndexedDB safety and wallet recovery boundaries
+
+Browser `ClientOptions.indexedDb` and `MockOptions.indexedDb` accept
+`{ durability?: "default" | "strict" | "relaxed", onFailure?: callback }`.
+Keep the callback synchronous; it runs before the failing operation settles,
+throws are isolated, and returned promises are not awaited. Delivery includes
+method-worker failures and ends at termination. Node SQLite rejects an explicit
+option, including `{}`, with `TypeError` before creating files.
+
+```typescript
+let localFailure;
+const client = await MidenClient.createTestnet({
+  feeFaucetId: FEE_FAUCET,
+  storeName: "my-wallet",
+  autoSync: false,
+  indexedDb: {
+    durability: "strict",
+    onFailure(failure) { localFailure = failure; },
+  },
+});
+const storeName = await client.storeIdentifier();
+const marker = await client.settings.get<number[]>("wallet.generation");
+```
+
+Omitted durability inherits an existing shared/pending connection's policy;
+explicit conflicts reject without changing siblings. Sharing is per realm.
+The SDK forwards this client's policy to its method worker, but unrelated tabs
+and workers must each opt in. Strict is a browser durability hint, not a
+physical-integrity or data-loss guarantee; it cannot retroactively configure
+schema-upgrade transactions.
+
+`IndexedDbFailure` contains only `backend: "indexeddb"`, `storeName`,
+`phase: "open" | "read" | "write" | "commit"`, the matching
+`operation: "indexeddb.<phase>"`, `kind`, `errorName` and `eventId`.
+`QuotaExceededError` maps to `quota`; native `UnknownError` maps to `io`;
+`SecurityError`, `InvalidStateError` and `MissingAPIError` map to `unavailable`;
+a cause-free native `AbortError` maps to `unexpected-abort`. These classifications
+are not forensic proof. Native commit can fail after successful requests.
+Validation errors, deliberate rollback and unrelated aborts are excluded.
+Transactions report once; each wrapper retains only its latest 64 event IDs
+(each at most 128 characters) for duplicate suppression, not persistent delivery.
+
+There are no arbitrary messages, stacks, table names, record keys or values in
+the envelope, but `storeName` can identify a user namespace. Keep the name and
+event ID private unless your own policy permits export. There is no automatic
+telemetry, retry, reset, repair or wallet financial policy.
+
+`storeIdentifier()` is a namespace, not an incarnation. Use the existing USER
+settings for wallet-owned marker bytes, for example
+`settings.set("wallet.generation", Array.from(new TextEncoder().encode(marker)))`
+only during deliberate new-wallet provisioning or approved recovery. The SDK
+never automatically mutates the marker. Full-store import and rollback copy it;
+a matching marker cannot detect partial loss of expected accounts. Missing or
+changed markers and missing expected accounts require wallet-owned recovery,
+with expectations retained outside the affected store. `autoSync: false` permits
+inspection before sync but does not suppress open-time migrations/metadata writes
+or implement a write gate.
+
+Standalone `exportStore(storeName, indexedDb)` and
+`importStore(storeName, dump, indexedDb)` obey the same policy/conflict rules.
+Import explicitly replaces all data, including a marker; it is not an automatic
+repair action. Keep dumps private because they include stored key material.
+`createMock({ indexedDb, useWorker: false })` selects direct execution; omitting
+`useWorker` retains the mock's worker path. For raw-WASM argument positions,
+read the sibling `frontend-source-guide` skill. Full narrative:
+<https://docs.miden.xyz/builder/tools/clients/web-client/library/indexeddb-safety/>.
+
 ### Observability
 
 `ClientOptions.observer` is called once per underlying client operation with a
@@ -1134,6 +1201,54 @@ instance is required.
 unrelated notes. It is a received-note filter: `listSent` returns an empty list
 for it.
 
+### Bounded browser pages and details-commitment lookup
+
+```typescript
+const page = await client.notes.listPage({
+  states: ["expected", "unverified", "committed", "processing"],
+  afterDetailsCommitment: savedCursor,
+  limit: 128,
+});
+savedCursor = page.nextCursor;
+const continueScan = !page.exhausted;
+
+const known = await client.notes.list({
+  detailsCommitments: [detailsCommitmentHex, detailsCommitmentWord],
+});
+```
+
+`listPage(query?: InputNotePageQuery): Promise<InputNotePage>` returns plain
+`{ notes: InputNoteRecord[], nextCursor: string | null, exhausted: boolean }`.
+Omitted states selects all states, as `list()` does. Explicit `states` accepts
+consumed/committed/expected/processing/unverified; `processing` covers both
+processing states. Unknown values and `[]` reject; repeated states are harmless.
+
+`limit` is a safe integer from 1 to 256, default 128. It bounds raw rows scanned
+**before** state filtering, not the number of matching records to collect.
+Exhaustion uses at most one extra lookahead key. Empty filtered pages can be
+nonexhausted: continue from `nextCursor`, the last scanned raw key, rather than
+from a returned note ID. A page with no raw rows retains the supplied cursor or
+`null`. `afterDetailsCommitment` is an exclusive canonical lowercase
+`0x`-prefixed 32-byte details commitment; omitted/`null` starts at the beginning.
+Invalid encodings/field elements reject. Continuation works after deletion of
+the cursor row. Partial metadata-less rows do not require a `NoteId`.
+
+Pages are browser-only, use the already-open store and serialize through the
+main-WASM fallback even with `useWorker: true`. Native Node explicitly rejects
+them. Eager/lazy and ST/MT entries share the API. There is no cross-page snapshot:
+coordinate mutations and validate the application's generation/checkpoint before
+accepting a complete baseline. Do not infer completeness from an empty page.
+
+`detailsCommitments: (string | Word)[]` uses the existing native indexed lookup
+across all states, including consumed or metadata-less records, on browser and
+Node. It is exclusive with status/ids/scriptRoots; mixed queries reject and `[]`
+matches none. It does not materialize unrelated notes, but has no page limit;
+size requests according to the commitments the application needs.
+
+These APIs read stored notes. They do not add an awaited before-acquisition hook,
+a write gate, a recovery journal or automatic retention. Full narrative:
+<https://docs.miden.xyz/builder/tools/clients/web-client/library/input-note-queries/>.
+
 ### Private-note transport
 
 ```typescript
@@ -1468,3 +1583,18 @@ while (true) {
     the wrong request rather than failing. Split it into two calls.
 19. **Dereferencing `consumeAll().txId` unconditionally.** It is `null`, with
     zero counts, when the account had nothing consumable.
+
+
+### Awaited candidate retention
+
+Browser `create` and `createMock` accept paired `beforeNoteAcquisition` and
+`noteAcquisitionLimits` options. The callback returns `Promise<void>` after an independent
+durable receipt; direct and method-worker operations await it before import writes and
+transport cursor advancement. Never re-enter the locked client. Bind vault, network and
+epoch before retention and acknowledgement, and preserve prior good retained generations.
+`NoteAcquisitionCandidate` carries copied NoteFile bytes and actual optional metadata;
+ExpectedNote has no invented note ID, metadata or nullifier. Candidate typing does not
+authenticate inclusion. Delivered u32 count/byte limits do not bound initial encoder
+allocation. Native Node refuses the options. Generic refusal is `NOTE_ACQUISITION_REJECTED`;
+only a deliberate `NoteAcquisitionRetentionError` signals a known independent storage
+failure. See the note-acquisition narrative and `js/types/api-types.d.ts`.

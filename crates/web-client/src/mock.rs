@@ -31,6 +31,7 @@ impl WebClient {
         seed: Option<Vec<u8>>,
         serialized_mock_chain: Option<Vec<u8>>,
         serialized_mock_note_transport_node: Option<Vec<u8>>,
+        indexed_db: Option<wasm_bindgen::JsValue>,
     ) -> Result<String, JsErr> {
         let mock_rpc_api = match serialized_mock_chain {
             Some(chain) => {
@@ -54,9 +55,12 @@ impl WebClient {
         let store_name = "mock_client_db".to_owned();
         let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
-            IdxdbStore::new(store_name.clone())
-                .await
-                .map_err(|err| idxdb_store_init_error(&err))?,
+            IdxdbStore::new_with_options(
+                store_name.clone(),
+                indexed_db.unwrap_or(wasm_bindgen::JsValue::UNDEFINED),
+            )
+            .await
+            .map_err(|err| idxdb_store_init_error(&err))?,
         );
         let keystore = WebKeyStore::new_with_callbacks(
             StdRng::from_rng(&mut rng),

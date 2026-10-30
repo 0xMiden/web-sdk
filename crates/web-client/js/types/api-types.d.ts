@@ -207,7 +207,130 @@ export interface MidenObservation {
 // Client options
 // ════════════════════════════════════════════════════════════════
 
-export interface ClientOptions {
+/**
+ * Closed notification from a native IndexedDB storage boundary, including a final
+ * commit abort after successful requests. Normal validation errors, deliberate
+ * rollback and unrelated AbortErrors are excluded. These classifications are not
+ * forensic proof of physical damage; absence of events does not prove integrity.
+ *
+ * Contains no arbitrary messages, stacks, table names, record keys or stored data.
+ * The SDK does not automatically send these events to observations or telemetry.
+ */
+export interface IndexedDbFailure {
+  /** Backend discriminator; SQLite never emits this event. */
+  backend: "indexeddb";
+  /**
+   * Private local routing name. It identifies a namespace, not a database
+   * incarnation; deletion and recreation can retain the same name.
+   */
+  storeName: string;
+  /** Native operation boundary, including commit after successful requests. */
+  phase: "open" | "read" | "write" | "commit";
+  /** Stable vocabulary; contains no table names, keys, messages or stored values. */
+  operation: "indexeddb.open" | "indexeddb.read" | "indexeddb.write" | "indexeddb.commit";
+  /**
+   * QuotaExceededError maps to quota; native UnknownError maps to io.
+   * SecurityError, InvalidStateError and MissingAPIError map to unavailable.
+   * A native abort without a more specific cause maps to unexpected-abort.
+   * These kinds classify the observation, not its physical hardware cause.
+   */
+  kind: "quota" | "io" | "unavailable" | "unexpected-abort";
+  /** Allowlisted native error name. */
+  errorName: "QuotaExceededError" | "UnknownError" | "SecurityError" | "InvalidStateError" | "MissingAPIError" | "AbortError";
+  /**
+   * Private connection-scoped ID, at most 128 characters. A transaction reports
+   * once; the client wrapper retains its latest 64 IDs for duplicate suppression.
+   * Not a global ID, durable event log or permanent exactly-once guarantee.
+   */
+  eventId: string;
+}
+
+/**
+ * Browser-only construction options for a shared connection in one realm.
+ * The SDK forwards the policy into this client's method worker. Unrelated clients
+ * in other workers or tabs have independent connections and must each opt in.
+ * Node SQLite rejects an explicit options value, even {}, with TypeError before
+ * creating files or constructing a native client.
+ *
+ * Adds no automatic retry, reset, repair, generation marker or wallet policy.
+ */
+export interface IndexedDbOptions {
+  /**
+   * Browser transaction durability hint. Omission inherits the shared or pending
+   * connection's policy; without one it preserves the browser default. An explicit
+   * conflicting value rejects with TypeError without changing sibling holders.
+   * "default" is explicit and conflicts with strict or relaxed on a live connection.
+   * Strict does not prevent eviction, corruption, rollback or data loss, and cannot
+   * configure schema-upgrade transactions retroactively.
+   */
+  durability?: "default" | "strict" | "relaxed";
+  /**
+   * Synchronous callback before the failing operation settles, including failures
+   * during creation. In worker mode, the main realm invokes it before delivering
+   * the worker's result. Keep it short: returned promises are not awaited.
+   * Exceptions cannot replace the operation's original result or rejection.
+   *
+   * Each holder owns its callback. Client delivery stops at termination without
+   * unsubscribing siblings; standalone import/export holders end with the call.
+   * Treat storeName and eventId as private routing state. Export them only under
+   * your own privacy policy; the SDK does not automatically export this envelope.
+   */
+  onFailure?: (failure: IndexedDbFailure) => void;
+}
+
+/** A syntactic candidate, not an authenticated proof of network inclusion. */
+export interface NoteAcquisitionCandidate {
+  readonly operationId: string;
+  readonly noteFileBytes: Uint8Array;
+  readonly variant: "noteId" | "expectedNote" | "committed";
+  readonly source: "import" | "noteTransport";
+  readonly batchIndex: number;
+  readonly batchCount: number;
+  readonly detailsCommitment?: string;
+  readonly noteId?: string;
+  readonly nullifier?: string;
+  readonly metadata?: {
+    readonly sender: string;
+    readonly noteType: 0 | 1;
+    readonly tag: number;
+    readonly attachmentsCommitment: string;
+  };
+  readonly tag?: number;
+  readonly afterBlockNum?: number;
+}
+
+export interface NoteAcquisitionOptions {
+  /**
+   * Browser only. Await an independent durable receipt before any native import writes or
+   * transport cursor advancement. Must return Promise<void>. Never re-enter this client.
+   * Check vault, network and epoch before retention and again before resolving. Preserve good
+   * retained generations when refusing a later candidate. Generic throws reject without implying
+   * storage corruption; throw NoteAcquisitionRetentionError only for a known storage failure.
+   */
+  beforeNoteAcquisition?: (candidate: NoteAcquisitionCandidate) => Promise<void>;
+  /**
+   * Required together with the callback. Nonnegative u32 limits on delivered candidates;
+   * these do not bound initial native encoder allocation. Zero refuses nonempty input.
+   */
+  noteAcquisitionLimits?: {
+    maxNotes: number;
+    maxNoteFileBytes: number;
+    maxTotalNoteFileBytes: number;
+  };
+}
+
+/** Deliberate signal of a known independent retention failure, with no sensitive diagnostics. */
+export declare class NoteAcquisitionRetentionError extends Error {
+  constructor();
+}
+
+export interface ClientOptions extends NoteAcquisitionOptions {
+  /**
+   * Opt-in browser storage options, also forwarded to this client's method worker.
+   * Node SQLite rejects any explicit value, including {}, with TypeError before
+   * creating database/keystore files or constructing the native client.
+   */
+  indexedDb?: IndexedDbOptions;
   /**
    * RPC endpoint. Accepts shorthands or a raw URL:
    * - `"testnet"` — Miden testnet RPC (`https://rpc.testnet.miden.io`)
@@ -1000,24 +1123,75 @@ export type TransactionQuery =
 // Note types
 // ════════════════════════════════════════════════════════════════
 
+/** Named input-note states accepted by queries. */
+export type NoteStatus =
+  | "consumed"
+  | "committed"
+  | "expected"
+  | "processing"
+  | "unverified";
+
 /** Discriminated union for note queries. */
 export type NoteQuery =
   | {
-      status:
-        | "consumed"
-        | "committed"
-        | "expected"
-        | "processing"
-        | "unverified";
+      status: NoteStatus;
+      detailsCommitments?: never;
     }
-  | { ids: (string | NoteId)[] }
+  | { ids: (string | NoteId)[]; detailsCommitments?: never }
   /**
    * Filter received notes by note script root, given as hex strings or Word
    * instances (e.g. from `NoteScript.root()`). Notes match regardless of their
    * state. Only supported by `notes.list`; `notes.listSent` returns an empty
    * list for this query.
    */
-  | { scriptRoots: (string | Word)[] };
+  | { scriptRoots: (string | Word)[]; detailsCommitments?: never }
+  /**
+   * Indexed lookup by details commitment across every state, including partial
+   * records without metadata or a note ID. An empty array matches no notes.
+   * Mutually exclusive with status, ids and scriptRoots. Supported on browser
+   * and native Node for both received and sent notes.
+   */
+  | {
+      detailsCommitments: (string | Word)[];
+      status?: never;
+      ids?: never;
+      scriptRoots?: never;
+    };
+
+/** Options for a bounded browser input-note scan. */
+export interface InputNotePageQuery {
+  /**
+   * States selected after scanning the raw page. Omitted selects every state,
+   * matching list(). An explicit empty array or unknown state rejects; repeated
+   * states are harmless. Processing includes both processing variants and
+   * consumed includes every consumed variant.
+   */
+  states?: NoteStatus[];
+  /**
+   * Exclusive details-commitment primary-key cursor, in canonical lowercase
+   * 0x-prefixed 32-byte hex with valid native Word field elements. Omitted or
+   * null starts the scan. A deleted cursor remains valid. This is not a NoteId.
+   */
+  afterDetailsCommitment?: string | null;
+  /** Raw rows scanned before filtering: integer 1-256, default 128. */
+  limit?: number;
+}
+
+/** One bounded scan result. Separate pages do not form a consistent snapshot. */
+export interface InputNotePage {
+  /** Selected decoded records, including metadata-less partial records. */
+  notes: InputNoteRecord[];
+  /**
+   * Last scanned raw details commitment, even if no records matched. A raw-empty
+   * page retains the supplied cursor, or null when starting an empty store.
+   */
+  nextCursor: string | null;
+  /**
+   * No further primary key existed in this read transaction. An empty notes
+   * array can still have exhausted:false; continue from nextCursor.
+   */
+  exhausted: boolean;
+}
 
 /** Options for standalone note creation utilities. */
 export interface NoteOptions {
@@ -1059,7 +1233,15 @@ export interface SendPrivateOutputOptions {
   to: AccountRef;
 }
 
-export interface MockOptions {
+export interface MockOptions extends NoteAcquisitionOptions {
+  /**
+   * Browser IndexedDB policy, including the mock method worker. The chain is in
+   * memory, but the browser store uses IndexedDB. Node SQLite rejects an explicit
+   * value with TypeError before creating files or constructing the native client.
+   */
+  indexedDb?: IndexedDbOptions;
+  /** Browser only: defaults to true; set false to run on the current thread. */
+  useWorker?: boolean;
   seed?: string | Uint8Array;
   serializedMockChain?: Uint8Array;
   serializedNoteTransport?: Uint8Array;
@@ -1608,6 +1790,20 @@ export interface NotesResource {
    * @param query - Optional filter by note status, note IDs, or script roots.
    */
   list(query?: NoteQuery): Promise<InputNoteRecord[]>;
+
+  /**
+   * Scan a bounded input-note page using the already-open browser store.
+   *
+   * Reads at most limit full raw rows plus one lookahead key, then filters states
+   * and decodes selected records with the native codec. An empty filtered page
+   * still advances nextCursor. This does not promise a snapshot across calls;
+   * coordinate mutations and validate application checkpoints separately.
+   *
+   * Uses the serialized main-WASM path with useWorker:true as well as direct
+   * clients. Native Node rejects this browser-only API. Does not sync or fetch.
+   * @throws If options are invalid, storage/decoding fails, or on native Node.
+   */
+  listPage(query?: InputNotePageQuery): Promise<InputNotePage>;
   /**
    * Retrieve a note by ID. Returns `null` if not found.
    *
@@ -1865,16 +2061,20 @@ export interface TagsResource {
 
 export interface SettingsResource {
   /**
-   * Get a setting value by key. Returns `null` if not found.
+   * Get a USER-scoped byte setting by key. Returns `null` if not found.
+   * A wallet-owned generation marker is ordinary stored data: full-store import
+   * or rollback copies it and partial loss can leave it while accounts disappear.
    *
    * @param key - The setting key.
    */
   get<T = unknown>(key: string): Promise<T | null>;
   /**
-   * Set a setting value.
+   * Set a USER-scoped byte setting. Pass a byte array, for example
+   * `Array.from(new TextEncoder().encode(marker))`, rather than a plain string.
+   * The SDK does not automatically create or mutate wallet generation markers.
    *
    * @param key - The setting key.
-   * @param value - The value to store.
+   * @param value - The bytes to store.
    */
   set(key: string, value: unknown): Promise<void>;
   /**
@@ -1961,7 +2161,10 @@ export declare class MidenClient {
    * cover the endpoints, not the chain's fee asset.
    */
   static createDevnet(options?: ClientOptions): Promise<MidenClient>;
-  /** Creates a mock client for testing. */
+  /**
+   * Creates a mock-chain client for testing. Browser mocks accept indexedDb and
+   * useWorker controls; Node mocks use SQLite and reject explicit indexedDb.
+   */
   static createMock(options?: MockOptions): Promise<MidenClient>;
   /**
    * Resolves once the WASM module is initialized and safe to use.
@@ -2046,7 +2249,11 @@ export declare class MidenClient {
    */
   feeFaucetId(): Promise<AccountId>;
 
-  /** Returns the identifier of the underlying store (e.g. IndexedDB database name, file path). */
+  /**
+   * Returns the underlying store namespace (IndexedDB database name or file path),
+   * not an incarnation or data-integrity identifier. Recreated/restored stores can
+   * retain it. Wallet recovery must also check its own marker and expected accounts.
+   */
   storeIdentifier(): Promise<string>;
 
   /**
@@ -2264,11 +2471,28 @@ export declare function isConsumableNow(
   accountIdHex?: string
 ): boolean;
 
-/** Exports the entire contents of an IndexedDB store as a JSON string. */
-export declare function exportStore(storeName: string): Promise<string>;
+/**
+ * Browser only: exports the entire IndexedDB store as JSON, including USER
+ * settings and key material. Keep the dump private.
+ *
+ * @param storeName - Database namespace to export.
+ * @param indexedDb - Optional per-connection policy and synchronous failure callback.
+ * Omitted durability inherits a shared connection's policy; explicit conflicts
+ * reject. The helper's callback holder is released when the operation finishes.
+ */
+export declare function exportStore(storeName: string, indexedDb?: IndexedDbOptions): Promise<string>;
 
 /**
- * Imports store contents from a JSON string, replacing all existing data.
+ * Browser only: imports a JSON dump, replacing all existing store data.
+ * This explicit restore copies USER settings, including wallet generation markers;
+ * it does not create a fresh incarnation marker or implement wallet recovery.
+ * Coordinate other clients before replacing their store.
+ *
+ * @param storeName - Database namespace to replace.
+ * @param storeDump - Full private store dump, including key material.
+ * @param indexedDb - Optional policy and synchronous failure callback. Omitted
+ * durability inherits an existing connection; explicit conflicts reject. The
+ * helper's callback holder is released when the operation finishes.
  *
  * Rejects, leaving the store unchanged, a dump the store could not have kept: one with no client
  * version stamp, or stamped by a client older than 0.17.0 (its data belongs to networks that no
@@ -2276,7 +2500,8 @@ export declare function exportStore(storeName: string): Promise<string>;
  */
 export declare function importStore(
   storeName: string,
-  storeDump: string
+  storeDump: string,
+  indexedDb?: IndexedDbOptions
 ): Promise<void>;
 
 /** Returns the initialized WASM module. Throws if WASM is unavailable. */

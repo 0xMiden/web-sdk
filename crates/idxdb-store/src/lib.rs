@@ -81,18 +81,23 @@ extern "C" {
     fn log_web_store_error(error: JsValue, error_context: alloc::string::String);
 }
 
+#[wasm_bindgen(module = "/src/js/storage-policy.js")]
+extern "C" {
+    #[wasm_bindgen(catch, js_name = validateIndexedDbOptions)]
+    fn validate_indexed_db_options(options: JsValue) -> Result<JsValue, JsValue>;
+}
+
 // Initialize IndexedDB
 #[wasm_bindgen(module = "/src/js/schema.js")]
 extern "C" {
     /// Opens the database, or joins the connection already open under `network`, and counts the
-    /// caller as one holder of it. Returns the database ID (network name) which can be used to
-    /// look up the database.
-    #[wasm_bindgen(js_name = openDatabase)]
-    fn open_database(network: &str, client_version: &str) -> js_sys::Promise;
+    /// caller as one holder of it. Returns the subscription token for releasing that holder.
+    #[wasm_bindgen(js_name = openDatabaseWithOptions)]
+    fn open_database(network: &str, client_version: &str, options: JsValue) -> js_sys::Promise;
 
     /// Releases one holder of the database opened under `network`; the last one closes it.
     #[wasm_bindgen(js_name = closeDatabase)]
-    fn close_database(network: &str);
+    fn close_database(network: &str, holder_token: &str);
 }
 
 /// `IdxdbStore` provides an `IndexedDB`-backed implementation of the Store trait.
@@ -102,21 +107,32 @@ extern "C" {
 /// which would prevent the struct from being Send + Sync.
 pub struct IdxdbStore {
     database_id: String,
+    holder_token: String,
     smt_forest: RwLock<AccountForest>,
 }
 
 impl IdxdbStore {
     pub async fn new(database_name: String) -> Result<IdxdbStore, JsValue> {
+        Self::new_with_options(database_name, JsValue::UNDEFINED).await
+    }
+
+    pub async fn new_with_options(
+        database_name: String,
+        options: JsValue,
+    ) -> Result<IdxdbStore, JsValue> {
+        let options = validate_indexed_db_options(options)?;
         // Built before the open: once the open counts this store as a holder, only `Drop`
         // releases it, so nothing after the open may fail.
         let smt_forest = AccountForest::new()
             .map_err(|e| JsValue::from_str(&format!("Failed to create SMT forest: {e:?}")))?;
 
-        let promise = open_database(database_name.as_str(), CLIENT_VERSION);
-        let _db_id = JsFuture::from(promise).await?;
+        let promise = open_database(database_name.as_str(), CLIENT_VERSION, options);
+        let token = JsFuture::from(promise).await?;
+        let holder_token = token.as_string().expect("store acquisition returns a holder token");
 
         Ok(IdxdbStore {
             database_id: database_name,
+            holder_token,
             smt_forest: RwLock::new(smt_forest),
         })
     }
@@ -132,7 +148,7 @@ impl IdxdbStore {
 /// by the `FinalizationRegistry`.
 impl Drop for IdxdbStore {
     fn drop(&mut self) {
-        close_database(&self.database_id);
+        close_database(&self.database_id, &self.holder_token);
     }
 }
 

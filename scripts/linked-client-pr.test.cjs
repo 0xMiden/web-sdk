@@ -171,6 +171,34 @@ for (const mode of ["local", "ci"]) {
   });
 }
 
+test("the tracked workspace does not commit linked-client git patches", () => {
+  const manifest = fs.readFileSync(path.join(sdkRoot, "Cargo.toml"), "utf8");
+  const lock = fs.readFileSync(path.join(sdkRoot, "Cargo.lock"), "utf8");
+
+  assert.doesNotMatch(
+    manifest,
+    /^\[patch\.crates-io\.miden-client(?:-proto|-sqlite-store)?\]\s*\n\s*git\s*=/m
+  );
+
+  for (const name of [
+    "miden-client",
+    "miden-client-proto",
+    "miden-client-sqlite-store",
+  ]) {
+    const packageBlock = lock.match(
+      new RegExp(
+        `\\[\\[package\\]\\]\\nname = "${name}"\\n[\\s\\S]*?(?=\\n\\[\\[package\\]\\]|$)`
+      )
+    )?.[0];
+    assert.ok(packageBlock, `Cargo.lock contains ${name}`);
+    assert.match(
+      packageBlock,
+      /^source = "registry\+https:\/\/github\.com\/rust-lang\/crates\.io-index"$/m,
+      `${name} is locked to the registry`
+    );
+  }
+});
+
 test("local --clear restores the manifest and lock bytes after repeated apply", (t) => {
   const f = injectionFixture(t);
   assert.equal(f.local("123").status, 0);
@@ -503,7 +531,7 @@ test("the precise refresh keeps the main update output ahead of its own", (t) =>
   f.write("Cargo.toml", '[package]\nname = "fixture"\nversion = "1.0.0"\n');
   f.write(
     "Cargo.lock",
-    '[[package]]\nname = "miden-objects"\nversion = "0.17.0"\n\n[[patch.unused]]\nname = "miden-objects"\nversion = "0.18.0"\n'
+    '[[package]]\nname = "miden-objects"\nversion = "0.17.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n\n[[patch.unused]]\nname = "miden-objects"\nversion = "0.18.0"\n'
   );
   f.write(
     "bin/cargo",
@@ -524,6 +552,40 @@ test("the precise refresh keeps the main update output ahead of its own", (t) =>
   const main = result.stdout.indexOf("MAIN-UPDATE-MARKER");
   assert.ok(main >= 0, result.stdout);
   assert.ok(result.stdout.indexOf("PRECISE-MARKER") > main, result.stdout);
+});
+
+test("an unused registry patch does not retarget a git-sourced package by version", (t) => {
+  const f = fixture(t);
+  f.write("Cargo.toml", '[package]\nname = "fixture"\nversion = "1.0.0"\n');
+  f.write(
+    "Cargo.lock",
+    '[[package]]\nname = "miden-client-sqlite-store"\nversion = "0.17.5"\nsource = "git+https://github.com/0xMiden/rust-sdk?rev=0123456789abcdef0123456789abcdef01234567#0123456789abcdef0123456789abcdef01234567"\n\n[[patch.unused]]\nname = "miden-client-sqlite-store"\nversion = "0.17.5"\n'
+  );
+  f.write(
+    "bin/cargo",
+    `#!/usr/bin/env python3\nimport json, sys\nwith open('cargo-calls.jsonl', 'a') as out:\n    out.write(json.dumps(sys.argv[1:]) + '\\n')\nprint('MAIN-UPDATE-MARKER')\n`,
+    0o755
+  );
+  const result = f.run(
+    "bash",
+    ["scripts/cargo-update-linked-patches.sh", "-p", "fixture"],
+    {
+      env: {
+        ...process.env,
+        PATH: `${path.join(f.root, "bin")}:${process.env.PATH}`,
+      },
+    }
+  );
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const calls = fs
+    .readFileSync(path.join(f.root, "cargo-calls.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .map(JSON.parse);
+  assert.deepEqual(calls, [
+    ["update", "-p", "fixture", "-p", "miden-client-sqlite-store"],
+  ]);
+  assert.doesNotMatch(result.stdout + result.stderr, /PRECISE-MARKER/);
 });
 
 for (const [kind, error] of [
@@ -549,7 +611,7 @@ for (const [kind, error] of [
     f.write("Cargo.toml", '[package]\nname = "fixture"\nversion = "1.0.0"\n');
     f.write(
       "Cargo.lock",
-      '[[package]]\nname = "miden-objects"\nversion = "0.17.0"\n\n[[patch.unused]]\nname = "miden-objects"\nversion = "0.18.0"\n'
+      '[[package]]\nname = "miden-objects"\nversion = "0.17.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n\n[[patch.unused]]\nname = "miden-objects"\nversion = "0.18.0"\n'
     );
     f.write(
       "bin/cargo",

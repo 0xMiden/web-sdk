@@ -5,6 +5,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::{base64_to_vec_u8_optional, base64_to_vec_u8_required};
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InputNotePageIdxdbObject {
+    pub notes: Vec<InputNoteIdxdbObject>,
+    pub next_cursor: Option<String>,
+    pub exhausted: bool,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InputNoteIdxdbObject {

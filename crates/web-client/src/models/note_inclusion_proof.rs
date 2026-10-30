@@ -26,13 +26,16 @@ impl NoteInclusionProof {
     pub fn note_path(&self) -> MerklePath {
         NativeMerklePath::from(self.0.note_path().clone()).into()
     }
+}
 
+#[cfg(feature = "testing")]
+#[js_export]
+impl NoteInclusionProof {
     /// Build a proof whose location block is `block_num` and whose path is empty.
     ///
     /// The mock note transport records that block and does not authenticate the path. A real
     /// node rejects the proof. The published package is built with the `testing` feature, so
     /// this constructor is present there; it is not a way to produce a proof a node accepts.
-    #[cfg(feature = "testing")]
     #[js_export(js_name = "mockAtBlock")]
     pub fn mock_at_block(block_num: u32) -> Result<NoteInclusionProof, JsErr> {
         let path = SparseMerklePath::from_parts(0, Vec::new())

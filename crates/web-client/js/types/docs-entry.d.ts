@@ -29,6 +29,7 @@ export {
   Felt,
   ForeignAccount,
   InputNote,
+  InputNotePageResult,
   InputNoteRecord,
   NetworkAccountTarget,
   NonFungibleAsset,

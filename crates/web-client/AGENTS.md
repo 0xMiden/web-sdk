@@ -125,6 +125,32 @@ transaction's execution input. A mismatch rejects before changing account state
 or transaction history. A submitted transaction may already be on-chain when
 local apply fails; check its status before submitting again.
 
+**Bounded note pages count scanned rows.** Browser
+`notes.listPage({ states, afterDetailsCommitment, limit })` defaults to all states
+and a raw scan limit of 128 (maximum 256), before filtering. Continue until
+`exhausted`, including empty filtered pages, using the returned `nextCursor`.
+The exclusive cursor is a details commitment, not a note ID. Partial records need
+no metadata; pages are not a cross-page snapshot. Node rejects paging; worker
+clients use a serialized main-WASM fallback. For known commitments,
+`notes.list({ detailsCommitments: [hexOrWord] })` uses native indexed lookup across
+all states on browser and Node. This filter is exclusive with other query fields.
+Read the usage skill for the full contract; these reads add no acquisition gate
+or recovery journal.
+
+**IndexedDB safety is opt-in and per connection.** Browser `ClientOptions` and
+`MockOptions` accept `indexedDb: { durability: "strict", onFailure }`; Node
+SQLite rejects an explicit option with `TypeError` before creating files.
+Omitted durability inherits a shared connection's policy, while explicit conflicts
+reject. Other realms must opt in separately. Strict is a browser hint, not a
+data-loss guarantee. Keep `onFailure` synchronous: it runs before settlement,
+exceptions are isolated, and its closed routing envelope is not automatically
+sent to telemetry. Treat `storeName` and `eventId` as private. Read the usage skill
+before building a recovery path: store names are namespaces, full import/rollback
+copies wallet-owned byte-setting markers, and missing markers or expected accounts
+need wallet recovery. The SDK adds no generation API, retry, reset or financial
+policy. Use `autoSync: false` to inspect recovery state before sync; opening can
+still migrate or stamp the store.
+
 **Amounts are always `BigInt`.** Passing a `number` either throws at the WASM
 boundary or silently loses precision above 2^53. Convert at the edges of your
 own code, not in the middle of a transaction builder.
@@ -205,3 +231,27 @@ the asset back in the vault. The amount-based `send` helper remains fungible-onl
 If there is no application yet, [`0xMiden/agentic-template`](https://github.com/0xMiden/agentic-template)
 scaffolds the full stack: Rust contracts, MockChain tests, local-node
 validation, and a React frontend already wired to this SDK.
+
+
+### Awaited browser note retention
+
+`MidenClient.create` and `createMock` accept `beforeNoteAcquisition` together with
+`noteAcquisitionLimits` (`maxNotes`, `maxNoteFileBytes`, `maxTotalNoteFileBytes`, each a
+nonnegative u32). Direct and method-worker clients await the callback's `Promise<void>`
+before native import writes or transport cursor advancement. Native Node refuses the pair.
+Raw browser WASM clients can install the corresponding `installNoteAcquisitionGate` decision
+adapter before exposing the client; it resolves `accepted`, `rejected`, or `retentionFailed`.
+
+The copied `NoteAcquisitionCandidate` carries NoteFile bytes and actual optional identity,
+metadata and hints. ExpectedNote never invents a note ID or metadata. This is syntactic
+candidate data, not authenticated protocol proof. Retain it in independent encrypted durable
+storage, preserve previous good generations and check vault, network and epoch before
+retention and acknowledgement. Never re-enter the locked client from the callback.
+Throw `NoteAcquisitionRetentionError` only for a known independent storage failure; ordinary
+refusal maps to `NOTE_ACQUISITION_REJECTED`. Limits map to
+`NOTE_ACQUISITION_LIMIT_EXCEEDED`, and explicit storage failure maps to
+`NOTE_ACQUISITION_RETENTION_FAILED`. Callback diagnostics are not serialized.
+
+The limits bound per-item and aggregate delivered encoded bytes. The existing native
+encoder allocates before checking encoded size, so these are not strict pre-allocation
+bounds. See `NoteAcquisitionOptions` and `NoteAcquisitionCandidate` for the field contract.

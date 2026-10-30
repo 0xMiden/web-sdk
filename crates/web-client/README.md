@@ -478,6 +478,58 @@ console.log(`Balance: ${balance}`); // 900n
 client.terminate();
 ```
 
+### IndexedDB Durability and Failure Notifications
+
+Browser clients can opt in per store with `indexedDb` on `create`,
+`createTestnet`, `createDevnet` or `createMock`:
+
+```typescript
+let localFailure;
+const client = await MidenClient.createTestnet({
+  feeFaucetId: FEE_FAUCET,
+  storeName: "my-wallet",
+  autoSync: false,
+  indexedDb: {
+    durability: "strict",
+    onFailure(failure) { localFailure = failure; },
+  },
+});
+const storeName = await client.storeIdentifier();
+const generation = await client.settings.get("wallet.generation");
+```
+
+`durability` is `"default" | "strict" | "relaxed"`. Omission inherits an existing
+shared connection's policy; explicit conflicts reject. Sharing is per connection
+and JavaScript realm. The SDK carries the policy into this client's method
+worker; unrelated clients in other tabs/workers must opt in separately. Strict is
+a browser hint, not protection against eviction, corruption, rollback or data
+loss, and cannot retroactively configure schema-upgrade transactions.
+
+`onFailure` runs synchronously before operation settlement; callback exceptions
+are isolated and returned promises are not awaited. Its closed envelope contains
+`backend`, `storeName`, `phase`, `operation`, `kind`, `errorName` and `eventId`.
+Phases are open/read/write/commit; kinds are quota/io/unavailable/unexpected-abort,
+not forensic proof of disk damage. It excludes arbitrary messages and payloads.
+Treat the routing name and event ID as private. No automatic telemetry, retry,
+reset or wallet financial policy is added. A transaction reports once; the client
+retains only its latest 64 event IDs for duplicate suppression, not a durable log.
+Callbacks end when the client terminates.
+
+`storeIdentifier()` names a namespace, not an incarnation. Wallet generation
+markers use existing byte-valued USER settings, for example
+`settings.set("wallet.generation", Array.from(new TextEncoder().encode(marker)))`
+during deliberate provisioning. The SDK never mutates such markers automatically.
+Full import/rollback copies them; missing markers or expected accounts require
+wallet-owned recovery. `autoSync: false` allows inspection before sync, but is not
+a write gate and does not suppress open-time migrations or metadata writes.
+
+`exportStore(storeName, indexedDb)` and
+`importStore(storeName, dump, indexedDb)` accept the same trailing options.
+`createMock({ indexedDb, useWorker: false })` selects direct execution. Explicit
+`indexedDb`, even `{}`, rejects with `TypeError` on Node SQLite before files are
+created. See [IndexedDB Safety](https://docs.miden.xyz/builder/tools/clients/web-client/library/indexeddb-safety/)
+for error mappings, callback privacy, raw-WASM arguments and recovery limits.
+
 ### Stateless RPC queries and submission
 
 Use `RpcClient` when your application keeps its own state or submits
@@ -713,6 +765,43 @@ for (const record of all) {
   }
 }
 ```
+
+### Query Input Notes with Bounded Browser Pages
+
+```typescript
+const page = await client.notes.listPage({
+  states: ["expected", "unverified", "committed", "processing"],
+  afterDetailsCommitment: savedCursor,
+  limit: 128,
+});
+savedCursor = page.nextCursor;
+const hasMore = !page.exhausted;
+
+const known = await client.notes.list({
+  detailsCommitments: [detailsCommitmentHex],
+});
+```
+
+`listPage` returns `{ notes, nextCursor, exhausted }`. Omitted `states` selects
+all states; explicit choices are consumed/committed/expected/processing/unverified,
+and `[]` rejects. `limit` defaults to 128 and accepts integers from 1 to 256,
+bounding raw rows **before** state filtering, with at most one lookahead key.
+Continue until `exhausted`, even when `notes` is empty: `nextCursor` is the last
+scanned raw details-commitment key. A raw-empty page retains the supplied cursor
+or `null`. Cursors are exclusive canonical lowercase `0x`-prefixed 32-byte details
+commitments, not note IDs; deleted cursor rows do not prevent continuation.
+Partial records need no metadata or `NoteId` to be enumerated.
+
+Pages are browser-only and use the serialized main-WASM fallback even with
+`useWorker: true`; Node SQLite rejects this API. There is no snapshot guarantee
+across pages. `notes.list({ detailsCommitments })` instead uses the existing
+native indexed lookup across all states on both browser and Node, accepts hex
+strings or `Word` instances, and matches none for `[]`. This filter cannot be
+combined with status/IDs/script roots and has no page limit.
+
+These read APIs add no acquisition gate or recovery journal. See
+[Input Note Queries](https://docs.miden.xyz/builder/tools/clients/web-client/library/input-note-queries/)
+for cursor semantics and baseline coordination.
 
 ### Check Balance
 
@@ -1171,3 +1260,27 @@ Both binding packages then require the disclosure a *second* time — `includeSe
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+
+### Awaited browser note retention
+
+`MidenClient.create` and `createMock` accept `beforeNoteAcquisition` together with
+`noteAcquisitionLimits` (`maxNotes`, `maxNoteFileBytes`, `maxTotalNoteFileBytes`, each a
+nonnegative u32). Direct and method-worker clients await the callback's `Promise<void>`
+before native import writes or transport cursor advancement. Native Node refuses the pair.
+Raw browser WASM clients can install the corresponding `installNoteAcquisitionGate` decision
+adapter before exposing the client; it resolves `accepted`, `rejected`, or `retentionFailed`.
+
+The copied `NoteAcquisitionCandidate` carries NoteFile bytes and actual optional identity,
+metadata and hints. ExpectedNote never invents a note ID or metadata. This is syntactic
+candidate data, not authenticated protocol proof. Retain it in independent encrypted durable
+storage, preserve previous good generations and check vault, network and epoch before
+retention and acknowledgement. Never re-enter the locked client from the callback.
+Throw `NoteAcquisitionRetentionError` only for a known independent storage failure; ordinary
+refusal maps to `NOTE_ACQUISITION_REJECTED`. Limits map to
+`NOTE_ACQUISITION_LIMIT_EXCEEDED`, and explicit storage failure maps to
+`NOTE_ACQUISITION_RETENTION_FAILED`. Callback diagnostics are not serialized.
+
+The limits bound per-item and aggregate delivered encoded bytes. The existing native
+encoder allocates before checking encoded size, so these are not strict pre-allocation
+bounds. See `NoteAcquisitionOptions` and `NoteAcquisitionCandidate` for the field contract.

@@ -116,6 +116,67 @@ The browser storage layer for accounts, keys, notes, and transaction history.
 
 **Explore when**: Debugging data persistence issues, understanding what's stored in IndexedDB, investigating storage isolation for external signers.
 
+### Bounded input-note query sources
+
+`notes.listPage(query?: InputNotePageQuery): Promise<InputNotePage>` is the
+browser-only bounded scan in `js/resources/notes.js` and `src/notes.rs`, backed by
+`crates/idxdb-store/src/ts/notes.ts` and the existing note decoder. It uses the
+already-open store and the proxy's serialized main-WASM fallback, including with
+`useWorker: true`; native Node rejects it. The returned plain object has `notes`,
+`nextCursor` and `exhausted`. Default states is all; the raw scan limit defaults
+to 128, maximum 256, before filtering, with one bounded lookahead key. State names
+are consumed/committed/expected/processing/unverified; explicit `[]` rejects.
+
+The exclusive cursor is a canonical lowercase `0x`-prefixed 32-byte details
+commitment, not a `NoteId`. It records the last scanned key even when filtering
+returns no notes; a raw-empty page retains the input cursor or `null`. Deleted
+cursor rows do not block continuation. Partial metadata-less rows use the
+existing decoder. Pages do not provide a cross-page snapshot.
+
+`notes.list({ detailsCommitments: (string | Word)[] })` maps to native
+`NoteFilter::DetailsCommitments` on browser and Node for indexed all-state
+lookup. It is exclusive with other filters and `[]` matches none. Read
+`js/types/api-types.d.ts` and the sibling usage skill for validation and examples.
+These APIs do not implement acquisition gating, retention or a recovery journal.
+
+### IndexedDB construction and diagnostics
+
+Read `js/types/api-types.d.ts` for `IndexedDbOptions` and the closed
+`IndexedDbFailure` contract, `js/indexeddb.js` for option validation and bounded
+client deduplication, and `js/workers/web-client-methods-worker.js` for cloneable
+worker policy and notification ordering. `crates/idxdb-store/src/ts/storage-policy.ts`
+captures native request/commit failures; `schema.ts` owns per-connection policy
+and holder lifetimes. Callbacks stay in JavaScript, not Rust store state.
+
+Prefer `MidenClient.create({ indexedDb })` or `createMock({ indexedDb, useWorker })`.
+For the JS `WasmWebClient` wrapper, `createClient` and
+`createClientWithExternalKeystore` append `indexedDb` after
+`noteTransportRetryIntervalMs`; `MockWebClient.createClient` appends `indexedDb`
+and `useWorker` after `logLevel`. Earlier positional arguments do not move.
+A raw WASM `new (await getWasmOrThrow()).WebClient()` instead takes the trailing
+options as argument 8 of `createClient`, 11 of `createClientWithExternalKeystore`
+and 4 of `createMockClient`. Standalone `exportStore(storeName, indexedDb)` and
+`importStore(storeName, dump, indexedDb)` use the same options. Keep raw-client
+serialization and lifetime requirements.
+
+Omitted durability inherits an existing connection policy; explicit conflicts
+reject. Sharing is per realm; independent tabs/workers each opt in. Strict is a
+browser hint, not a guarantee against data loss, and cannot retroactively govern
+schema-upgrade transactions. Keep the synchronous callback local and short;
+exceptions are isolated and returned promises are not awaited. Treat routing
+`storeName`/`eventId` as private; events are not automatically sent to telemetry.
+Kinds classify native failures rather than proving physical damage. The SDK
+adds no retry, reset, wallet financial policy or generation API. Node SQLite
+rejects explicit `indexedDb` with `TypeError` before files/native construction.
+
+Wallet generation uses existing `storeIdentifier()` and byte-valued USER
+settings, never a new SDK generation API. Names are namespaces; full import or
+rollback copies markers, and partial loss can retain a marker while losing
+accounts. Missing markers or expected accounts require wallet-owned recovery.
+The SDK does not automatically mutate markers. Read `web-client-usage` and the
+[IndexedDB safety narrative](https://docs.miden.xyz/builder/tools/clients/web-client/library/indexeddb-safety/)
+for the startup example with `autoSync: false` and byte-array marker provisioning.
+
 ### `packages/adapter/` - MidenFi browser-extension wallet adapter
 
 `base/` (`@miden-sdk/miden-wallet-adapter-base`: `WalletAdapterNetwork`, `WalletReadyState`, `PrivateDataPermission`), `miden/` (`MidenWalletAdapter`, plus a conformance suite wallets import and run against their own providers), `react/` (`MidenFiSignerProvider`, `useWallet`), `reactui/`, `all/`.
@@ -237,3 +298,18 @@ Both wait hooks default to `timeoutMs: 10000` and `intervalMs: 1000`; `waitForCo
 Implement the SignerContextValue interface, wrap MidenProvider in your provider. Reference `packages/react-sdk/src/context/SignerContext.ts` for the exact interface contract. The `storeName` field must be unique per user to ensure IndexedDB isolation.
 
 Both shipped signers live in this repo and are the two worked examples of that contract: read `packages/para/react/src/ParaSignerProvider.tsx` or `packages/turnkey/react/src/TurnkeySignerProvider.tsx` end to end before writing your own. For a guarded-multisig account, build the auth component with `createAuthGuardedMultisig` rather than compiling equivalent MASM - see the `signer-integration` skill for why the hand-rolled route breaks fee handling.
+
+
+### Awaited candidate retention
+
+Browser `create` and `createMock` accept paired `beforeNoteAcquisition` and
+`noteAcquisitionLimits` options. The callback returns `Promise<void>` after an independent
+durable receipt; direct and method-worker operations await it before import writes and
+transport cursor advancement. Never re-enter the locked client. Bind vault, network and
+epoch before retention and acknowledgement, and preserve prior good retained generations.
+`NoteAcquisitionCandidate` carries copied NoteFile bytes and actual optional metadata;
+ExpectedNote has no invented note ID, metadata or nullifier. Candidate typing does not
+authenticate inclusion. Delivered u32 count/byte limits do not bound initial encoder
+allocation. Native Node refuses the options. Generic refusal is `NOTE_ACQUISITION_REJECTED`;
+only a deliberate `NoteAcquisitionRetentionError` signals a known independent storage
+failure. See the note-acquisition narrative and `js/types/api-types.d.ts`.

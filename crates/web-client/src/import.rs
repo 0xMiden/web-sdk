@@ -131,10 +131,24 @@ impl WebClient {
 /// Use together with [`export_store`].
 #[cfg(feature = "browser")]
 #[wasm_bindgen(js_name = "importStore")]
-pub async fn import_store(store_name: &str, store_dump: &str) -> Result<(), JsValue> {
-    let store = idxdb_store::IdxdbStore::new(store_name.into())
-        .await
-        .map_err(|err| JsValue::from_str(&format!("failed to open store: {err:?}")))?;
+pub async fn import_store(
+    store_name: &str,
+    store_dump: &str,
+    indexed_db: Option<JsValue>,
+) -> Result<(), JsValue> {
+    let store = idxdb_store::IdxdbStore::new_with_options(
+        store_name.into(),
+        indexed_db.unwrap_or(JsValue::UNDEFINED),
+    )
+    .await
+    .map_err(|err| {
+        if let Some(error) = err.dyn_ref::<js_sys::TypeError>() {
+            let cause = String::from(error.message());
+            JsValue::from(js_sys::TypeError::new(&format!("failed to open store: {cause}")))
+        } else {
+            JsValue::from_str(&format!("failed to open store: {err:?}"))
+        }
+    })?;
 
     store
         .import_store(store_dump.to_string())

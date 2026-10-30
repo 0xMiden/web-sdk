@@ -68,6 +68,7 @@ pub mod fetched_account;
 pub mod foreign_account;
 pub mod fungible_asset;
 pub mod input_note;
+pub mod input_note_page;
 pub mod input_note_record;
 pub mod input_note_state;
 pub mod input_notes;

@@ -2,8 +2,16 @@
 
 ## 0.17.9 (TBD)
 
+### Enhancements
+
+* [FEATURE][web] Await optional browser note-acquisition retention before import writes and transport cursor advancement, including method workers. `MidenClient.create` and `createMock` take `beforeNoteAcquisition` with `noteAcquisitionLimits`; method workers carry the same gate, and native Node rejects the options ([#505](https://github.com/0xMiden/web-sdk/pull/505), [rust-sdk#2751](https://github.com/0xMiden/rust-sdk/pull/2751)).
+* [FEATURE][web] Page browser input notes with `notes.listPage({ states, afterDetailsCommitment, limit })`, scanning at most 128 raw rows by default (maximum 256) before state filtering and returning an advancing cursor even for empty filtered pages. Omitted states includes all states. Look up known notes across all states on browser and Node with `notes.list({ detailsCommitments: [hexOrWord] })` ([#505](https://github.com/0xMiden/web-sdk/pull/505)).
+* [FEATURE][web] Browser clients accept `indexedDb: { durability: "strict", onFailure }` to request transaction durability and receive bounded storage-failure notifications before operation settlement, including worker calls. Standalone `exportStore` / `importStore` and mock clients accept the same policy; explicit IndexedDB options reject on Node SQLite. Strict remains a browser hint; recovery and wallet write gating stay application-owned ([#505](https://github.com/0xMiden/web-sdk/pull/505)).
+
 ### Fixes
 
+* [FIX][web] Skip registry patch refreshes for dependencies locked from Git sources, so linked client patch injection does not try to resolve a registry version as a Git revision ([#505](https://github.com/0xMiden/web-sdk/pull/505)).
+* [FIX][web] Conflicting IndexedDB durability for a shared store rejects with a `TypeError`: `Failed to initialize IdxdbStore: …` from browser client and mock construction, and `failed to open store: …` from `exportStore` and `importStore`. A method worker's `client.ready` rejects with that same `TypeError`, and a `TypeError` cause stays a `TypeError` ([#505](https://github.com/0xMiden/web-sdk/pull/505)).
 * [FIX][web] `MockWebClient` no longer fails `syncState()` intermittently with "chain tip block header 0 does not carry valid validator signatures". Its Web Worker built a second mock chain, with its own validator keys, in the same IndexedDB store, and whichever chain's genesis header was stored first won. The worker now starts from the main thread's mock chain ([#503](https://github.com/0xMiden/web-sdk/pull/503)).
 
 ## 0.17.8 (2026-10-28)
