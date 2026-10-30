@@ -10,6 +10,7 @@
 
 ### Fixes
 
+* [FIX][web] Skip registry patch refreshes for dependencies locked from Git sources, so linked client patch injection does not try to resolve a registry version as a Git revision ([#505](https://github.com/0xMiden/web-sdk/pull/505)).
 * [FIX][web] Conflicting IndexedDB durability for a shared store rejects with a `TypeError`: `Failed to initialize IdxdbStore: …` from browser client and mock construction, and `failed to open store: …` from `exportStore` and `importStore`. A method worker's `client.ready` rejects with that same `TypeError`, and a `TypeError` cause stays a `TypeError` ([#505](https://github.com/0xMiden/web-sdk/pull/505)).
 
 ## 0.17.8 (2026-10-28)
