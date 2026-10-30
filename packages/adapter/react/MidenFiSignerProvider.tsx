@@ -39,12 +39,12 @@ import { WalletContext as CanonicalWalletContext } from "./useWallet.js";
 // TYPES
 // ================================================================================================
 
-export interface Wallet {
+interface Wallet {
   adapter: Adapter;
   readyState: WalletReadyState;
 }
 
-export interface WalletContextState {
+interface WalletContextState {
   autoConnect: boolean;
   wallets: Wallet[];
   wallet: Wallet | null;
