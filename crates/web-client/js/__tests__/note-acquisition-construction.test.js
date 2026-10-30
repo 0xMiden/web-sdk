@@ -28,6 +28,8 @@ it.each(["normal", "external", "mock"])(
       createClient: vi.fn(async () => {}),
       createClientWithExternalKeystore: vi.fn(async () => {}),
       createMockClient: vi.fn(async () => {}),
+      serializeMockChain: vi.fn(async () => new Uint8Array()),
+      serializeMockNoteTransportNode: vi.fn(async () => new Uint8Array()),
       installNoteAcquisitionGate: vi.fn(async (callback, actual) => {
         decision = callback;
         expect(actual).toEqual(limits);
