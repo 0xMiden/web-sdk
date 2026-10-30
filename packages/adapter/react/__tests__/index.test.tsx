@@ -2,7 +2,10 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { renderHook, cleanup, act } from "@testing-library/react";
 import React, { useContext, type ReactNode } from "react";
 import {
+  AllowedPrivateData,
   EventEmitter,
+  PrivateDataPermission,
+  WalletAdapterNetwork,
   WalletReadyState,
   type Adapter,
   type WalletAdapterEvents,
@@ -112,6 +115,44 @@ describe("WalletContext exported from the package entry (#484)", () => {
     });
 
     expect(result.current.createAccount).toBe(createAccount);
+  });
+
+  it("forwards caller arguments to the exported context connect", async () => {
+    const createAccount = vi.fn();
+    const connect = vi.fn().mockResolvedValue(undefined);
+    const value = { createAccount, connect } as unknown as React.ContextType<
+      typeof WalletContext
+    >;
+    const { result } = renderHook(() => useMidenFiWallet(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <WalletContext.Provider value={value}>
+          {children}
+        </WalletContext.Provider>
+      ),
+    });
+
+    await expect(result.current.connect()).rejects.toThrow(
+      "useMidenFiWallet connect requires privateDataPermission and network"
+    );
+    expect(connect).not.toHaveBeenCalled();
+
+    const connectWithArgs = result.current.connect as unknown as (
+      privateDataPermission: PrivateDataPermission,
+      network: WalletAdapterNetwork,
+      allowedPrivateData?: AllowedPrivateData
+    ) => Promise<void>;
+    await connectWithArgs(
+      PrivateDataPermission.UponRequest,
+      WalletAdapterNetwork.Testnet,
+      AllowedPrivateData.None
+    );
+
+    expect(connect).toHaveBeenCalledOnce();
+    expect(connect).toHaveBeenCalledWith(
+      PrivateDataPermission.UponRequest,
+      WalletAdapterNetwork.Testnet,
+      AllowedPrivateData.None
+    );
   });
 
   it("still rejects WalletProvider when it has no createAccount", () => {
