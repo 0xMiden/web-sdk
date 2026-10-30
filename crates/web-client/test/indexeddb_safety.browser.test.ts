@@ -267,7 +267,7 @@ test("conflicting same-realm clients and helpers preserve TypeError", async ({
       seed: new Uint8Array(32).fill(1),
       indexedDb: { durability: "strict" },
     });
-    await client.setSetting("same-realm-durability", new Uint8Array([1]));
+    await client.settings.set("same-realm-durability", new Uint8Array([1]));
     const rejectsTypeError = async (operation) => {
       try {
         await operation();
