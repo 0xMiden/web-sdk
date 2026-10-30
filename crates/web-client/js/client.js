@@ -7,6 +7,7 @@ import { CompilerResource } from "./resources/compiler.js";
 import { KeystoreResource } from "./resources/keystore.js";
 import { PswapResource } from "./resources/pswap.js";
 import { hashSeed, resolveAccountRef } from "./utils.js";
+import { validateCallbackTimeoutMs } from "./callbackBridge.js";
 
 /**
  * MidenClient wraps the existing proxy-wrapped WebClient with a resource-based API.
@@ -141,6 +142,8 @@ export class MidenClient {
         "MidenClient not initialized. Import from the SDK package entry point."
       );
     }
+
+    validateCallbackTimeoutMs(options?.callbackTimeoutMs);
 
     const seed = options?.seed ? await hashSeed(options.seed) : undefined;
 

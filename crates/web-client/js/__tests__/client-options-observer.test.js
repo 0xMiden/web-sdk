@@ -283,14 +283,16 @@ describe("MidenClient.create forwards the observability options", () => {
     MidenClient._WasmWebClient = {
       createClient: async (...args) => {
         calls.createClient.push(args);
-        return {};
+        return { syncState: async () => {} };
       },
       createClientWithExternalKeystore: async (...args) => {
         calls.createClientWithExternalKeystore.push(args);
-        return {};
+        return { syncState: async () => {} };
       },
     };
-    MidenClient._getWasmOrThrow = async () => ({});
+    MidenClient._getWasmOrThrow = async () => ({
+      TransactionProver: { newRemoteProver: () => ({}) },
+    });
     return calls;
   }
 
@@ -348,6 +350,43 @@ describe("MidenClient.create forwards the observability options", () => {
     const args = calls.createClientWithExternalKeystore[0];
     expect(args).toHaveLength(12);
     expect(args[11]).toBe(120000);
+  });
+
+  it.each([
+    ["negative", -1],
+    ["non-finite", Number.NaN],
+    ["above the timer limit", 2147483648],
+  ])(
+    "rejects a %s callbackTimeoutMs before either factory runs",
+    async (_, callbackTimeoutMs) => {
+      for (const keystore of [
+        undefined,
+        { getKey: () => {}, insertKey: () => {}, sign: () => {} },
+      ]) {
+        const calls = captureFactory();
+        await expect(
+          MidenClient.create({ rpcUrl: "testnet", keystore, callbackTimeoutMs })
+        ).rejects.toThrow(
+          "callbackTimeoutMs must be a non-negative finite number no greater than 2147483647"
+        );
+        expect(calls.createClient).toHaveLength(0);
+        expect(calls.createClientWithExternalKeystore).toHaveLength(0);
+      }
+    }
+  );
+
+  it.each([
+    ["default create", (options) => MidenClient.create(options)],
+    ["createTestnet", (options) => MidenClient.createTestnet(options)],
+    ["createDevnet", (options) => MidenClient.createDevnet(options)],
+  ])("rejects an invalid callbackTimeoutMs through %s", async (_, create) => {
+    const calls = captureFactory();
+
+    await expect(create({ callbackTimeoutMs: 2147483648 })).rejects.toThrow(
+      "callbackTimeoutMs must be a non-negative finite number no greater than 2147483647"
+    );
+    expect(calls.createClient).toHaveLength(0);
+    expect(calls.createClientWithExternalKeystore).toHaveLength(0);
   });
 
   it("passes the observability options to the external-keystore factory", async () => {
