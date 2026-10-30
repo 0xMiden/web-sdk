@@ -1,10 +1,9 @@
 /**
  * Simple static server that serves both the test app and the SDK.
  * - /        -> test/test-app/
- * - /sdk/    -> ../../crates/web-client/dist/
+ * - /sdk/    -> ../../crates/web-client/dist/st/
  * - /react-sdk/ -> ../dist/
- * - /vendor/react/ -> ../node_modules/react/umd/
- * - /vendor/react-dom/ -> ../node_modules/react-dom/umd/
+ * - /vendor/react.js -> react + react-dom, assembled at startup (see below)
  * - /vendor/zustand/ -> ../node_modules/zustand/
  */
 const http = require("http");
@@ -34,24 +33,67 @@ const SDK_DIR = path.join(
   "..",
   "crates",
   "web-client",
-  "dist"
+  "dist",
+  "st"
 );
 const REACT_SDK_DIR = path.join(__dirname, "..", "dist");
-const REACT_UMD_DIR = path.join(
-  __dirname,
-  "..",
-  "node_modules",
-  "react",
-  "umd"
-);
-const REACT_DOM_UMD_DIR = path.join(
-  __dirname,
-  "..",
-  "node_modules",
-  "react-dom",
-  "umd"
-);
 const ZUSTAND_DIR = path.join(__dirname, "..", "node_modules", "zustand");
+
+// React 19 ships no UMD build, and the test apps reach React through the
+// window globals that the shims in test-app/ re-export. Assemble one script
+// at startup that evaluates the CommonJS development builds of react,
+// react-dom, react-dom/client and their scheduler dependency with a minimal
+// require(), then sets those globals.
+const REACT_VENDOR_PATH = "/vendor/react.js";
+
+function packageDir(name, fromDir) {
+  return path.dirname(
+    require.resolve(`${name}/package.json`, { paths: [fromDir] })
+  );
+}
+
+function buildReactVendorScript() {
+  const reactDir = packageDir("react", __dirname);
+  const reactDomDir = packageDir("react-dom", __dirname);
+  const schedulerDir = packageDir("scheduler", reactDomDir);
+  const modules = {
+    react: path.join(reactDir, "cjs", "react.development.js"),
+    "react-dom": path.join(reactDomDir, "cjs", "react-dom.development.js"),
+    "react-dom/client": path.join(
+      reactDomDir,
+      "cjs",
+      "react-dom-client.development.js"
+    ),
+    scheduler: path.join(schedulerDir, "cjs", "scheduler.development.js"),
+  };
+
+  const definitions = Object.entries(modules)
+    .map(
+      ([name, file]) =>
+        `definitions[${JSON.stringify(name)}] = function (module, exports, require) {\n${fs.readFileSync(file, "utf8")}\n};`
+    )
+    .join("\n");
+
+  return Buffer.from(`(function () {
+  var process = { env: { NODE_ENV: "development" } };
+  var definitions = {};
+  var cache = {};
+  function require(name) {
+    if (cache[name]) return cache[name].exports;
+    if (!definitions[name]) throw new Error("Unknown module: " + name);
+    var module = { exports: {} };
+    cache[name] = module;
+    definitions[name](module, module.exports, require);
+    return module.exports;
+  }
+${definitions}
+  window.React = require("react");
+  window.ReactDOM = Object.assign({}, require("react-dom"), require("react-dom/client"));
+})();
+`);
+}
+
+const REACT_VENDOR_SCRIPT = buildReactVendorScript();
 
 const SECURITY_HEADERS = {
   "Cross-Origin-Opener-Policy": "same-origin",
@@ -170,20 +212,6 @@ function resolveRequestPath(requestPath) {
     };
   }
 
-  if (requestPath.startsWith("/vendor/react-dom/")) {
-    return {
-      baseDir: REACT_DOM_UMD_DIR,
-      urlPath: requestPath.slice("/vendor/react-dom".length),
-    };
-  }
-
-  if (requestPath.startsWith("/vendor/react/")) {
-    return {
-      baseDir: REACT_UMD_DIR,
-      urlPath: requestPath.slice("/vendor/react".length),
-    };
-  }
-
   if (requestPath.startsWith("/vendor/zustand/")) {
     return {
       baseDir: ZUSTAND_DIR,
@@ -197,15 +225,11 @@ function resolveRequestPath(requestPath) {
 const TEST_APP_FILES = buildFileMap(TEST_APP_DIR);
 const SDK_FILES = buildFileMap(SDK_DIR);
 const REACT_SDK_FILES = buildFileMap(REACT_SDK_DIR);
-const REACT_UMD_FILES = buildFileMap(REACT_UMD_DIR);
-const REACT_DOM_UMD_FILES = buildFileMap(REACT_DOM_UMD_DIR);
 const ZUSTAND_FILES = buildFileMap(ZUSTAND_DIR);
 const FILE_MAPS = new Map([
   [TEST_APP_DIR, TEST_APP_FILES],
   [SDK_DIR, SDK_FILES],
   [REACT_SDK_DIR, REACT_SDK_FILES],
-  [REACT_UMD_DIR, REACT_UMD_FILES],
-  [REACT_DOM_UMD_DIR, REACT_DOM_UMD_FILES],
   [ZUSTAND_DIR, ZUSTAND_FILES],
 ]);
 
@@ -228,6 +252,16 @@ const server = http.createServer((req, res) => {
     requestPath = new URL(req.url, "http://localhost").pathname;
   } catch {
     sendPlain(res, 400, "Bad Request");
+    return;
+  }
+
+  if (requestPath === REACT_VENDOR_PATH) {
+    res.writeHead(200, {
+      "Content-Type": MIME_TYPES[".js"],
+      "Content-Length": REACT_VENDOR_SCRIPT.length,
+      "Cache-Control": "no-store",
+    });
+    res.end(req.method === "HEAD" ? undefined : REACT_VENDOR_SCRIPT);
     return;
   }
 

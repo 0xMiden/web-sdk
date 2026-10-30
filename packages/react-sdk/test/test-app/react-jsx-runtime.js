@@ -1,7 +1,9 @@
 const React = window.React;
 
 if (!React) {
-  throw new Error("React not found on window. Ensure react UMD is loaded.");
+  throw new Error(
+    "React not found on window. Ensure /vendor/react.js is loaded."
+  );
 }
 
 export const Fragment = React.Fragment;

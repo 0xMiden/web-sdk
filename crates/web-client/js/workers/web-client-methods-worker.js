@@ -566,7 +566,15 @@ async function processMessage(event) {
       self.postMessage({ ready: true });
       return;
     } else if (action === WorkerAction.INIT_MOCK) {
-      const [seed, logLevel, numThreads, storagePolicy, limits] = args;
+      const [
+        seed,
+        logLevel,
+        numThreads,
+        serializedMockChain,
+        serializedMockNoteTransportNode,
+        storagePolicy,
+        limits,
+      ] = args;
       acquisitionLimits = limits;
       const indexedDb = storageOptions(storagePolicy);
       wasmIndexedDb = indexedDb;
@@ -590,8 +598,10 @@ async function processMessage(event) {
       wasmWebClient = new wasm.WebClient();
       await wasmWebClient.createMockClient(
         seed,
-        undefined,
-        undefined,
+        serializedMockChain ? new Uint8Array(serializedMockChain) : undefined,
+        serializedMockNoteTransportNode
+          ? new Uint8Array(serializedMockNoteTransportNode)
+          : undefined,
         ...indexedDbArgs(indexedDb)
       );
 

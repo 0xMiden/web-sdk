@@ -26,6 +26,9 @@ const fakeWasm = vi.hoisted(() => {
         if (WebClient.createFailure) throw WebClient.createFailure;
         return WebClient.pendingCreateMockClient;
       });
+      // MockWebClient.createClient hands these to the worker's INIT_MOCK.
+      this.serializeMockChain = vi.fn(async () => new Uint8Array());
+      this.serializeMockNoteTransportNode = vi.fn(async () => new Uint8Array());
     }
   }
   return {
