@@ -44,7 +44,7 @@ interface Wallet {
   readyState: WalletReadyState;
 }
 
-interface WalletContextState {
+export interface MidenFiWalletContextState {
   autoConnect: boolean;
   wallets: Wallet[];
   wallet: Wallet | null;
@@ -71,8 +71,8 @@ interface WalletContextState {
   createAccount?: MessageSignerWalletAdapterProps["createAccount"];
 }
 
-const WalletContext = createContext<WalletContextState>(
-  {} as WalletContextState
+const WalletContext = createContext<MidenFiWalletContextState>(
+  {} as MidenFiWalletContextState
 );
 
 // MIDENFI SIGNER PROVIDER
@@ -828,7 +828,7 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
  * const txId = await requestTransaction({ ... });
  * ```
  */
-export function useMidenFiWallet(): WalletContextState {
+export function useMidenFiWallet(): MidenFiWalletContextState {
   const context = useContext(WalletContext);
   const canonicalContext = useContext(CanonicalWalletContext);
   if (!context || Object.keys(context).length === 0) {
@@ -837,7 +837,7 @@ export function useMidenFiWallet(): WalletContextState {
       typeof (canonicalContext as { createAccount?: unknown }).createAccount ===
         "function"
     ) {
-      return canonicalContext as WalletContextState;
+      return canonicalContext as MidenFiWalletContextState;
     }
     throw new Error(
       "useMidenFiWallet must be used within MidenFiSignerProvider"
@@ -845,5 +845,3 @@ export function useMidenFiWallet(): WalletContextState {
   }
   return context;
 }
-
-export type { WalletContextState as MidenFiWalletContextState };

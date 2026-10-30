@@ -6,14 +6,15 @@
 
 # Function: useMidenFiWallet()
 
-> **useMidenFiWallet**(): [`WalletContextState`](../interfaces/WalletContextState.md)
+> **useMidenFiWallet**(): [`MidenFiWalletContextState`](../interfaces/MidenFiWalletContextState.md)
 
 Hook for MidenFi wallet operations beyond the unified useSigner interface.
 Use this to access wallet-specific methods like requestTransaction, requestAssets, etc.
+A package `WalletContext.Provider` whose value includes a `createAccount` function satisfies the hook, and `WalletProvider` does not.
 
 ## Returns
 
-[`WalletContextState`](../interfaces/WalletContextState.md)
+[`MidenFiWalletContextState`](../interfaces/MidenFiWalletContextState.md)
 
 ## Example
 
