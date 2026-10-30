@@ -173,7 +173,7 @@ export function callbackTimeoutFor(callbackType, callbackTimeoutMs) {
   if (callbackTimeoutMs === undefined) {
     return callbackType === "sign" ? undefined : DEFAULT_CALLBACK_TIMEOUT_MS;
   }
-  return callbackTimeoutMs === 0 ? undefined : callbackTimeoutMs;
+  return callbackTimeoutMs === 0 ? undefined : Math.ceil(callbackTimeoutMs);
 }
 
 /**
