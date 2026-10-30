@@ -6,7 +6,7 @@
 /** Per-callback limit for `getKey` and `insertKey` when `callbackTimeoutMs` is unset. */
 export const DEFAULT_CALLBACK_TIMEOUT_MS = 30000;
 /** Largest delay `setTimeout` can store, in milliseconds. */
-export const MAX_CALLBACK_TIMEOUT_MS = 2147483647;
+const MAX_CALLBACK_TIMEOUT_MS = 2147483647;
 
 const isTransferableCode = (value) =>
   typeof value === "string" ||

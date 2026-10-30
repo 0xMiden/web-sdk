@@ -834,6 +834,8 @@ class WebClient {
    *   hex account ID. Optional: the client receives the protocol configuration, which names the
    *   fee asset, from the node when it syncs, so this only sets what `feeFaucetId()` reports
    *   before the first sync.
+   * @param {number | undefined} [callbackTimeoutMs] - How long to wait for external keystore
+   *   callbacks. Invalid values reject before WASM initialization.
    */
   static async createClient(
     rpcUrl,
@@ -843,7 +845,8 @@ class WebClient {
     logLevel,
     useWorker = true,
     observability,
-    feeFaucetId
+    feeFaucetId,
+    callbackTimeoutMs
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -857,7 +860,8 @@ class WebClient {
       logLevel,
       useWorker,
       observability,
-      feeFaucetId
+      feeFaucetId,
+      callbackTimeoutMs
     );
 
     // Set up logging on the main thread before creating the client.
