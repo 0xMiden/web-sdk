@@ -29,7 +29,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("MidenProvider — fee faucet", () => {
+describe("MidenProvider - fee faucet", () => {
   it("passes config.feeFaucetId to createClient as its last argument", async () => {
     // A 0.17 client cannot execute or screen notes without a protocol
     // configuration, and this is the only thing the provider is given to build
@@ -58,10 +58,10 @@ describe("MidenProvider — fee faucet", () => {
     expect(args[7]).toBe("0x1234567890abcdef");
   });
 
-  // The branch every signer provider takes, and the harder of the two: eleven
+  // The branch every signer provider takes, and the harder of the two: twelve
   // positional arguments with `undefined` placeholders, which is exactly what
   // rots. The createClient case above cannot catch a regression here.
-  it("passes config.feeFaucetId to the external-keystore factory as its last argument", async () => {
+  it("passes config.feeFaucetId and an unset callback timeout to the external-keystore factory", async () => {
     const signer = createMockSignerContext({
       isConnected: true,
       storeName: "signer_fee_faucet",
@@ -87,8 +87,41 @@ describe("MidenProvider — fee faucet", () => {
     });
     const args = vi.mocked(WebClient.createClientWithExternalKeystore).mock
       .calls[0];
-    expect(args).toHaveLength(11);
+    expect(args).toHaveLength(12);
     expect(args[10]).toBe("0xfeedfacecafebeef");
+    expect(args[11]).toBeUndefined();
+  });
+
+  it("forwards config.callbackTimeoutMs to the external-keystore factory", async () => {
+    const signer = createMockSignerContext({
+      isConnected: true,
+      storeName: "signer_callback_timeout",
+    });
+
+    render(
+      <SignerContext.Provider value={signer}>
+        <MidenProvider
+          config={{
+            rpcUrl: "https://rpc.testnet.miden.io",
+            feeFaucetId: "0xfeedfacecafebeef",
+            callbackTimeoutMs: 120_000,
+          }}
+        >
+          <div data-testid="children">ready</div>
+        </MidenProvider>
+      </SignerContext.Provider>
+    );
+
+    await waitFor(() => {
+      expect(
+        vi.mocked(WebClient.createClientWithExternalKeystore)
+      ).toHaveBeenCalled();
+    });
+    const args = vi.mocked(WebClient.createClientWithExternalKeystore).mock
+      .calls[0];
+    expect(args).toHaveLength(12);
+    expect(args[10]).toBe("0xfeedfacecafebeef");
+    expect(args[11]).toBe(120_000);
   });
 });
 

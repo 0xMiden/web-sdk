@@ -58,6 +58,7 @@ leave it out to keep the point they make legible; every real provider needs it.
     proverTimeoutMs: 10000,     // optional: remote-prover request timeout
     proverUrls: { testnet: "...", devnet: "..." },  // optional: override network prover URLs
     seed: seedBytes,            // optional: 32-byte Uint8Array for a deterministic RNG
+    callbackTimeoutMs: 120000,  // optional: connected-signer callback wait in ms; unset leaves sign unlimited
   }}
   loadingComponent={<Loading />}  // shown during WASM init
   errorComponent={(error) => <Error error={error} />}  // function form receives the Error

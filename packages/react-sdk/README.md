@@ -164,6 +164,9 @@ function App() {
         // Set to 0 to disable auto-sync
         autoSyncInterval: 15000,
 
+        // Optional: connected-signer callback wait in ms. Unset leaves sign unlimited.
+        callbackTimeoutMs: 120000,
+
         // Optional: prover selection ('local' | 'devnet' | 'testnet' | URL)
         // prover: 'local',
       }}

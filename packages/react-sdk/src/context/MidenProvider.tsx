@@ -268,7 +268,8 @@ export function MidenProvider({
               undefined,
               resolvedConfig.useWorker,
               undefined,
-              resolvedConfig.feeFaucetId
+              resolvedConfig.feeFaucetId,
+              resolvedConfig.callbackTimeoutMs
             );
 
             if (cancelled) return;
