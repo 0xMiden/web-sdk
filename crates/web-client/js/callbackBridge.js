@@ -5,6 +5,8 @@
 
 /** Per-callback limit for `getKey` and `insertKey` when `callbackTimeoutMs` is unset. */
 export const DEFAULT_CALLBACK_TIMEOUT_MS = 30000;
+/** Largest delay `setTimeout` can store, in milliseconds. */
+export const MAX_CALLBACK_TIMEOUT_MS = 2147483647;
 
 const isTransferableCode = (value) =>
   typeof value === "string" ||
@@ -135,9 +137,14 @@ export function deserializeCallbackError(serialized) {
  */
 export function validateCallbackTimeoutMs(value) {
   if (value === undefined) return undefined;
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > MAX_CALLBACK_TIMEOUT_MS
+  ) {
     throw new TypeError(
-      `callbackTimeoutMs must be a non-negative finite number, got ${describeThrown(value)}`
+      `callbackTimeoutMs must be a non-negative finite number no greater than ${MAX_CALLBACK_TIMEOUT_MS}, got ${describeThrown(value)}`
     );
   }
   return value;

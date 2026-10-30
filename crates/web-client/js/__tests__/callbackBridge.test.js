@@ -358,6 +358,31 @@ describe("callback time limits", () => {
       expect(() => validateCallbackTimeoutMs(bad)).toThrow(TypeError);
     }
   });
+
+  it("rejects a callbackTimeoutMs above the timer limit", () => {
+    expect(() => validateCallbackTimeoutMs(2_147_483_648)).toThrow(
+      "callbackTimeoutMs must be a non-negative finite number no greater than 2147483647, got 2147483648"
+    );
+    expect(validateCallbackTimeoutMs(2_147_483_647)).toBe(2_147_483_647);
+  });
+
+  it("passes the largest callback timeout to timers for every callback", () => {
+    vi.useFakeTimers();
+    const timer = vi.spyOn(globalThis, "setTimeout");
+
+    for (const callbackType of ["sign", "getKey", "insertKey"]) {
+      const forwarder = createCallbackForwarder({
+        post: () => {},
+        timeoutMs: () => 2_147_483_647,
+      });
+      forwarder.forward(callbackType, []);
+    }
+
+    expect(timer).toHaveBeenCalledTimes(3);
+    for (const [, delay] of timer.mock.calls) {
+      expect(delay).toBe(2_147_483_647);
+    }
+  });
 });
 
 describe("handleReply", () => {
