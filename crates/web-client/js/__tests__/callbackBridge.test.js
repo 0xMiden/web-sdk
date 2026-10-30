@@ -526,6 +526,7 @@ describe("callback time limits", () => {
     expect(callbackTimeoutFor("insertKey", undefined)).toBe(30_000);
     expect(callbackTimeoutFor("sign", 0)).toBeUndefined();
     expect(callbackTimeoutFor("getKey", 0)).toBeUndefined();
+    expect(callbackTimeoutFor("sign", 0.5)).toBe(1);
     expect(callbackTimeoutFor("sign", 120_000)).toBe(120_000);
     expect(callbackTimeoutFor("insertKey", 120_000)).toBe(120_000);
   });
@@ -535,6 +536,18 @@ describe("callback time limits", () => {
     expect(validateCallbackTimeoutMs(0)).toBe(0);
     for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY, "1000"]) {
       expect(() => validateCallbackTimeoutMs(bad)).toThrow(TypeError);
+    }
+  });
+
+  it("reports non-finite numeric callbackTimeoutMs values accurately", () => {
+    for (const [bad, value] of [
+      [Number.NaN, "NaN"],
+      [Number.POSITIVE_INFINITY, "Infinity"],
+      [Number.NEGATIVE_INFINITY, "-Infinity"],
+    ]) {
+      expect(() => validateCallbackTimeoutMs(bad)).toThrow(
+        `callbackTimeoutMs must be a non-negative finite number no greater than 2147483647, got ${value}`
+      );
     }
   });
 
