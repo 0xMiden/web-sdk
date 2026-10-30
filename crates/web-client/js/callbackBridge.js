@@ -99,7 +99,13 @@ export function serializeCallbackError(thrown, callbackType) {
       serialized.reason = reason.value;
     }
     if (cause.ok && cause.value !== undefined) {
-      serialized.cause = serialize(cause.value, seen);
+      try {
+        serialized.cause = serialize(cause.value, seen);
+      } catch {
+        serialized.cause = {
+          message: `${callbackType} callback threw an unreadable cause`,
+        };
+      }
     }
     return serialized;
   };
@@ -215,10 +221,9 @@ export function createCallbackForwarder({ post, timeoutMs }) {
      * @returns {boolean} Whether `data` answered a pending callback.
      */
     handleReply(data) {
-      const entry = data.callbackRequestId
-        ? pending.get(data.callbackRequestId)
-        : undefined;
-      if (!entry) return false;
+      if (typeof data.callbackRequestId !== "string") return false;
+      const entry = pending.get(data.callbackRequestId);
+      if (!entry) return true;
       clearTimeout(entry.timeoutId);
       pending.delete(data.callbackRequestId);
       if (data.callbackOk) {
