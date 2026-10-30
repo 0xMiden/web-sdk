@@ -150,7 +150,7 @@ export function validateCallbackTimeoutMs(value) {
     value > MAX_CALLBACK_TIMEOUT_MS
   ) {
     throw new TypeError(
-      `callbackTimeoutMs must be a non-negative finite number no greater than ${MAX_CALLBACK_TIMEOUT_MS}, got ${describeThrown(value)}`
+      `callbackTimeoutMs must be a non-negative finite number no greater than ${MAX_CALLBACK_TIMEOUT_MS}, got ${typeof value === "number" ? String(value) : describeThrown(value)}`
     );
   }
   return value;
