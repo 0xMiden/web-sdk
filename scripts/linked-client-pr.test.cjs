@@ -526,6 +526,38 @@ test("the precise refresh keeps the main update output ahead of its own", (t) =>
   assert.ok(result.stdout.indexOf("PRECISE-MARKER") > main, result.stdout);
 });
 
+test("an unused registry patch does not retarget a git-sourced package by version", (t) => {
+  const f = fixture(t);
+  f.write("Cargo.toml", '[package]\nname = "fixture"\nversion = "1.0.0"\n');
+  f.write(
+    "Cargo.lock",
+    '[[package]]\nname = "miden-client-sqlite-store"\nversion = "0.17.5"\nsource = "git+https://github.com/0xMiden/rust-sdk?rev=0123456789abcdef0123456789abcdef01234567#0123456789abcdef0123456789abcdef01234567"\n\n[[patch.unused]]\nname = "miden-client-sqlite-store"\nversion = "0.17.5"\n'
+  );
+  f.write(
+    "bin/cargo",
+    `#!/usr/bin/env python3\nimport json, sys\nwith open('cargo-calls.jsonl', 'a') as out:\n    out.write(json.dumps(sys.argv[1:]) + '\\n')\nprint('MAIN-UPDATE-MARKER')\n`,
+    0o755
+  );
+  const result = f.run(
+    "bash",
+    ["scripts/cargo-update-linked-patches.sh", "-p", "fixture"],
+    {
+      env: {
+        ...process.env,
+        PATH: `${path.join(f.root, "bin")}:${process.env.PATH}`,
+      },
+    }
+  );
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const calls = fs
+    .readFileSync(path.join(f.root, "cargo-calls.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .map(JSON.parse);
+  assert.deepEqual(calls, [["update", "-p", "fixture"]]);
+  assert.doesNotMatch(result.stdout + result.stderr, /PRECISE-MARKER/);
+});
+
 for (const [kind, error] of [
   [
     "network",
