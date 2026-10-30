@@ -55,7 +55,11 @@ export interface MidenFiWalletContextState {
   disconnecting: boolean;
 
   select(walletName: WalletName): void;
-  connect(): Promise<void>;
+  connect(
+    privateDataPermission?: PrivateDataPermission,
+    network?: WalletAdapterNetwork,
+    allowedPrivateData?: AllowedPrivateData
+  ): Promise<void>;
   disconnect(): Promise<void>;
 
   requestTransaction?: MessageSignerWalletAdapterProps["requestTransaction"];
@@ -816,6 +820,7 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
  * Hook for MidenFi wallet operations beyond the unified useSigner interface.
  * Use this to access wallet-specific methods like requestTransaction, requestAssets, etc.
  * A package `WalletContext.Provider` whose value includes a `createAccount` function satisfies the hook, and `WalletProvider` does not.
+ * The exported-context fallback forwards `privateDataPermission`, `network`, and optional `allowedPrivateData`, and rejects with `useMidenFiWallet connect requires privateDataPermission and network` when either required argument is omitted.
  *
  * @example
  * ```tsx
@@ -837,7 +842,27 @@ export function useMidenFiWallet(): MidenFiWalletContextState {
       typeof (canonicalContext as { createAccount?: unknown }).createAccount ===
         "function"
     ) {
-      return canonicalContext as MidenFiWalletContextState;
+      return {
+        ...canonicalContext,
+        connect(
+          privateDataPermission?: PrivateDataPermission,
+          network?: WalletAdapterNetwork,
+          allowedPrivateData?: AllowedPrivateData
+        ) {
+          if (privateDataPermission === undefined || network === undefined) {
+            return Promise.reject(
+              new Error(
+                "useMidenFiWallet connect requires privateDataPermission and network"
+              )
+            );
+          }
+          return canonicalContext.connect(
+            privateDataPermission,
+            network,
+            allowedPrivateData
+          );
+        },
+      };
     }
     throw new Error(
       "useMidenFiWallet must be used within MidenFiSignerProvider"

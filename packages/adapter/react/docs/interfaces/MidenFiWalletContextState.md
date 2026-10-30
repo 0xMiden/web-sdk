@@ -228,7 +228,21 @@
 
 ### connect()
 
-> **connect**(): `Promise`\<`void`\>
+> **connect**(`privateDataPermission?`, `network?`, `allowedPrivateData?`): `Promise`\<`void`\>
+
+#### Parameters
+
+##### privateDataPermission?
+
+`PrivateDataPermission`
+
+##### network?
+
+`WalletAdapterNetwork`
+
+##### allowedPrivateData?
+
+`AllowedPrivateData`
 
 #### Returns
 

@@ -45,7 +45,11 @@ one provider: nesting both gives two wallet states over one adapter.
 `(privateDataPermission, network, allowedPrivateData)`, and both providers
 drop them and use their own props. Set `network`, `privateDataPermission` and
 `allowedPrivateData` on the provider. Passing them anywhere else, including to
-the reactui buttons and modal, does nothing.
+the reactui buttons and modal, does nothing. The exported-context fallback is
+the exception: `connect` forwards `privateDataPermission`, `network`, and
+optional `allowedPrivateData`, and rejects with
+`useMidenFiWallet connect requires privateDataPermission and network` when
+either required argument is omitted.
 
 **Every request method can be `undefined`.** They are built from the selected
 adapter, so they are `undefined` until `select(name)` resolves one, and they

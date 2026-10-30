@@ -136,12 +136,7 @@ describe("WalletContext exported from the package entry (#484)", () => {
     );
     expect(connect).not.toHaveBeenCalled();
 
-    const connectWithArgs = result.current.connect as unknown as (
-      privateDataPermission: PrivateDataPermission,
-      network: WalletAdapterNetwork,
-      allowedPrivateData?: AllowedPrivateData
-    ) => Promise<void>;
-    await connectWithArgs(
+    await result.current.connect(
       PrivateDataPermission.UponRequest,
       WalletAdapterNetwork.Testnet,
       AllowedPrivateData.None

@@ -69,8 +69,9 @@ export function App() {
 ```
 
 `network`, `privateDataPermission` and `allowedPrivateData` belong on the
-provider. `connect()` takes no arguments in practice: the provider's `connect`
-ignores anything passed to it and forwards its own props to the adapter.
+provider. `connect()` takes no arguments in practice for `WalletProvider` and
+`MidenFiSignerProvider`: each provider's `connect` ignores anything passed to
+it and forwards its own props to the adapter.
 
 ### B. The wallet holds the key, your app drives `MidenClient`
 
@@ -111,7 +112,11 @@ that value is non-empty. When the private context is empty, the hook accepts
 the exported `WalletContext` value only if `createAccount` is a function, so
 a package `WalletContext.Provider` whose value includes `createAccount`
 satisfies the hook. A plain `WalletProvider` still throws
-`useMidenFiWallet must be used within MidenFiSignerProvider`.
+`useMidenFiWallet must be used within MidenFiSignerProvider`. On that
+exported-context fallback, `connect` forwards `privateDataPermission`,
+`network`, and optional `allowedPrivateData`, and rejects with
+`useMidenFiWallet connect requires privateDataPermission and network` when
+either required argument is omitted.
 
 ## The readiness lifecycle
 
