@@ -798,7 +798,7 @@ pub(crate) fn create_rng(seed: Option<Vec<u8>>) -> Result<StdRng, JsErr> {
 
 /// The error a client constructor reports when the browser store fails to open, carrying the
 /// store's own reason, such as a store written by a newer client. A rejected `TypeError`,
-/// including conflicting IndexedDB durability, stays a `TypeError`. Every other failure stays a
+/// including conflicting `IndexedDB` durability, stays a `TypeError`. Every other failure stays a
 /// string.
 #[cfg(feature = "browser")]
 pub(crate) fn idxdb_store_init_error(err: &JsValue) -> JsErr {
