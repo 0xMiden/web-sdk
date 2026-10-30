@@ -47,7 +47,9 @@ import { MidenProvider } from "@miden-sdk/react";
     proverTimeoutMs: 10000,     // optional: remote-prover request timeout
     proverUrls: { testnet: "...", devnet: "..." },  // optional: override network prover URLs
     seed: seedBytes,            // optional: 32-byte Uint8Array for a deterministic RNG
-    callbackTimeoutMs: 120000,  // optional: connected-signer callback wait in ms; unset leaves sign unlimited
+    callbackTimeoutMs: 120000,  // optional: connected-signer callback wait in ms; unset leaves sign unlimited,
+                                //   so a stalled signer holds the batch and later worker calls.
+                                //   Contract: https://github.com/0xMiden/web-sdk/blob/main/packages/react-sdk/README.md#keystore-callback-timeouts
   }}
   loadingComponent={<Loading />}  // shown during WASM init
   errorComponent={(error) => <Error error={error} />}  // function form receives the Error; a static element does not
@@ -302,7 +304,7 @@ const { blockNumber } = await batch({
 });
 ```
 
-Submits every item as one atomic batch: every tx lands or none does. Each item pairs a tracked local account with a pre-built `TransactionRequest`; items may span accounts, and push order must respect producer-before-consumer. Resolves to `{ blockNumber }`, the node's chain tip as of submission (not the block the batch commits in), with no per-tx ids. Each tx is proven inside the batch primitive by the client's built-in local prover, so `MidenProvider`'s `prover` setting and its fallback do not apply, and `stage` goes `"executing"` -> `"submitting"` -> `"complete"` without ever reporting `"proving"`. In the browser the batch runs in the client's Web Worker, so the page stays responsive while it proves; with `useWorker: false`, or without `Worker` support, it proves on the calling thread and blocks the page until it settles, so keep batches small there. A second `batch()` while one is in flight throws a `MidenError` with `code: "BATCH_BUSY"`. Like `useMultiSend`, it calls `assertSignerConnected()` and throws on a mounted-but-disconnected signer. The hook declares no fee conversion salt, so build a multisig item's request from `client.feeAwareTransactionRequestBuilder(account)`.
+Submits every item as one atomic batch: every tx lands or none does. Each item pairs a tracked local account with a pre-built `TransactionRequest`; items may span accounts, and push order must respect producer-before-consumer. Resolves to `{ blockNumber }`, the node's chain tip as of submission (not the block the batch commits in), with no per-tx ids. Each tx is proven inside the batch primitive by the client's built-in local prover, so `MidenProvider`'s `prover` setting and its fallback do not apply, and `stage` goes `"executing"` -> `"submitting"` -> `"complete"` without ever reporting `"proving"`. In the browser the batch runs in the client's Web Worker, so the page stays responsive while it proves; with `useWorker: false`, or without `Worker` support, it proves on the calling thread and blocks the page until it settles, so keep batches small there. Through the worker, `sign` waits without a limit unless `callbackTimeoutMs` sets one, so a stalled signer holds the batch and later worker calls; set a finite timeout as the [complete contract](https://github.com/0xMiden/web-sdk/blob/main/packages/react-sdk/README.md#keystore-callback-timeouts) shows. A second `batch()` while one is in flight throws a `MidenError` with `code: "BATCH_BUSY"`. Like `useMultiSend`, it calls `assertSignerConnected()` and throws on a mounted-but-disconnected signer. The hook declares no fee conversion salt, so build a multisig item's request from `client.feeAwareTransactionRequestBuilder(account)`.
 
 ### useMint()
 ```tsx
@@ -654,7 +656,7 @@ await runExclusive(async () => {
 - **No protocol `AssetId` / `AssetClass` / `AssetVaultKey` type.** Every `assetId` in this package is a faucet (token) account reference - `asset.faucetId().toString()`. Do not "fix" these names to protocol ones.
 - **No `mutable` wallet option and no `storageMode: "network"`.** `CreateWalletOptions` is exactly `{ storageMode?, authScheme?, initSeed? }`.
 
-> **The package's own `README.md` and `ReactSDK.Arena.Findings.md` are stale - do not treat them as authoritative.** The README still documents `authScheme: 0`, a `mutable: true` wallet option and `storageMode: 'network'`, none of which exist in `src/types/index.ts`. The Arena findings file is a proposal document and describes an API that was never shipped in that shape. `src/types/index.ts` plus the hook bodies are the source of truth, and the package's `AGENTS.md` (which ships alongside this skill) is kept current.
+> **The package's own `README.md` and `ReactSDK.Arena.Findings.md` are stale - do not treat them as authoritative.** The README still documents `authScheme: 0`, a `mutable: true` wallet option and `storageMode: 'network'`, none of which exist in `src/types/index.ts`. Its "Keystore Callback Timeouts" section is the exception: it is the complete `callbackTimeoutMs` contract. The Arena findings file is a proposal document and describes an API that was never shipped in that shape. `src/types/index.ts` plus the hook bodies are the source of truth, and the package's `AGENTS.md` (which ships alongside this skill) is kept current.
 
 ## Type Imports
 

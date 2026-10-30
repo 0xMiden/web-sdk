@@ -143,8 +143,13 @@ returns the raw value your sign callback threw - is only meaningful with
 Under the worker, `keystore` callbacks run on the main thread and the worker
 waits for each one. `callbackTimeoutMs` sets that wait: left unset, `sign` has
 no limit (a wallet or hardware approval can take minutes) and `getKey` and
-`insertKey` fail after 30 seconds; a positive value applies to all three and `0`
-removes the limit. A value greater than 2147483647 is rejected at creation.
+`insertKey` fail after 30 seconds; a positive value applies to all three,
+rounded up to a whole millisecond, and `0` removes all three limits. A negative,
+non-finite or non-number value, or one greater than 2147483647, throws
+`TypeError` at creation. Without a limit, a stalled `sign` holds its batch or
+transaction and leaves later worker calls in the queue, so pass a finite value
+such as `callbackTimeoutMs: 120000` if a signer can stall. See the
+[complete contract](https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts).
 Whatever a callback throws counts as a failure, including a
 bare string, `{ code: 4001 }` or `null`; cyclic causes and unreadable thrown
 properties are converted to finite, safe error replies. A failed `sign` fails
@@ -874,6 +879,10 @@ In the browser the batch runs in the client's Web Worker, so the page stays
 responsive while it proves; with `useWorker: false`, without `Worker` support,
 or on a mock client it proves on the calling thread and blocks it until it
 settles, so keep batches small there.
+With an external keystore, `sign` waits without a limit unless
+`callbackTimeoutMs` sets one, so a stalled signer holds the batch and later
+worker calls. Set a finite timeout if a signer can stall; see the
+[complete callback timeout contract](https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts).
 
 ### Preview (dry run)
 

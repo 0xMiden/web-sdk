@@ -165,6 +165,7 @@ function App() {
         autoSyncInterval: 15000,
 
         // Optional: connected-signer callback wait in ms. Unset leaves sign unlimited.
+        // See "Keystore Callback Timeouts" below.
         callbackTimeoutMs: 120000,
 
         // Optional: prover selection ('local' | 'devnet' | 'testnet' | URL)
@@ -183,6 +184,42 @@ function App() {
   );
 }
 ```
+
+### Keystore Callback Timeouts
+
+Under the Web Worker, a connected signer's callbacks run on the main thread and
+the worker waits for each one. `config.callbackTimeoutMs` sets that wait. A
+callback that outlasts it fails the call that needed it with
+`Callback <id> timed out after <n>ms`.
+
+| `callbackTimeoutMs` | `sign` | `getKey` and `insertKey` |
+| --- | --- | --- |
+| Unset | No limit | 30 seconds |
+| `0` | No limit | No limit |
+| Positive | That value | That value |
+
+A positive value applies to all three callbacks, and a fraction rounds up to a
+whole millisecond. A negative, non-finite or non-number value, or one above
+`2147483647`, throws `TypeError` at creation, with or without a signer, and
+`MidenProvider` passes that error to `errorComponent`. Callbacks use this
+timeout only through the Web Worker: with `useWorker: false`, or without
+`Worker` support, it sets no limit on them.
+
+`sign` has no limit by default because it can wait on a person approving in a
+wallet or on a hardware device. The cost is that a stalled `sign` never fails on
+its own. The worker runs one call at a time, so it holds its batch or
+transaction and leaves later worker calls in the queue. With `useBatch()`,
+`isLoading` stays `true` and another `batch()` throws `BATCH_BUSY`. If a signer
+can stall, set a finite timeout:
+
+```tsx
+<MidenProvider config={{ rpcUrl: 'testnet', callbackTimeoutMs: 120000 }}>
+  <YourApp />
+</MidenProvider>
+```
+
+A batch signs while it is built, so one failed or timed out `sign` fails the
+whole batch.
 
 ## Subpaths: Eager / Lazy × ST / MT
 
@@ -858,7 +895,11 @@ so `MidenProvider`'s `prover` setting and its fallback do not apply to batches.
 In the browser the batch runs in the client's Web Worker, so the page stays
 responsive while it proves; with `useWorker: false`, or without `Worker`
 support, it proves on the calling thread and blocks the page until it settles,
-so keep batches small there.
+so keep batches small there. Through the worker, `sign` waits without a limit
+unless `callbackTimeoutMs` sets one, so a stalled signer holds the batch and
+later worker calls; see
+[Keystore Callback Timeouts](#keystore-callback-timeouts) to set a finite
+timeout.
 
 Built-in features:
 - **Auto pre-sync** before submit (disable with `skipSync: true`)

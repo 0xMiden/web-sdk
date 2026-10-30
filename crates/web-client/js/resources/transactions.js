@@ -613,6 +613,10 @@ export class TransactionsResource {
    * page's main thread stays responsive; without a worker (`useWorker: false`,
    * or no `Worker` in the environment), and on a mock client, it proves on the
    * calling thread and blocks it until it settles.
+   * With an external keystore and a worker, `sign` waits without a limit unless
+   * `callbackTimeoutMs` sets one, so a stalled signer holds the batch and later
+   * worker calls. See
+   * https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
    *
    * @param {BatchOptions} opts - Batch options: the operations array, and
    *   `timeout` / `waitForConfirmation` (the latter does not currently work,
@@ -702,9 +706,11 @@ export class TransactionsResource {
    *   With an external keystore and a worker, signing happens at push time
    *   and this wrapper treats a failed push as fatal, so one failed or timed
    *   out signature callback fails the whole batch. `sign` has no time limit
-   *   unless `callbackTimeoutMs` sets one. Relatedly, `lastAuthError()`
-   *   reads the main-thread instance, so it does not report a forwarded
-   *   batch's auth error.
+   *   unless `callbackTimeoutMs` sets one, so a stalled signer holds the batch
+   *   and later worker calls. See
+   *   https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
+   *   Relatedly, `lastAuthError()` reads the main-thread instance, so it does
+   *   not report a forwarded batch's auth error.
    * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
    *   submission, not the block the batch commits in.
    */
