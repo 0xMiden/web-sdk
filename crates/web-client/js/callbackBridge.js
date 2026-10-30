@@ -17,12 +17,10 @@ const isTransferableCode = (value) =>
 const describeThrown = (thrown) => {
   if (thrown === null) return "null";
   if (thrown === undefined) return "undefined";
-  try {
-    const json = JSON.stringify(thrown);
-    if (json !== undefined && json !== "{}") return json;
-  } catch {
-    // Fall through to String().
-  }
+  if (typeof thrown === "string") return thrown || "an empty string";
+  if (typeof thrown === "symbol") return String(thrown);
+  if (typeof thrown === "function") return "a function";
+  if (typeof thrown === "object") return "an object";
   return String(thrown);
 };
 

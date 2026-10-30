@@ -201,9 +201,19 @@ describe("a callback that throws", () => {
 
     expect(error).toBeInstanceOf(Error);
     expect(error.code).toBe(4001);
-    expect(error.message).toBe(
-      'sign callback threw {"code":4001} with no message'
-    );
+    expect(error.message).toBe("sign callback threw an object with no message");
+  });
+
+  it("does not include unrelated thrown object fields in the error message", async () => {
+    const forwarder = bridgeTo(() => {
+      throw { code: 4001, privateData: "must not leak" };
+    });
+
+    const error = await forwarder.forward("sign", []).catch((e) => e);
+
+    expect(error.code).toBe(4001);
+    expect(error.message).toBe("sign callback threw an object with no message");
+    expect(error.message).not.toContain("must not leak");
   });
 
   it("rejects when the callback throws null", async () => {
@@ -384,23 +394,27 @@ describe("a callback that throws", () => {
     expect(() => structuredClone(serialized)).not.toThrow();
   });
 
-  it("uses a fallback when a value cannot be converted to text", () => {
+  it("does not invoke coercion hooks on thrown objects", () => {
+    const toJSON = vi.fn(() => {
+      throw new Error("json conversion failed");
+    });
+    const toPrimitive = vi.fn(() => {
+      throw new Error("string conversion failed");
+    });
     const thrown = {
       message: "",
-      toJSON() {
-        throw new Error("json conversion failed");
-      },
-      [Symbol.toPrimitive]() {
-        throw new Error("string conversion failed");
-      },
+      toJSON,
+      [Symbol.toPrimitive]: toPrimitive,
     };
 
     expect(serializeCallbackError(thrown, "sign")).toEqual({
-      message: "sign callback threw an unreadable value",
+      message: "sign callback threw an object with no message",
     });
+    expect(toJSON).not.toHaveBeenCalled();
+    expect(toPrimitive).not.toHaveBeenCalled();
   });
 
-  it("keeps the parent message when the cause cannot be stringified", () => {
+  it("keeps the parent message and sanitizes an object cause without a message", () => {
     const thrown = Object.assign(new Error("wallet locked"), {
       name: "WalletError",
       code: "E_LOCKED",
@@ -413,7 +427,7 @@ describe("a callback that throws", () => {
       name: "WalletError",
       message: "wallet locked",
       code: "E_LOCKED",
-      cause: { message: "sign callback threw an unreadable cause" },
+      cause: { message: "sign callback threw an object with no message" },
     });
     expect(() => structuredClone(serialized)).not.toThrow();
   });
