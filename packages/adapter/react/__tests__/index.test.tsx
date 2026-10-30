@@ -23,6 +23,7 @@ import {
   MidenFiSignerProvider,
   WalletContext,
   WalletProvider,
+  useMidenFiWallet,
   useWallet,
 } from "../index";
 
@@ -95,5 +96,39 @@ describe("WalletContext exported from the package entry (#484)", () => {
     expect(result.current.viaExport.wallets[0].adapter.name).toBe(
       "Stub Wallet"
     );
+  });
+
+  it("reads createAccount from the exported WalletContext provider", () => {
+    const createAccount = vi.fn();
+    const value = { createAccount } as unknown as React.ContextType<
+      typeof WalletContext
+    >;
+    const { result } = renderHook(() => useMidenFiWallet(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <WalletContext.Provider value={value}>
+          {children}
+        </WalletContext.Provider>
+      ),
+    });
+
+    expect(result.current.createAccount).toBe(createAccount);
+  });
+
+  it("still rejects WalletProvider when it has no createAccount", () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const adapter = new StubAdapter();
+    const wallets = [adapter as unknown as Adapter];
+
+    expect(() => {
+      renderHook(() => useMidenFiWallet(), {
+        wrapper: ({ children }: { children: ReactNode }) => (
+          <WalletProvider wallets={wallets}>{children}</WalletProvider>
+        ),
+      });
+    }).toThrow("useMidenFiWallet must be used within MidenFiSignerProvider");
+
+    consoleError.mockRestore();
   });
 });
