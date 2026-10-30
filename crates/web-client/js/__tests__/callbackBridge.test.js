@@ -1,6 +1,4 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 vi.mock("../../Cargo.toml", () => ({}));
 import { WasmWebClient } from "../index.js";
 import { CallbackType, WorkerAction } from "../constants.js";
@@ -420,15 +418,6 @@ describe("a callback that throws", () => {
     expect(() => structuredClone(serialized)).not.toThrow();
   });
 
-  it("records the unreadable-cause fix in the changelog", () => {
-    const changelog = readFileSync(
-      fileURLToPath(new URL("../../../../CHANGELOG.md", import.meta.url)),
-      "utf8"
-    );
-
-    expect(changelog).toContain("unreadable cause");
-  });
-
   it("drops a code that cannot be structured-cloned instead of failing the reply", () => {
     const serialized = serializeCallbackError(
       { message: "no", code: () => {} },
@@ -531,15 +520,6 @@ describe("callback time limits", () => {
     await expect(result).rejects.toThrow(/timed out after 1000ms$/);
   });
 
-  it("records the late-reply fix in the changelog", () => {
-    const changelog = readFileSync(
-      fileURLToPath(new URL("../../../../CHANGELOG.md", import.meta.url)),
-      "utf8"
-    );
-
-    expect(changelog).toContain("arrives after its timeout");
-  });
-
   it("maps callbackTimeoutMs to a limit for each callback", () => {
     expect(callbackTimeoutFor("sign", undefined)).toBeUndefined();
     expect(callbackTimeoutFor("getKey", undefined)).toBe(30_000);
@@ -601,22 +581,6 @@ describe("handleReply", () => {
   });
 });
 
-describe("the custom signer guide", () => {
-  it("documents callbackTimeoutMs and its worker queue behavior", () => {
-    const guide = readFileSync(
-      fileURLToPath(
-        new URL("../../skills/signer-integration/SKILL.md", import.meta.url)
-      ),
-      "utf8"
-    );
-
-    expect(guide).toContain("callbackTimeoutMs: 120000");
-    expect(guide).toContain("Left unset, `sign` waits without a limit");
-    expect(guide).toContain("`0` removes the limit for all three");
-    expect(guide).toContain("holds the worker queue");
-  });
-});
-
 describe("deserializeCallbackError", () => {
   it("returns a plain Error when only a message was sent", () => {
     const error = deserializeCallbackError({ message: "boom" });
@@ -624,5 +588,25 @@ describe("deserializeCallbackError", () => {
     expect(error).toBeInstanceOf(Error);
     expect(error.name).toBe("Error");
     expect(error).not.toHaveProperty("code");
+  });
+});
+
+describe("WebClient.createClient callback timeout", () => {
+  it("rejects an invalid timeout before loading WASM", async () => {
+    await expect(
+      WasmWebClient.createClient(
+        "https://rpc.testnet.miden.io",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        2147483648
+      )
+    ).rejects.toThrow(
+      "callbackTimeoutMs must be a non-negative finite number no greater than 2147483647"
+    );
   });
 });

@@ -30,7 +30,7 @@ beforeEach(() => {
 });
 
 describe("MidenProvider - fee faucet", () => {
-  it("passes config.feeFaucetId to createClient as its last argument", async () => {
+  it("passes config.feeFaucetId to createClient", async () => {
     // A 0.17 client cannot execute or screen notes without a protocol
     // configuration, and this is the only thing the provider is given to build
     // one from, so a dropped argument leaves every consumer of the provider
@@ -49,12 +49,9 @@ describe("MidenProvider - fee faucet", () => {
     await waitFor(() => {
       expect(vi.mocked(WebClient.createClient)).toHaveBeenCalled();
     });
-    // Length plus absolute index, not a position from the end: passing the
-    // value last makes `args[args.length - 1]` true by construction, so
-    // deleting an earlier placeholder would shift every later argument one slot
-    // left and still satisfy it.
+    // Length plus absolute index catches placeholder shifts in the factory call.
     const args = vi.mocked(WebClient.createClient).mock.calls[0];
-    expect(args).toHaveLength(8);
+    expect(args).toHaveLength(9);
     expect(args[7]).toBe("0x1234567890abcdef");
   });
 
@@ -122,6 +119,26 @@ describe("MidenProvider - fee faucet", () => {
     expect(args).toHaveLength(12);
     expect(args[10]).toBe("0xfeedfacecafebeef");
     expect(args[11]).toBe(120_000);
+  });
+
+  it("forwards config.callbackTimeoutMs to the local-keystore factory", async () => {
+    render(
+      <MidenProvider
+        config={{
+          rpcUrl: "https://rpc.testnet.miden.io",
+          callbackTimeoutMs: 120_000,
+        }}
+      >
+        <div data-testid="children">ready</div>
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(vi.mocked(WebClient.createClient)).toHaveBeenCalled();
+    });
+    const args = vi.mocked(WebClient.createClient).mock.calls[0];
+    expect(args).toHaveLength(9);
+    expect(args[8]).toBe(120_000);
   });
 });
 
