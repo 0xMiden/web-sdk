@@ -1734,6 +1734,15 @@ class MockWebClient extends WebClient {
       undefined,
       logLevel
     );
+    // The worker's mock client has to start from the main thread's mock
+    // chain: both clients open the same IndexedDB store, and a worker that
+    // built its own chain could store that chain's genesis header first.
+    // Every later sync against the main chain would then fail validation
+    // ("does not carry valid validator signatures"). `createClient` resolves
+    // this once the main-thread chain exists.
+    this.mockChainReady = new Promise((resolve) => {
+      this.resolveMockChainReady = resolve;
+    });
   }
 
   initializeWorker() {
@@ -1751,10 +1760,20 @@ class MockWebClient extends WebClient {
         numThreads = navigator.hardwareConcurrency;
       }
     } catch {}
-    this.worker.postMessage({
-      action: WorkerAction.INIT_MOCK,
-      args: [this.seed, this.logLevel, numThreads],
-    });
+    this.mockChainReady.then(
+      ([serializedMockChain, serializedMockNoteTransportNode]) => {
+        this.worker.postMessage({
+          action: WorkerAction.INIT_MOCK,
+          args: [
+            this.seed,
+            this.logLevel,
+            numThreads,
+            serializedMockChain,
+            serializedMockNoteTransportNode,
+          ],
+        });
+      }
+    );
   }
 
   /**
@@ -1788,6 +1807,12 @@ class MockWebClient extends WebClient {
         serializedMockChain ?? null,
         serializedMockNoteTransportNode ?? null
       );
+
+      // Hand the main-thread chain to the worker's INIT_MOCK.
+      instance.resolveMockChainReady([
+        (await wasmWebClient.serializeMockChain()).buffer,
+        (await wasmWebClient.serializeMockNoteTransportNode()).buffer,
+      ]);
 
       // Wait for the worker to be ready
       await instance.ready;

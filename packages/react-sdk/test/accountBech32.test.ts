@@ -42,14 +42,14 @@ async function readBechAppState(page: Page): Promise<BechAppState> {
  * to be fully ready: SDK loaded, bech32 utilities exposed, and MidenProvider
  * initialised (reactSdkReady = isReady from useMiden()).
  *
- * Returns false (and logs) if any step fails so the caller can call
- * test.skip() instead of hard-failing on infrastructure issues.
+ * Throws with the reason if any step fails, so a page that cannot load fails
+ * the test instead of skipping it.
  */
 async function loadBech32Page(
   page: Page,
   params: Record<string, string> = {},
   timeoutMs = 30_000
-): Promise<boolean> {
+): Promise<void> {
   const query = new URLSearchParams(params).toString();
   const url = `http://localhost:8081/bech32.html${query ? `?${query}` : ""}`;
   await page.goto(url);
@@ -60,8 +60,7 @@ async function loadBech32Page(
   while (Date.now() < deadline) {
     const s = await readBechAppState(page);
     if (s.testAppError) {
-      console.log("bech32 test app error:", s.testAppError);
-      return false;
+      throw new Error(`bech32 test app error: ${s.testAppError}`);
     }
     if (s.testAppReady) break;
     await page.waitForTimeout(200);
@@ -71,8 +70,7 @@ async function loadBech32Page(
   while (Date.now() < deadline) {
     const s = await readBechAppState(page);
     if (s.sdkLoadError) {
-      console.log("SDK load error:", s.sdkLoadError);
-      return false;
+      throw new Error(`SDK load error: ${s.sdkLoadError}`);
     }
     if (s.sdkLoaded) break;
     await page.waitForTimeout(200);
@@ -82,16 +80,16 @@ async function loadBech32Page(
   while (Date.now() < deadline) {
     const s = await readBechAppState(page);
     if (s.testAppError) {
-      console.log("bech32 test app error (post-sdk):", s.testAppError);
-      return false;
+      throw new Error(`bech32 test app error (post-sdk): ${s.testAppError}`);
     }
-    if (s.reactSdkReady && s.hasBech32) return true;
+    if (s.reactSdkReady && s.hasBech32) return;
     await page.waitForTimeout(200);
   }
 
   const final = await readBechAppState(page);
-  console.log("Timeout waiting for bech32 page to be ready:", final);
-  return false;
+  throw new Error(
+    `Timeout waiting for bech32 page to be ready: ${JSON.stringify(final)}`
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -108,14 +106,10 @@ test.describe("accountBech32 utilities (Playwright)", () => {
   }) => {
     // inferNetworkId branch: !rpcUrl → NetworkId.testnet()
     // toBech32FromAccountId: Address.fromAccountId(...) → address.toBech32()
-    const ready = await loadBech32Page(page);
-    if (!ready) {
-      test.skip();
-      return;
-    }
+    await loadBech32Page(page);
 
     const result = await page.evaluate(async () => {
-      const client = await (window as any).MockWebClient.createClient();
+      const client = (window as any).__mockClient;
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
@@ -135,14 +129,10 @@ test.describe("accountBech32 utilities (Playwright)", () => {
   }) => {
     // Address.fromAccountId(..., "BasicWallet") may fail for faucet IDs;
     // falls through to id.toBech32?.(NetworkId, AccountInterface.BasicWallet).
-    const ready = await loadBech32Page(page);
-    if (!ready) {
-      test.skip();
-      return;
-    }
+    await loadBech32Page(page);
 
     const result = await page.evaluate(async () => {
-      const client = await (window as any).MockWebClient.createClient();
+      const client = (window as any).__mockClient;
       await client.syncState();
       const faucet = await client.newFaucet(
         (window as any).AccountStorageMode.private(),
@@ -168,14 +158,10 @@ test.describe("accountBech32 utilities (Playwright)", () => {
     page,
   }) => {
     // parseAccountId → Address.fromBech32 → address.accountId() → toBech32FromAccountId
-    const ready = await loadBech32Page(page);
-    if (!ready) {
-      test.skip();
-      return;
-    }
+    await loadBech32Page(page);
 
     const result = await page.evaluate(async () => {
-      const client = await (window as any).MockWebClient.createClient();
+      const client = (window as any).__mockClient;
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
@@ -198,11 +184,7 @@ test.describe("accountBech32 utilities (Playwright)", () => {
     page,
   }) => {
     // parseAccountId throws → catch returns accountId unchanged
-    const ready = await loadBech32Page(page);
-    if (!ready) {
-      test.skip();
-      return;
-    }
+    await loadBech32Page(page);
 
     const result = await page.evaluate(() => {
       return (window as any).__bech32.toBech32AccountId("not-a-valid-id");
@@ -219,14 +201,10 @@ test.describe("accountBech32 utilities (Playwright)", () => {
     page,
   }) => {
     // inferNetworkId branch: url.includes("devnet") → NetworkId.devnet()
-    const ready = await loadBech32Page(page, { rpcUrl: "devnet" });
-    if (!ready) {
-      test.skip();
-      return;
-    }
+    await loadBech32Page(page, { rpcUrl: "devnet" });
 
     const result = await page.evaluate(async () => {
-      const client = await (window as any).MockWebClient.createClient();
+      const client = (window as any).__mockClient;
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
@@ -245,16 +223,12 @@ test.describe("accountBech32 utilities (Playwright)", () => {
     page,
   }) => {
     // inferNetworkId branch: url.includes("mainnet") → NetworkId.mainnet()
-    const ready = await loadBech32Page(page, {
+    await loadBech32Page(page, {
       rpcUrl: "https://rpc.mainnet.miden.io",
     });
-    if (!ready) {
-      test.skip();
-      return;
-    }
 
     const result = await page.evaluate(async () => {
-      const client = await (window as any).MockWebClient.createClient();
+      const client = (window as any).__mockClient;
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
@@ -273,14 +247,10 @@ test.describe("accountBech32 utilities (Playwright)", () => {
     page,
   }) => {
     // inferNetworkId branch: url.includes("testnet") → NetworkId.testnet()
-    const ready = await loadBech32Page(page, { rpcUrl: "testnet" });
-    if (!ready) {
-      test.skip();
-      return;
-    }
+    await loadBech32Page(page, { rpcUrl: "testnet" });
 
     const result = await page.evaluate(async () => {
-      const client = await (window as any).MockWebClient.createClient();
+      const client = (window as any).__mockClient;
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
@@ -297,16 +267,12 @@ test.describe("accountBech32 utilities (Playwright)", () => {
     page,
   }) => {
     // inferNetworkId branch: no keyword match → default NetworkId.testnet()
-    const ready = await loadBech32Page(page, {
+    await loadBech32Page(page, {
       rpcUrl: "https://my-custom-node.example.com/rpc",
     });
-    if (!ready) {
-      test.skip();
-      return;
-    }
 
     const result = await page.evaluate(async () => {
-      const client = await (window as any).MockWebClient.createClient();
+      const client = (window as any).__mockClient;
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
@@ -328,18 +294,14 @@ test.describe("accountBech32 utilities (Playwright)", () => {
   }) => {
     // Exercises installAccountBech32() body: Account.prototype lookup,
     // early-return if already present, and defineBech32(proto).
-    const ready = await loadBech32Page(page);
-    if (!ready) {
-      test.skip();
-      return;
-    }
+    await loadBech32Page(page);
 
     const result = await page.evaluate(async () => {
       // Calling installAccountBech32 installs the method on the prototype.
       (window as any).__bech32.installAccountBech32();
 
       // Create a real account to verify the installed method works.
-      const client = await (window as any).MockWebClient.createClient();
+      const client = (window as any).__mockClient;
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
@@ -358,11 +320,7 @@ test.describe("accountBech32 utilities (Playwright)", () => {
     page,
   }) => {
     // proto.bech32id is already present → early return (no throw, no re-define)
-    const ready = await loadBech32Page(page);
-    if (!ready) {
-      test.skip();
-      return;
-    }
+    await loadBech32Page(page);
 
     await expect(
       page.evaluate(() => {
@@ -379,11 +337,7 @@ test.describe("accountBech32 utilities (Playwright)", () => {
   test("ensureAccountBech32 is a no-op for null and undefined", async ({
     page,
   }) => {
-    const ready = await loadBech32Page(page);
-    if (!ready) {
-      test.skip();
-      return;
-    }
+    await loadBech32Page(page);
 
     await expect(
       page.evaluate(() => {
@@ -396,11 +350,7 @@ test.describe("accountBech32 utilities (Playwright)", () => {
   test("ensureAccountBech32 is a no-op when bech32id is already present on the account", async ({
     page,
   }) => {
-    const ready = await loadBech32Page(page);
-    if (!ready) {
-      test.skip();
-      return;
-    }
+    await loadBech32Page(page);
 
     const result = await page.evaluate(() => {
       const account = { bech32id: () => "mtst1already" };
@@ -415,14 +365,10 @@ test.describe("accountBech32 utilities (Playwright)", () => {
     page,
   }) => {
     // Exercises: proto found, defineBech32(proto) succeeds → return
-    const ready = await loadBech32Page(page);
-    if (!ready) {
-      test.skip();
-      return;
-    }
+    await loadBech32Page(page);
 
     const result = await page.evaluate(async () => {
-      const client = await (window as any).MockWebClient.createClient();
+      const client = (window as any).__mockClient;
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
@@ -447,14 +393,10 @@ test.describe("accountBech32 utilities (Playwright)", () => {
     page,
   }) => {
     // Exercises the defineBech32(account) fallback when proto is null.
-    const ready = await loadBech32Page(page);
-    if (!ready) {
-      test.skip();
-      return;
-    }
+    await loadBech32Page(page);
 
     const result = await page.evaluate(async () => {
-      const client = await (window as any).MockWebClient.createClient();
+      const client = (window as any).__mockClient;
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
@@ -475,17 +417,13 @@ test.describe("accountBech32 utilities (Playwright)", () => {
     page,
   }) => {
     // Exercises the inner bech32id() function body installed by defineBech32.
-    const ready = await loadBech32Page(page);
-    if (!ready) {
-      test.skip();
-      return;
-    }
+    await loadBech32Page(page);
 
     const result = await page.evaluate(async () => {
       // Install on prototype so all new accounts get bech32id().
       (window as any).__bech32.installAccountBech32();
 
-      const client = await (window as any).MockWebClient.createClient();
+      const client = (window as any).__mockClient;
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
