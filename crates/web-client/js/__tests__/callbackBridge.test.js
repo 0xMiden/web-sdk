@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+vi.mock("../../Cargo.toml", () => ({}));
+import { WasmWebClient } from "../index.js";
+import { CallbackType, WorkerAction } from "../constants.js";
 import {
   DEFAULT_CALLBACK_TIMEOUT_MS,
   callbackTimeoutFor,
@@ -41,6 +44,139 @@ function bridgeTo(callback, { timeoutMs } = {}) {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe("the production WebClient worker bridge", () => {
+  class RecordingWorker {
+    static instances = [];
+
+    constructor() {
+      this.messages = [];
+      this.listeners = new Map();
+      RecordingWorker.instances.push(this);
+    }
+
+    addEventListener(type, listener) {
+      this.listeners.set(type, listener);
+    }
+
+    postMessage(message) {
+      this.messages.push(structuredClone(message));
+    }
+
+    async emit(data) {
+      return this.listeners.get("message")({ data });
+    }
+  }
+
+  function createClient({ sign, callbackTimeoutMs } = {}) {
+    const client = new WasmWebClient(
+      "https://rpc.example",
+      "https://notes.example",
+      undefined,
+      "callback-bridge-store",
+      undefined,
+      undefined,
+      sign,
+      undefined,
+      true,
+      undefined,
+      "0xfee",
+      callbackTimeoutMs
+    );
+    return { client, worker: RecordingWorker.instances.at(-1) };
+  }
+
+  async function initialize(worker) {
+    await worker.emit({ loaded: true });
+    await Promise.resolve();
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    RecordingWorker.instances = [];
+  });
+
+  it("posts a successful sign reply from the real handler", async () => {
+    vi.stubGlobal("Worker", RecordingWorker);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const sign = vi.fn(async () => "signed");
+    const { worker } = createClient({ sign, callbackTimeoutMs: 120000 });
+
+    await worker.emit({
+      action: WorkerAction.EXECUTE_CALLBACK,
+      callbackType: CallbackType.SIGN,
+      args: ["pk", "inputs"],
+      requestId: "req-ok",
+    });
+
+    expect(sign).toHaveBeenCalledWith("pk", "inputs");
+    expect(worker.messages).toContainEqual({
+      callbackOk: true,
+      callbackResult: "signed",
+      callbackRequestId: "req-ok",
+    });
+  });
+
+  it("posts a cloneable failure reply from the real handler", async () => {
+    vi.stubGlobal("Worker", RecordingWorker);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { worker } = createClient({
+      sign: async () => {
+        throw new Error("wallet locked");
+      },
+      callbackTimeoutMs: 120000,
+    });
+
+    await worker.emit({
+      action: WorkerAction.EXECUTE_CALLBACK,
+      callbackType: CallbackType.SIGN,
+      args: ["pk", "inputs"],
+      requestId: "req-fail",
+    });
+
+    expect(worker.messages).toContainEqual({
+      callbackOk: false,
+      callbackError: { name: "Error", message: "wallet locked" },
+      callbackRequestId: "req-fail",
+    });
+  });
+
+  it.each([0, 120000, 2147483647])(
+    "posts callbackTimeoutMs %s as the last INIT argument",
+    async (callbackTimeoutMs) => {
+      vi.stubGlobal("Worker", RecordingWorker);
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const { worker } = createClient({ sign: () => {}, callbackTimeoutMs });
+
+      await initialize(worker);
+
+      const init = worker.messages.find(
+        ({ action }) => action === WorkerAction.INIT
+      );
+      expect(init.args).toHaveLength(11);
+      expect(init.args[0]).toBe("https://rpc.example");
+      expect(init.args[4]).toBe(false);
+      expect(init.args[5]).toBe(false);
+      expect(init.args[6]).toBe(true);
+      expect(init.args[9]).toBe("0xfee");
+      expect(init.args[10]).toBe(callbackTimeoutMs);
+    }
+  );
+
+  it.each([-1, Number.NaN, 2147483648])(
+    "rejects invalid callbackTimeoutMs %s in the constructor before creating a worker",
+    (callbackTimeoutMs) => {
+      vi.stubGlobal("Worker", RecordingWorker);
+      vi.spyOn(console, "log").mockImplementation(() => {});
+
+      expect(() => createClient({ sign: () => {}, callbackTimeoutMs })).toThrow(
+        "callbackTimeoutMs must be a non-negative finite number no greater than 2147483647"
+      );
+      expect(RecordingWorker.instances).toHaveLength(0);
+    }
+  );
 });
 
 // ── failed callbacks (#316) ───────────────────────────────────────────────────
