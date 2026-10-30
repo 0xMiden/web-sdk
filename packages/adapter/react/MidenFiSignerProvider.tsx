@@ -821,6 +821,7 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
  * Use this to access wallet-specific methods like requestTransaction, requestAssets, etc.
  * A package `WalletContext.Provider` whose value includes a `createAccount` function satisfies the hook, and `WalletProvider` does not.
  * The exported-context fallback forwards `privateDataPermission`, `network`, and optional `allowedPrivateData`, and rejects with `useMidenFiWallet connect requires privateDataPermission and network` when either required argument is omitted.
+ * The fallback `connect` keeps the identity of the canonical `connect` it forwards to, so a rerender that passes the same function does not rerun an effect that depends on `connect`.
  *
  * @example
  * ```tsx
@@ -836,6 +837,28 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
 export function useMidenFiWallet(): MidenFiWalletContextState {
   const context = useContext(WalletContext);
   const canonicalContext = useContext(CanonicalWalletContext);
+  const canonicalConnect = canonicalContext?.connect;
+  const fallbackConnect = useCallback(
+    (
+      privateDataPermission?: PrivateDataPermission,
+      network?: WalletAdapterNetwork,
+      allowedPrivateData?: AllowedPrivateData
+    ) => {
+      if (privateDataPermission === undefined || network === undefined) {
+        return Promise.reject(
+          new Error(
+            "useMidenFiWallet connect requires privateDataPermission and network"
+          )
+        );
+      }
+      return canonicalConnect(
+        privateDataPermission,
+        network,
+        allowedPrivateData
+      );
+    },
+    [canonicalConnect]
+  );
   if (!context || Object.keys(context).length === 0) {
     if (
       canonicalContext != null &&
@@ -844,24 +867,7 @@ export function useMidenFiWallet(): MidenFiWalletContextState {
     ) {
       return {
         ...canonicalContext,
-        connect(
-          privateDataPermission?: PrivateDataPermission,
-          network?: WalletAdapterNetwork,
-          allowedPrivateData?: AllowedPrivateData
-        ) {
-          if (privateDataPermission === undefined || network === undefined) {
-            return Promise.reject(
-              new Error(
-                "useMidenFiWallet connect requires privateDataPermission and network"
-              )
-            );
-          }
-          return canonicalContext.connect(
-            privateDataPermission,
-            network,
-            allowedPrivateData
-          );
-        },
+        connect: fallbackConnect,
       };
     }
     throw new Error(

@@ -117,6 +117,7 @@ exported-context fallback, `connect` forwards `privateDataPermission`,
 `network`, and optional `allowedPrivateData`, and rejects with
 `useMidenFiWallet connect requires privateDataPermission and network` when
 either required argument is omitted.
+The fallback `connect` keeps the identity of the canonical `connect` it forwards to, so a rerender that passes the same function does not rerun an effect that depends on `connect`.
 
 ## The readiness lifecycle
 

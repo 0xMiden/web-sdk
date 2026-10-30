@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { renderHook, cleanup, act } from "@testing-library/react";
-import React, { useContext, type ReactNode } from "react";
+import { render, renderHook, cleanup, act } from "@testing-library/react";
+import React, { useContext, useLayoutEffect, type ReactNode } from "react";
 import {
   AllowedPrivateData,
   EventEmitter,
@@ -148,6 +148,81 @@ describe("WalletContext exported from the package entry (#484)", () => {
       WalletAdapterNetwork.Testnet,
       AllowedPrivateData.None
     );
+  });
+
+  it("keeps fallback connect stable while the canonical connect is stable", () => {
+    const createAccount = vi.fn();
+    const connect = vi.fn().mockResolvedValue(undefined);
+    const seenConnects: Array<ReturnType<typeof useMidenFiWallet>["connect"]> =
+      [];
+
+    function Consumer() {
+      const { connect: walletConnect } = useMidenFiWallet();
+
+      useLayoutEffect(() => {
+        seenConnects.push(walletConnect);
+        void walletConnect(
+          PrivateDataPermission.UponRequest,
+          WalletAdapterNetwork.Testnet,
+          AllowedPrivateData.None
+        );
+      }, [walletConnect]);
+
+      return null;
+    }
+
+    function Host({ canonicalConnect }: { canonicalConnect: typeof connect }) {
+      const value = {
+        createAccount,
+        connect: canonicalConnect,
+      } as unknown as React.ContextType<typeof WalletContext>;
+
+      return (
+        <WalletContext.Provider value={value}>
+          <Consumer />
+        </WalletContext.Provider>
+      );
+    }
+
+    const view = render(<Host canonicalConnect={connect} />);
+
+    expect(connect).toHaveBeenCalledOnce();
+    expect(seenConnects).toHaveLength(1);
+
+    view.rerender(<Host canonicalConnect={connect} />);
+
+    expect(connect).toHaveBeenCalledOnce();
+    expect(seenConnects).toHaveLength(1);
+
+    const replacementConnect = vi.fn().mockResolvedValue(undefined);
+    view.rerender(<Host canonicalConnect={replacementConnect} />);
+
+    expect(seenConnects).toHaveLength(2);
+    expect(seenConnects[1]).not.toBe(seenConnects[0]);
+    expect(connect).toHaveBeenCalledOnce();
+    expect(replacementConnect).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the provider connect identity aligned across both contexts", () => {
+    const wallets: Adapter[] = [];
+    const { result, rerender } = renderHook(
+      () => ({ midenFi: useMidenFiWallet(), canonical: useWallet() }),
+      {
+        wrapper: ({ children }: { children: ReactNode }) => (
+          <MidenFiSignerProvider wallets={wallets}>
+            {children}
+          </MidenFiSignerProvider>
+        ),
+      }
+    );
+
+    const connect = result.current.midenFi.connect;
+    expect(connect).toBe(result.current.canonical.connect);
+
+    rerender();
+
+    expect(result.current.midenFi.connect).toBe(connect);
+    expect(result.current.canonical.connect).toBe(connect);
   });
 
   it("still rejects WalletProvider when it has no createAccount", () => {
