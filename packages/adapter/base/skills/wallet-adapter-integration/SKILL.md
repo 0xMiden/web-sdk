@@ -105,8 +105,13 @@ with `importAccountId`, `accountType` (default
 `"RegularAccountImmutableCode"`), `storageMode` (`"private" | "public"`,
 default `"public"`) and `customComponents`.
 
-Read wallet state inside it with `useMidenFiWallet()`, which throws if it is
-rendered outside the provider, or with `useWallet()` from the same package.
+Read wallet state inside it with `useMidenFiWallet()`, or with `useWallet()`
+from the same package. `useMidenFiWallet()` returns the private context when
+that value is non-empty. When the private context is empty, the hook accepts
+the exported `WalletContext` value only if `createAccount` is a function, so
+a package `WalletContext.Provider` whose value includes `createAccount`
+satisfies the hook. A plain `WalletProvider` still throws
+`useMidenFiWallet must be used within MidenFiSignerProvider`.
 
 ## The readiness lifecycle
 

@@ -815,6 +815,7 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
 /**
  * Hook for MidenFi wallet operations beyond the unified useSigner interface.
  * Use this to access wallet-specific methods like requestTransaction, requestAssets, etc.
+ * A package `WalletContext.Provider` whose value includes a `createAccount` function satisfies the hook, and `WalletProvider` does not.
  *
  * @example
  * ```tsx
@@ -829,7 +830,15 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
  */
 export function useMidenFiWallet(): WalletContextState {
   const context = useContext(WalletContext);
+  const canonicalContext = useContext(CanonicalWalletContext);
   if (!context || Object.keys(context).length === 0) {
+    if (
+      canonicalContext != null &&
+      typeof (canonicalContext as { createAccount?: unknown }).createAccount ===
+        "function"
+    ) {
+      return canonicalContext as WalletContextState;
+    }
     throw new Error(
       "useMidenFiWallet must be used within MidenFiSignerProvider"
     );
