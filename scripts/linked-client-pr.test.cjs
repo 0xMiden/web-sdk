@@ -171,6 +171,34 @@ for (const mode of ["local", "ci"]) {
   });
 }
 
+test("the tracked workspace does not commit linked-client git patches", () => {
+  const manifest = fs.readFileSync(path.join(sdkRoot, "Cargo.toml"), "utf8");
+  const lock = fs.readFileSync(path.join(sdkRoot, "Cargo.lock"), "utf8");
+
+  assert.doesNotMatch(
+    manifest,
+    /^\[patch\.crates-io\.miden-client(?:-proto|-sqlite-store)?\]\s*\n\s*git\s*=/m
+  );
+
+  for (const name of [
+    "miden-client",
+    "miden-client-proto",
+    "miden-client-sqlite-store",
+  ]) {
+    const packageBlock = lock.match(
+      new RegExp(
+        `\\[\\[package\\]\\]\\nname = "${name}"\\n[\\s\\S]*?(?=\\n\\[\\[package\\]\\]|$)`
+      )
+    )?.[0];
+    assert.ok(packageBlock, `Cargo.lock contains ${name}`);
+    assert.match(
+      packageBlock,
+      /^source = "registry\+https:\/\/github\.com\/rust-lang\/crates\.io-index"$/m,
+      `${name} is locked to the registry`
+    );
+  }
+});
+
 test("local --clear restores the manifest and lock bytes after repeated apply", (t) => {
   const f = injectionFixture(t);
   assert.equal(f.local("123").status, 0);
