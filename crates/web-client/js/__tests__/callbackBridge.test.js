@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 vi.mock("../../Cargo.toml", () => ({}));
 import { WasmWebClient } from "../index.js";
 import { CallbackType, WorkerAction } from "../constants.js";
@@ -400,6 +402,33 @@ describe("a callback that throws", () => {
     });
   });
 
+  it("keeps the parent message when the cause cannot be stringified", () => {
+    const thrown = Object.assign(new Error("wallet locked"), {
+      name: "WalletError",
+      code: "E_LOCKED",
+      cause: Object.create(null),
+    });
+
+    const serialized = serializeCallbackError(thrown, "sign");
+
+    expect(serialized).toEqual({
+      name: "WalletError",
+      message: "wallet locked",
+      code: "E_LOCKED",
+      cause: { message: "sign callback threw an unreadable cause" },
+    });
+    expect(() => structuredClone(serialized)).not.toThrow();
+  });
+
+  it("records the unreadable-cause fix in the changelog", () => {
+    const changelog = readFileSync(
+      fileURLToPath(new URL("../../../../CHANGELOG.md", import.meta.url)),
+      "utf8"
+    );
+
+    expect(changelog).toContain("unreadable cause");
+  });
+
   it("drops a code that cannot be structured-cloned instead of failing the reply", () => {
     const serialized = serializeCallbackError(
       { message: "no", code: () => {} },
@@ -477,6 +506,40 @@ describe("callback time limits", () => {
     expect((await result).message).toMatch(/timed out after 1000ms$/);
   });
 
+  it("consumes a reply that arrives after its timeout", async () => {
+    vi.useFakeTimers();
+    let callbackRequestId;
+    const forwarder = createCallbackForwarder({
+      post: (request) => {
+        callbackRequestId = request.requestId;
+      },
+      timeoutMs: () => 1_000,
+    });
+
+    const result = forwarder.forward("getKey", []);
+    const timedOut = expect(result).rejects.toThrow(/timed out after 1000ms$/);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await timedOut;
+
+    expect(
+      forwarder.handleReply({
+        callbackRequestId,
+        callbackOk: true,
+        callbackResult: "late",
+      })
+    ).toBe(true);
+    await expect(result).rejects.toThrow(/timed out after 1000ms$/);
+  });
+
+  it("records the late-reply fix in the changelog", () => {
+    const changelog = readFileSync(
+      fileURLToPath(new URL("../../../../CHANGELOG.md", import.meta.url)),
+      "utf8"
+    );
+
+    expect(changelog).toContain("arrives after its timeout");
+  });
+
   it("maps callbackTimeoutMs to a limit for each callback", () => {
     expect(callbackTimeoutFor("sign", undefined)).toBeUndefined();
     expect(callbackTimeoutFor("getKey", undefined)).toBe(30_000);
@@ -522,7 +585,7 @@ describe("callback time limits", () => {
 });
 
 describe("handleReply", () => {
-  it("returns false for a message that answers no pending callback", () => {
+  it("consumes stale callback replies but leaves ordinary messages alone", () => {
     const forwarder = createCallbackForwarder({
       post: () => {},
       timeoutMs: () => undefined,
@@ -534,7 +597,23 @@ describe("handleReply", () => {
         callbackRequestId: "sign-unknown",
         callbackOk: true,
       })
-    ).toBe(false);
+    ).toBe(true);
+  });
+});
+
+describe("the custom signer guide", () => {
+  it("documents callbackTimeoutMs and its worker queue behavior", () => {
+    const guide = readFileSync(
+      fileURLToPath(
+        new URL("../../skills/signer-integration/SKILL.md", import.meta.url)
+      ),
+      "utf8"
+    );
+
+    expect(guide).toContain("callbackTimeoutMs: 120000");
+    expect(guide).toContain("Left unset, `sign` waits without a limit");
+    expect(guide).toContain("`0` removes the limit for all three");
+    expect(guide).toContain("holds the worker queue");
   });
 });
 
