@@ -8,8 +8,8 @@ use miden_client::keystore::KeyStoreError;
 use miden_client::utils::Deserializable;
 use miden_client::{AuthenticationError, Word as NativeWord};
 use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::js_sys::{Function, Promise, Reflect, Uint8Array};
 use wasm_bindgen_futures::JsFuture;
+use wasm_bindgen_futures::js_sys::{Function, Promise, Reflect, Uint8Array};
 
 use crate::models::auth_secret_key::AuthSecretKey as WebAuthSecretKey;
 use crate::models::signature::Signature;
