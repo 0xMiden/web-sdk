@@ -32,7 +32,8 @@ import {
   getFeeFaucetId,
   RUN_ID,
 } from "./playwright.global.setup";
-import { normalizeArg, wrapClass } from "../js/node/napi-compat.js";
+import { wrapClient } from "../js/node/napi-compat.js";
+import { getNodeSdk, loadNodeSdk } from "./node-adapter.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -42,48 +43,7 @@ function generateStoreName(testInfo: TestInfo): string {
 
 // ── Node.js setup ─────────────────────────────────────────────────────
 
-let _nodeSdk: any = null;
-
-export function loadNodeSdk(): any {
-  if (_nodeSdk) return _nodeSdk;
-
-  const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..");
-  const arch = os.arch() === "arm64" ? "aarch64" : os.arch();
-  const platform =
-    os.platform() === "darwin" ? "apple-darwin" : "unknown-linux-gnu";
-  const target = `${arch}-${platform}`;
-  const ext = os.platform() === "darwin" ? "dylib" : "so";
-
-  const candidates = [
-    path.join(
-      repoRoot,
-      "target",
-      target,
-      "release",
-      `libmiden_client_web.${ext}`
-    ),
-    path.join(repoRoot, "target", "release", `libmiden_client_web.${ext}`),
-  ];
-
-  for (const p of candidates) {
-    if (fs.existsSync(p)) {
-      const nodeFile = path.join(path.dirname(p), "miden_client_web.node");
-      if (
-        !fs.existsSync(nodeFile) ||
-        fs.statSync(p).mtimeMs > fs.statSync(nodeFile).mtimeMs
-      ) {
-        fs.copyFileSync(p, nodeFile);
-      }
-      _nodeSdk = require(nodeFile);
-      return _nodeSdk;
-    }
-  }
-
-  throw new Error(
-    `napi module not found. Build with:\n` +
-      `  cargo build -p miden-client-web --no-default-features --features nodejs,testing --release --target ${target}`
-  );
-}
+export { loadNodeSdk };
 
 let _nodeTestCounter = 0;
 
@@ -91,6 +51,7 @@ async function createNodeMockClient(): Promise<{
   client: any;
   sdk: any;
 }> {
+  const sdk = createNodeSdkWrapper();
   const rawSdk = loadNodeSdk();
   const tmpDir = path.join(
     os.tmpdir(),
@@ -107,9 +68,7 @@ async function createNodeMockClient(): Promise<{
     null
   );
 
-  // Wrap the client to normalize napi differences
-  const client = wrapNodeClient(rawClient, rawSdk);
-  const sdk = createNodeSdkWrapper(rawSdk);
+  const client = wrapNodeClient(rawClient);
 
   return { client, sdk };
 }
@@ -118,6 +77,7 @@ export async function createNodeIntegrationClient(
   rpcUrl: string,
   storeName: string
 ): Promise<{ client: any; sdk: any }> {
+  const sdk = createNodeSdkWrapper();
   const rawSdk = loadNodeSdk();
   const tmpDir = path.join(
     os.tmpdir(),
@@ -135,20 +95,16 @@ export async function createNodeIntegrationClient(
     process.env.TEST_MIDEN_FEE_FAUCET_ID ?? null
   );
 
-  const client = wrapNodeClient(rawClient, rawSdk);
-  const sdk = createNodeSdkWrapper(rawSdk);
+  const client = wrapNodeClient(rawClient);
 
   return { client, sdk };
 }
 
 /**
- * Wraps a napi WebClient to normalize differences with the browser SDK:
- * - syncState() → syncStateImpl()
- * - syncChain() → syncChainImpl()
- * - syncNoteTransport() → syncNoteTransportImpl()
- * - null → undefined for Option<T> returns
+ * Wraps a napi WebClient in the shipped client proxy (`wrapClient`), plus the
+ * `keystore` the browser exposes through a getter and napi does not.
  */
-export function wrapNodeClient(rawClient: any, rawSdk: any): any {
+export function wrapNodeClient(rawClient: any, storeName?: string): any {
   // Keystore shim: the browser exposes client.keystore via #[wasm_bindgen(getter)],
   // but the napi WebClient does not. Provide the same interface using the underlying
   // client methods that exist on both platforms.
@@ -172,165 +128,28 @@ export function wrapNodeClient(rawClient: any, rawSdk: any): any {
     },
   };
 
-  return new Proxy(rawClient, {
-    get(target, prop) {
+  return new Proxy(wrapClient(rawClient, storeName), {
+    get(target, prop, receiver) {
       if (prop === "keystore") {
         return keystoreShim;
       }
-      if (prop === "syncState") {
-        return (...args: any[]) => target.syncStateImpl(...args);
-      }
-      if (prop === "syncChain") {
-        return (...args: any[]) => target.syncChainImpl(...args);
-      }
-      if (prop === "syncNoteTransport") {
-        return (...args: any[]) => target.syncNoteTransportImpl(...args);
-      }
-      if (prop === "proveBlock") {
-        return async () => {
-          const guard = await target.proveBlock();
-          return guard;
-        };
-      }
-      if (prop === "newWallet") {
-        return (mode: any, authScheme: any, seed?: any) => {
-          const normSeed =
-            seed instanceof Uint8Array || Buffer.isBuffer(seed)
-              ? Array.from(seed)
-              : seed;
-          const result = target.newWallet(mode, authScheme, normSeed ?? null);
-          if (result && typeof result.then === "function") {
-            return result.then((v: any) => (v === null ? undefined : v));
-          }
-          return result === null ? undefined : result;
-        };
-      }
-      const val = target[prop];
-      if (typeof val === "function") {
-        const bound = val.bind(target);
-        return (...args: any[]) => {
-          const normalizedArgs = args.map(normalizeArg);
-          const result = bound(...normalizedArgs);
-          if (result && typeof result.then === "function") {
-            return result.then((v: any) => (v === null ? undefined : v));
-          }
-          return result === null ? undefined : result;
-        };
-      }
-      return val;
+      return Reflect.get(target, prop, receiver);
     },
   });
 }
 
-/**
- * Creates polyfills for WASM typed array types.
- * napi accepts plain JS arrays, so `new XArray([a, b])` just returns a plain Array.
- */
-function makeArrayPolyfills(): Record<string, any> {
-  // Must be a regular function (not arrow) so it can be called with `new`
-  function polyfill(items: any[]) {
-    const arr =
-      items === undefined || items === null
-        ? []
-        : Array.isArray(items)
-          ? [...items]
-          : [items];
-    (arr as any).get = (i: number) => arr[i];
-    return arr;
-  }
-  const names = [
-    "AccountArray",
-    "AccountIdArray",
-    "FeltArray",
-    "ForeignAccountArray",
-    "NoteAndArgsArray",
-    "NoteArray",
-    "NoteDetailsAndTagArray",
-    "NoteIdAndArgsArray",
-    "NoteRecipientArray",
-    "OutputNoteArray",
-    "OutputNotesArray",
-    "StorageSlotArray",
-    "TransactionScriptInputPairArray",
-  ];
-  const result: Record<string, any> = {};
-  for (const name of names) {
-    result[name] = polyfill;
-  }
-  return result;
-}
-
-function patchNapiPrototypes(rawSdk: any) {
-  // snake_case aliases for camelCase methods (browser uses snake_case via wasm_bindgen)
-  /* eslint-disable camelcase */
-  for (const [cls, aliases] of [
-    [rawSdk.Account, { to_commitment: "toCommitment" }],
-    [rawSdk.AccountHeader, { to_commitment: "toCommitment" }],
-  ] as [any, Record<string, string>][]) {
-    if (!cls?.prototype) continue;
-    for (const [snake, camel] of Object.entries(aliases)) {
-      if (typeof cls.prototype[camel] === "function" && !cls.prototype[snake]) {
-        cls.prototype[snake] = cls.prototype[camel];
-      }
-    }
-  }
-  /* eslint-enable camelcase */
-
-  // Patch null → undefined for Option<T> returns
-  for (const [cls, methods] of [
-    [rawSdk.AccountPatch, ["finalNonce"]],
-    [rawSdk.AccountStorage, ["getItem", "getMapEntries", "getMapItem"]],
-    [rawSdk.NoteConsumptionStatus, ["consumableAfterBlock"]],
-    [
-      rawSdk.BasicFungibleFaucetComponent,
-      ["description", "logoUri", "externalLink"],
-    ],
-  ] as [any, string[]][]) {
-    if (!cls?.prototype) continue;
-    for (const method of methods) {
-      const original = cls.prototype[method];
-      if (typeof original === "function") {
-        cls.prototype[method] = function (...args: any[]) {
-          const result = original.apply(this, args);
-          return result === null ? undefined : result;
-        };
-      }
-    }
-  }
-
-  // snake_case aliases for static methods
-  if (rawSdk.NoteScript) {
-    if (!rawSdk.NoteScript.p2id && rawSdk.NoteScript.p2Id)
-      rawSdk.NoteScript.p2id = rawSdk.NoteScript.p2Id;
-    if (!rawSdk.NoteScript.p2ide && rawSdk.NoteScript.p2Ide)
-      rawSdk.NoteScript.p2ide = rawSdk.NoteScript.p2Ide;
-  }
-}
-
-function createNodeSdkWrapper(rawSdk: any): any {
-  patchNapiPrototypes(rawSdk);
+/** The shipped SDK object (`createSdkWrapper`) plus the test-only extras. */
+function createNodeSdkWrapper(): any {
   // Expose the StorageView JS wrapper on `sdk.*` so tests can reach it via the
   // same namespace on both platforms (browser exposes it on `window.*`).
   const sv = require("../js/storageView.js");
 
   return {
-    ...rawSdk,
-    // Wrap classes whose constructors/static methods accept Uint8Array or BigInt args
-    AccountBuilder: wrapClass(rawSdk.AccountBuilder),
-    AccountComponent: wrapClass(rawSdk.AccountComponent),
-    AuthSecretKey: wrapClass(rawSdk.AuthSecretKey),
-    Felt: wrapClass(rawSdk.Felt),
-    FungibleAsset: wrapClass(rawSdk.FungibleAsset),
-    Word: wrapClass(rawSdk.Word),
-    NoteTag: wrapClass(rawSdk.NoteTag),
+    ...getNodeSdk(),
     // StorageView JS wrapper — browser exposes these on window via index.js.
     StorageView: sv.StorageView,
     StorageResult: sv.StorageResult,
     wordToBigInt: sv.wordToBigInt,
-    // Array type polyfills — napi accepts plain arrays directly, but browser
-    // WASM needs typed array wrappers. These make `new sdk.XArray([...])` work
-    // on both platforms.
-    ...makeArrayPolyfills(),
     // u64: converts to BigInt — both platforms map u64 to JS BigInt.
     u64: (val: number | bigint) => BigInt(val),
     // u64Array: converts an array of numbers to a BigInt array — both platforms
@@ -1311,8 +1130,7 @@ export const test = base.extend<{
     const isNode = testInfo.project.name === "nodejs";
 
     if (isNode) {
-      const rawSdk = loadNodeSdk();
-      await use(createNodeSdkWrapper(rawSdk));
+      await use(createNodeSdkWrapper());
     } else {
       // Browser: proxy to window.* (SDK types are set up by forEachTest)
       await use(
