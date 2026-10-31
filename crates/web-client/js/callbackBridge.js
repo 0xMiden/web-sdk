@@ -119,10 +119,18 @@ export function serializeCallbackError(thrown, callbackType) {
  * Rebuilds the `Error` a failed callback reply describes, so the worker rejects
  * with the callback's own name, message, code, reason and cause.
  *
- * @param {ReturnType<typeof serializeCallbackError>} serialized
+ * @param {unknown} serialized
  * @returns {Error}
  */
 export function deserializeCallbackError(serialized) {
+  if (
+    typeof serialized !== "object" ||
+    serialized === null ||
+    typeof serialized.message !== "string"
+  ) {
+    throw new TypeError("Invalid callback error reply from the main thread");
+  }
+
   const error = new Error(serialized.message);
   if (serialized.name !== undefined) error.name = serialized.name;
   if (serialized.code !== undefined) error.code = serialized.code;
@@ -215,19 +223,31 @@ export function createCallbackForwarder({ post, timeoutMs }) {
     /**
      * Settles the callback a main-thread reply answers.
      *
-     * @param {{callbackRequestId?: string, callbackOk?: boolean, callbackResult?: unknown, callbackError?: object}} data
+     * @param {{callbackRequestId?: string, callbackOk?: boolean, callbackResult?: unknown, callbackError?: unknown}} data
      * @returns {boolean} Whether `data` answered a pending callback.
      */
     handleReply(data) {
       if (typeof data.callbackRequestId !== "string") return false;
       const entry = pending.get(data.callbackRequestId);
       if (!entry) return true;
+
+      let error;
+      if (!data.callbackOk) {
+        try {
+          error = deserializeCallbackError(data.callbackError);
+        } catch {
+          error = new Error(
+            "Invalid callback error reply from the main thread"
+          );
+        }
+      }
+
       clearTimeout(entry.timeoutId);
       pending.delete(data.callbackRequestId);
       if (data.callbackOk) {
         entry.resolve(data.callbackResult);
       } else {
-        entry.reject(deserializeCallbackError(data.callbackError));
+        entry.reject(error);
       }
       return true;
     },
