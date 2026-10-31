@@ -104,8 +104,13 @@ describe("missing WalletProvider context (useWallet)", () => {
       .mockImplementation(() => {});
     const { result } = renderHook(() => useWallet());
 
-    await expect(connectWithoutPerCallSettings(result.current)).rejects.toThrow(
-      /You have tried to\s+get "connect" on a WalletContext/
+    const connectPromise = connectWithoutPerCallSettings(result.current);
+    await expect(connectPromise).rejects.toBeInstanceOf(Error);
+    await expect(connectPromise).rejects.toHaveProperty(
+      "message",
+      expect.stringMatching(
+        /You have tried to\s+get "connect" on a WalletContext/
+      )
     );
     expect(consoleError).toHaveBeenCalledWith(
       expect.stringMatching(
@@ -120,8 +125,13 @@ describe("missing WalletProvider context (useWallet)", () => {
       .mockImplementation(() => {});
     const { result } = renderHook(() => useWallet());
 
-    await expect(result.current.requestAssets!()).rejects.toThrow(
-      /You have tried to\s+get "requestAssets" on a WalletContext/
+    const requestAssetsPromise = result.current.requestAssets!();
+    await expect(requestAssetsPromise).rejects.toBeInstanceOf(Error);
+    await expect(requestAssetsPromise).rejects.toHaveProperty(
+      "message",
+      expect.stringMatching(
+        /You have tried to\s+get "requestAssets" on a WalletContext/
+      )
     );
     expect(consoleError).toHaveBeenCalledWith(
       expect.stringMatching(
