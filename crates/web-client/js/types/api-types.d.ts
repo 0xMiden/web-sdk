@@ -1942,23 +1942,28 @@ export declare class MidenClient {
   /**
    * Creates and initializes a new MidenClient.
    *
-   * Every non-mock client must name the chain's fee faucet in
-   * {@link ClientOptions.feeFaucetId} while the SDK carries a default for no
-   * network; without it creation fails with an error saying so.
+   * {@link ClientOptions.feeFaucetId} is optional: the client receives the
+   * chain's protocol configuration, which names the fee asset, from the node
+   * when it syncs. The option only sets what `feeFaucetId()` reports before
+   * that first sync.
    */
   static create(options?: ClientOptions): Promise<MidenClient>;
   /**
    * Creates a client preconfigured for testnet (rpc, prover, note transport, autoSync).
    *
-   * Still needs {@link ClientOptions.feeFaucetId}: the preconfigured defaults
-   * cover the endpoints, not the chain's fee asset.
+   * {@link ClientOptions.feeFaucetId} is optional: the client receives the
+   * chain's protocol configuration, which names the fee asset, from the node
+   * when it syncs. The option only sets what `feeFaucetId()` reports before
+   * that first sync.
    */
   static createTestnet(options?: ClientOptions): Promise<MidenClient>;
   /**
    * Creates a client preconfigured for devnet (rpc, prover, note transport, autoSync).
    *
-   * Still needs {@link ClientOptions.feeFaucetId}: the preconfigured defaults
-   * cover the endpoints, not the chain's fee asset.
+   * {@link ClientOptions.feeFaucetId} is optional: the client receives the
+   * chain's protocol configuration, which names the fee asset, from the node
+   * when it syncs. The option only sets what `feeFaucetId()` reports before
+   * that first sync.
    */
   static createDevnet(options?: ClientOptions): Promise<MidenClient>;
   /** Creates a mock client for testing. */
