@@ -54,6 +54,37 @@ const createActionsRow = () => {
   return actions;
 };
 
+/**
+ * Builds one note summary row (heading plus detail lines) for the signing modal.
+ * All transaction data is assigned through textContent so values received from
+ * the chain can never be interpreted as HTML inside the user's page.
+ */
+const createNoteSummaryRow = (
+  noteNumber: number,
+  id: string,
+  details: string[]
+) => {
+  const noteDiv = document.createElement("div");
+  noteDiv.style.marginBottom = "8px";
+  noteDiv.style.paddingLeft = "8px";
+
+  const heading = document.createElement("div");
+  const label = document.createElement("strong");
+  label.textContent = `Note ${noteNumber}:`;
+  heading.append(label, ` ${id}`);
+
+  const detail = document.createElement("div");
+  detail.style.paddingLeft = "8px";
+  detail.style.color = "#475569";
+  details.forEach((line, idx) => {
+    if (idx > 0) detail.append(document.createElement("br"));
+    detail.append(line);
+  });
+
+  noteDiv.append(heading, detail);
+  return noteDiv;
+};
+
 const createPrimaryButton = (label: string) => {
   const button = document.createElement("button");
   button.textContent = label;
@@ -124,16 +155,10 @@ export const signingModal = (txSummaryJson: TxSummaryJson) => {
       inputSection.append(noInputs);
     } else {
       txSummaryJson.inputNotes.forEach((note, idx) => {
-        const noteDiv = document.createElement("div");
-        noteDiv.style.marginBottom = "8px";
-        noteDiv.style.paddingLeft = "8px";
-        noteDiv.innerHTML = `
-          <div><strong>Note ${idx + 1}:</strong> ${note.id}</div>
-          <div style="padding-left: 8px; color: #475569;">
-            Sender: ${note.sender}<br/>
-            Assets: ${note.assets.map((a) => `${a.amount} of ${a.assetId}`).join(", ") || "None"}
-          </div>
-        `;
+        const noteDiv = createNoteSummaryRow(idx + 1, note.id, [
+          `Sender: ${note.sender}`,
+          `Assets: ${note.assets.map((a) => `${a.amount} of ${a.assetId}`).join(", ") || "None"}`,
+        ]);
         inputSection.append(noteDiv);
       });
     }
@@ -152,16 +177,10 @@ export const signingModal = (txSummaryJson: TxSummaryJson) => {
       outputSection.append(noOutputs);
     } else {
       txSummaryJson.outputNotes.forEach((note, idx) => {
-        const noteDiv = document.createElement("div");
-        noteDiv.style.marginBottom = "8px";
-        noteDiv.style.paddingLeft = "8px";
-        noteDiv.innerHTML = `
-          <div><strong>Note ${idx + 1}:</strong> ${note.id}</div>
-          <div style="padding-left: 8px; color: #475569;">
-            Type: ${note.noteType}<br/>
-            Assets: ${note.assets.map((a) => `${a.amount} of ${a.assetId}`).join(", ") || "None"}
-          </div>
-        `;
+        const noteDiv = createNoteSummaryRow(idx + 1, note.id, [
+          `Type: ${note.noteType}`,
+          `Assets: ${note.assets.map((a) => `${a.amount} of ${a.assetId}`).join(", ") || "None"}`,
+        ]);
         outputSection.append(noteDiv);
       });
     }
