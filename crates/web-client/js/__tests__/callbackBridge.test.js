@@ -606,6 +606,48 @@ describe("handleReply", () => {
       })
     ).toBe(true);
   });
+
+  it("rejects the pending callback when a correlated error reply is malformed", async () => {
+    let request;
+    const forwarder = createCallbackForwarder({
+      post: (message) => {
+        request = message;
+      },
+      timeoutMs: () => undefined,
+    });
+    const result = forwarder.forward("sign", []).then(
+      () => ({ status: "resolved" }),
+      (error) => ({ status: "rejected", error })
+    );
+
+    let replyError = null;
+    try {
+      forwarder.handleReply({
+        callbackRequestId: request.requestId,
+        callbackOk: false,
+        callbackError: null,
+      });
+    } catch (error) {
+      replyError = error;
+    }
+
+    const settlement = await Promise.race([
+      result,
+      new Promise((resolve) =>
+        setTimeout(() => resolve({ status: "pending" }), 1000)
+      ),
+    ]);
+
+    expect({ replyError, settlement }).toMatchObject({
+      replyError: null,
+      settlement: {
+        status: "rejected",
+        error: {
+          message: "Invalid callback error reply from the main thread",
+        },
+      },
+    });
+  });
 });
 
 describe("deserializeCallbackError", () => {

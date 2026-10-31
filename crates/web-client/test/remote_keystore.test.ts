@@ -3,6 +3,83 @@ import test from "./playwright.global.setup";
 import { expect } from "@playwright/test";
 
 test.describe("remote keystore", () => {
+  test("preserves getKey timeout details in transaction errors", async ({
+    page,
+  }) => {
+    const message = await page.evaluate(async () => {
+      let failGetKey = false;
+      const client = await window.helpers.createClientWithKeystore(
+        () =>
+          failGetKey
+            ? new Promise<Uint8Array>(() => {})
+            : Promise.resolve(undefined),
+        async () => {},
+        undefined,
+        `get-key-timeout-${Date.now()}`,
+        1000
+      );
+      const faucet = await client.newFaucet(
+        window.AccountStorageMode.private(),
+        false,
+        "DAG",
+        "DAG",
+        8,
+        BigInt(10000000),
+        window.AuthScheme.AuthRpoFalcon512
+      );
+      await client.syncState();
+      const wallet = await client.newWallet(
+        window.AccountStorageMode.private(),
+        window.AuthScheme.AuthRpoFalcon512,
+        undefined
+      );
+      await client.syncState();
+      const txRequest = await (client as any).newMintTransactionRequest(
+        wallet.id(),
+        faucet.id(),
+        window.NoteType.Public,
+        BigInt(1000)
+      );
+
+      failGetKey = true;
+      try {
+        await client.executeTransaction(faucet.id(), txRequest);
+        return "transaction unexpectedly succeeded";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+
+    expect(message).toMatch(/Callback getKey-.+ timed out after 1000ms/);
+  });
+
+  test("preserves insertKey timeout details when creating a wallet", async ({
+    page,
+  }) => {
+    const message = await page.evaluate(async () => {
+      const client = await window.helpers.createClientWithKeystore(
+        undefined,
+        () => new Promise<void>(() => {}),
+        undefined,
+        `insert-key-timeout-${Date.now()}`,
+        1000
+      );
+
+      try {
+        await client.newWallet(
+          window.AccountStorageMode.private(),
+          window.AuthScheme.AuthRpoFalcon512,
+          undefined
+        );
+        return "newWallet unexpectedly succeeded";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+
+    expect(message).toMatch(/Callback insertKey-.+ timed out after 1000ms/);
+  });
+
   test("should create a client with a remote keystore", async ({ page }) => {
     const client = await page.evaluate(async () => {
       const insertKeyCb = async (

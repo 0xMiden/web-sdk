@@ -205,7 +205,8 @@ declare global {
         getKeyCb?: unknown,
         insertKeyCb?: unknown,
         signCb?: unknown,
-        storeName?: string
+        storeName?: string,
+        callbackTimeoutMs?: number
       ) => Promise<any>;
       parseNetworkId: (networkId: string) => NetworkId;
       generateKeyWithScheme: (signatureScheme: string) => AuthSecretKey;
