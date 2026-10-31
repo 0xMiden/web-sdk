@@ -28,6 +28,18 @@ const fakeNative = vi.hoisted(() => {
     }
   }
   class Word {}
+  // napi returns null for an unset Option<String>; the browser returns undefined.
+  class BasicFungibleFaucetComponent {
+    description() {
+      return null;
+    }
+    logoUri() {
+      return null;
+    }
+    externalLink() {
+      return null;
+    }
+  }
   class TransactionRequestBuilder {
     withOwnOutputNotes(notes) {
       received.push(notes);
@@ -71,6 +83,7 @@ const fakeNative = vi.hoisted(() => {
   return {
     Account,
     Word,
+    BasicFungibleFaucetComponent,
     TransactionRequestBuilder,
     NoteStorage,
     SigningInputs,
@@ -87,6 +100,7 @@ vi.mock("../node/loader.js", () => ({
   loadNativeModule: () => ({
     Account: fakeNative.Account,
     Word: fakeNative.Word,
+    BasicFungibleFaucetComponent: fakeNative.BasicFungibleFaucetComponent,
     TransactionRequestBuilder: fakeNative.TransactionRequestBuilder,
     NoteStorage: fakeNative.NoteStorage,
     SigningInputs: fakeNative.SigningInputs,
@@ -203,6 +217,14 @@ describe("Node napi boundary", () => {
       "exported"
     );
     expect(fakeNative.received.at(-1)).toEqual([item]);
+  });
+
+  it("reads unset faucet metadata as undefined, as the browser does", () => {
+    const faucet = new nodeIndex.BasicFungibleFaucetComponent();
+
+    expect(faucet.description()).toBeUndefined();
+    expect(faucet.logoUri()).toBeUndefined();
+    expect(faucet.externalLink()).toBeUndefined();
   });
 
   it("keeps the NoteScript.p2id and p2ide aliases", () => {
