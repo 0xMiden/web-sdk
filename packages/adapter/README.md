@@ -238,7 +238,7 @@ function WalletStatus() {
 
   return connected
     ? <button onClick={disconnect}>Disconnect ({address})</button>
-    : <button onClick={connect}>Connect Wallet</button>;
+    : <button onClick={() => { void connect(); }}>Connect Wallet</button>;
 }
 ```
 
