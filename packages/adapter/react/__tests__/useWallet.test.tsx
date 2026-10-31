@@ -9,7 +9,10 @@ import {
   type WalletName,
 } from "@miden-sdk/miden-wallet-adapter-base";
 import { WalletProvider } from "../WalletProvider";
-import { useWallet } from "../useWallet";
+import { useWallet, type WalletContextState } from "../useWallet";
+
+const connectWithoutPerCallSettings = (wallet: WalletContextState) =>
+  wallet.connect();
 
 class StubAdapter extends EventEmitter<WalletAdapterEvents> {
   name = "Stub Wallet" as WalletName<"Stub Wallet">;
@@ -113,7 +116,7 @@ describe("connect re-drive when already connected (useWallet, 0xMiden/wallet#470
     await act(() => result.current.select(stubAdapter.name));
 
     await act(async () => {
-      await result.current.connect();
+      await connectWithoutPerCallSettings(result.current);
     });
     expect(stubAdapter.connect).toHaveBeenCalledTimes(1);
     expect(result.current.connected).toBe(true);
@@ -122,7 +125,7 @@ describe("connect re-drive when already connected (useWallet, 0xMiden/wallet#470
     // park/restore, so a re-opened dApp is still connected. A second
     // connect() must re-drive instead of silently no-opping (#470).
     await act(async () => {
-      await result.current.connect();
+      await connectWithoutPerCallSettings(result.current);
     });
     expect(stubAdapter.connect).toHaveBeenCalledTimes(2);
   });
