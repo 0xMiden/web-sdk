@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, afterAll } from "vitest";
 vi.mock("../../Cargo.toml", () => ({}));
 import { WasmWebClient } from "../index.js";
 import { CallbackType, WorkerAction } from "../constants.js";
@@ -96,6 +96,11 @@ describe("the production WebClient worker bridge", () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     RecordingWorker.instances = [];
+  });
+
+  afterAll(() => {
+    delete globalThis.self;
+    delete globalThis.__midenWorkerWasm;
   });
 
   it("posts a successful sign reply from the real handler", async () => {
@@ -588,6 +593,121 @@ describe("callback time limits", () => {
     for (const [, delay] of timer.mock.calls) {
       expect(delay).toBe(2_147_483_647);
     }
+  });
+
+  it("binds INIT timeouts and settles worker callback replies", async () => {
+    vi.resetModules();
+    const messages = [];
+    let callbacks;
+
+    class WorkerWebClient {
+      async createClientWithExternalKeystore(
+        _rpcUrl,
+        _noteTransportUrl,
+        _seed,
+        _storeName,
+        _feeFaucetId,
+        getKey,
+        insertKey,
+        sign
+      ) {
+        callbacks = { getKey, insertKey, sign };
+      }
+    }
+
+    globalThis.self = {
+      postMessage(message) {
+        messages.push(structuredClone(message));
+      },
+    };
+    globalThis.__midenWorkerWasm = {
+      WebClient: WorkerWebClient,
+      setupLogging() {},
+    };
+
+    await import("../workers/web-client-methods-worker.js");
+    expect(messages).toContainEqual({ loaded: true });
+
+    globalThis.self.onmessage({
+      data: {
+        action: WorkerAction.INIT,
+        args: [
+          "https://rpc.example",
+          undefined,
+          undefined,
+          "worker-callback-bridge-store",
+          true,
+          true,
+          true,
+          null,
+          1,
+          "0xfee",
+          1000,
+        ],
+      },
+    });
+    await vi.waitFor(() => expect(messages).toContainEqual({ ready: true }));
+
+    const successfulReply = callbacks.sign("pk-success", "inputs");
+    const successRequest = messages.findLast(
+      ({ action }) => action === WorkerAction.EXECUTE_CALLBACK
+    );
+    globalThis.self.onmessage({
+      data: {
+        callbackOk: true,
+        callbackResult: "signed",
+        callbackRequestId: successRequest.requestId,
+      },
+    });
+    await expect(successfulReply).resolves.toBe("signed");
+
+    const rejectedReply = callbacks.sign("pk-rejected", "inputs");
+    const rejectedRequest = messages.findLast(
+      ({ action }) => action === WorkerAction.EXECUTE_CALLBACK
+    );
+    globalThis.self.onmessage({
+      data: {
+        callbackOk: false,
+        callbackError: { message: "wallet locked" },
+        callbackRequestId: rejectedRequest.requestId,
+      },
+    });
+    await expect(rejectedReply).rejects.toThrow("wallet locked");
+
+    vi.useFakeTimers();
+    const timeoutRequest = async (callbackType, callback) => {
+      const pending = callback();
+      const request = messages.findLast(
+        (message) =>
+          message.action === WorkerAction.EXECUTE_CALLBACK &&
+          message.callbackType === callbackType
+      );
+      const rejection = expect(pending).rejects.toThrow(
+        new RegExp(`Callback ${callbackType}-.+ timed out after 1000ms`)
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      await rejection;
+      return request;
+    };
+
+    const lateRequest = await timeoutRequest("sign", () =>
+      callbacks.sign("pk-timeout", "inputs")
+    );
+    await timeoutRequest("getKey", () => callbacks.getKey("pk"));
+    await timeoutRequest("insertKey", () => callbacks.insertKey("pk", "key"));
+
+    globalThis.self.onmessage({
+      data: {
+        callbackOk: true,
+        callbackResult: "late",
+        callbackRequestId: lateRequest.requestId,
+      },
+    });
+    expect(
+      messages.some(
+        ({ error }) => error?.message === "Unsupported action: undefined"
+      )
+    ).toBe(false);
   });
 });
 
