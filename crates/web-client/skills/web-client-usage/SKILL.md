@@ -137,8 +137,10 @@ to `false` when you pass a `CallbackProver` from
 `TransactionProver.newCallbackProver(jsFn)` (the worker boundary serializes the
 prover and silently downgrades the callback variant to `"local"`), or when
 embedding in a single-WebView native shell. `client.lastAuthError()` - which
-returns the raw value your sign callback threw - is only meaningful with
-`useWorker: false`.
+returns the raw sign rejection or a readable external `getKey` failure string -
+is only meaningful with `useWorker: false`. `executeTransaction` clears the stored
+detail when it starts, as does a successful sign or `getKey` callback. On both worker and direct
+paths, failed `executeTransaction` calls include any missing readable callback detail.
 
 Under the worker, `keystore` callbacks run on the main thread and the worker
 waits for each one. `callbackTimeoutMs` sets that wait: left unset, `sign` has

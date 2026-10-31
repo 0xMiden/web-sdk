@@ -1,6 +1,6 @@
 import loadWasm from "../../dist/wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "../constants.js";
-import { createCallbackForwarder } from "../callbackBridge.js";
+import { appendAuthError, createCallbackForwarder } from "../callbackBridge.js";
 
 let wasmModule = null;
 
@@ -155,10 +155,22 @@ const methodHandlers = {
     const transactionRequest = wasm.TransactionRequest.deserialize(
       transactionRequestBytes
     );
-    const result = await wasmWebClient.executeTransaction(
-      accountId,
-      transactionRequest
-    );
+    let result;
+    try {
+      result = await wasmWebClient.executeTransaction(
+        accountId,
+        transactionRequest
+      );
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") {
+        throw appendAuthError(error, authError);
+      }
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
+    }
     const serializedResult = result.serialize();
     return serializedResult.buffer;
   },

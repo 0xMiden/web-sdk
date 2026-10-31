@@ -501,6 +501,9 @@ impl WebClient {
     ) -> Result<TransactionResult, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        if let Some(keystore) = client.authenticator() {
+            keystore.clear_auth_error();
+        }
         let native_request: NativeTransactionRequest = transaction_request.into();
         let fut = Box::pin(client.execute_transaction(account_id.into(), native_request));
         maybe_wrap_send(fut)

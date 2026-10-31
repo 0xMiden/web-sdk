@@ -4,6 +4,7 @@ import { WasmWebClient } from "../index.js";
 import { CallbackType, WorkerAction } from "../constants.js";
 import {
   DEFAULT_CALLBACK_TIMEOUT_MS,
+  appendAuthError,
   callbackTimeoutFor,
   createCallbackForwarder,
   deserializeCallbackError,
@@ -755,5 +756,151 @@ describe("WebClient.createClient callback timeout", () => {
     ).rejects.toThrow(
       "callbackTimeoutMs must be a non-negative finite number no greater than 2147483647"
     );
+  });
+});
+
+describe("transaction authentication error detail", () => {
+  it.each(["wallet locked", new Error("wallet locked")])(
+    "appends readable callback detail to the native error",
+    (detail) => {
+      expect(appendAuthError("authentication failed", detail)).toBe(
+        "authentication failed: wallet locked"
+      );
+    }
+  );
+
+  it("does not duplicate callback detail already in the error", () => {
+    expect(
+      appendAuthError("authentication failed: wallet locked", "wallet locked")
+    ).toBe("authentication failed: wallet locked");
+  });
+
+  it.each([
+    null,
+    undefined,
+    "",
+    4001,
+    { privateData: "must not leak" },
+    new Error(""),
+  ])("ignores callback values without a readable message", (detail) => {
+    expect(appendAuthError("authentication failed", detail)).toBe(
+      "authentication failed"
+    );
+  });
+
+  it("ignores a callback value whose message getter throws", () => {
+    const detail = Object.defineProperty({}, "message", {
+      get() {
+        throw new Error("must not leak");
+      },
+    });
+    expect(appendAuthError("authentication failed", detail)).toBe(
+      "authentication failed"
+    );
+  });
+});
+
+describe("executeTransaction auth error boundaries", () => {
+  it.each(["wallet locked", new Error("wallet locked")])(
+    "enriches direct errors while preserving the native code and identity",
+    async (detail) => {
+      const error = Object.assign(new Error("authentication failed"), {
+        code: "AUTH",
+      });
+      const wasmWebClient = {
+        executeTransaction: async () => {
+          throw error;
+        },
+        lastAuthError: () => detail,
+      };
+      const client = Object.assign(Object.create(WasmWebClient.prototype), {
+        worker: null,
+        wasmWebClient,
+        getWasmWebClient: async () => wasmWebClient,
+        _withInnerLockDepth: 0,
+        _wasmCallChain: Promise.resolve(),
+      });
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await expect(client.executeTransaction({}, {})).rejects.toBe(error);
+        expect(error.message).toBe("authentication failed: wallet locked");
+        expect(error.code).toBe("AUTH");
+      } finally {
+        log.mockRestore();
+      }
+    }
+  );
+
+  it("enriches worker errors while preserving the native code", async () => {
+    vi.resetModules();
+    const messages = [];
+    class WorkerWebClient {
+      async createClient() {}
+      async executeTransaction() {
+        throw Object.assign(new Error("authentication failed"), {
+          code: "AUTH",
+        });
+      }
+      lastAuthError() {
+        return "wallet locked";
+      }
+    }
+    globalThis.self = {
+      postMessage: (message) => messages.push(structuredClone(message)),
+    };
+    globalThis.__midenWorkerWasm = {
+      WebClient: WorkerWebClient,
+      setupLogging() {},
+      AccountId: { fromHex: (value) => value },
+      TransactionRequest: {
+        deserialize: (value) => {
+          if (value[0] === 255) throw new Error("invalid transaction request");
+          return value;
+        },
+      },
+    };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await import("../workers/web-client-methods-worker.js");
+      globalThis.self.onmessage({
+        data: { action: WorkerAction.INIT, args: [] },
+      });
+      await vi.waitFor(() => expect(messages).toContainEqual({ ready: true }));
+      globalThis.self.onmessage({
+        data: {
+          action: WorkerAction.CALL_METHOD,
+          methodName: "executeTransaction",
+          requestId: "tx-auth",
+          args: ["account", new Uint8Array()],
+        },
+      });
+      await vi.waitFor(() =>
+        expect(
+          messages.find((message) => message.requestId === "tx-auth")
+        ).toMatchObject({
+          error: {
+            message: "authentication failed: wallet locked",
+            code: "AUTH",
+          },
+        })
+      );
+      globalThis.self.onmessage({
+        data: {
+          action: WorkerAction.CALL_METHOD,
+          methodName: "executeTransaction",
+          requestId: "tx-invalid",
+          args: ["account", new Uint8Array([255])],
+        },
+      });
+      await vi.waitFor(() =>
+        expect(
+          messages.find((message) => message.requestId === "tx-invalid")
+        ).toMatchObject({ error: { message: "invalid transaction request" } })
+      );
+    } finally {
+      log.mockRestore();
+      delete globalThis.self;
+      delete globalThis.__midenWorkerWasm;
+    }
   });
 });

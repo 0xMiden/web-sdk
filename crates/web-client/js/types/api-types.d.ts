@@ -1959,15 +1959,15 @@ export declare class MidenClient {
    */
   waitForIdle(): Promise<void>;
   /**
-   * Returns the raw JS value that the most recent sign-callback invocation
-   * threw, or `null` if the last sign call succeeded (or no call has
-   * happened yet). Useful for recovering structured metadata (e.g. a
-   * `reason: 'locked'` property) that the kernel-level `auth::request`
-   * diagnostic would otherwise erase.
+   * Returns the latest raw sign callback rejection or readable external `getKey`
+   * failure string. Returns `null` after a successful sign or `getKey` callback,
+   * or when `executeTransaction` starts. Raw sign values preserve structured metadata
+   * such as `reason: 'locked'`. Transaction errors include any missing readable
+   * callback detail on both the direct and worker paths.
    *
    * Meaningful only with `useWorker: false` (the worker shim's keystore
    * lives in the worker WASM instance, so this reads `null` there). On
-   * the Node.js binding it always returns `null` — signing goes through
+   * the Node.js binding it always returns `null` - signing goes through
    * the filesystem keystore, never a JS callback.
    */
   lastAuthError(): unknown;

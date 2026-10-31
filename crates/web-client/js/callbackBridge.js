@@ -133,6 +133,21 @@ export function deserializeCallbackError(serialized) {
   return error;
 }
 
+/** Appends readable auth callback detail without serializing unrelated object fields. */
+export function appendAuthError(message, authError) {
+  let detail;
+  try {
+    detail = typeof authError === "string" ? authError : authError?.message;
+  } catch {
+    return message;
+  }
+  return typeof detail === "string" &&
+    detail !== "" &&
+    !message.includes(detail)
+    ? `${message}: ${detail}`
+    : message;
+}
+
 /**
  * Checks the `callbackTimeoutMs` client option.
  *
