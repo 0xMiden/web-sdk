@@ -92,6 +92,45 @@ describe("requestGuardianInfo wiring (useWallet)", () => {
   });
 });
 
+describe("missing WalletProvider context (useWallet)", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("rejects connect() with the missing-provider error", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const { result } = renderHook(() => useWallet());
+
+    await expect(connectWithoutPerCallSettings(result.current)).rejects.toThrow(
+      /You have tried to\s+get "connect" on a WalletContext/
+    );
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /You have tried to\s+get "connect" on a WalletContext/
+      )
+    );
+  });
+
+  it("rejects requestAssets() with the missing-provider error", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const { result } = renderHook(() => useWallet());
+
+    await expect(result.current.requestAssets!()).rejects.toThrow(
+      /You have tried to\s+get "requestAssets" on a WalletContext/
+    );
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /You have tried to\s+get "requestAssets" on a WalletContext/
+      )
+    );
+  });
+});
+
 describe("connect re-drive when already connected (useWallet, 0xMiden/wallet#470)", () => {
   afterEach(() => {
     cleanup();
