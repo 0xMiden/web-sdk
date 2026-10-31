@@ -8,7 +8,7 @@ use crate::models::advice_map::AdviceMap;
 use crate::models::note::Note;
 use crate::models::word::Word;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::utils::{decode_proto, encode_proto};
 
 pub mod note_and_args;
 pub mod note_details_and_tag;
@@ -30,12 +30,12 @@ pub struct TransactionRequest(NativeTransactionRequest);
 impl TransactionRequest {
     /// Serializes the transaction request into bytes.
     pub fn serialize(&self) -> JsBytes {
-        serialize_to_bytes(&self.0)
+        encode_proto(&self.0)
     }
 
     /// Deserializes a transaction request from bytes.
     pub fn deserialize(bytes: JsBytes) -> Result<TransactionRequest, JsErr> {
-        deserialize_from_bytes::<NativeTransactionRequest>(&bytes).map(TransactionRequest)
+        decode_proto::<NativeTransactionRequest>(&bytes).map(TransactionRequest)
     }
 
     /// Returns output notes created by the sender account.
