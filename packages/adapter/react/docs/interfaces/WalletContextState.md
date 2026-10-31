@@ -10,7 +10,7 @@
 
 ### address
 
-> **address**: `string`
+> **address**: `string` \| `null`
 
 ***
 
@@ -38,159 +38,81 @@
 
 ***
 
-### importPrivateNote()?
+### importPrivateNote
 
-> `optional` **importPrivateNote**: (`note`) => `Promise`\<`string`\>
+> **importPrivateNote**: ((`note`) => `Promise`\<`string`\>) \| `undefined`
 
-#### Parameters
+***
 
-##### note
+### privateDataPermission?
 
-`Uint8Array`
-
-#### Returns
-
-`Promise`\<`string`\>
+> `optional` **privateDataPermission?**: `PrivateDataPermission`
 
 ***
 
 ### publicKey
 
-> **publicKey**: `Uint8Array`\<`ArrayBufferLike`\>
+> **publicKey**: `Uint8Array`\<`ArrayBufferLike`\> \| `null`
 
 ***
 
-### requestAssets()?
+### requestAssets
 
-> `optional` **requestAssets**: () => `Promise`\<`Asset`[]\>
-
-#### Returns
-
-`Promise`\<`Asset`[]\>
+> **requestAssets**: (() => `Promise`\<`Asset`[]\>) \| `undefined`
 
 ***
 
-### requestConsumableNotes()?
+### requestConsumableNotes
 
-> `optional` **requestConsumableNotes**: () => `Promise`\<`InputNoteDetails`[]\>
-
-#### Returns
-
-`Promise`\<`InputNoteDetails`[]\>
+> **requestConsumableNotes**: (() => `Promise`\<`InputNoteDetails`[]\>) \| `undefined`
 
 ***
 
-### requestConsume()?
+### requestConsume
 
-> `optional` **requestConsume**: (`transaction`) => `Promise`\<`string`\>
-
-#### Parameters
-
-##### transaction
-
-`MidenConsumeTransaction`
-
-#### Returns
-
-`Promise`\<`string`\>
+> **requestConsume**: ((`transaction`) => `Promise`\<`string`\>) \| `undefined`
 
 ***
 
-### requestPrivateNotes()?
+### requestGuardianInfo
 
-> `optional` **requestPrivateNotes**: (`noteFilterType`, `noteIds?`) => `Promise`\<`InputNoteDetails`[]\>
-
-#### Parameters
-
-##### noteFilterType
-
-`NoteFilterTypes`
-
-##### noteIds?
-
-`string`[]
-
-#### Returns
-
-`Promise`\<`InputNoteDetails`[]\>
+> **requestGuardianInfo**: (() => `Promise`\<`GuardianInfo`\>) \| `undefined`
 
 ***
 
-### requestSend()?
+### requestPrivateNotes
 
-> `optional` **requestSend**: (`transaction`) => `Promise`\<`string`\>
-
-#### Parameters
-
-##### transaction
-
-`MidenSendTransaction`
-
-#### Returns
-
-`Promise`\<`string`\>
+> **requestPrivateNotes**: ((`noteFilterType`, `noteIds?`) => `Promise`\<`InputNoteDetails`[]\>) \| `undefined`
 
 ***
 
-### requestTransaction()?
+### requestSend
 
-> `optional` **requestTransaction**: (`transaction`) => `Promise`\<`string`\>
-
-#### Parameters
-
-##### transaction
-
-`MidenTransaction`
-
-#### Returns
-
-`Promise`\<`string`\>
+> **requestSend**: ((`transaction`) => `Promise`\<`string`\>) \| `undefined`
 
 ***
 
-### signBytes()?
+### requestTransaction
 
-> `optional` **signBytes**: (`data`, `kind`) => `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
-
-#### Parameters
-
-##### data
-
-`Uint8Array`
-
-##### kind
-
-`SignKind`
-
-#### Returns
-
-`Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
+> **requestTransaction**: ((`transaction`) => `Promise`\<`string`\>) \| `undefined`
 
 ***
 
-### waitForTransaction()?
+### signBytes
 
-> `optional` **waitForTransaction**: (`txId`, `timeout?`) => `Promise`\<`TransactionOutput`\>
+> **signBytes**: ((`data`, `kind`) => `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>) \| `undefined`
 
-#### Parameters
+***
 
-##### txId
+### waitForTransaction
 
-`string`
-
-##### timeout?
-
-`number`
-
-#### Returns
-
-`Promise`\<`TransactionOutput`\>
+> **waitForTransaction**: ((`txId`, `timeout?`) => `Promise`\<`TransactionOutput`\>) \| `undefined`
 
 ***
 
 ### wallet
 
-> **wallet**: [`Wallet`](Wallet.md)
+> **wallet**: [`Wallet`](Wallet.md) \| `null`
 
 ***
 
@@ -202,7 +124,21 @@
 
 ### connect()
 
-> **connect**(): `Promise`\<`void`\>
+> **connect**(`privateDataPermission`, `network`, `allowedPrivateData?`): `Promise`\<`void`\>
+
+#### Parameters
+
+##### privateDataPermission
+
+`PrivateDataPermission`
+
+##### network
+
+`WalletAdapterNetwork`
+
+##### allowedPrivateData?
+
+`AllowedPrivateData`
 
 #### Returns
 
