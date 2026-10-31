@@ -201,6 +201,11 @@ function patchSdkPrototypes(rawSdk) {
     [rawSdk.AccountPatch, ["finalNonce"]],
     [rawSdk.AccountStorage, ["getItem", "getMapEntries", "getMapItem"]],
     [rawSdk.AdviceMap, ["get", "insert"]],
+    // The optional token metadata is unset on every faucet `newFaucet` creates.
+    [
+      rawSdk.BasicFungibleFaucetComponent,
+      ["description", "logoUri", "externalLink"],
+    ],
     // `feeNote` is absent whenever the chain charges nothing, which is the common case on a
     // local chain, so the "no fee note" reading has to be the same on both bindings.
     [rawSdk.ExecutedTransaction, ["feeNote"]],
