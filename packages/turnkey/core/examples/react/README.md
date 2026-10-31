@@ -76,7 +76,7 @@ const webClient = await WebClient.createClientWithExternalKeystore(
   undefined, // logLevel
   undefined, // useWorker
   undefined, // observability
-  feeFaucetId // required: the chain's fee faucet, bech32 or hex
+  feeFaucetId // optional: what feeFaucetId() reports before the first sync
 );
 ```
 

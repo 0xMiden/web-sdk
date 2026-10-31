@@ -39,7 +39,7 @@ never with `new` - and route work through its typed resources:
 ```ts
 import { MidenClient } from "@miden-sdk/miden-sdk";
 
-const client = await MidenClient.createTestnet({ feeFaucetId: FEE_FAUCET });
+const client = await MidenClient.createTestnet();
 await client.sync();
 ```
 
@@ -47,9 +47,12 @@ await client.sync();
 `createDevnet()` are preconfigured; `createMock()` backs tests with an in-memory
 chain and no network.
 
-Every non-mock `MidenClient` names the chain's fee faucet. Since 0.17 the fee asset
-lives in a protocol configuration the node does not serve over RPC, and the SDK
-carries a per-network default for no network yet, so creation without it fails.
+`feeFaucetId` is optional. Since 0.17 the chain's fee asset lives in the
+protocol configuration, which the client receives from the node when it syncs,
+so execution never needs the option: it only sets what `client.feeFaucetId()`
+reports before the first sync. Before that sync, a client created without it
+rejects `feeFaucetId()` and asks you to sync first; a mock client reports its
+mock chain's own faucet.
 
 State is split across resources rather than living on the client:
 `accounts`, `transactions`, `notes`, `tags`, `settings`, `keystore`, `compile`

@@ -28,19 +28,18 @@ import { MidenProvider } from "@miden-sdk/react";
 
 function App() {
   return (
-    <MidenProvider config={{ rpcUrl: "testnet", feeFaucetId: FEE_FAUCET }}>
+    <MidenProvider config={{ rpcUrl: "testnet" }}>
       <YourApp />
     </MidenProvider>
   );
 }
 ```
 
-`feeFaucetId` is required today. Since 0.17 the chain's fee asset lives in a
-protocol configuration the node does not serve over RPC, and the SDK carries a
-per-network default for no network yet, so a provider without it fails at client
-init. It is the faucet the chain mints its fee asset from - ask whoever runs the
-network, or read it from the genesis of a local node. Other snippets in this file
-leave it out to keep the point they make legible; every real provider needs it.
+`feeFaucetId` is optional. Since 0.17 the chain's fee asset lives in the
+protocol configuration, which the client receives from the node when it syncs,
+so a provider does not need the option: it only sets what `client.feeFaucetId()`
+reports before the first sync. Before that sync, a client created without it
+rejects `feeFaucetId()` and asks you to sync first.
 
 ## Configuration
 
@@ -48,7 +47,7 @@ leave it out to keep the point they make legible; every real provider needs it.
 <MidenProvider
   config={{
     rpcUrl: "testnet",          // "devnet" | "testnet" | "localhost" | "local" | custom URL
-    feeFaucetId: FEE_FAUCET,    // REQUIRED: the chain's fee faucet, bech32 or hex
+    feeFaucetId: FEE_FAUCET,    // optional: what feeFaucetId() reports before the first sync
     prover: "testnet",          // "local" | "localhost" | "devnet" | "testnet" | URL
                                 //   | { url, timeoutMs }
                                 //   | { primary, fallback, disableFallback?, onFallback? }
