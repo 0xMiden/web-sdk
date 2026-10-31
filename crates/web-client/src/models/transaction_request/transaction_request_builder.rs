@@ -192,7 +192,11 @@ impl TransactionRequestBuilder {
     #[js_export(js_name = "withAuthArg")]
     pub fn with_auth_arg(&mut self, auth_arg: &Word) -> Self {
         let native_word: NativeWord = auth_arg.into();
-        self.builder = self.builder.clone().auth_arg(native_word);
+        // `auth_args` needs the typed preimage. This method takes the raw word, and the caller
+        // supplies the preimage through `extendAdviceMap`.
+        #[allow(deprecated)]
+        let builder = self.builder.clone().auth_arg(native_word);
+        self.builder = builder;
         self.clone()
     }
 

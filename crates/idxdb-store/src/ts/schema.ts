@@ -4,6 +4,12 @@ import { logWebStoreError } from "./utils.js";
 
 export const CLIENT_VERSION_SETTING_KEY = "clientVersion";
 
+/** Prefix of the `clientConfig` key of a protocol configuration. */
+export const PROTOCOL_CONFIG_KEY_PREFIX = "protocol_config:";
+
+/** Mirrors `PswapLineageState::Active`, originally defined in miden-client. */
+export const PSWAP_STATE_ACTIVE = 0;
+
 /** Mirrors `StorageSlotType::Map`, originally defined in miden-protocol. */
 export const STORAGE_SLOT_TYPE_MAP = 1;
 
@@ -72,9 +78,12 @@ enum Table {
   ForeignAccountCode = "foreignAccountCode",
   Settings = "settings",
   AccountWitnesses = "accountWitnesses",
+  ClientConfig = "clientConfig",
+  UserSettings = "userSettings",
+  PswapLineages = "pswapLineages",
 }
 
-/** Mirrors `SettingScope`, whose discriminants are part of a store's schema. */
+/** Scope of a row of the `settings` table, which version 8 removes. Version 7 reads it. */
 export const SETTING_SCOPE_CLIENT = 0;
 export const SETTING_SCOPE_USER = 1;
 
@@ -254,6 +263,21 @@ export interface ISetting {
   value: Uint8Array;
 }
 
+/** A value of the client or of the user, stored under a key. */
+export interface IKeyValue {
+  key: string;
+  value: Uint8Array;
+}
+
+/** A PSWAP lineage. The other fields repeat the record fields that the queries filter on. */
+export interface IPswapLineage {
+  orderId: string;
+  creatorAccountId: string;
+  currentTipNoteId: string;
+  state: number;
+  record: Uint8Array;
+}
+
 // `witness` stays null until the first sync refreshes it.
 export interface IAccountWitness {
   accountId: string;
@@ -376,8 +400,10 @@ declare module "dexie" {
     blockHeaders: Table<IBlockHeader, number>;
     partialBlockchainNodes: Table<IPartialBlockchainNode, number>;
     foreignAccountCode: Table<IForeignAccountCode, string>;
-    settings: Table<ISetting, [number, string]>;
     accountWitnesses: Table<IAccountWitness, string>;
+    clientConfig: Table<IKeyValue, string>;
+    userSettings: Table<IKeyValue, string>;
+    pswapLineages: Table<IPswapLineage, string>;
   }
 }
 
@@ -404,8 +430,10 @@ export type MidenDexie = Dexie & {
   partialBlockchainNodes: Dexie.Table<IPartialBlockchainNode, number>;
   tags: Dexie.Table<ITag, number>;
   foreignAccountCode: Dexie.Table<IForeignAccountCode, string>;
-  settings: Dexie.Table<ISetting, [number, string]>;
   accountWitnesses: Dexie.Table<IAccountWitness, string>;
+  clientConfig: Dexie.Table<IKeyValue, string>;
+  userSettings: Dexie.Table<IKeyValue, string>;
+  pswapLineages: Dexie.Table<IPswapLineage, string>;
 };
 
 export class MidenDatabase {
@@ -432,8 +460,10 @@ export class MidenDatabase {
   partialBlockchainNodes: Dexie.Table<IPartialBlockchainNode, number>;
   tags: Dexie.Table<ITag, number>;
   foreignAccountCode: Dexie.Table<IForeignAccountCode, string>;
-  settings: Dexie.Table<ISetting, [number, string]>;
   accountWitnesses: Dexie.Table<IAccountWitness, string>;
+  clientConfig: Dexie.Table<IKeyValue, string>;
+  userSettings: Dexie.Table<IKeyValue, string>;
+  pswapLineages: Dexie.Table<IPswapLineage, string>;
 
   constructor(network: string) {
     this.dexie = new Dexie(network) as MidenDexie;
@@ -553,6 +583,45 @@ export class MidenDatabase {
       [Table.AccountWitnesses]: indexes("&accountId"),
     });
 
+    // v7 (miden-client 0.18): split `settings`, as SQLite migration 5 does. The user rows move to
+    // `userSettings`. Of the client rows, the protocol configurations and the client version move
+    // to `clientConfig`. The client fetches or rebuilds the other client rows again. The PSWAP rows
+    // are dropped, as SQLite migration 4 drops them. PSWAP lineages get a store of their own.
+    this.dexie
+      .version(7)
+      .stores({
+        [Table.ClientConfig]: indexes("key"),
+        [Table.UserSettings]: indexes("key"),
+        [Table.PswapLineages]: indexes(
+          "orderId",
+          "creatorAccountId",
+          "[state+currentTipNoteId]"
+        ),
+      })
+      .upgrade(async (tx) => {
+        const rows = (await tx.table(Table.Settings).toArray()) as ISetting[];
+        const keyValue = ({ key, value }: ISetting): IKeyValue => ({
+          key,
+          value,
+        });
+        await tx.userSettings.bulkPut(
+          rows.filter((row) => row.scope === SETTING_SCOPE_USER).map(keyValue)
+        );
+        await tx.clientConfig.bulkPut(
+          rows
+            .filter(
+              (row) =>
+                row.scope === SETTING_SCOPE_CLIENT &&
+                (row.key === CLIENT_VERSION_SETTING_KEY ||
+                  row.key.startsWith(PROTOCOL_CONFIG_KEY_PREFIX))
+            )
+            .map(keyValue)
+        );
+      });
+
+    // v8: drop `settings`, after v7 copied the rows that it keeps.
+    this.dexie.version(8).stores({ [Table.Settings]: null });
+
     this.accountCodes = this.dexie.table<IAccountCode, string>(
       Table.AccountCode
     );
@@ -618,11 +687,13 @@ export class MidenDatabase {
     this.foreignAccountCode = this.dexie.table<IForeignAccountCode, string>(
       Table.ForeignAccountCode
     );
-    this.settings = this.dexie.table<ISetting, [number, string]>(
-      Table.Settings
-    );
     this.accountWitnesses = this.dexie.table<IAccountWitness, string>(
       Table.AccountWitnesses
+    );
+    this.clientConfig = this.dexie.table<IKeyValue, string>(Table.ClientConfig);
+    this.userSettings = this.dexie.table<IKeyValue, string>(Table.UserSettings);
+    this.pswapLineages = this.dexie.table<IPswapLineage, string>(
+      Table.PswapLineages
     );
 
     this.dexie.on("populate", () => {
@@ -700,13 +771,10 @@ export class MidenDatabase {
     await this.persistClientVersion(clientVersion);
   }
 
-  // This store is the client, so its own bookkeeping belongs to the `Client` scope, which the
+  // The client version is client bookkeeping, so it lives in `clientConfig`, which the
   // user-facing settings API never reaches.
   private async getStoredClientVersion(): Promise<string | null> {
-    const record = await this.settings.get([
-      SETTING_SCOPE_CLIENT,
-      CLIENT_VERSION_SETTING_KEY,
-    ]);
+    const record = await this.clientConfig.get(CLIENT_VERSION_SETTING_KEY);
     if (!record) {
       return null;
     }
@@ -714,8 +782,7 @@ export class MidenDatabase {
   }
 
   private async persistClientVersion(clientVersion: string): Promise<void> {
-    await this.settings.put({
-      scope: SETTING_SCOPE_CLIENT,
+    await this.clientConfig.put({
       key: CLIENT_VERSION_SETTING_KEY,
       value: textEncoder.encode(clientVersion),
     });

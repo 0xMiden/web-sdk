@@ -28,7 +28,6 @@ use miden_client::transaction::{
     TransactionRequestBuilder as NativeTransactionRequestBuilder,
 };
 use miden_client::{Client, ClientError, Word as NativeWord};
-use miden_protocol::crypto::SequentialCommit;
 
 use crate::models::NoteType;
 use crate::models::account_id::AccountId;
@@ -475,12 +474,16 @@ impl WebClient {
         for item in &items {
             let native_account_id: NativeAccountId = item.account_id().into();
             let native_req: NativeTransactionRequest = item.request().into();
-            maybe_wrap_send(Box::pin(builder.push(native_account_id, native_req)))
-                .await
-                .map_err(|err| js_error_with_context(err, "failed to push transaction to batch"))?;
+            maybe_wrap_send(Box::pin(client.push_to_batch(
+                &mut builder,
+                native_account_id,
+                native_req,
+            )))
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to push transaction to batch"))?;
         }
 
-        maybe_wrap_send(Box::pin(builder.submit()))
+        maybe_wrap_send(Box::pin(client.submit_transaction_batch(builder)))
             .await
             .map(|block_number| block_number.as_u32())
             .map_err(|err| js_error_with_context(err, "failed to submit transaction batch"))
@@ -1101,11 +1104,7 @@ async fn fee_aware_builder_with(
     // loads foreign accounts (the fee faucet among them) at a block the node prunes after ~50
     // blocks.
     let auth_args = multisig_auth_args(client, overrides).await?;
-    let commitment = auth_args.to_commitment();
-    builder = builder
-        .auth_arg(commitment)
-        .extend_advice_map([(commitment, auth_args.to_elements())])
-        .block_numbers([auth_args.bound_block_num()]);
+    builder = builder.auth_args(&auth_args).block_numbers([auth_args.bound_block_num()]);
     Ok(builder)
 }
 

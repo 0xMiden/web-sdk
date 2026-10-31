@@ -32,28 +32,33 @@ use miden_client::account::{
 use miden_client::asset::{Asset, AssetId, AssetVault, AssetWitness, StorageMapWitness};
 use miden_client::block::{AccountWitness, BlockHeader};
 use miden_client::crypto::{InOrderIndex, MmrPeaks};
-use miden_client::note::{BlockNumber, NoteScript, Nullifier};
+use miden_client::note::{BlockNumber, NoteId, NoteScript, NoteTag, Nullifier};
+use miden_client::note_transport::NoteTransportCursor;
+use miden_client::protocol_config::ProtocolConfig;
+use miden_client::pswap::{PswapLineageFilter, PswapLineageRecord};
+use miden_client::rpc::RpcLimits;
+use miden_client::rpc::encryption::TransactionEncryptionKey;
 use miden_client::store::{
-    AccountRecord,
     AccountStatus,
-    AccountStorageFilter,
     BlockRelevance,
-    ClientAccountType,
-    InputNoteCursor,
     InputNoteRecord,
     NoteFilter,
     OutputNoteRecord,
-    PartialBlockchainFilter,
-    SettingMutation,
-    SettingScope,
     Store,
     StoreError,
     TransactionFilter,
 };
 use miden_client::sync::{NoteTagRecord, StateSyncUpdate};
-use miden_client::transaction::{TransactionRecord, TransactionStoreUpdate};
+use miden_client::transaction::{BatchStoreUpdate, TransactionRecord, TransactionStoreUpdate};
 use miden_client::utils::RwLock;
 use miden_client::{Felt, Word};
+use miden_client_core::store::{
+    AccountRecord,
+    AccountStorageFilter,
+    ClientAccountType,
+    InputNoteCursor,
+    PartialBlockchainFilter,
+};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use wasm_bindgen::prelude::*;
@@ -67,6 +72,7 @@ mod forest;
 pub mod import;
 pub mod note;
 mod promise;
+mod pswap;
 pub mod settings;
 pub mod sync;
 pub mod transaction;
@@ -169,9 +175,9 @@ impl Store for IdxdbStore {
 
     async fn apply_transaction_batch(
         &self,
-        tx_updates: Vec<TransactionStoreUpdate>,
+        batch_update: BatchStoreUpdate,
     ) -> Result<(), StoreError> {
-        self.apply_transaction_batch_atomic(tx_updates).await
+        self.apply_transaction_batch_atomic(batch_update).await
     }
 
     // NOTES
@@ -434,37 +440,106 @@ impl Store for IdxdbStore {
     // SETTINGS
     // --------------------------------------------------------------------------------------------
 
-    async fn set_setting(
+    async fn set_setting(&self, key: String, value: Vec<u8>) -> Result<(), StoreError> {
+        self.set_setting(key, value).await
+    }
+
+    async fn get_setting(&self, key: String) -> Result<Option<Vec<u8>>, StoreError> {
+        self.get_setting(key).await
+    }
+
+    async fn remove_setting(&self, key: String) -> Result<bool, StoreError> {
+        self.remove_setting(key).await
+    }
+
+    async fn list_setting_keys(&self) -> Result<Vec<String>, StoreError> {
+        self.list_setting_keys().await
+    }
+
+    // PSWAP
+    // --------------------------------------------------------------------------------------------
+
+    async fn get_pswap_lineage(
         &self,
-        scope: SettingScope,
-        key: String,
-        value: Vec<u8>,
+        order_id: Felt,
+    ) -> Result<Option<PswapLineageRecord>, StoreError> {
+        self.get_pswap_lineage(order_id).await
+    }
+
+    async fn get_pswap_order_id_by_tip(&self, tip: NoteId) -> Result<Option<Felt>, StoreError> {
+        self.get_pswap_order_id_by_tip(tip).await
+    }
+
+    async fn get_pswap_lineages(
+        &self,
+        filter: PswapLineageFilter,
+    ) -> Result<Vec<PswapLineageRecord>, StoreError> {
+        self.get_pswap_lineages(&filter).await
+    }
+
+    async fn upsert_pswap_lineage(&self, record: &PswapLineageRecord) -> Result<(), StoreError> {
+        self.upsert_pswap_lineage(record).await
+    }
+
+    // TRANSPORT
+    // --------------------------------------------------------------------------------------------
+
+    async fn get_note_transport_cursors(
+        &self,
+    ) -> Result<BTreeMap<NoteTag, NoteTransportCursor>, StoreError> {
+        self.get_note_transport_cursors().await
+    }
+
+    async fn set_note_transport_cursors(
+        &self,
+        cursors: &BTreeMap<NoteTag, NoteTransportCursor>,
     ) -> Result<(), StoreError> {
-        self.set_setting(scope, key, value).await
+        self.set_note_transport_cursors(cursors).await
     }
 
-    async fn get_setting(
+    // PROTOCOL CONFIG
+    // --------------------------------------------------------------------------------------------
+
+    async fn get_protocol_config(
         &self,
-        scope: SettingScope,
-        key: String,
-    ) -> Result<Option<Vec<u8>>, StoreError> {
-        self.get_setting(scope, key).await
+        commitment: Word,
+    ) -> Result<Option<ProtocolConfig>, StoreError> {
+        self.get_protocol_config(commitment).await
     }
 
-    async fn remove_setting(&self, scope: SettingScope, key: String) -> Result<bool, StoreError> {
-        self.remove_setting(scope, key).await
+    async fn insert_protocol_config(&self, config: &ProtocolConfig) -> Result<(), StoreError> {
+        self.insert_protocol_config(config).await
     }
 
-    async fn list_setting_keys(&self, scope: SettingScope) -> Result<Vec<String>, StoreError> {
-        self.list_setting_keys(scope).await
+    // RPC LIMITS
+    // --------------------------------------------------------------------------------------------
+
+    async fn get_rpc_limits(&self) -> Result<Option<RpcLimits>, StoreError> {
+        self.get_rpc_limits().await
     }
 
-    async fn apply_settings_mutations(
+    async fn set_rpc_limits(&self, limits: RpcLimits) -> Result<(), StoreError> {
+        self.set_rpc_limits(limits).await
+    }
+
+    // TRANSACTION ENCRYPTION KEY
+    // --------------------------------------------------------------------------------------------
+
+    async fn get_transaction_encryption_key(
         &self,
-        scope: SettingScope,
-        mutations: Vec<SettingMutation>,
+    ) -> Result<Option<TransactionEncryptionKey>, StoreError> {
+        self.get_transaction_encryption_key().await
+    }
+
+    async fn set_transaction_encryption_key(
+        &self,
+        key: &TransactionEncryptionKey,
     ) -> Result<(), StoreError> {
-        self.apply_settings_mutations(scope, mutations).await
+        self.set_transaction_encryption_key(key).await
+    }
+
+    async fn remove_transaction_encryption_key(&self) -> Result<(), StoreError> {
+        self.remove_transaction_encryption_key().await
     }
 }
 
