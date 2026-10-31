@@ -8,12 +8,24 @@ use miden_client::keystore::KeyStoreError;
 use miden_client::utils::Deserializable;
 use miden_client::{AuthenticationError, Word as NativeWord};
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::js_sys::{Function, Promise, Reflect, Uint8Array};
 use wasm_bindgen_futures::JsFuture;
-use wasm_bindgen_futures::js_sys::{Function, Promise, Uint8Array};
 
 use crate::models::auth_secret_key::AuthSecretKey as WebAuthSecretKey;
 use crate::models::signature::Signature;
 use crate::models::signing_inputs::SigningInputs;
+
+fn callback_storage_error(fallback: &str, error: &JsValue) -> KeyStoreError {
+    let message = error
+        .as_string()
+        .or_else(|| Reflect::get(error, &JsValue::from_str("message")).ok()?.as_string())
+        .filter(|message| !message.is_empty());
+
+    KeyStoreError::StorageError(match message {
+        Some(message) => format!("{fallback}: {message}"),
+        None => fallback.to_string(),
+    })
+}
 
 /// Wrapper for the JavaScript `getKey` callback.
 /// Expected JS signature: `(pubKeyCommitment: Uint8Array) => Promise<Uint8Array | null | undefined>
@@ -29,11 +41,11 @@ impl GetKeyCallback {
         let call_result = self
             .0
             .call1(&JsValue::NULL, &JsValue::from(pub_key_array))
-            .map_err(|err| KeyStoreError::StorageError(format!("JS getKey threw: {err:?}")))?;
+            .map_err(|err| callback_storage_error("JS getKey threw", &err))?;
 
         let resolved = if let Some(promise) = call_result.dyn_ref::<Promise>() {
-            JsFuture::from(promise.clone()).await.map_err(|_| {
-                KeyStoreError::StorageError("Failed to get secret key via callback".to_string())
+            JsFuture::from(promise.clone()).await.map_err(|err| {
+                callback_storage_error("Failed to get secret key via callback", &err)
             })?
         } else {
             call_result
@@ -72,12 +84,12 @@ impl InsertKeyCallback {
                 &JsValue::from(pub_key_commitment.as_bytes().to_vec()),
                 &JsValue::from(secret_key.serialize()),
             )
-            .map_err(|err| KeyStoreError::StorageError(format!("JS insertKey threw: {err:?}")))?;
+            .map_err(|err| callback_storage_error("JS insertKey threw", &err))?;
 
         if let Some(promise) = result.dyn_ref::<Promise>() {
-            JsFuture::from(promise.clone()).await.map_err(|_| {
-                KeyStoreError::StorageError("Failed to insert key via callback".to_string())
-            })?;
+            JsFuture::from(promise.clone())
+                .await
+                .map_err(|err| callback_storage_error("Failed to insert key via callback", &err))?;
         }
         Ok(())
     }
