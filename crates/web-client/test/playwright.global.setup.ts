@@ -191,8 +191,7 @@ export const test = base.extend<{ forEachTest: void }>({
               getKeyCb,
               insertKeyCb,
               signCb,
-              clientStoreName,
-              callbackTimeoutMs
+              clientStoreName
             ) =>
               window.WasmWebClient.createClientWithExternalKeystore(
                 window.rpcUrl,
@@ -205,8 +204,7 @@ export const test = base.extend<{ forEachTest: void }>({
                 undefined, // logLevel
                 undefined, // useWorker, defaulted
                 undefined, // observability
-                window.feeFaucetId,
-                callbackTimeoutMs
+                window.feeFaucetId
               );
 
             // The test node runs a prover beside its RPC. Expose its URL
