@@ -53,7 +53,7 @@ struct JsCallbacks {
     insert_key: Option<InsertKeyCallback>,
     sign: Option<SignCallback>,
     /// The latest raw sign rejection or readable external getKey failure.
-    /// Mutating WebClient calls are serialized, so this slot has a single writer.
+    /// Mutating `WebClient` calls are serialized, so this slot has a single writer.
     last_auth_error: RefCell<JsValue>,
 }
 
