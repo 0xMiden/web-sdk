@@ -165,19 +165,18 @@ before retrying.
 import { MidenClient } from "@miden-sdk/miden-sdk";
 
 // Testnet - autoSync on, testnet RPC + prover + note transport
-const client = await MidenClient.createTestnet({ feeFaucetId: FEE_FAUCET });
+const client = await MidenClient.createTestnet();
 
 // Devnet equivalent
-const client = await MidenClient.createDevnet({ feeFaucetId: FEE_FAUCET });
+const client = await MidenClient.createDevnet();
 ```
 
-`feeFaucetId` is not optional today, on any `MidenClient` factory but `createMock`. Since
-0.17 the chain's fee asset lives in a protocol configuration the node does not
-serve over RPC, and the SDK carries a per-network default for no network yet, so
-a client created without it fails with an error naming the option. It is the
-faucet the chain mints its fee asset from: ask whoever runs the network, or read
-it from a local node's genesis. Snippets below leave it out to keep their own
-point legible.
+`feeFaucetId` is optional. Since 0.17 the chain's fee asset lives in the
+protocol configuration, which the client receives from the node when it syncs,
+so execution never needs the option: it only sets what `client.feeFaucetId()`
+reports before the first sync. Before that sync, a client created without it
+rejects `feeFaucetId()` and asks you to sync first; a mock client reports its
+mock chain's own faucet.
 
 Both accept the same `ClientOptions` for overrides:
 
@@ -194,7 +193,7 @@ const client = await MidenClient.createTestnet({
 ```typescript
 const client = await MidenClient.create({
   rpcUrl: "https://rpc.testnet.miden.io", // string URL or "testnet"/"devnet"/"localhost"/"local"
-  feeFaucetId: FEE_FAUCET, // required - the chain's fee faucet, bech32 or hex
+  feeFaucetId: FEE_FAUCET, // optional - what feeFaucetId() reports before the first sync
   noteTransportUrl: "https://transport.miden.io",
   noteTransportMaxRetries: 3, // optional - in-call retries of a private note send; see below
   noteTransportRetryIntervalMs: 250, // optional - delay before the first retry, in ms
