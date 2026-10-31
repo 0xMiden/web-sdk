@@ -34,6 +34,9 @@ export interface UseBatchResult {
  * responsive while it proves; with `useWorker: false`, or without `Worker`
  * support, it proves on the calling thread and blocks the page until it
  * settles, so keep batches small there.
+ * Through the worker, `sign` waits without a limit unless `callbackTimeoutMs`
+ * sets one, so a stalled signer holds the batch and later worker calls. See
+ * https://github.com/0xMiden/web-sdk/blob/main/packages/react-sdk/README.md#keystore-callback-timeouts
  * A later tx may consume a note produced by an earlier one (even across accounts);
  * push order must respect producer-before-consumer.
  *
