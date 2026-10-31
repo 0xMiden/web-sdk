@@ -134,6 +134,78 @@ test.describe("remote keystore", () => {
     expect(message).toMatch(/Callback insertKey-string timed out after 1000ms/);
   });
 
+  test("renders a synchronous insertKey throw on the direct callback path", async ({
+    page,
+  }) => {
+    const message = await page.evaluate(async () => {
+      const client =
+        await window.WasmWebClient.createClientWithExternalKeystore(
+          window.rpcUrl,
+          undefined,
+          undefined,
+          `${window.storeName}-insert-key-sync-error-direct`,
+          undefined,
+          () => {
+            throw new Error("synchronous insertKey failure");
+          },
+          undefined,
+          undefined,
+          false,
+          undefined,
+          window.feeFaucetId
+        );
+
+      try {
+        await client.newWallet(
+          window.AccountStorageMode.private(),
+          window.AuthScheme.AuthRpoFalcon512,
+          undefined
+        );
+        return "wallet creation unexpectedly succeeded";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+
+    expect(message).toContain("synchronous insertKey failure");
+    expect(message).not.toContain("JsValue(");
+  });
+
+  test("renders a primitive insertKey rejection on the direct callback path", async ({
+    page,
+  }) => {
+    const message = await page.evaluate(async () => {
+      const client =
+        await window.WasmWebClient.createClientWithExternalKeystore(
+          window.rpcUrl,
+          undefined,
+          undefined,
+          `${window.storeName}-insert-key-primitive-error-direct`,
+          undefined,
+          () => Promise.reject("primitive insertKey failure"),
+          undefined,
+          undefined,
+          false,
+          undefined,
+          window.feeFaucetId
+        );
+
+      try {
+        await client.newWallet(
+          window.AccountStorageMode.private(),
+          window.AuthScheme.AuthRpoFalcon512,
+          undefined
+        );
+        return "wallet creation unexpectedly succeeded";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+
+    expect(message).toContain("primitive insertKey failure");
+    expect(message).not.toContain("JsValue(");
+  });
+
   test("should create a client with a remote keystore", async ({ page }) => {
     const client = await page.evaluate(async () => {
       const insertKeyCb = async (
