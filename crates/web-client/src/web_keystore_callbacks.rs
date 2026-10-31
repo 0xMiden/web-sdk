@@ -16,10 +16,14 @@ use crate::models::signature::Signature;
 use crate::models::signing_inputs::SigningInputs;
 
 fn callback_storage_error(prefix: &str, err: JsValue) -> KeyStoreError {
-    let detail = Reflect::get(&err, &JsValue::from_str("message"))
-        .ok()
-        .and_then(|message| message.as_string())
-        .filter(|message| !message.is_empty())
+    let detail = err
+        .as_string()
+        .or_else(|| {
+            Reflect::get(&err, &JsValue::from_str("message"))
+                .ok()
+                .and_then(|message| message.as_string())
+                .filter(|message| !message.is_empty())
+        })
         .unwrap_or_else(|| format!("{err:?}"));
 
     KeyStoreError::StorageError(format!("{prefix}: {detail}"))
@@ -39,7 +43,7 @@ impl GetKeyCallback {
         let call_result = self
             .0
             .call1(&JsValue::NULL, &JsValue::from(pub_key_array))
-            .map_err(|err| KeyStoreError::StorageError(format!("JS getKey threw: {err:?}")))?;
+            .map_err(|err| callback_storage_error("JS getKey threw", err))?;
 
         let resolved = if let Some(promise) = call_result.dyn_ref::<Promise>() {
             JsFuture::from(promise.clone()).await.map_err(|err| {
@@ -82,7 +86,7 @@ impl InsertKeyCallback {
                 &JsValue::from(pub_key_commitment.as_bytes().to_vec()),
                 &JsValue::from(secret_key.serialize()),
             )
-            .map_err(|err| KeyStoreError::StorageError(format!("JS insertKey threw: {err:?}")))?;
+            .map_err(|err| callback_storage_error("JS insertKey threw", err))?;
 
         if let Some(promise) = result.dyn_ref::<Promise>() {
             JsFuture::from(promise.clone())
