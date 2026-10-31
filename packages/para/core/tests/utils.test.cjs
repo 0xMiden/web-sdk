@@ -33,6 +33,34 @@ const loadUtils = (mocks = {}) => {
   }
 };
 
+const loadParaMidenClient = (mocks = {}) => {
+  const originalLoad = Module._load;
+  Module._load = function patchedLoad(request, parent, isMain) {
+    if (Object.hasOwn(mocks, request)) return mocks[request];
+    return originalLoad.apply(this, [request, parent, isMain]);
+  };
+
+  try {
+    const filePath = path.resolve(__dirname, "../src/midenClient.ts");
+    const source = fs.readFileSync(filePath, "utf8");
+    const { outputText } = ts.transpileModule(source, {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2020,
+      },
+      fileName: filePath,
+    });
+
+    const compiledModule = new Module(filePath, module);
+    compiledModule.filename = filePath;
+    compiledModule.paths = Module._nodeModulePaths(path.dirname(filePath));
+    compiledModule._compile(outputText, filePath);
+    return compiledModule.exports;
+  } finally {
+    Module._load = originalLoad;
+  }
+};
+
 test("accountSeedFromStr handles missing seeds gracefully", () => {
   const { accountSeedFromStr } = loadUtils();
   const result = accountSeedFromStr();
@@ -438,3 +466,45 @@ test("txSummaryToJson refuses to report unknown output assets as none", () => {
     /carries no asset data/
   );
 });
+
+for (const callbackTimeoutMs of [0, 120000]) {
+  test(`createParaMidenClient forwards callbackTimeoutMs ${callbackTimeoutMs}`, async () => {
+    const createdOptions = [];
+    const sdk = {
+      MidenClient: {
+        create: async (options) => {
+          createdOptions.push(options);
+          throw new Error("stop after create");
+        },
+      },
+    };
+    const { createParaMidenClient } = loadParaMidenClient({
+      "@getpara/web-sdk": { hexStringToBase64: (value) => value },
+      "@noble/hashes/sha3.js": { keccak_256: () => new Uint8Array() },
+      "@noble/hashes/utils.js": {
+        bytesToHex: () => "",
+        hexToBytes: () => new Uint8Array(),
+      },
+      "./utils.js": {
+        accountSeedFromStr: () => undefined,
+        getUncompressedPublicKeyFromWallet: async (_para, wallet) =>
+          wallet.publicKey,
+        resolveEvmWallets: (_para, wallets) => wallets,
+      },
+      "./modalClient.js": { accountSelectionModal: async () => 0 },
+    });
+
+    await assert.rejects(
+      withMockedSdk(sdk, () =>
+        createParaMidenClient(
+          {},
+          [{ id: "wallet-1", type: "EVM", publicKey: "0xpublic" }],
+          { endpoint: "testnet", storageMode: "public", callbackTimeoutMs },
+          false
+        )
+      ),
+      /stop after create/
+    );
+    assert.strictEqual(createdOptions[0].callbackTimeoutMs, callbackTimeoutMs);
+  });
+}

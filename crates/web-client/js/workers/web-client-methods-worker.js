@@ -1,5 +1,6 @@
 import loadWasm from "../../dist/wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "../constants.js";
+import { createCallbackForwarder } from "../callbackBridge.js";
 
 let wasmModule = null;
 
@@ -93,71 +94,25 @@ let ready = false; // Indicates if the worker is fully initialized.
 let messageQueue = []; // Queue for sequential processing.
 let processing = false; // Flag to ensure one message is processed at a time.
 
-// Track pending callback requests
-let pendingCallbacks = new Map();
+// The `callbackTimeoutMs` client option, received with INIT.
+let callbackTimeoutMs;
 
-// Timeout for pending callbacks (30 seconds)
-const CALLBACK_TIMEOUT_MS = 30000;
+// Keystore callbacks run on the main thread; this forwards each one there and
+// settles it from the reply `self.onmessage` hands back.
+const callbackForwarder = createCallbackForwarder({
+  post: (request) =>
+    self.postMessage({ action: WorkerAction.EXECUTE_CALLBACK, ...request }),
+  timeoutMs: () => callbackTimeoutMs,
+});
 
 // Define proxy functions for callbacks that communicate with main thread
 const callbackProxies = {
-  getKey: async (pubKey) => {
-    return new Promise((resolve, reject) => {
-      const requestId = `${CallbackType.GET_KEY}-${Date.now()}-${Math.random()}`;
-      const timeoutId = setTimeout(() => {
-        if (pendingCallbacks.has(requestId)) {
-          pendingCallbacks.delete(requestId);
-          reject(new Error(`Callback ${requestId} timed out`));
-        }
-      }, CALLBACK_TIMEOUT_MS);
-      pendingCallbacks.set(requestId, { resolve, reject, timeoutId });
-
-      self.postMessage({
-        action: WorkerAction.EXECUTE_CALLBACK,
-        callbackType: CallbackType.GET_KEY,
-        args: [pubKey],
-        requestId,
-      });
-    });
-  },
-  insertKey: async (pubKey, secretKey) => {
-    return new Promise((resolve, reject) => {
-      const requestId = `${CallbackType.INSERT_KEY}-${Date.now()}-${Math.random()}`;
-      const timeoutId = setTimeout(() => {
-        if (pendingCallbacks.has(requestId)) {
-          pendingCallbacks.delete(requestId);
-          reject(new Error(`Callback ${requestId} timed out`));
-        }
-      }, CALLBACK_TIMEOUT_MS);
-      pendingCallbacks.set(requestId, { resolve, reject, timeoutId });
-
-      self.postMessage({
-        action: WorkerAction.EXECUTE_CALLBACK,
-        callbackType: CallbackType.INSERT_KEY,
-        args: [pubKey, secretKey],
-        requestId,
-      });
-    });
-  },
-  sign: async (pubKey, signingInputs) => {
-    return new Promise((resolve, reject) => {
-      const requestId = `${CallbackType.SIGN}-${Date.now()}-${Math.random()}`;
-      const timeoutId = setTimeout(() => {
-        if (pendingCallbacks.has(requestId)) {
-          pendingCallbacks.delete(requestId);
-          reject(new Error(`Callback ${requestId} timed out`));
-        }
-      }, CALLBACK_TIMEOUT_MS);
-      pendingCallbacks.set(requestId, { resolve, reject, timeoutId });
-
-      self.postMessage({
-        action: WorkerAction.EXECUTE_CALLBACK,
-        callbackType: CallbackType.SIGN,
-        args: [pubKey, signingInputs],
-        requestId,
-      });
-    });
-  },
+  getKey: async (pubKey) =>
+    callbackForwarder.forward(CallbackType.GET_KEY, [pubKey]),
+  insertKey: async (pubKey, secretKey) =>
+    callbackForwarder.forward(CallbackType.INSERT_KEY, [pubKey, secretKey]),
+  sign: async (pubKey, signingInputs) =>
+    callbackForwarder.forward(CallbackType.SIGN, [pubKey, signingInputs]),
 };
 
 // Define a mapping from method names to handler functions.
@@ -480,7 +435,9 @@ async function processMessage(event) {
         logLevel,
         numThreads,
         feeFaucetId,
+        initCallbackTimeoutMs,
       ] = args;
+      callbackTimeoutMs = initCallbackTimeoutMs;
       const wasm = await getWasmOrThrow();
 
       if (logLevel) {
@@ -605,20 +562,7 @@ async function processQueue() {
 
 // Enqueue incoming messages and process them sequentially.
 self.onmessage = (event) => {
-  if (
-    event.data.callbackRequestId &&
-    pendingCallbacks.has(event.data.callbackRequestId)
-  ) {
-    const { callbackRequestId, callbackResult, callbackError } = event.data;
-    const { resolve, reject, timeoutId } =
-      pendingCallbacks.get(callbackRequestId);
-    clearTimeout(timeoutId);
-    pendingCallbacks.delete(callbackRequestId);
-    if (!callbackError) {
-      resolve(callbackResult);
-    } else {
-      reject(new Error(callbackError));
-    }
+  if (callbackForwarder.handleReply(event.data)) {
     return;
   }
   messageQueue.push(event);
