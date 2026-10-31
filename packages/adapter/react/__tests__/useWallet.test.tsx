@@ -8,8 +8,8 @@ import {
   type WalletAdapterEvents,
   type WalletName,
 } from "@miden-sdk/miden-wallet-adapter-base";
-import { WalletProvider } from "../WalletProvider";
-import { useWallet, type WalletContextState } from "../useWallet";
+import { WalletProvider } from "../WalletProvider.js";
+import { useWallet, type WalletContextState } from "../useWallet.js";
 
 const connectWithoutPerCallSettings = (wallet: WalletContextState) =>
   wallet.connect();
