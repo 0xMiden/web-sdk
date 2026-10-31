@@ -21,6 +21,7 @@
 
 ### Fixes
 
+* [FIX][web] Rejections from external keystore `getKey` and `insertKey` callbacks preserve their error message when surfaced through Rust storage errors, including the worker timeout ID and duration ([#516](https://github.com/0xMiden/web-sdk/pull/516)).
 * [FIX][web] Callback errors with cyclic causes or throwing property getters now return a cloneable failure reply, so the worker rejects the waiting call instead of leaving it pending. Unreadable values use a stable fallback message.
 * [FIX][web] `ClientOptions.callbackTimeoutMs` greater than 2147483647 is rejected with `TypeError` at client creation. That is the largest delay `setTimeout` can store, so a larger value used to wrap and could time out a keystore callback almost immediately ([#316](https://github.com/0xMiden/web-sdk/issues/316), [#512](https://github.com/0xMiden/web-sdk/pull/512)).
 * [FIX][web] `MidenClient.create` throws `TypeError` for an invalid `callbackTimeoutMs` when no external keystore is supplied. A negative, non-finite, or greater-than-2147483647 value is refused before either client factory runs, including from `create`, `createTestnet`, and `createDevnet`. A valid value on the no-keystore path remains omitted from the `createClient` argument list ([#316](https://github.com/0xMiden/web-sdk/issues/316), [#512](https://github.com/0xMiden/web-sdk/pull/512)).
