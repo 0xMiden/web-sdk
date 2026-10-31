@@ -3,6 +3,77 @@ import test from "./playwright.global.setup";
 import { expect } from "@playwright/test";
 
 test.describe("remote keystore", () => {
+  test("includes the worker getKey timeout in export failures", async ({
+    page,
+  }) => {
+    const message = await page.evaluate(async () => {
+      const client =
+        await window.WasmWebClient.createClientWithExternalKeystore(
+          window.rpcUrl,
+          undefined,
+          undefined,
+          "remote-keystore-get-key-timeout",
+          () => new Promise<Uint8Array>(() => {}),
+          async () => {},
+          undefined,
+          undefined,
+          true,
+          undefined,
+          window.feeFaucetId,
+          1000
+        );
+      const wallet = await client.newWallet(
+        window.AccountStorageMode.private(),
+        window.AuthScheme.AuthRpoFalcon512,
+        undefined
+      );
+
+      try {
+        await client.exportAccountFile(wallet.id());
+        return "export unexpectedly succeeded";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+
+    expect(message).toMatch(/Callback getKey-.+ timed out after 1000ms/);
+  });
+
+  test("includes the worker insertKey timeout in newWallet failures", async ({
+    page,
+  }) => {
+    const message = await page.evaluate(async () => {
+      const client =
+        await window.WasmWebClient.createClientWithExternalKeystore(
+          window.rpcUrl,
+          undefined,
+          undefined,
+          "remote-keystore-insert-key-timeout",
+          undefined,
+          () => new Promise<void>(() => {}),
+          undefined,
+          undefined,
+          true,
+          undefined,
+          window.feeFaucetId,
+          1000
+        );
+
+      try {
+        await client.newWallet(
+          window.AccountStorageMode.private(),
+          window.AuthScheme.AuthRpoFalcon512,
+          undefined
+        );
+        return "wallet creation unexpectedly succeeded";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+
+    expect(message).toMatch(/Callback insertKey-.+ timed out after 1000ms/);
+  });
+
   test("should create a client with a remote keystore", async ({ page }) => {
     const client = await page.evaluate(async () => {
       const insertKeyCb = async (
