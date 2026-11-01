@@ -137,8 +137,25 @@ to `false` when you pass a `CallbackProver` from
 `TransactionProver.newCallbackProver(jsFn)` (the worker boundary serializes the
 prover and silently downgrades the callback variant to `"local"`), or when
 embedding in a single-WebView native shell. `client.lastAuthError()` - which
-returns the raw value your sign callback threw - is only meaningful with
-`useWorker: false`.
+returns the raw sign rejection or a readable external `getKey` failure string -
+is only meaningful with `useWorker: false`. `executeTransaction` clears the stored
+detail when it starts, as does a successful sign or `getKey` callback. On both worker and direct
+paths, failed `executeTransaction` calls include any missing readable callback detail.
+
+Under the worker, `keystore` callbacks run on the main thread and the worker
+waits for each one. `callbackTimeoutMs` sets that wait: left unset, `sign` has
+no limit (a wallet or hardware approval can take minutes) and `getKey` and
+`insertKey` fail after 30 seconds; a positive value applies to all three,
+rounded up to a whole millisecond, and `0` removes all three limits. A negative,
+non-finite or non-number value, or one greater than 2147483647, throws
+`TypeError` at creation. Without a limit, a stalled `sign` holds its batch or
+transaction and leaves later worker calls in the queue, so pass a finite value
+such as `callbackTimeoutMs: 120000` if a signer can stall. See the
+[complete contract](https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts).
+Whatever a callback throws counts as a failure, including a
+bare string, `{ code: 4001 }` or `null`; cyclic causes and unreadable thrown
+properties are converted to finite, safe error replies. A failed `sign` fails
+the call with an error that includes the thrown value's message.
 
 There is no `debugMode` option. It was removed in 0.16 along with upstream
 transaction debug mode.
@@ -864,6 +881,10 @@ In the browser the batch runs in the client's Web Worker, so the page stays
 responsive while it proves; with `useWorker: false`, without `Worker` support,
 or on a mock client it proves on the calling thread and blocks it until it
 settles, so keep batches small there.
+With an external keystore, `sign` waits without a limit unless
+`callbackTimeoutMs` sets one, so a stalled signer holds the batch and later
+worker calls. Set a finite timeout if a signer can stall; see the
+[complete callback timeout contract](https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts).
 
 ### Preview (dry run)
 

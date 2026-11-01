@@ -244,6 +244,30 @@ export interface ClientOptions {
     sign: SignCallback;
   };
   /**
+   * How long, in milliseconds, the client waits for each `keystore` callback
+   * (`getKey`, `insertKey`, `sign`) before the call that needed it fails with
+   * `Callback <id> timed out after <n>ms`.
+   *
+   * Applies only when the callbacks run through the Web Worker (the browser
+   * default; see `useWorker`). Left unset, `sign` waits without a limit, since
+   * it can wait on a person approving in a wallet or on a hardware device, and
+   * `getKey` and `insertKey` time out after 30 seconds. A positive value applies
+   * to all three callbacks, rounded up to a whole millisecond, and `0` removes
+   * the limit for all three. Throws a `TypeError` at creation for a negative,
+   * non-finite, non-number, or greater-than-2147483647 value.
+   *
+   * Without a limit, a stalled `sign` holds its batch or transaction and leaves
+   * later worker calls in the queue; set a finite value if a signer can stall.
+   * See https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
+   *
+   * Under the Web Worker, a callback that throws counts as a failure whatever
+   * it throws: an `Error`, a string, an object such as `{ code: 4001 }`, or
+   * `null`. Cyclic causes are reported as a finite cause chain, and unreadable
+   * thrown properties use a safe fallback message. A failed `sign` fails the
+   * call with an error that includes the thrown value's message.
+   */
+  callbackTimeoutMs?: number;
+  /**
    * Enable the Web Worker shim that runs WASM calls off the main thread.
    * Defaults to `true` — leave it that way in browsers/extensions so the UI
    * stays responsive while WASM is busy.
@@ -1431,6 +1455,9 @@ export interface TransactionsResource {
    * page's main thread stays responsive; without a worker (`useWorker: false`,
    * or no `Worker` in the environment), and on a mock client, it proves on the
    * calling thread and blocks it until it settles.
+   * Through the worker, `sign` waits without a limit unless `callbackTimeoutMs`
+   * sets one, so a stalled signer holds the batch and later worker calls. See
+   * https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
    *
    * The named operations attach fee conversion info themselves; a request you
    * supply through the `custom` operation is subject to the fee checks
@@ -1463,15 +1490,14 @@ export interface TransactionsResource {
    *   In the browser the batch runs in the client's Web Worker where it has
    *   one; see {@link batch} for when it runs in-thread instead.
    *
-   *   With an external keystore and a worker, each of the batch's signature
-   *   callbacks has the worker's fixed 30s ceiling, and since signing happens
-   *   at push time and this wrapper treats a failed push as fatal, one timeout
-   *   fails the whole batch. A rejection thrown as a non-nullish value with no
-   *   truthy `.message` (a bare string, `{ code }`) loses its reason and surfaces as
-   *   the generic `sign callback must return a Uint8Array`. Both are shared
-   *   with every worker-forwarded method; tracked in #316. Relatedly,
-   *   `lastAuthError()` reads the main-thread instance, so it does not report
-   *   a forwarded batch's auth error.
+   *   With an external keystore and a worker, signing happens at push time
+   *   and this wrapper treats a failed push as fatal, so one failed or timed
+   *   out signature callback fails the whole batch. `sign` has no time limit
+   *   unless `callbackTimeoutMs` sets one, so a stalled signer holds the batch
+   *   and later worker calls. See
+   *   https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
+   *   Relatedly, `lastAuthError()` reads the main-thread instance, so it does
+   *   not report a forwarded batch's auth error.
    */
   submitBatch(
     items: { account: AccountRef; request: TransactionRequest }[],
@@ -1933,15 +1959,15 @@ export declare class MidenClient {
    */
   waitForIdle(): Promise<void>;
   /**
-   * Returns the raw JS value that the most recent sign-callback invocation
-   * threw, or `null` if the last sign call succeeded (or no call has
-   * happened yet). Useful for recovering structured metadata (e.g. a
-   * `reason: 'locked'` property) that the kernel-level `auth::request`
-   * diagnostic would otherwise erase.
+   * Returns the latest raw sign callback rejection or readable external `getKey`
+   * failure string. Returns `null` after a successful sign or `getKey` callback,
+   * or when `executeTransaction` starts. Raw sign values preserve structured metadata
+   * such as `reason: 'locked'`. Transaction errors include any missing readable
+   * callback detail on both the direct and worker paths.
    *
    * Meaningful only with `useWorker: false` (the worker shim's keystore
    * lives in the worker WASM instance, so this reads `null` there). On
-   * the Node.js binding it always returns `null` — signing goes through
+   * the Node.js binding it always returns `null` - signing goes through
    * the filesystem keystore, never a JS callback.
    */
   lastAuthError(): unknown;

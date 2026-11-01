@@ -1,8 +1,100 @@
 // @ts-nocheck
 import { test, expect } from "./test-setup";
+import browserTest from "./playwright.global.setup";
 
 // CHAIN ANCHOR TESTS
 // =======================================================================================================
+
+browserTest.describe("chain anchor callback details", () => {
+  for (const callbackKind of ["getKey", "sign"] as const) {
+    for (const useWorker of [true, false]) {
+      browserTest(
+        `anchored execution includes external ${callbackKind} details (worker: ${useWorker})`,
+        async ({ page }, testInfo) => {
+          browserTest.skip(testInfo.project.name === "nodejs");
+
+          const result = await page.evaluate(
+            async ({ callbackKind, useWorker }) => {
+              let getKeyCalls = 0;
+              let failCallbacks = false;
+              const keys = new Map<string, Uint8Array>();
+              const callbackMessage = `Callback ${callbackKind} anchored failure`;
+              const client =
+                await window.WasmWebClient.createClientWithExternalKeystore(
+                  window.rpcUrl,
+                  undefined,
+                  undefined,
+                  `${window.storeName}-anchor-callback-${callbackKind}-${useWorker}`,
+                  (commitment: Uint8Array) => {
+                    getKeyCalls++;
+                    if (failCallbacks && callbackKind === "getKey") {
+                      return Promise.reject(new Error(callbackMessage));
+                    }
+                    return Promise.resolve(
+                      keys.get(Array.from(commitment).join(","))
+                    );
+                  },
+                  async (commitment: Uint8Array, key: Uint8Array) => {
+                    keys.set(Array.from(commitment).join(","), key);
+                  },
+                  callbackKind === "sign"
+                    ? async () => {
+                        throw new Error(callbackMessage);
+                      }
+                    : undefined,
+                  undefined,
+                  useWorker,
+                  undefined,
+                  window.feeFaucetId
+                );
+              const faucet = await client.newFaucet(
+                window.AccountStorageMode.private(),
+                false,
+                "DAG",
+                "DAG",
+                8,
+                BigInt(10000000),
+                window.AuthScheme.AuthRpoFalcon512
+              );
+              await client.syncState();
+              const wallet = await client.newWallet(
+                window.AccountStorageMode.private(),
+                window.AuthScheme.AuthRpoFalcon512,
+                undefined
+              );
+              await client.syncState();
+              const request = await client.newMintTransactionRequest(
+                wallet.id(),
+                faucet.id(),
+                window.NoteType.Private,
+                BigInt(5)
+              );
+              const anchor = await client.chainAnchorForRequest(request);
+
+              failCallbacks = true;
+              let errorMessage = "transaction unexpectedly succeeded";
+              try {
+                await client.executeTransactionAt(faucet.id(), request, anchor);
+              } catch (error) {
+                errorMessage =
+                  error instanceof Error ? error.message : String(error);
+              }
+              return { errorMessage, getKeyCalls };
+            },
+            { callbackKind, useWorker }
+          );
+
+          expect(result.errorMessage).toContain(
+            `Callback ${callbackKind} anchored failure`
+          );
+          if (callbackKind === "getKey") {
+            expect(result.getKeyCalls).toBeGreaterThan(0);
+          }
+        }
+      );
+    }
+  }
+});
 
 test.describe("chain anchor", () => {
   test("anchored execution references the anchor block, not the tip", async ({

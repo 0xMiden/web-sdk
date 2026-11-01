@@ -12,6 +12,7 @@ export interface UseTurnkeyMidenOpts {
   noteTransportUrl?: string;
   endpoint?: string;
   organizationId?: string;
+  callbackTimeoutMs?: number;
 }
 
 export interface UseTurnkeyMidenResult {
@@ -84,6 +85,7 @@ export function useTurnkeyMiden(
             noteTransportUrl: opts.noteTransportUrl,
             accountSeed: opts.accountSeed,
             storageMode: accountStorageMode,
+            callbackTimeoutMs: opts.callbackTimeoutMs,
           }
         );
 
@@ -117,6 +119,7 @@ export function useTurnkeyMiden(
     opts.accountSeed,
     opts.noteTransportUrl,
     opts.endpoint,
+    opts.callbackTimeoutMs,
     opts.organizationId,
   ]);
 

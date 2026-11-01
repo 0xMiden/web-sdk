@@ -2,6 +2,8 @@ use alloc::collections::BTreeMap;
 use core::num::NonZeroU32;
 
 use js_export_macro::js_export;
+#[cfg(feature = "browser")]
+use js_sys::Reflect;
 use miden_client::account::standards::auth::{FeeConversionInfo, MultisigAuthArgs};
 use miden_client::account::{AccountComponentInterfaceExt, AccountId as NativeAccountId};
 use miden_client::agglayer::B2AggNote;
@@ -29,6 +31,8 @@ use miden_client::transaction::{
 };
 use miden_client::{Client, ClientError, Word as NativeWord};
 use miden_protocol::crypto::SequentialCommit;
+#[cfg(feature = "browser")]
+use wasm_bindgen::JsValue;
 
 use crate::models::NoteType;
 use crate::models::account_id::AccountId;
@@ -470,6 +474,15 @@ impl WebClient {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
 
+        // `BatchBuilder` borrows `client` until `submit`, so retained callback
+        // detail is read from this keystore handle.
+        #[cfg(feature = "browser")]
+        let keystore = client.authenticator().cloned();
+        #[cfg(feature = "browser")]
+        if let Some(keystore) = keystore.as_ref() {
+            keystore.clear_auth_error();
+        }
+
         let mut builder = client.new_transaction_batch();
 
         for item in &items {
@@ -477,13 +490,30 @@ impl WebClient {
             let native_req: NativeTransactionRequest = item.request().into();
             maybe_wrap_send(Box::pin(builder.push(native_account_id, native_req)))
                 .await
-                .map_err(|err| js_error_with_context(err, "failed to push transaction to batch"))?;
+                .map_err(|err| {
+                    let js_error =
+                        js_error_with_context(err, "failed to push transaction to batch");
+                    #[cfg(feature = "browser")]
+                    append_get_key_detail(
+                        &js_error,
+                        keystore.as_ref().and_then(|keystore| keystore.last_get_key_error()),
+                    );
+                    js_error
+                })?;
         }
 
         maybe_wrap_send(Box::pin(builder.submit()))
             .await
             .map(|block_number| block_number.as_u32())
-            .map_err(|err| js_error_with_context(err, "failed to submit transaction batch"))
+            .map_err(|err| {
+                let js_error = js_error_with_context(err, "failed to submit transaction batch");
+                #[cfg(feature = "browser")]
+                append_get_key_detail(
+                    &js_error,
+                    keystore.as_ref().and_then(|keystore| keystore.last_get_key_error()),
+                );
+                js_error
+            })
     }
 
     /// Executes a transaction specified by the request against the specified account but does not
@@ -501,12 +531,22 @@ impl WebClient {
     ) -> Result<TransactionResult, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        #[cfg(feature = "browser")]
+        if let Some(keystore) = client.authenticator() {
+            keystore.clear_auth_error();
+        }
         let native_request: NativeTransactionRequest = transaction_request.into();
         let fut = Box::pin(client.execute_transaction(account_id.into(), native_request));
-        maybe_wrap_send(fut)
-            .await
-            .map(TransactionResult::from)
-            .map_err(|err| js_error_with_context(err, "failed to execute transaction"))
+        let result = maybe_wrap_send(fut).await;
+        result.map(TransactionResult::from).map_err(|err| {
+            let js_error = js_error_with_context(err, "failed to execute transaction");
+            #[cfg(feature = "browser")]
+            append_get_key_detail(
+                &js_error,
+                client.authenticator().and_then(|keystore| keystore.last_get_key_error()),
+            );
+            js_error
+        })
     }
 
     /// Captures a [`ChainAnchor`] at the client's current sync height, tracking the blocks the
@@ -569,16 +609,25 @@ impl WebClient {
     ) -> Result<TransactionResult, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        #[cfg(feature = "browser")]
+        if let Some(keystore) = client.authenticator() {
+            keystore.clear_auth_error();
+        }
         let native_request: NativeTransactionRequest = transaction_request.into();
         let fut = Box::pin(client.execute_transaction_at(
             account_id.into(),
             native_request,
             anchor.into(),
         ));
-        maybe_wrap_send(fut)
-            .await
-            .map(TransactionResult::from)
-            .map_err(|err| map_anchor_err(err, "failed to execute transaction at anchor"))
+        maybe_wrap_send(fut).await.map(TransactionResult::from).map_err(|err| {
+            let js_error = map_anchor_err(err, "failed to execute transaction at anchor");
+            #[cfg(feature = "browser")]
+            append_get_key_detail(
+                &js_error,
+                client.authenticator().and_then(|keystore| keystore.last_get_key_error()),
+            );
+            js_error
+        })
     }
 
     /// Executes a transaction at `anchor` and returns the `TransactionSummary` the account is
@@ -889,6 +938,25 @@ impl WebClient {
         };
         let builder = fee_aware_builder_with(client, account_id.into(), overrides).await?;
         Ok(TransactionRequestBuilder::from_native(builder))
+    }
+}
+
+/// Appends retained getKey callback detail to a transaction error message.
+///
+/// Native error codes and other properties stay as the caller built them. Detail already present
+/// in the message is not appended again.
+#[cfg(feature = "browser")]
+fn append_get_key_detail(js_error: &JsErr, callback_error: Option<String>) {
+    let Some(callback_error) = callback_error else {
+        return;
+    };
+    let message_key = JsValue::from_str("message");
+    if let Ok(message) = Reflect::get(js_error, &message_key)
+        && let Some(message) = message.as_string()
+        && !message.contains(&callback_error)
+    {
+        let combined = format!("{message}: {callback_error}");
+        let _ = Reflect::set(js_error, &message_key, &JsValue::from_str(&combined));
     }
 }
 

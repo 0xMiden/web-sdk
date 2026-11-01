@@ -401,6 +401,100 @@ const submitDuplicateNoteBatch = async (
 };
 
 test.describe("submitNewTransactionBatch tests", () => {
+  for (const callbackKind of ["getKey", "sign"] as const) {
+    for (const useWorker of [true, false]) {
+      test(`batch submission includes external ${callbackKind} details (worker: ${useWorker})`, async ({
+        page,
+      }) => {
+        const result = await page.evaluate(
+          async ({ callbackKind, useWorker }) => {
+            let getKeyCalls = 0;
+            let failCallbacks = false;
+            const keys = new Map<string, Uint8Array>();
+            const callbackMessage = `Callback ${callbackKind} batch failure`;
+            const client =
+              await window.WasmWebClient.createClientWithExternalKeystore(
+                window.rpcUrl,
+                undefined,
+                undefined,
+                `${window.storeName}-batch-callback-${callbackKind}-${useWorker}`,
+                (commitment: Uint8Array) => {
+                  getKeyCalls++;
+                  if (failCallbacks && callbackKind === "getKey") {
+                    return Promise.reject(new Error(callbackMessage));
+                  }
+                  return Promise.resolve(
+                    keys.get(Array.from(commitment).join(","))
+                  );
+                },
+                async (commitment: Uint8Array, key: Uint8Array) => {
+                  keys.set(Array.from(commitment).join(","), key);
+                },
+                callbackKind === "sign"
+                  ? async () => {
+                      throw new Error(callbackMessage);
+                    }
+                  : undefined,
+                undefined,
+                useWorker,
+                undefined,
+                window.feeFaucetId
+              );
+            const faucet = await client.newFaucet(
+              window.AccountStorageMode.private(),
+              false,
+              "DAG",
+              "DAG",
+              8,
+              BigInt(10000000),
+              window.AuthScheme.AuthRpoFalcon512
+            );
+            await client.syncState();
+            const wallet = await client.newWallet(
+              window.AccountStorageMode.private(),
+              window.AuthScheme.AuthRpoFalcon512,
+              undefined
+            );
+            await client.syncState();
+            const request = await client.newMintTransactionRequest(
+              wallet.id(),
+              faucet.id(),
+              window.NoteType.Private,
+              BigInt(1000)
+            );
+            const secondRequest = await client.newMintTransactionRequest(
+              wallet.id(),
+              faucet.id(),
+              window.NoteType.Private,
+              BigInt(2000)
+            );
+
+            failCallbacks = true;
+            let errorMessage = "batch unexpectedly succeeded";
+            try {
+              await client.submitNewTransactionBatch([
+                new window.BatchItem(faucet.id(), request),
+                new window.BatchItem(faucet.id(), secondRequest),
+              ]);
+            } catch (error) {
+              errorMessage =
+                error instanceof Error ? error.message : String(error);
+            }
+            return { errorMessage, getKeyCalls };
+          },
+          { callbackKind, useWorker }
+        );
+
+        expect(result.errorMessage).toContain(
+          `Callback ${callbackKind} batch failure`
+        );
+        if (callbackKind === "getKey") {
+          expect(result.getKeyCalls).toBeGreaterThan(0);
+        }
+      });
+    }
+  }
+
   test("2-tx batch advances sender nonce by exactly 2", async ({ page }) => {
     test.setTimeout(900000);
 

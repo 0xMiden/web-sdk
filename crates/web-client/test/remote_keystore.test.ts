@@ -3,6 +3,360 @@ import test from "./playwright.global.setup";
 import { expect } from "@playwright/test";
 
 test.describe("remote keystore", () => {
+  for (const useWorker of [true, false]) {
+    test(`includes getKey failure details and clears them on retry (worker: ${useWorker})`, async ({
+      page,
+    }) => {
+      const {
+        failedMessage,
+        retrySucceeded,
+        failedLookupCalls,
+        retryLookupCalls,
+        authErrorMessage,
+        retryAuthError,
+      } = await page.evaluate(async (useWorker) => {
+        let failLookup = true;
+        let getKeyCalls = 0;
+        const keys = new Map<string, Uint8Array>();
+        const client =
+          await window.WasmWebClient.createClientWithExternalKeystore(
+            window.rpcUrl,
+            undefined,
+            undefined,
+            `${window.storeName}-get-key-timeout`,
+            (commitment: Uint8Array) => {
+              getKeyCalls++;
+              if (!failLookup)
+                return Promise.resolve(
+                  keys.get(Array.from(commitment).join(","))
+                );
+              if (useWorker) return new Promise<Uint8Array>(() => {});
+              return Promise.reject(
+                new Error("Callback getKey-direct timed out after 1000ms")
+              );
+            },
+            async (commitment: Uint8Array, key: Uint8Array) => {
+              keys.set(Array.from(commitment).join(","), key);
+            },
+            undefined,
+            undefined,
+            useWorker,
+            undefined,
+            window.feeFaucetId,
+            1000
+          );
+        const faucet = await client.newFaucet(
+          window.AccountStorageMode.private(),
+          false,
+          "DAG",
+          "DAG",
+          8,
+          BigInt(10000000),
+          window.AuthScheme.AuthRpoFalcon512
+        );
+        await client.syncState();
+        const wallet = await client.newWallet(
+          window.AccountStorageMode.private(),
+          window.AuthScheme.AuthRpoFalcon512,
+          undefined
+        );
+        await client.syncState();
+        const txRequest = await (client as any).newMintTransactionRequest(
+          wallet.id(),
+          faucet.id(),
+          window.NoteType.Public,
+          BigInt(1000)
+        );
+
+        const attempt = async () => {
+          try {
+            await client.executeTransaction(faucet.id(), txRequest);
+            return { succeeded: true, message: null };
+          } catch (error) {
+            return {
+              succeeded: false,
+              message: error instanceof Error ? error.message : String(error),
+            };
+          }
+        };
+        const failedAttempt = await attempt();
+        const failedLookupCalls = getKeyCalls;
+        const authError = useWorker ? null : client.lastAuthError();
+        const authErrorMessage =
+          authError instanceof Error
+            ? authError.message
+            : typeof authError === "string"
+              ? authError
+              : null;
+        failLookup = false;
+        const retryAttempt = await attempt();
+        return {
+          failedMessage: failedAttempt.message,
+          retrySucceeded: retryAttempt.succeeded,
+          failedLookupCalls,
+          retryLookupCalls: getKeyCalls,
+          authErrorMessage,
+          retryAuthError: useWorker ? null : client.lastAuthError(),
+        };
+      }, useWorker);
+
+      expect(failedLookupCalls).toBeGreaterThan(0);
+      expect(failedMessage).toMatch(/Failed to get secret key via callback/);
+      expect(failedMessage).toMatch(
+        /Callback getKey-.+ timed out after 1000ms/
+      );
+      expect(failedMessage.match(/timed out after 1000ms/g)).toHaveLength(1);
+      expect(failedMessage).not.toContain("JsValue(");
+      expect(retryLookupCalls).toBeGreaterThan(failedLookupCalls);
+      expect(retrySucceeded).toBe(true);
+      if (!useWorker) {
+        expect(authErrorMessage).toMatch(/Callback getKey-direct timed out/);
+        expect(retryAuthError).toBeNull();
+      }
+    });
+  }
+
+  for (const useWorker of [true, false]) {
+    test(`preserves sign callback errors separately from getKey (worker: ${useWorker})`, async ({
+      page,
+    }) => {
+      const {
+        message,
+        signCalls,
+        getKeyCalls,
+        authErrorMessage,
+        rawSignPreserved,
+      } = await page.evaluate(async (useWorker) => {
+        let signCalls = 0;
+        let getKeyCalls = 0;
+        const keys = new Map<string, Uint8Array>();
+        const signError = Object.assign(new Error("wallet locked"), {
+          reason: "locked",
+        });
+        const client =
+          await window.WasmWebClient.createClientWithExternalKeystore(
+            window.rpcUrl,
+            undefined,
+            undefined,
+            `${window.storeName}-sign-error-${useWorker}`,
+            async (commitment: Uint8Array) => {
+              getKeyCalls++;
+              return keys.get(Array.from(commitment).join(","));
+            },
+            async (commitment: Uint8Array, key: Uint8Array) => {
+              keys.set(Array.from(commitment).join(","), key);
+            },
+            async () => {
+              signCalls++;
+              throw signError;
+            },
+            undefined,
+            useWorker,
+            undefined,
+            window.feeFaucetId
+          );
+        const faucet = await client.newFaucet(
+          window.AccountStorageMode.private(),
+          false,
+          "DAG",
+          "DAG",
+          8,
+          BigInt(10000000),
+          window.AuthScheme.AuthRpoFalcon512
+        );
+        await client.syncState();
+        const wallet = await client.newWallet(
+          window.AccountStorageMode.private(),
+          window.AuthScheme.AuthRpoFalcon512,
+          undefined
+        );
+        await client.syncState();
+        const txRequest = await (client as any).newMintTransactionRequest(
+          wallet.id(),
+          faucet.id(),
+          window.NoteType.Public,
+          BigInt(1000)
+        );
+
+        let message = "transaction unexpectedly succeeded";
+        try {
+          await client.executeTransaction(faucet.id(), txRequest);
+        } catch (error) {
+          message = error instanceof Error ? error.message : String(error);
+        }
+        const authError = useWorker ? null : client.lastAuthError();
+        return {
+          message,
+          signCalls,
+          getKeyCalls,
+          authErrorMessage:
+            authError instanceof Error
+              ? authError.message
+              : typeof authError === "string"
+                ? authError
+                : null,
+          rawSignPreserved: !useWorker && authError === signError,
+        };
+      }, useWorker);
+
+      expect(signCalls).toBeGreaterThan(0);
+      expect(getKeyCalls).toBe(0);
+      expect(message).toContain("wallet locked");
+      if (!useWorker) {
+        expect(authErrorMessage).toBe("wallet locked");
+        expect(rawSignPreserved).toBe(true);
+      }
+    });
+  }
+
+  test("preserves an insertKey error in newWallet failures", async ({
+    page,
+  }) => {
+    const message = await page.evaluate(async () => {
+      const client =
+        await window.WasmWebClient.createClientWithExternalKeystore(
+          window.rpcUrl,
+          undefined,
+          undefined,
+          `${window.storeName}-insert-key-error`,
+          undefined,
+          () =>
+            Promise.reject(
+              new Error("Callback insertKey-wallet timed out after 1000ms")
+            ),
+          undefined,
+          undefined,
+          true,
+          undefined,
+          window.feeFaucetId,
+          1000
+        );
+
+      try {
+        await client.newWallet(
+          window.AccountStorageMode.private(),
+          window.AuthScheme.AuthRpoFalcon512,
+          undefined
+        );
+        return "wallet creation unexpectedly succeeded";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+
+    expect(message).toMatch(/Failed to insert key via callback/);
+    expect(message).toMatch(/Callback insertKey-.+ timed out after 1000ms/);
+    expect(message).not.toContain("JsValue(");
+  });
+
+  test("preserves a string insertKey rejection in newWallet failures", async ({
+    page,
+  }) => {
+    const message = await page.evaluate(async () => {
+      const client =
+        await window.WasmWebClient.createClientWithExternalKeystore(
+          window.rpcUrl,
+          undefined,
+          undefined,
+          `${window.storeName}-insert-key-string-error`,
+          undefined,
+          () =>
+            Promise.reject("Callback insertKey-string timed out after 1000ms"),
+          undefined,
+          undefined,
+          true,
+          undefined,
+          window.feeFaucetId,
+          1000
+        );
+
+      try {
+        await client.newWallet(
+          window.AccountStorageMode.private(),
+          window.AuthScheme.AuthRpoFalcon512,
+          undefined
+        );
+        return "wallet creation unexpectedly succeeded";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+
+    expect(message).toMatch(/Callback insertKey-string timed out after 1000ms/);
+  });
+
+  test("renders a synchronous insertKey throw on the direct callback path", async ({
+    page,
+  }) => {
+    const message = await page.evaluate(async () => {
+      const client =
+        await window.WasmWebClient.createClientWithExternalKeystore(
+          window.rpcUrl,
+          undefined,
+          undefined,
+          `${window.storeName}-insert-key-sync-error-direct`,
+          undefined,
+          () => {
+            throw new Error("synchronous insertKey failure");
+          },
+          undefined,
+          undefined,
+          false,
+          undefined,
+          window.feeFaucetId
+        );
+
+      try {
+        await client.newWallet(
+          window.AccountStorageMode.private(),
+          window.AuthScheme.AuthRpoFalcon512,
+          undefined
+        );
+        return "wallet creation unexpectedly succeeded";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+
+    expect(message).toContain("synchronous insertKey failure");
+    expect(message).not.toContain("JsValue(");
+  });
+
+  test("renders a primitive insertKey rejection on the direct callback path", async ({
+    page,
+  }) => {
+    const message = await page.evaluate(async () => {
+      const client =
+        await window.WasmWebClient.createClientWithExternalKeystore(
+          window.rpcUrl,
+          undefined,
+          undefined,
+          `${window.storeName}-insert-key-primitive-error-direct`,
+          undefined,
+          () => Promise.reject("primitive insertKey failure"),
+          undefined,
+          undefined,
+          false,
+          undefined,
+          window.feeFaucetId
+        );
+
+      try {
+        await client.newWallet(
+          window.AccountStorageMode.private(),
+          window.AuthScheme.AuthRpoFalcon512,
+          undefined
+        );
+        return "wallet creation unexpectedly succeeded";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+
+    expect(message).toContain("primitive insertKey failure");
+    expect(message).not.toContain("JsValue(");
+  });
+
   test("should create a client with a remote keystore", async ({ page }) => {
     const client = await page.evaluate(async () => {
       const insertKeyCb = async (

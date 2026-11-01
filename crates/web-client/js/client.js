@@ -7,6 +7,7 @@ import { CompilerResource } from "./resources/compiler.js";
 import { KeystoreResource } from "./resources/keystore.js";
 import { PswapResource } from "./resources/pswap.js";
 import { hashSeed, resolveAccountRef } from "./utils.js";
+import { validateCallbackTimeoutMs } from "./callbackBridge.js";
 
 /**
  * MidenClient wraps the existing proxy-wrapped WebClient with a resource-based API.
@@ -142,6 +143,8 @@ export class MidenClient {
       );
     }
 
+    validateCallbackTimeoutMs(options?.callbackTimeoutMs);
+
     const seed = options?.seed ? await hashSeed(options.seed) : undefined;
 
     const rpcUrl = resolveRpcUrl(options?.rpcUrl);
@@ -169,7 +172,8 @@ export class MidenClient {
         undefined,
         useWorker,
         options,
-        options?.feeFaucetId
+        options?.feeFaucetId,
+        options?.callbackTimeoutMs
       );
     } else {
       inner = await WebClientClass.createClient(

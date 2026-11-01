@@ -142,6 +142,7 @@ test-web-client-unit: ## Run web-client unit tests with coverage
 .PHONY: test
 test: ## Run the TypeScript unit suites (no Rust toolchain required)
 	pnpm test
+	node --test packages/para/core/tests/utils.test.cjs packages/turnkey/core/tests/utils.test.cjs
 
 .PHONY: hydrate-web-client
 hydrate-web-client: ## Populate crates/web-client/dist from the published npm tarball (no Rust build)
