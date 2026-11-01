@@ -196,7 +196,6 @@ test.describe("remote keystore", () => {
           faucet.id(),
           mintRequest
         );
-        await client.proveBlock();
         await client.syncState();
         const [mintRecord] = await client.getTransactions(
           window.TransactionFilter.ids([mintTransactionId])
