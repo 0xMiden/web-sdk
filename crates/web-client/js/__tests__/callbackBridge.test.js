@@ -65,6 +65,10 @@ describe("the production WebClient worker bridge", () => {
       this.messages.push(structuredClone(message));
     }
 
+    terminate() {
+      this.terminated = true;
+    }
+
     async emit(data) {
       return this.listeners.get("message")({ data });
     }
@@ -91,6 +95,25 @@ describe("the production WebClient worker bridge", () => {
   async function initialize(worker) {
     await worker.emit({ loaded: true });
     await Promise.resolve();
+  }
+
+  function settleWithin(promise, timeoutMs = 50) {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(
+        () => resolve({ state: "pending" }),
+        timeoutMs
+      );
+      promise.then(
+        () => {
+          clearTimeout(timeout);
+          resolve({ state: "resolved" });
+        },
+        (error) => {
+          clearTimeout(timeout);
+          resolve({ state: "rejected", error });
+        }
+      );
+    });
   }
 
   afterEach(() => {
@@ -123,6 +146,74 @@ describe("the production WebClient worker bridge", () => {
       callbackResult: "signed",
       callbackRequestId: "req-ok",
     });
+  });
+
+  it("settles current and later worker calls when terminated", async () => {
+    vi.stubGlobal("Worker", RecordingWorker);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { client, worker } = createClient();
+    await worker.emit({ ready: true });
+
+    const current = client._serializeWasmCall(
+      () => client.callMethodWithWorker("current"),
+      "current"
+    );
+    const currentSettlement = settleWithin(current);
+    await vi.waitFor(() => expect(client.pendingRequests.size).toBe(1));
+
+    const later = client._serializeWasmCall(
+      () => client.callMethodWithWorker("later"),
+      "later"
+    );
+    const laterSettlement = settleWithin(later);
+    const idleSettlement = settleWithin(client.waitForIdle());
+
+    client.terminate();
+    const afterTermination = settleWithin(
+      client.callMethodWithWorker("after termination")
+    );
+
+    const [currentResult, laterResult, idleResult, afterResult] =
+      await Promise.all([
+        currentSettlement,
+        laterSettlement,
+        idleSettlement,
+        afterTermination,
+      ]);
+
+    for (const result of [currentResult, laterResult, afterResult]) {
+      expect(result.state).toBe("rejected");
+      expect(result.error).toBeInstanceOf(Error);
+      expect(result.error.message).toMatch(/terminated/i);
+    }
+    expect(idleResult.state).toBe("resolved");
+    expect(client.pendingRequests.size).toBe(0);
+    expect(worker.terminated).toBe(true);
+    expect(
+      worker.messages.some(
+        ({ methodName }) => methodName === "after termination"
+      )
+    ).toBe(false);
+  });
+
+  it("rejects worker calls waiting for initialization when terminated", async () => {
+    vi.stubGlobal("Worker", RecordingWorker);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { client, worker } = createClient();
+    const call = client._serializeWasmCall(
+      () => client.callMethodWithWorker("waiting for ready"),
+      "waiting for ready"
+    );
+    const callSettlement = settleWithin(call);
+
+    client.terminate();
+
+    const result = await callSettlement;
+    expect(result.state).toBe("rejected");
+    expect(result.error).toBeInstanceOf(Error);
+    expect(result.error.message).toMatch(/terminated/i);
+    expect(client.pendingRequests.size).toBe(0);
+    expect(worker.messages).toHaveLength(0);
   });
 
   it("posts a cloneable failure reply from the real handler", async () => {
