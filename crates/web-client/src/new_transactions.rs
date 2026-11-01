@@ -519,17 +519,12 @@ impl WebClient {
                 client.authenticator().and_then(|keystore| keystore.last_get_key_error())
             {
                 let message_key = JsValue::from_str("message");
-                if let Ok(message) = Reflect::get(&js_error, &message_key) {
-                    if let Some(message) = message.as_string() {
-                        if !message.contains(&callback_error) {
-                            let combined = format!("{message}: {callback_error}");
-                            let _ = Reflect::set(
-                                &js_error,
-                                &message_key,
-                                &JsValue::from_str(&combined),
-                            );
-                        }
-                    }
+                if let Ok(message) = Reflect::get(&js_error, &message_key)
+                    && let Some(message) = message.as_string()
+                    && !message.contains(&callback_error)
+                {
+                    let combined = format!("{message}: {callback_error}");
+                    let _ = Reflect::set(&js_error, &message_key, &JsValue::from_str(&combined));
                 }
             }
             js_error
