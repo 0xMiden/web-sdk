@@ -117,6 +117,147 @@ test.describe("remote keystore", () => {
   }
 
   for (const useWorker of [true, false]) {
+    test(`retains a failed getKey detail across later lookups (worker: ${useWorker})`, async ({
+      page,
+    }) => {
+      const result = await page.evaluate(async (useWorker) => {
+        const keys = new Map<string, Uint8Array>();
+        let getKeyCalls = 0;
+        let successfulLookups = 0;
+        let failedLookups = 0;
+        let failNextLookup = false;
+        const client =
+          await window.WasmWebClient.createClientWithExternalKeystore(
+            window.rpcUrl,
+            undefined,
+            undefined,
+            `${window.storeName}-multi-lookup-${useWorker}`,
+            (commitment: Uint8Array) => {
+              getKeyCalls++;
+              if (failNextLookup) {
+                failNextLookup = false;
+                failedLookups++;
+                return Promise.reject(
+                  new Error("Callback getKey multi-lookup failure")
+                );
+              }
+              const key = keys.get(Array.from(commitment).join(","));
+              if (key) successfulLookups++;
+              return Promise.resolve(key);
+            },
+            async (commitment: Uint8Array, key: Uint8Array) => {
+              keys.set(Array.from(commitment).join(","), key);
+            },
+            undefined,
+            undefined,
+            useWorker,
+            undefined,
+            window.feeFaucetId
+          );
+        const approverKeys = Array.from({ length: 3 }, () =>
+          window.AuthSecretKey.rpoFalconWithRNG()
+        );
+        const multisig = window.createAuthFalcon512RpoMultisig(
+          new window.AuthFalcon512RpoMultisigConfig(
+            approverKeys.map((key) => key.publicKey().toCommitment()),
+            3
+          )
+        );
+        const seed = new Uint8Array(32);
+        crypto.getRandomValues(seed);
+        const account = new window.AccountBuilder(seed)
+          .storageMode(window.AccountStorageMode.private())
+          .withAuthComponent(multisig)
+          .withBasicWalletComponent()
+          .build().account;
+        const accountId = account.id();
+        await client.newAccount(account, false);
+        for (const key of approverKeys) {
+          await client.keystore.insert(accountId, key);
+        }
+
+        const faucet = await client.newFaucet(
+          window.AccountStorageMode.private(),
+          false,
+          "DAG",
+          "DAG",
+          8,
+          BigInt(10000000),
+          window.AuthScheme.AuthRpoFalcon512
+        );
+        await client.syncState();
+        const mintRequest = await client.newMintTransactionRequest(
+          accountId,
+          faucet.id(),
+          window.NoteType.Private,
+          BigInt(1000)
+        );
+        const mintTransactionId = await client.submitNewTransaction(
+          faucet.id(),
+          mintRequest
+        );
+        await client.proveBlock();
+        await client.syncState();
+        const [mintRecord] = await client.getTransactions(
+          window.TransactionFilter.ids([mintTransactionId])
+        );
+        const mintedNotes = await Promise.all(
+          mintRecord
+            .outputNotes()
+            .notes()
+            .map(async (note: any) =>
+              (await client.getInputNote(note.id().toString())).toNote()
+            )
+        );
+        const consumeRequest = await client.newConsumeTransactionRequest(
+          mintedNotes,
+          accountId
+        );
+
+        const callsBeforeFailure = getKeyCalls;
+        const successfulBeforeFailure = successfulLookups;
+        const failuresBeforeFailure = failedLookups;
+        failNextLookup = true;
+        let failedMessage = "transaction unexpectedly succeeded";
+        try {
+          await client.executeTransaction(accountId, consumeRequest);
+        } catch (error) {
+          failedMessage =
+            error instanceof Error ? error.message : String(error);
+        }
+        const callsDuringFailure = getKeyCalls - callsBeforeFailure;
+        const successfulLookupsAfterFailure =
+          successfulLookups - successfulBeforeFailure;
+        const failedLookupsDuringFailure =
+          failedLookups - failuresBeforeFailure;
+
+        let retrySucceeded = false;
+        try {
+          await client.executeTransaction(accountId, consumeRequest);
+          retrySucceeded = true;
+        } catch {
+          retrySucceeded = false;
+        }
+        return {
+          failedMessage,
+          callsDuringFailure,
+          successfulLookupsAfterFailure,
+          failedLookupsDuringFailure,
+          retrySucceeded,
+        };
+      }, useWorker);
+
+      expect(result.failedLookupsDuringFailure).toBe(1);
+      expect(result.callsDuringFailure).toBeGreaterThan(1);
+      expect(result.successfulLookupsAfterFailure).toBeGreaterThan(0);
+      expect(result.failedMessage).toContain(
+        "Callback getKey multi-lookup failure"
+      );
+      expect(result.retrySucceeded).toBe(true);
+    });
+  }
+
+  for (const useWorker of [true, false]) {
     test(`preserves sign callback errors separately from getKey (worker: ${useWorker})`, async ({
       page,
     }) => {
