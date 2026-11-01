@@ -863,6 +863,29 @@ describe("handleReply", () => {
     ).toBe(true);
     await expect(pending).resolves.toBe("signed");
   });
+
+  it.each([
+    ["empty string", ""],
+    ["null", null],
+  ])(
+    "rejects a legacy reply with a %s callbackError",
+    async (_, callbackError) => {
+      const posted = [];
+      const forwarder = createCallbackForwarder({
+        post: (request) => posted.push(request),
+        timeoutMs: () => undefined,
+      });
+      const pending = forwarder.forward("sign", []);
+
+      expect(
+        forwarder.handleReply({
+          callbackRequestId: posted[0].requestId,
+          callbackError,
+        })
+      ).toBe(true);
+      await expect(pending).rejects.toBeInstanceOf(Error);
+    }
+  );
 });
 
 describe("deserializeCallbackError", () => {
