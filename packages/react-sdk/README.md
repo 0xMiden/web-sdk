@@ -864,38 +864,6 @@ function MultiSendButton() {
 }
 ```
 
-#### `useInternalTransfer()`
-
-Create a P2ID note and immediately consume it. This is useful for transfers
-between accounts you control (e.g., public → private), since the receiver must
-be available in the local client to consume the note.
-It abstracts the two-transaction flow and keeps both steps tied to a single UI
-action. You don't have to juggle temporary note IDs or manual syncs.
-
-```tsx
-import { useInternalTransfer } from '@miden-sdk/react';
-
-function InternalTransferButton() {
-  const { transfer, isLoading, stage } = useInternalTransfer();
-
-  const handleTransfer = async () => {
-    await transfer({
-      from: '0xsender...',
-      to: '0xrecipient...',
-      assetId: '0xtoken...',
-      amount: 50n,
-      noteType: 'public',
-    });
-  };
-
-  return (
-    <button onClick={handleTransfer} disabled={isLoading}>
-      {isLoading ? `Transferring (${stage})...` : 'Transfer'}
-    </button>
-  );
-}
-```
-
 #### `useWaitForCommit()`
 
 Wait for a transaction to be committed. Useful for gating UI transitions,
@@ -2097,9 +2065,6 @@ import type {
   SendOptions,
   MultiSendRecipient,
   MultiSendOptions,
-  InternalTransferOptions,
-  InternalTransferChainOptions,
-  InternalTransferResult,
   WaitForCommitOptions,
   WaitForNotesOptions,
   MintOptions,
