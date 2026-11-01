@@ -183,9 +183,59 @@ test.describe("remote keystore", () => {
           await client.keystore.insert(accountId, key);
         }
         await client.syncState();
-        const request = (
-          await client.feeAwareTransactionRequestBuilder(accountId)
-        ).build();
+
+        const faucet = await client.newFaucet(
+          window.AccountStorageMode.private(),
+          false,
+          "DAG",
+          "DAG",
+          8,
+          BigInt(10000000),
+          window.AuthScheme.AuthRpoFalcon512
+        );
+        const mintRequest = await client.newMintTransactionRequest(
+          accountId,
+          faucet.id(),
+          window.NoteType.Public,
+          BigInt(1000)
+        );
+        const mintResult = await client.executeTransaction(
+          faucet.id(),
+          mintRequest
+        );
+        const noteId = mintResult
+          .executedTransaction()
+          .userOutputNotes()[0]
+          .id()
+          .toString();
+        const mintProver = window.TransactionProver.newLocalProver();
+        const mintProven = await client.proveTransaction(
+          mintResult,
+          mintProver
+        );
+        const mintHeight = await client.submitProvenTransaction(
+          mintProven,
+          mintResult
+        );
+        await client.applyTransaction(mintResult, mintHeight);
+
+        const mintTxId = mintResult.id().toHex();
+        let timeWaited = 0;
+        while (timeWaited < 10000) {
+          await client.syncState();
+          const uncommitted = await client.getTransactions(
+            window.TransactionFilter.uncommitted()
+          );
+          if (!uncommitted.some((tx) => tx.id().toHex() === mintTxId)) break;
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          timeWaited += 1000;
+        }
+        const inputNoteRecord = await client.getInputNote(noteId);
+        if (!inputNoteRecord) throw new Error(`Input note ${noteId} not found`);
+        const request = await client.newConsumeTransactionRequest(
+          [inputNoteRecord.toNote()],
+          accountId
+        );
 
         const callsBeforeFailure = getKeyCalls;
         const successfulBeforeFailure = successfulLookups;
