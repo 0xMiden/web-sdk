@@ -125,7 +125,9 @@ test.describe("remote keystore", () => {
         let getKeyCalls = 0;
         let successfulLookups = 0;
         let failedLookups = 0;
-        let failNextLookup = false;
+        let trackLookups = false;
+        const failedCommitments = new Set<string>();
+        const callbackFailureMessage = "Callback getKey multi-lookup failure";
         const client =
           await window.WasmWebClient.createClientWithExternalKeystore(
             window.rpcUrl,
@@ -133,15 +135,20 @@ test.describe("remote keystore", () => {
             undefined,
             `${window.storeName}-multi-lookup-${useWorker}`,
             (commitment: Uint8Array) => {
-              getKeyCalls++;
-              if (failNextLookup) {
-                failNextLookup = false;
-                failedLookups++;
-                return Promise.reject(
-                  new Error("Callback getKey multi-lookup failure")
-                );
+              const commitmentKey = Array.from(commitment).join(",");
+              if (!trackLookups) {
+                return Promise.resolve(keys.get(commitmentKey));
               }
-              const key = keys.get(Array.from(commitment).join(","));
+              getKeyCalls++;
+              if (
+                failedCommitments.has(commitmentKey) ||
+                failedCommitments.size < 2
+              ) {
+                failedCommitments.add(commitmentKey);
+                failedLookups++;
+                return Promise.reject(new Error(callbackFailureMessage));
+              }
+              const key = keys.get(commitmentKey);
               if (key) successfulLookups++;
               return Promise.resolve(key);
             },
@@ -175,64 +182,33 @@ test.describe("remote keystore", () => {
         for (const key of approverKeys) {
           await client.keystore.insert(accountId, key);
         }
-
-        const faucet = await client.newFaucet(
-          window.AccountStorageMode.private(),
-          false,
-          "DAG",
-          "DAG",
-          8,
-          BigInt(10000000),
-          window.AuthScheme.AuthRpoFalcon512
-        );
         await client.syncState();
-        const mintRequest = await client.newMintTransactionRequest(
-          accountId,
-          faucet.id(),
-          window.NoteType.Private,
-          BigInt(1000)
-        );
-        const mintTransactionId = await client.submitNewTransaction(
-          faucet.id(),
-          mintRequest
-        );
-        await client.syncState();
-        const [mintRecord] = await client.getTransactions(
-          window.TransactionFilter.ids([mintTransactionId])
-        );
-        const mintedNotes = await Promise.all(
-          mintRecord
-            .outputNotes()
-            .notes()
-            .map(async (note: any) =>
-              (await client.getInputNote(note.id().toString())).toNote()
-            )
-        );
-        const consumeRequest = await client.newConsumeTransactionRequest(
-          mintedNotes,
-          accountId
-        );
+        const request = (
+          await client.feeAwareTransactionRequestBuilder(accountId)
+        ).build();
 
         const callsBeforeFailure = getKeyCalls;
         const successfulBeforeFailure = successfulLookups;
         const failuresBeforeFailure = failedLookups;
-        failNextLookup = true;
+        trackLookups = true;
         let failedMessage = "transaction unexpectedly succeeded";
         try {
-          await client.executeTransaction(accountId, consumeRequest);
+          await client.executeTransaction(accountId, request);
         } catch (error) {
           failedMessage =
             error instanceof Error ? error.message : String(error);
         }
+        trackLookups = false;
         const callsDuringFailure = getKeyCalls - callsBeforeFailure;
         const successfulLookupsAfterFailure =
           successfulLookups - successfulBeforeFailure;
         const failedLookupsDuringFailure =
           failedLookups - failuresBeforeFailure;
 
+        failedCommitments.clear();
         let retrySucceeded = false;
         try {
-          await client.executeTransaction(accountId, consumeRequest);
+          await client.executeTransaction(accountId, request);
           retrySucceeded = true;
         } catch {
           retrySucceeded = false;
