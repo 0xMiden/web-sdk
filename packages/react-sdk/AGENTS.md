@@ -238,13 +238,14 @@ queue, so nothing re-sends the note unless you do; see
 
 ### Send to Multiple Recipients
 ```tsx
-const { multiSend } = useMultiSend();
+const { sendMany } = useMultiSend();
 
-await multiSend({
+await sendMany({
   from: senderAccountId,
+  assetId,
   recipients: [
-    { to: recipient1, assetId, amount: 500n },
-    { to: recipient2, assetId, amount: 300n },
+    { to: recipient1, amount: 500n },
+    { to: recipient2, amount: 300n },
   ],
 });
 ```
@@ -700,7 +701,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | `useExportNote()` | `exportNote(...)` | serialized note bytes |
 | `useImportStore()` / `useExportStore()` | store import/export | bytes / `void` |
 | `useSend()` | `send({ from, to, assetId, amount, noteType })` | `SendResult` (with `txId`, `note`) |
-| `useMultiSend()` | `multiSend({ from, recipients })` | `TransactionResult` |
+| `useMultiSend()` | `sendMany({ from, assetId, recipients })` | `TransactionResult` |
 | `useMint()` | `mint({ faucetId, to, amount })` | `TransactionResult` |
 | `useBridge()` | `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress })` | `TransactionResult` (emits an AggLayer B2AGG bridge-out note) |
 | `useCreateNetworkNote()` | `createNetworkNote({ accountId, target, script \| recipient, ... })` | `NetworkNoteResult` (`{ txId, note }`; note satisfies `note.isNetworkNote()`) |
