@@ -192,6 +192,15 @@ const methodHandlers = {
       );
       const serializedResult = result.serialize();
       return serializedResult.buffer;
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") {
+        throw appendAuthError(error, authError);
+      }
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
     } finally {
       // Rebuilt from bytes on every anchored execution and the largest
       // transient here, since it carries a partial blockchain. The binding
@@ -270,7 +279,18 @@ const methodHandlers = {
           )
         )
     );
-    return await wasmWebClient.submitNewTransactionBatch(items);
+    try {
+      return await wasmWebClient.submitNewTransactionBatch(items);
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") {
+        throw appendAuthError(error, authError);
+      }
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
+    }
   },
   [MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER]: async (args) => {
     const wasm = await getWasmOrThrow();
