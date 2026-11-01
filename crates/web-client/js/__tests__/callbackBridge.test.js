@@ -158,8 +158,8 @@ describe("the production WebClient worker bridge", () => {
       () => client.callMethodWithWorker("current"),
       "current"
     );
-    const currentSettlement = settleWithin(current);
     await vi.waitFor(() => expect(client.pendingRequests.size).toBe(1));
+    const currentSettlement = settleWithin(current);
 
     const later = client._serializeWasmCall(
       () => client.callMethodWithWorker("later"),
@@ -181,8 +181,12 @@ describe("the production WebClient worker bridge", () => {
         afterTermination,
       ]);
 
-    for (const result of [currentResult, laterResult, afterResult]) {
-      expect(result.state).toBe("rejected");
+    for (const [label, result] of [
+      ["current", currentResult],
+      ["later", laterResult],
+      ["after termination", afterResult],
+    ]) {
+      expect(result.state, label).toBe("rejected");
       expect(result.error).toBeInstanceOf(Error);
       expect(result.error.message).toMatch(/terminated/i);
     }

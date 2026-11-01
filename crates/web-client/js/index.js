@@ -969,6 +969,10 @@ class WebClient {
    */
   async callMethodWithWorker(methodName, ...args) {
     await this.ready;
+    // `await` can yield after readiness has resolved but before posting.
+    if (this._workerTerminated) {
+      throw new Error("Worker terminated");
+    }
     // Create a unique request ID.
     const requestId = `${methodName}-${Date.now()}-${Math.random()}`;
     return new Promise((resolve, reject) => {
@@ -1449,9 +1453,21 @@ class WebClient {
    * After calling terminate(), the WebClient should not be used.
    */
   terminate() {
-    if (this.worker) {
-      this.worker.terminate();
+    if (!this.worker) {
+      return;
     }
+    // A second call must not reject promises that already settled.
+    if (!this._workerTerminated) {
+      this._workerTerminated = true;
+      const terminationError = new Error("Worker terminated");
+      for (const { reject } of this.pendingRequests.values()) {
+        reject(terminationError);
+      }
+      this.pendingRequests.clear();
+      // Rejecting unblocks calls still waiting on initialization.
+      this.readyRejecter(terminationError);
+    }
+    this.worker.terminate();
   }
 }
 
