@@ -7,87 +7,116 @@ test.describe("remote keystore", () => {
     test(`includes getKey failure details and clears them on retry (worker: ${useWorker})`, async ({
       page,
     }) => {
-      const { message, retryMessage, authError, rawSignPreserved } =
-        await page.evaluate(async (useWorker) => {
-          let failLookup = true;
-          let failSigning = false;
-          const keys = new Map<string, Uint8Array>();
-          const signError = Object.assign(new Error("wallet locked"), {
-            reason: "locked",
-          });
-          const client =
-            await window.WasmWebClient.createClientWithExternalKeystore(
-              window.rpcUrl,
-              undefined,
-              undefined,
-              `${window.storeName}-get-key-timeout`,
-              (commitment: Uint8Array) => {
-                if (failSigning)
-                  return Promise.resolve(
-                    keys.get(Array.from(commitment).join(","))
-                  );
-                if (!failLookup) return Promise.resolve(undefined);
-                if (useWorker) return new Promise<Uint8Array>(() => {});
-                return Promise.reject(
-                  new Error("Callback getKey-direct timed out after 1000ms")
+      const {
+        message,
+        retryMessage,
+        authErrorMessage,
+        authErrorReason,
+        signCalledAfterLookupFailure,
+        rawSignPreserved,
+        retrySignPreserved,
+      } = await page.evaluate(async (useWorker) => {
+        let failLookup = true;
+        let failSigning = false;
+        let signCalls = 0;
+        const keys = new Map<string, Uint8Array>();
+        const signError = Object.assign(new Error("wallet locked"), {
+          reason: "locked",
+        });
+        const client =
+          await window.WasmWebClient.createClientWithExternalKeystore(
+            window.rpcUrl,
+            undefined,
+            undefined,
+            `${window.storeName}-get-key-timeout`,
+            (commitment: Uint8Array) => {
+              if (failSigning)
+                return Promise.resolve(
+                  keys.get(Array.from(commitment).join(","))
                 );
-              },
-              async (commitment: Uint8Array, key: Uint8Array) => {
-                keys.set(Array.from(commitment).join(","), key);
-              },
-              async () => {
-                throw signError;
-              },
-              undefined,
-              useWorker,
-              undefined,
-              window.feeFaucetId,
-              1000
-            );
-          const faucet = await client.newFaucet(
-            window.AccountStorageMode.private(),
-            false,
-            "DAG",
-            "DAG",
-            8,
-            BigInt(10000000),
-            window.AuthScheme.AuthRpoFalcon512
+              if (!failLookup) return Promise.resolve(undefined);
+              if (useWorker) return new Promise<Uint8Array>(() => {});
+              return Promise.reject(
+                new Error("Callback getKey-direct timed out after 1000ms")
+              );
+            },
+            async (commitment: Uint8Array, key: Uint8Array) => {
+              keys.set(Array.from(commitment).join(","), key);
+            },
+            async () => {
+              signCalls++;
+              throw signError;
+            },
+            undefined,
+            useWorker,
+            undefined,
+            window.feeFaucetId,
+            1000
           );
-          await client.syncState();
-          const wallet = await client.newWallet(
-            window.AccountStorageMode.private(),
-            window.AuthScheme.AuthRpoFalcon512,
-            undefined
-          );
-          await client.syncState();
-          const txRequest = await (client as any).newMintTransactionRequest(
-            wallet.id(),
-            faucet.id(),
-            window.NoteType.Public,
-            BigInt(1000)
-          );
+        const faucet = await client.newFaucet(
+          window.AccountStorageMode.private(),
+          false,
+          "DAG",
+          "DAG",
+          8,
+          BigInt(10000000),
+          window.AuthScheme.AuthRpoFalcon512
+        );
+        await client.syncState();
+        const wallet = await client.newWallet(
+          window.AccountStorageMode.private(),
+          window.AuthScheme.AuthRpoFalcon512,
+          undefined
+        );
+        await client.syncState();
+        const txRequest = await (client as any).newMintTransactionRequest(
+          wallet.id(),
+          faucet.id(),
+          window.NoteType.Public,
+          BigInt(1000)
+        );
 
-          const attempt = async () => {
-            try {
-              await client.executeTransaction(faucet.id(), txRequest);
-              return "transaction unexpectedly succeeded";
-            } catch (error) {
-              return error instanceof Error ? error.message : String(error);
-            }
-          };
-          const message = await attempt();
-          const authError = useWorker ? null : client.lastAuthError();
-          failLookup = false;
-          const retryMessage = await attempt();
-          let rawSignPreserved = false;
-          if (!useWorker) {
-            failSigning = true;
-            await attempt();
-            rawSignPreserved = client.lastAuthError() === signError;
+        const attempt = async () => {
+          try {
+            await client.executeTransaction(faucet.id(), txRequest);
+            return "transaction unexpectedly succeeded";
+          } catch (error) {
+            return error instanceof Error ? error.message : String(error);
           }
-          return { message, retryMessage, authError, rawSignPreserved };
-        }, useWorker);
+        };
+        const message = await attempt();
+        const signCalledAfterLookupFailure = signCalls > 0;
+        const authError = useWorker ? null : client.lastAuthError();
+        const authErrorMessage =
+          authError instanceof Error
+            ? authError.message
+            : typeof authError === "string"
+              ? authError
+              : null;
+        const authErrorReason =
+          authError && typeof authError === "object" ? authError.reason : null;
+        const rawSignPreserved = !useWorker && authError === signError;
+        failLookup = false;
+        const retryMessage = await attempt();
+        let retrySignPreserved = false;
+        if (!useWorker) {
+          failSigning = true;
+          await attempt();
+          retrySignPreserved = client.lastAuthError() === signError;
+        }
+        return {
+          message,
+          retryMessage,
+          authErrorMessage,
+          authErrorReason,
+          signCalledAfterLookupFailure,
+          rawSignPreserved,
+          retrySignPreserved,
+        };
+      }, useWorker);
 
+      expect(message).toContain("wallet locked");
+      expect(signCalledAfterLookupFailure).toBe(true);
       expect(message).toMatch(/Failed to get secret key via callback/);
       expect(message).toMatch(/Callback getKey-.+ timed out after 1000ms/);
       expect(message.match(/timed out after 1000ms/g)).toHaveLength(1);
@@ -95,10 +124,10 @@ test.describe("remote keystore", () => {
       expect(retryMessage).not.toContain("timed out");
       expect(retryMessage).not.toBe("transaction unexpectedly succeeded");
       if (!useWorker) {
-        expect(authError).toContain(
-          "Callback getKey-direct timed out after 1000ms"
-        );
+        expect(authErrorMessage).toBe("wallet locked");
+        expect(authErrorReason).toBe("locked");
         expect(rawSignPreserved).toBe(true);
+        expect(retrySignPreserved).toBe(true);
       }
     });
   }

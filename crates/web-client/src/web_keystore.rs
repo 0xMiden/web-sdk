@@ -55,6 +55,8 @@ struct JsCallbacks {
     /// The latest raw sign rejection or readable external getKey failure.
     /// Mutating `WebClient` calls are serialized, so this slot has a single writer.
     last_auth_error: RefCell<JsValue>,
+    /// A failed getKey lookup remains available for the transaction error even if sign also fails.
+    last_get_key_error: RefCell<Option<String>>,
 }
 
 // Since Function / JsValue are not Send/Sync, we need to explicitly mark
@@ -73,6 +75,7 @@ impl<R: Rng> WebKeyStore<R> {
                 insert_key: None,
                 sign: None,
                 last_auth_error: RefCell::new(JsValue::NULL),
+                last_get_key_error: RefCell::new(None),
             }),
             db_id,
         }
@@ -94,6 +97,7 @@ impl<R: Rng> WebKeyStore<R> {
                 insert_key: insert_key.map(InsertKeyCallback),
                 sign: sign.map(SignCallback),
                 last_auth_error: RefCell::new(JsValue::NULL),
+                last_get_key_error: RefCell::new(None),
             }),
             db_id,
         }
@@ -106,14 +110,24 @@ impl<R: Rng> WebKeyStore<R> {
         self.callbacks.last_auth_error.borrow().clone()
     }
 
+    pub(crate) fn last_get_key_error(&self) -> Option<String> {
+        self.callbacks.last_get_key_error.borrow().clone()
+    }
+
     /// Records a raw sign rejection or readable getKey failure.
     fn record_auth_error(&self, err: JsValue) {
         *self.callbacks.last_auth_error.borrow_mut() = err;
     }
 
+    fn record_get_key_error(&self, detail: String) {
+        *self.callbacks.last_get_key_error.borrow_mut() = Some(detail.clone());
+        self.record_auth_error(JsValue::from_str(&detail));
+    }
+
     /// Clears callback detail before a new transaction or key lookup.
     pub(crate) fn clear_auth_error(&self) {
         *self.callbacks.last_auth_error.borrow_mut() = JsValue::NULL;
+        *self.callbacks.last_get_key_error.borrow_mut() = None;
     }
 
     /// Adds a secret key to the keystore without updating account mappings.
@@ -285,7 +299,7 @@ impl<R: Rng> Keystore for WebKeyStore<R> {
             let result = get_key_cb.get_secret_key(pub_key).await;
             if let Err(err) = &result {
                 // get_public_key returns Option, so retain the failure before it is discarded.
-                self.record_auth_error(JsValue::from_str(&err.to_string()));
+                self.record_get_key_error(err.to_string());
             }
             return result;
         }

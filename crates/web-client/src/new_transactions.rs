@@ -2,6 +2,8 @@ use alloc::collections::BTreeMap;
 use core::num::NonZeroU32;
 
 use js_export_macro::js_export;
+#[cfg(feature = "browser")]
+use js_sys::Reflect;
 use miden_client::account::standards::auth::{FeeConversionInfo, MultisigAuthArgs};
 use miden_client::account::{AccountComponentInterfaceExt, AccountId as NativeAccountId};
 use miden_client::agglayer::B2AggNote;
@@ -29,6 +31,8 @@ use miden_client::transaction::{
 };
 use miden_client::{Client, ClientError, Word as NativeWord};
 use miden_protocol::crypto::SequentialCommit;
+#[cfg(feature = "browser")]
+use wasm_bindgen::JsValue;
 
 use crate::models::NoteType;
 use crate::models::account_id::AccountId;
@@ -501,15 +505,35 @@ impl WebClient {
     ) -> Result<TransactionResult, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        #[cfg(feature = "browser")]
         if let Some(keystore) = client.authenticator() {
             keystore.clear_auth_error();
         }
         let native_request: NativeTransactionRequest = transaction_request.into();
         let fut = Box::pin(client.execute_transaction(account_id.into(), native_request));
-        maybe_wrap_send(fut)
-            .await
-            .map(TransactionResult::from)
-            .map_err(|err| js_error_with_context(err, "failed to execute transaction"))
+        let result = maybe_wrap_send(fut).await;
+        result.map(TransactionResult::from).map_err(|err| {
+            let js_error = js_error_with_context(err, "failed to execute transaction");
+            #[cfg(feature = "browser")]
+            if let Some(callback_error) =
+                client.authenticator().and_then(|keystore| keystore.last_get_key_error())
+            {
+                let message_key = JsValue::from_str("message");
+                if let Ok(message) = Reflect::get(&js_error, &message_key) {
+                    if let Some(message) = message.as_string() {
+                        if !message.contains(&callback_error) {
+                            let combined = format!("{message}: {callback_error}");
+                            let _ = Reflect::set(
+                                &js_error,
+                                &message_key,
+                                &JsValue::from_str(&combined),
+                            );
+                        }
+                    }
+                }
+            }
+            js_error
+        })
     }
 
     /// Captures a [`ChainAnchor`] at the client's current sync height, tracking the blocks the
