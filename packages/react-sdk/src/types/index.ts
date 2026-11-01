@@ -366,7 +366,7 @@ export interface SendOptions {
   skipSync?: boolean;
   /** Send the full balance of this asset. When true, amount is ignored. */
   sendAll?: boolean;
-  /** true = build note in JS and return the Note object (e.g. for out-of-band delivery). Default: false */
+  /** true = build note in JS and return the Note object (e.g. for out-of-band delivery). Cannot be combined with recallHeight or timelockHeight. Default: false */
   returnNote?: boolean;
 }
 
