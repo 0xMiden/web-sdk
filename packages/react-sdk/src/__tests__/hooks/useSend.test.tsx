@@ -194,6 +194,84 @@ describe("useSend", () => {
       );
     });
 
+    it("should put the attachment on the returned note when returnNote=true", async () => {
+      const { Note } = await import("@miden-sdk/miden-sdk");
+      const createP2IDNote = Note.createP2IDNote as unknown as ReturnType<
+        typeof vi.fn
+      >;
+      createP2IDNote.mockClear();
+      const mockClient = createMockWebClient({
+        submitNewTransaction: vi
+          .fn()
+          .mockResolvedValue({ toHex: vi.fn(() => "0xtxattach") }),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useSend());
+
+      await act(async () => {
+        await result.current.send({
+          from: "0xsender",
+          to: "0xrecipient",
+          assetId: "0xfaucet",
+          amount: 100n,
+          attachment: [42n],
+          returnNote: true,
+        });
+      });
+
+      expect(createP2IDNote).toHaveBeenCalledTimes(1);
+      const attachment = createP2IDNote.mock.calls[0][4] as {
+        toWords(): { toU64s(): BigUint64Array }[];
+      };
+      expect(Array.from(attachment.toWords()[0].toU64s())).toEqual([
+        42n,
+        0n,
+        0n,
+        0n,
+      ]);
+    });
+
+    it.each([
+      ["recallHeight", { recallHeight: 1000 }],
+      ["timelockHeight", { timelockHeight: 500 }],
+    ])(
+      "should reject %s when returnNote=true instead of sending a plain P2ID note",
+      async (_name, heights) => {
+        const mockClient = createMockWebClient();
+
+        mockUseMiden.mockReturnValue({
+          client: mockClient,
+          isReady: true,
+          sync: vi.fn().mockResolvedValue(undefined),
+        });
+
+        const { result } = renderHook(() => useSend());
+
+        await act(async () => {
+          await expect(
+            result.current.send({
+              from: "0xsender",
+              to: "0xrecipient",
+              assetId: "0xfaucet",
+              amount: 100n,
+              returnNote: true,
+              ...heights,
+            })
+          ).rejects.toThrow(
+            "recallHeight and timelockHeight are not supported when returnNote is true"
+          );
+        });
+
+        expect(mockClient.submitNewTransaction).not.toHaveBeenCalled();
+      }
+    );
+
     it("should handle different note types", async () => {
       const mockTxResult = createMockTransactionResult();
       const mockSync = vi.fn().mockResolvedValue(undefined);
