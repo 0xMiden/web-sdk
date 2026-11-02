@@ -328,6 +328,67 @@ test.describe("fee conversion salt", () => {
     expect(result.authArgLastSalt).toBeNull();
   });
 
+  test("withAuthArgs sets the commitment and its advice-map preimage", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const values = [1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n];
+      const salt = sdk.Word.newFromFelts(
+        [9n, 10n, 11n, 12n].map((v) => new sdk.Felt(v))
+      );
+
+      const request = new sdk.TransactionRequestBuilder()
+        .withFeeConversionSalt(salt)
+        .withAuthArgs(new sdk.FeltArray(values.map((v) => new sdk.Felt(v))))
+        .build();
+
+      const authArg = request.authArg();
+      const expected = sdk.Poseidon2.hashElements(
+        new sdk.FeltArray(values.map((v) => new sdk.Felt(v)))
+      );
+      const preimage = authArg ? request.adviceMap().get(authArg) : undefined;
+
+      return {
+        authArg: authArg?.toHex() ?? null,
+        expected: expected.toHex(),
+        preimage: preimage?.map((f) => f.asInt().toString()) ?? null,
+        salt: request.feeConversionSalt()?.toHex() ?? null,
+      };
+    });
+
+    expect(result.authArg).toBe(result.expected);
+    expect(result.preimage).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
+    // Like withAuthArg, it clears a declared fee conversion salt.
+    expect(result.salt).toBeNull();
+  });
+
+  test("withAuthArgs rejects input that is not a non-empty multiple of 4 felts", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      let notWholeWordsError = null;
+      try {
+        new sdk.TransactionRequestBuilder().withAuthArgs(
+          new sdk.FeltArray([1n, 2n, 3n].map((v) => new sdk.Felt(v)))
+        );
+      } catch (e) {
+        notWholeWordsError = String(e);
+      }
+
+      let emptyError = null;
+      try {
+        new sdk.TransactionRequestBuilder().withAuthArgs(new sdk.FeltArray([]));
+      } catch (e) {
+        emptyError = String(e);
+      }
+
+      return { notWholeWordsError, emptyError };
+    });
+
+    expect(result.notWholeWordsError).toContain("multiple of 4 felts");
+    expect(result.emptyError).toContain("multiple of 4 felts");
+  });
+
   test("feeNote and userOutputNotes split the kernel's fee note off", async ({
     run,
   }) => {

@@ -2002,8 +2002,8 @@ export declare class MidenClient {
    * - **A custom auth procedure that reads conversion info** — miden-client
    *   does not recognise the component and commits nothing, so the transaction
    *   aborts in the VM with `ERR_FEE_CONVERSION_INFO_MISSING`. Attach the
-   *   commitment yourself with `TransactionRequestBuilder.withAuthArg` plus
-   *   `extendAdviceMap`.
+   *   auth args yourself with `TransactionRequestBuilder.withAuthArgs`, which
+   *   sets the commitment and adds its advice-map preimage.
    *
    * The `new*TransactionRequest` constructors declare it, and so does every
    * `client.transactions` operation that builds its own request — but the ones
@@ -2033,11 +2033,11 @@ export declare class MidenClient {
    * height when it built the request; below it execution fails with
    * "requested block N is after transaction reference block M" until it syncs.
    *
-   * Calling `withAuthArg` on the result clears what this declared, and vice
+   * Calling `withAuthArgs` or `withAuthArg` on the result clears what this declared, and vice
    * versa: miden-client keeps the two mutually exclusive, so whichever is
    * called last wins rather than producing an error.
    *
-   * Do not call `withFeeConversionSalt` or `withAuthArg` on the builder this
+   * Do not call `withFeeConversionSalt`, `withAuthArgs` or `withAuthArg` on the builder this
    * returns for a multisig. The two setters clear each other, so either one
    * discards the three-word auth args this already set and the transaction
    * aborts in the auth procedure. Pass `feeConversionSalt` in `options`.

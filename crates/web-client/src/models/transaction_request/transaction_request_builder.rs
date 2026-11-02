@@ -1,5 +1,4 @@
 use js_export_macro::js_export;
-use miden_client::Word as NativeWord;
 use miden_client::block::BlockNumber;
 use miden_client::note::{
     Note as NativeNote,
@@ -15,12 +14,17 @@ use miden_client::transaction::{
     TransactionScript as NativeTransactionScript,
 };
 use miden_client::vm::AdviceMap as NativeAdviceMap;
+use miden_client::{Felt as NativeFelt, Word as NativeWord};
+use miden_protocol::WORD_SIZE;
+use miden_protocol::crypto::SequentialCommit;
 
 use crate::js_error_with_context;
 use crate::models::advice_map::AdviceMap;
+use crate::models::felt::felt_array_to_native_vec;
 use crate::models::foreign_account::ForeignAccount;
 use crate::models::input_note::InputNote;
 use crate::models::miden_arrays::{
+    FeltArray,
     ForeignAccountArray,
     NoteAndArgsArray,
     NoteArray,
@@ -33,7 +37,7 @@ use crate::models::transaction_request::note_and_args::{NoteAndArgs, NoteArgs};
 use crate::models::transaction_request::note_details_and_tag::NoteDetailsAndTag;
 use crate::models::transaction_script::TransactionScript;
 use crate::models::word::Word;
-use crate::platform::JsErr;
+use crate::platform::{JsErr, from_str_err};
 
 /// A builder for a `TransactionRequest`.
 ///
@@ -171,6 +175,9 @@ impl TransactionRequestBuilder {
     /// Adds an authentication argument: a `Word` pushed to the stack for the account's
     /// authentication procedure.
     ///
+    /// @deprecated Use `withAuthArgs`, which sets the commitment and adds its advice-map preimage
+    /// in one call.
+    ///
     /// Mutually exclusive with `withFeeConversionSalt`, and the exclusion is enforced by
     /// miden-client rather than reported as an error: each setter clears the other, so whichever
     /// is called last wins and the request can never carry both.
@@ -198,6 +205,26 @@ impl TransactionRequestBuilder {
         let builder = self.builder.clone().auth_arg(native_word);
         self.builder = builder;
         self.clone()
+    }
+
+    /// Sets the authentication argument to the Poseidon2 commitment of `authArgs` and adds
+    /// `authArgs` to the advice map under that commitment, so an auth procedure that reads its
+    /// arguments from the advice map finds them.
+    ///
+    /// `authArgs` must hold a whole number of words: a non-empty multiple of 4 felts.
+    #[js_export(js_name = "withAuthArgs")]
+    pub fn with_auth_args(&mut self, auth_args: FeltArray) -> Result<Self, JsErr> {
+        let elements = felt_array_to_native_vec(&auth_args);
+        if elements.is_empty() || !elements.len().is_multiple_of(WORD_SIZE) {
+            return Err(from_str_err(&format!(
+                "auth args must be a non-empty multiple of {} felts, got {}",
+                WORD_SIZE,
+                elements.len()
+            )));
+        }
+
+        self.builder = self.builder.clone().auth_args(&AuthArgs(elements));
+        Ok(self.clone())
     }
 
     /// Declares the salt the transaction's fee conversion info is committed under.
@@ -234,6 +261,17 @@ impl TransactionRequestBuilder {
             .build()
             .map(TransactionRequest)
             .map_err(|err| js_error_with_context(err, "failed to build transaction request"))
+    }
+}
+
+/// Auth args given as raw felts, committed with the default Poseidon2 hash.
+struct AuthArgs(Vec<NativeFelt>);
+
+impl SequentialCommit for AuthArgs {
+    type Commitment = NativeWord;
+
+    fn to_elements(&self) -> Vec<NativeFelt> {
+        self.0.clone()
     }
 }
 
