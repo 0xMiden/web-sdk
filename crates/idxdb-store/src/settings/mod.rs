@@ -1,7 +1,8 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use miden_client::store::{SettingMutation, SettingScope, StoreError};
+use miden_client::store::StoreError;
+use miden_client_core::store::{SettingMutation, SettingScope};
 
 mod js_bindings;
 mod models;
