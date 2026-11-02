@@ -123,8 +123,7 @@ since 0.17 a multisig resolves its auth args whatever the chain charges.
 Requests produced by the `new*TransactionRequest` constructors already declare a
 salt and need nothing extra.
 
-Two caveats. `withAuthArgs` (or the deprecated `withAuthArg`) and
-`withFeeConversionSalt` occupy the same slot and
+Two caveats. `withAuthArgs` and `withFeeConversionSalt` occupy the same slot and
 each setter clears the other, so a request cannot carry both. Never call either
 on a builder from `feeAwareTransactionRequestBuilder` for a multisig: that
 builder already carries the three-word auth args, and either setter discards

@@ -275,7 +275,7 @@ test.describe("fee conversion salt", () => {
     expect(result.roundTrippedSalt).toBe(result.expectedSalt);
   });
 
-  test("withAuthArg and withFeeConversionSalt are mutually exclusive", async ({
+  test("withAuthArgs and withFeeConversionSalt are mutually exclusive", async ({
     run,
   }) => {
     // miden-client keeps these two in the same slot and has each setter clear
@@ -292,21 +292,17 @@ test.describe("fee conversion salt", () => {
         new sdk.Felt(33n),
         new sdk.Felt(44n),
       ]);
-      const authArg = sdk.Word.newFromFelts([
-        new sdk.Felt(55n),
-        new sdk.Felt(66n),
-        new sdk.Felt(77n),
-        new sdk.Felt(88n),
-      ]);
+      const authArgs = () =>
+        new sdk.FeltArray([55n, 66n, 77n, 88n].map((v) => new sdk.Felt(v)));
 
       const saltLast = new sdk.TransactionRequestBuilder()
-        .withAuthArg(authArg)
+        .withAuthArgs(authArgs())
         .withFeeConversionSalt(salt)
         .build();
 
       const authArgLast = new sdk.TransactionRequestBuilder()
         .withFeeConversionSalt(salt)
-        .withAuthArg(authArg)
+        .withAuthArgs(authArgs())
         .build();
 
       return {
@@ -315,7 +311,7 @@ test.describe("fee conversion salt", () => {
         authArgLastSalt: authArgLast.feeConversionSalt()?.toHex() ?? null,
         authArgLastAuthArg: authArgLast.authArg()?.toHex() ?? null,
         expectedSalt: salt.toHex(),
-        expectedAuthArg: authArg.toHex(),
+        expectedAuthArg: sdk.Poseidon2.hashElements(authArgs()).toHex(),
       };
     });
 
@@ -333,12 +329,8 @@ test.describe("fee conversion salt", () => {
   }) => {
     const result = await run(async ({ sdk }) => {
       const values = [1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n];
-      const salt = sdk.Word.newFromFelts(
-        [9n, 10n, 11n, 12n].map((v) => new sdk.Felt(v))
-      );
 
       const request = new sdk.TransactionRequestBuilder()
-        .withFeeConversionSalt(salt)
         .withAuthArgs(new sdk.FeltArray(values.map((v) => new sdk.Felt(v))))
         .build();
 
@@ -352,14 +344,11 @@ test.describe("fee conversion salt", () => {
         authArg: authArg?.toHex() ?? null,
         expected: expected.toHex(),
         preimage: preimage?.map((f) => f.asInt().toString()) ?? null,
-        salt: request.feeConversionSalt()?.toHex() ?? null,
       };
     });
 
     expect(result.authArg).toBe(result.expected);
     expect(result.preimage).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
-    // Like withAuthArg, it clears a declared fee conversion salt.
-    expect(result.salt).toBeNull();
   });
 
   test("withAuthArgs rejects input that is not a non-empty multiple of 4 felts", async ({

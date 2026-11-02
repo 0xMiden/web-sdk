@@ -664,7 +664,6 @@ export interface BatchOptions {
   timeout?: number;
 }
 
-
 export interface BatchSubmitResult {
   /**
    * The node's chain tip as of submission — not the block the batch commits
@@ -2033,11 +2032,11 @@ export declare class MidenClient {
    * height when it built the request; below it execution fails with
    * "requested block N is after transaction reference block M" until it syncs.
    *
-   * Calling `withAuthArgs` or `withAuthArg` on the result clears what this declared, and vice
+   * Calling `withAuthArgs` on the result clears what this declared, and vice
    * versa: miden-client keeps the two mutually exclusive, so whichever is
    * called last wins rather than producing an error.
    *
-   * Do not call `withFeeConversionSalt`, `withAuthArgs` or `withAuthArg` on the builder this
+   * Do not call `withFeeConversionSalt` or `withAuthArgs` on the builder this
    * returns for a multisig. The two setters clear each other, so either one
    * discards the three-word auth args this already set and the transaction
    * aborts in the auth procedure. Pass `feeConversionSalt` in `options`.

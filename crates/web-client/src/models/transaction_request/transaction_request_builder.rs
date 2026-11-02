@@ -172,46 +172,28 @@ impl TransactionRequestBuilder {
         self.clone()
     }
 
-    /// Adds an authentication argument: a `Word` pushed to the stack for the account's
-    /// authentication procedure.
-    ///
-    /// @deprecated Use `withAuthArgs`, which sets the commitment and adds its advice-map preimage
-    /// in one call.
-    ///
-    /// Mutually exclusive with `withFeeConversionSalt`, and the exclusion is enforced by
-    /// miden-client rather than reported as an error: each setter clears the other, so whichever
-    /// is called last wins and the request can never carry both.
-    ///
-    /// That symmetry makes this setter destructive in the same place its twin is: on a builder
-    /// returned by `feeAwareTransactionRequestBuilder` for a multisig account, which already
-    /// carries the component's three-word auth args. Calling this discards them and the auth
-    /// procedure aborts piping a preimage that was never written. Pass `feeConversionSalt` to
-    /// `feeAwareTransactionRequestBuilder` instead.
-    ///
-    /// Setting this opts the request out of the client's fee-conversion machinery entirely. The
-    /// client commits conversion info only when the request carries no auth argument of its own,
-    /// so a caller that sets one is taking responsibility for the fee: on a fee-charging chain
-    /// the word has to be the commitment `hash(CONVERSION_INFO || SALT)`, with its preimage
-    /// reachable through `extendAdviceMap`, or `fee::pay_fee` aborts in the VM with
-    /// `ERR_FEE_CONVERSION_INFO_MISSING`. This is the escape hatch for an account whose auth
-    /// component miden-client does not recognise and therefore will not commit for; where the
-    /// account is a standard one, prefer `withFeeConversionSalt` or nothing at all.
-    #[js_export(js_name = "withAuthArg")]
-    pub fn with_auth_arg(&mut self, auth_arg: &Word) -> Self {
-        let native_word: NativeWord = auth_arg.into();
-        // `auth_arg` is deprecated in favor of `auth_args`, which also writes an advice-map
-        // preimage. This method sets a raw word by design, so it keeps the deprecated call.
-        #[allow(deprecated)]
-        let builder = self.builder.clone().auth_arg(native_word);
-        self.builder = builder;
-        self.clone()
-    }
-
     /// Sets the authentication argument to the Poseidon2 commitment of `authArgs` and adds
     /// `authArgs` to the advice map under that commitment, so an auth procedure that reads its
     /// arguments from the advice map finds them.
     ///
     /// `authArgs` must hold a whole number of words: a non-empty multiple of 4 felts.
+    ///
+    /// Mutually exclusive with `withFeeConversionSalt`, and the exclusion is enforced by
+    /// miden-client rather than reported as an error: each setter clears the other, so whichever
+    /// is called last wins and the request can never carry both.
+    ///
+    /// That makes this setter destructive on a builder returned by
+    /// `feeAwareTransactionRequestBuilder` for a multisig account, which already carries the
+    /// component's three-word auth args: calling it replaces them. Pass `feeConversionSalt` to
+    /// `feeAwareTransactionRequestBuilder` instead.
+    ///
+    /// Setting this opts the request out of the client's fee-conversion machinery entirely. The
+    /// client commits conversion info only when the request carries no auth argument of its own,
+    /// so a caller that sets one is taking responsibility for the fee: on a fee-charging chain
+    /// `authArgs` has to hold the conversion info the auth procedure reads, or `fee::pay_fee`
+    /// aborts in the VM with `ERR_FEE_CONVERSION_INFO_MISSING`. This is for an account whose auth
+    /// component miden-client does not recognise and therefore will not commit for; where the
+    /// account is a standard one, prefer `withFeeConversionSalt` or nothing at all.
     #[js_export(js_name = "withAuthArgs")]
     pub fn with_auth_args(&mut self, auth_args: FeltArray) -> Result<Self, JsErr> {
         let elements = felt_array_to_native_vec(&auth_args);
@@ -242,7 +224,7 @@ impl TransactionRequestBuilder {
     /// Declaring a salt against an account whose auth component does not read the auth args as
     /// conversion info is refused with `FeeConversionInfoUnsupported`.
     ///
-    /// Mutually exclusive with `withAuthArg` — see the note there. That makes this setter
+    /// Mutually exclusive with `withAuthArgs` — see the note there. That makes this setter
     /// destructive on a builder returned by `feeAwareTransactionRequestBuilder` for a multisig:
     /// that builder already carries the component's three-word auth args, and clearing them
     /// leaves the auth procedure piping a preimage that was never written. Pass

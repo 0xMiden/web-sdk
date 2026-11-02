@@ -389,7 +389,9 @@ test.describe("chain anchor", () => {
       // authenticate the bound block at the tip, which is what the declaration
       // on the fee-aware request fixes.
       const undeclared = new sdk.TransactionRequestBuilder()
-        .withAuthArg(request.authArg())
+        .withAuthArgs(
+          new sdk.FeltArray(request.adviceMap().get(request.authArg()))
+        )
         .extendAdviceMap(request.adviceMap())
         .build();
       let undeclaredError = null;

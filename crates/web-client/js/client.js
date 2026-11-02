@@ -504,7 +504,7 @@ export class MidenClient {
    * height when it built the request; below it execution fails with
    * "requested block N is after transaction reference block M" until it syncs.
    *
-   * Do not call `withFeeConversionSalt`, `withAuthArgs` or `withAuthArg` on the builder this
+   * Do not call `withFeeConversionSalt` or `withAuthArgs` on the builder this
    * returns for a multisig: the two setters clear each other, so either one
    * discards the auth args this already set. Pass `feeConversionSalt` here.
    *
