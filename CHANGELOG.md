@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.18.0-rc.0 (TBD)
+## 0.18.0 (TBD)
 
 ### Enhancements
 
