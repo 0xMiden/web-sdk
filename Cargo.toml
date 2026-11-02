@@ -49,18 +49,18 @@ js-export-macro = { path = "crates/js-export-macro", version = "0.18.0-rc.0" }
 # the `SequentialCommit` trait, which `miden-client` does not re-export but which the multisig auth
 # args are committed through. A requirement that drifts from `miden-client`'s would resolve a second
 # copy of the protocol types, so bump the three together.
-miden-client              = { default-features = false, version = "=0.17.1" }
-miden-client-proto        = { default-features = false, version = "=0.17.1" }
-miden-client-sqlite-store = { default-features = false, version = "=0.17.1" }
-miden-protocol            = { default-features = false, version = "=0.17.1" }
+miden-client              = { default-features = false, version = "=0.18.0" }
+miden-client-proto        = { default-features = false, version = "=0.18.0" }
+miden-client-sqlite-store = { default-features = false, version = "=0.18.0" }
+miden-protocol            = { default-features = false, version = "=0.18.0" }
 
 
 # VM crates
 # Declared here only so crates/web-client can depend on it and turn `std` on.
 # No code imports it, and this stanza does not enable the feature itself; the
 # rationale and blast radius are in crates/web-client/Cargo.toml.
-# 0.35.0 is the version already locked via the miden-client =0.17.1 (VM 0.35) graph.
-miden-precompiles-air = { default-features = false, version = "0.35.0" }
+# 0.36.3 is the version already locked via the miden-client =0.18.0 (VM 0.36) graph.
+miden-precompiles-air = { default-features = false, version = "0.36.3" }
 
 # External dependencies
 async-trait = { version = "0.1" }

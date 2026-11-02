@@ -192,7 +192,11 @@ impl TransactionRequestBuilder {
     #[js_export(js_name = "withAuthArg")]
     pub fn with_auth_arg(&mut self, auth_arg: &Word) -> Self {
         let native_word: NativeWord = auth_arg.into();
-        self.builder = self.builder.clone().auth_arg(native_word);
+        // `auth_arg` is deprecated in favor of `auth_args`, which also writes an advice-map
+        // preimage. This method sets a raw word by design, so it keeps the deprecated call.
+        #[allow(deprecated)]
+        let builder = self.builder.clone().auth_arg(native_word);
+        self.builder = builder;
         self.clone()
     }
 
