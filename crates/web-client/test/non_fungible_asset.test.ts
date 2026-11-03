@@ -711,7 +711,7 @@ test.describe("non-fungible faucet helpers", () => {
   }) => {
     const result = await run(async ({ client, sdk }) => {
       const faucet = await client.newNonFungibleFaucet(
-        sdk.AccountStorageMode.public(),
+        sdk.AccountStorageMode.private(),
         "Collectible",
         "NFT",
         sdk.AuthScheme.AuthRpoFalcon512
@@ -788,6 +788,7 @@ test.describe("accounts.create network non-fungible faucet", () => {
       });
       const regular = await client.accounts.create({
         type: "NonFungibleFaucet",
+        storage: "private",
         symbol: "NFT",
       });
       const stored = await client.accounts.get(faucet);

@@ -410,9 +410,10 @@ const faucet = await client.accounts.create({
   maxSupply: 10_000_000n,
 });
 
-// Non-fungible faucet
+// Non-fungible faucet. A public one requires `owner`.
 const collectibles = await client.accounts.create({
   type: FaucetType.NonFungibleFaucet,
+  storage: "private",
   symbol: "NFT",
 });
 

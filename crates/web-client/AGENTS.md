@@ -102,7 +102,8 @@ non-fungible faucets reject those fields with a `TypeError`. Neither kind
 accepts `components`.
 
 Passing `owner` with `FaucetType.NonFungibleFaucet` creates a network faucet.
-For its rules, how to mint from it, and why a public non-fungible faucet needs
+A public non-fungible faucet requires `owner`, and `storage` defaults to
+`"public"`. For its rules, how to mint from it, and why a public non-fungible faucet needs
 one for its assets to be burned, see
 [Account Visibility and Faucet Types](README.md#account-visibility-and-faucet-types).
 
@@ -115,6 +116,7 @@ const faucet = await client.accounts.create({
 });
 const collectibles = await client.accounts.create({
   type: FaucetType.NonFungibleFaucet,
+  storage: "private",
   symbol: "NFT",
 });
 // Network faucet: only `owner` can mint, and holders can burn.

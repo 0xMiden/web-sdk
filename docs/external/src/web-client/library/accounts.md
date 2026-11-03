@@ -28,6 +28,7 @@ const faucet = await client.accounts.create({
 });
 const collectibles = await client.accounts.create({
   type: FaucetType.NonFungibleFaucet,
+  storage: "private",
   symbol: "NFT",
 });
 ```

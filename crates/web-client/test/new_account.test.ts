@@ -227,10 +227,10 @@ test.describe("new_faucet tests", () => {
     expect(result.isNew).toEqual(true);
   });
 
-  test("creates a new public, non-fungible faucet", async ({ run }) => {
+  test("creates a new private, non-fungible faucet", async ({ run }) => {
     const result = await run(async ({ client, sdk }) => {
       const newFaucet = await client.newNonFungibleFaucet(
-        sdk.AccountStorageMode.public(),
+        sdk.AccountStorageMode.private(),
         "DAG",
         "DAG",
         sdk.AuthScheme.AuthRpoFalcon512
@@ -250,8 +250,27 @@ test.describe("new_faucet tests", () => {
     expect(result.isFaucet).toEqual(false);
     expect(result.isNonFungibleFaucet).toEqual(true);
     expect(result.isRegularAccount).toEqual(false);
-    expect(result.isPublic).toEqual(true);
+    expect(result.isPublic).toEqual(false);
     expect(result.isNew).toEqual(true);
+  });
+
+  test("rejects a public non-fungible faucet that is not a network account", async ({
+    run,
+  }) => {
+    const error = await run(async ({ client, sdk }) => {
+      try {
+        await client.newNonFungibleFaucet(
+          sdk.AccountStorageMode.public(),
+          "DAG",
+          "DAG",
+          sdk.AuthScheme.AuthRpoFalcon512
+        );
+        return null;
+      } catch (err: any) {
+        return String(err?.message ?? err);
+      }
+    });
+    expect(error).toContain("newNetworkNonFungibleFaucet");
   });
 
   test("throws an error when attempting to create a faucet with an invalid token symbol", async ({

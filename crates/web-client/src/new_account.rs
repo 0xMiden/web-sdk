@@ -103,6 +103,8 @@ impl WebClient {
     ///
     /// The faucet is registered with mint and burn policies (both `AllowAll`); its secret key is
     /// added to the keystore.
+    ///
+    /// The faucet must be private. A public non-fungible faucet must be a network account.
     #[js_export(js_name = "newNonFungibleFaucet")]
     pub async fn new_non_fungible_faucet(
         &self,
@@ -111,6 +113,11 @@ impl WebClient {
         token_symbol: String,
         auth_scheme: AuthScheme,
     ) -> Result<Account, JsErr> {
+        if storage_mode.is_public() {
+            return Err(from_str_err(
+                "a public non-fungible faucet must be a network faucet: use newNetworkNonFungibleFaucet",
+            ));
+        }
         self.maybe_sync_before_account_creation().await;
 
         let (new_account, key_pair) =

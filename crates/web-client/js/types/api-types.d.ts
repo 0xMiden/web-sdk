@@ -363,7 +363,10 @@ export interface NonFungibleFaucetCreateOptions {
    * Makes this a public network faucet owned by this account.
    */
   owner?: AccountRef;
-  /** Storage mode. Defaults to "public". */
+  /**
+   * Storage mode. Defaults to "public". A public non-fungible faucet requires
+   * `owner`, because it must be a network faucet for its assets to be burned.
+   */
   storage?: StorageMode;
   /** Authentication scheme. Defaults to Falcon. Not accepted with `owner`. */
   auth?: AuthSchemeType;

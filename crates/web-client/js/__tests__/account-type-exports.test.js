@@ -86,16 +86,20 @@ describe.each([
     const resource = new AccountsResource(
       inner,
       async () => ({
-        AccountStorageMode: { public: () => "public" },
+        AccountStorageMode: { private: () => "private" },
         AuthScheme: { AuthRpoFalcon512: 2 },
       }),
       { assertNotTerminated() {} }
     );
     await expect(
-      resource.create({ type: sdk.FaucetType.NonFungibleFaucet, symbol: "NFT" })
+      resource.create({
+        type: sdk.FaucetType.NonFungibleFaucet,
+        storage: "private",
+        symbol: "NFT",
+      })
     ).resolves.toBe("faucet");
     expect(inner.newNonFungibleFaucet).toHaveBeenCalledWith(
-      "public",
+      "private",
       "NFT",
       "NFT",
       2

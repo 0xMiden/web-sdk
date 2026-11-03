@@ -498,8 +498,10 @@ by submitting the request from
 `WebClient.newNetworkMintNonFungibleTransactionRequest(owner, target, asset)`
 from the owner account; the faucet rejects a MINT note from any other sender.
 Any holder can burn its assets with `newBurnNonFungibleAssetTransactionRequest`.
-A public non-fungible faucet without an `owner` mints with its own key, and the
-network never consumes a BURN note for it, so its assets cannot be burned.
+A public non-fungible faucet requires an `owner`, and `storage` defaults to
+`"public"`, so `create()` throws a `TypeError` for a public non-fungible faucet
+without one. A public faucet that is not a network account would never consume a
+BURN note, so its assets could not be burned.
 
 ### Create a New Wallet
 
@@ -554,6 +556,7 @@ const faucet = await client.accounts.create({
 
 const collectibles = await client.accounts.create({
   type: FaucetType.NonFungibleFaucet,
+  storage: "private",
   symbol: "NFT"
 });
 

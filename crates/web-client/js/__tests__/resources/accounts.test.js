@@ -134,13 +134,13 @@ describe("AccountsResource", () => {
       const resource = makeResource();
       await resource.create({
         type: 1,
-        storage: "public",
+        storage: "private",
         auth: "falcon",
         name: "Collectible",
         symbol: "NFT",
       });
       expect(inner.newNonFungibleFaucet).toHaveBeenCalledWith(
-        "public",
+        "private",
         "Collectible",
         "NFT",
         2
@@ -152,13 +152,13 @@ describe("AccountsResource", () => {
       const resource = makeResource();
       await resource.create({
         type: "NonFungibleFaucet",
-        storage: "public",
+        storage: "private",
         auth: "falcon",
         name: "Collectible",
         symbol: "NFT",
       });
       expect(inner.newNonFungibleFaucet).toHaveBeenCalledWith(
-        "public",
+        "private",
         "Collectible",
         "NFT",
         2
@@ -171,12 +171,16 @@ describe("AccountsResource", () => {
       ["NonFungibleFaucet", "NonFungibleFaucet"],
       ["legacy 1", 1],
     ])("non-fungible faucet with %s", (_label, type) => {
-      it("requires only a symbol and defaults the name to it", async () => {
+      it("defaults the name to the symbol", async () => {
         const resource = makeResource();
-        const result = await resource.create({ type, symbol: "NFT" });
+        const result = await resource.create({
+          type,
+          symbol: "NFT",
+          storage: "private",
+        });
 
         expect(inner.newNonFungibleFaucet).toHaveBeenCalledWith(
-          "public",
+          "private",
           "NFT",
           "NFT",
           2
@@ -184,6 +188,18 @@ describe("AccountsResource", () => {
         expect(result).toBe("newNonFungibleFaucetResult");
         expect(inner.newFaucet).not.toHaveBeenCalled();
         expect(inner.newWallet).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ["no storage", {}],
+        ["public storage", { storage: "public" }],
+      ])("rejects %s without an owner", async (_case, extra) => {
+        const resource = makeResource();
+        await expect(
+          resource.create({ type, symbol: "NFT", ...extra })
+        ).rejects.toThrow(TypeError);
+        expect(inner.newNonFungibleFaucet).not.toHaveBeenCalled();
+        expect(inner.newNetworkNonFungibleFaucet).not.toHaveBeenCalled();
       });
 
       it.each([

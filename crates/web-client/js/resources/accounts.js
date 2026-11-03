@@ -47,13 +47,16 @@ export class AccountsResource {
    * A non-fungible faucet with an `owner` is a public network faucet: the
    * network executes its transactions, so it has no auth key, and only the
    * owner can mint. It rejects `auth` and any `storage` other than "public".
+   * A public non-fungible faucet requires an `owner`; `storage` defaults to
+   * "public".
    *
    * The legacy 0 and 1 select fungible and non-fungible faucets respectively;
    * they are also AccountType.Private/Public, so a visibility value passed as
    * `type` is read as a faucet selector. Throws a TypeError naming `FaucetType`,
    * before creating anything, for an unrecognised `type`, for faucet fields
    * (`name`, `symbol`, `decimals`, `maxSupply`, `owner`) without a faucet type,
-   * for `owner` on a fungible faucet, for
+   * for `owner` on a fungible faucet, for a public non-fungible faucet without an
+   * `owner`, for
    * `components` on a faucet, or for missing or inapplicable faucet fields.
    */
   async create(opts) {
@@ -88,13 +91,17 @@ export class AccountsResource {
         throw selectorError(`a faucet request needs ${missing.join(", ")}.`);
       }
       const name = opts.name ?? opts.symbol;
+      const storage = opts.storage ?? "public";
+      if (nonFungible && storage === "public" && opts.owner === undefined) {
+        throw selectorError("a public non-fungible faucet needs an owner.");
+      }
       if (nonFungible && opts.owner !== undefined) {
         if (opts.auth !== undefined) {
           throw selectorError(
             "a network faucet (one with an owner) has no auth key, so it takes no auth."
           );
         }
-        if (opts.storage !== undefined && opts.storage !== "public") {
+        if (storage !== "public") {
           throw selectorError(
             "a network faucet (one with an owner) is always public."
           );
@@ -105,7 +112,7 @@ export class AccountsResource {
           opts.symbol
         );
       }
-      const storageMode = resolveStorageMode(opts.storage ?? "public", wasm);
+      const storageMode = resolveStorageMode(storage, wasm);
       const authScheme = resolveAuthScheme(opts.auth, wasm);
       if (nonFungible) {
         return await this.#inner.newNonFungibleFaucet(
