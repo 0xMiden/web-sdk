@@ -5,8 +5,7 @@ use miden_client::Word;
 use miden_client::account::{Account, AccountId};
 use miden_client::crypto::{Forest, MmrPeaks};
 use miden_client::note::{BlockNumber, NoteDetailsCommitment, NoteTag};
-use miden_client::protocol_config::protocol_config_setting_key;
-use miden_client::store::{SettingScope, StoreError};
+use miden_client::store::StoreError;
 use miden_client::sync::{
     NoteTagRecord,
     NoteTagSource,
@@ -15,6 +14,7 @@ use miden_client::sync::{
     StateSyncUpdate,
 };
 use miden_client::utils::{Deserializable, Serializable};
+use miden_client_core::store::{SettingScope, protocol_config_setting_key};
 use miden_client_proto::{decode_mmr_peaks, encode, encode_mmr_peaks};
 
 use super::IdxdbStore;

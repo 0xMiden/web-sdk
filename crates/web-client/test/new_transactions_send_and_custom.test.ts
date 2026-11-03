@@ -118,7 +118,6 @@ test.describe("custom transaction tests", () => {
       );
       const faucet = await client.newFaucet(
         sdk.AccountStorageMode.private(),
-        false,
         "DAG",
         "DAG",
         8,
@@ -325,7 +324,6 @@ test.describe("custom transaction tests", () => {
       );
       const faucet = await client.newFaucet(
         sdk.AccountStorageMode.private(),
-        false,
         "DAG",
         "DAG",
         8,

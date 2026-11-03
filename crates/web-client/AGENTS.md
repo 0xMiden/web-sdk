@@ -88,12 +88,45 @@ with it, and free the object wrappers the skills call out individually.
 
 **Account visibility and faucet kind are separate.** Use native
 `AccountType.Private` / `AccountType.Public` with `AccountBuilder.accountType()`.
-Use `FaucetType.FungibleFaucet` for `accounts.create({ type })`, and `storage`
-for visibility. Older `AccountType.FungibleFaucet` references must migrate to
+Use `FaucetType.FungibleFaucet` or `FaucetType.NonFungibleFaucet` for
+`accounts.create({ type })`, and `storage` for visibility. Older
+`AccountType.FungibleFaucet` references must migrate to
 `FaucetType.FungibleFaucet`; `create()` throws a `TypeError` for an unrecognised
-`type` rather than creating a wallet. The legacy `0` / `1` are still faucet
-selectors and equal `AccountType.Private` / `Public`, so never pass a visibility
-value as `type`.
+`type` rather than creating a wallet. The legacy `0` / `1` select fungible /
+non-fungible faucets and equal `AccountType.Private` / `Public`, so never pass
+a visibility value as `type`.
+
+Both faucet kinds require `symbol` and accept an optional `name` that defaults
+to `symbol`. Only fungible faucets require `decimals` and `maxSupply`;
+non-fungible faucets reject those fields with a `TypeError`. Neither kind
+accepts `components`.
+
+Passing `owner` with `FaucetType.NonFungibleFaucet` creates a network faucet.
+A public non-fungible faucet requires `owner`, and `storage` defaults to
+`"public"`. For its rules, how to mint from it, and why a public non-fungible faucet needs
+one for its assets to be burned, see
+[Account Visibility and Faucet Types](README.md#account-visibility-and-faucet-types).
+
+```typescript
+const faucet = await client.accounts.create({
+  type: FaucetType.FungibleFaucet,
+  symbol: "TOK",
+  decimals: 8,
+  maxSupply: 10_000_000n,
+});
+const collectibles = await client.accounts.create({
+  type: FaucetType.NonFungibleFaucet,
+  storage: "private",
+  symbol: "NFT",
+});
+// Network faucet: only `owner` can mint, and holders can burn.
+const owner = await client.accounts.create();
+const networkCollectibles = await client.accounts.create({
+  type: FaucetType.NonFungibleFaucet,
+  symbol: "NNFT",
+  owner,
+});
+```
 
 ## Read non-fungible assets
 

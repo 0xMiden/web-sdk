@@ -24,7 +24,6 @@ const noAuthConsumeTest = async (testingPage: Page) => {
     // Create a faucet (needs auth to mint)
     const faucetAccount = await client.newFaucet(
       window.AccountStorageMode.private(),
-      false,
       "TST",
       "TST",
       8,

@@ -2419,18 +2419,17 @@ dependencies = [
 
 [[package]]
 name = "miden-client"
-version = "0.17.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2c750011375ee29cc9f98d784395a5883eb2daaa615c49b869ed74ded407397"
+version = "0.17.2"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=af559d2a268dc852a130b22debb9b6eed68d3b61#af559d2a268dc852a130b22debb9b6eed68d3b61"
 dependencies = [
  "anyhow",
  "async-trait",
- "chrono",
  "futures",
  "getrandom 0.3.4",
  "gloo-timers",
  "miden-agglayer",
  "miden-assembly-syntax 0.35.0",
+ "miden-client-core",
  "miden-node-proto-build",
  "miden-objects",
  "miden-processor",
@@ -2459,12 +2458,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "miden-client-proto"
-version = "0.17.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66b5e863bb6be3600a33a5ca02d1d6bd8ae63b8dbade53e9b166fbe5db478da2"
+name = "miden-client-core"
+version = "0.17.2"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=af559d2a268dc852a130b22debb9b6eed68d3b61#af559d2a268dc852a130b22debb9b6eed68d3b61"
 dependencies = [
- "miden-client",
+ "async-trait",
+ "chrono",
+ "miden-objects",
+ "miden-protocol",
+ "thiserror",
+]
+
+[[package]]
+name = "miden-client-proto"
+version = "0.17.2"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=af559d2a268dc852a130b22debb9b6eed68d3b61#af559d2a268dc852a130b22debb9b6eed68d3b61"
+dependencies = [
+ "miden-client-core",
  "miden-objects",
  "miden-protocol",
  "prost",
@@ -2475,16 +2485,15 @@ dependencies = [
 
 [[package]]
 name = "miden-client-sqlite-store"
-version = "0.17.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "707b7b9d82469518570c07b25aefb90233c710015a62f9097daf52d8c6c9656d"
+version = "0.17.2"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=af559d2a268dc852a130b22debb9b6eed68d3b61#af559d2a268dc852a130b22debb9b6eed68d3b61"
 dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
  "deadpool",
  "deadpool-sync",
- "miden-client",
+ "miden-client-core",
  "miden-client-proto",
  "miden-protocol",
  "rusqlite",
@@ -2805,6 +2814,7 @@ dependencies = [
  "base64",
  "chrono",
  "miden-client",
+ "miden-client-core",
  "miden-client-proto",
  "miette",
  "serde",

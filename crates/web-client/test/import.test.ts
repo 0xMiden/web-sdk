@@ -21,7 +21,6 @@ test.describe("import from seed", () => {
 
       const faucet = await intClient.newFaucet(
         sdk.AccountStorageMode.public(),
-        false,
         "DAG",
         "DAG",
         8,
@@ -168,7 +167,6 @@ test.describe("import public account by id", () => {
 
       const faucet = await intClient.newFaucet(
         sdk.AccountStorageMode.public(),
-        false,
         "DAG",
         "DAG",
         8,

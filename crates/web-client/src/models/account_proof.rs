@@ -15,7 +15,9 @@ use miden_client::rpc::domain::account::{
 use super::account_code::AccountCode;
 use super::account_header::AccountHeader;
 use super::account_id::AccountId;
+use super::asset::native_non_fungible_asset;
 use super::fungible_asset::FungibleAsset;
+use super::non_fungible_asset::NonFungibleAsset;
 use super::word::Word;
 use crate::js_error_with_context;
 use crate::platform::JsErr;
@@ -181,6 +183,20 @@ impl AccountProof {
                 .iter()
                 .filter(|asset| asset.is_fungible())
                 .map(|asset| asset.unwrap_fungible().into())
+                .collect()
+        })
+    }
+
+    /// Returns the non-fungible assets in the account's vault, if vault details were included
+    /// in the proof response.
+    ///
+    /// Returns `undefined` if the account is private or vault data was not requested.
+    #[js_export(js_name = "vaultNonFungibleAssets")]
+    pub fn vault_non_fungible_assets(&self) -> Option<Vec<NonFungibleAsset>> {
+        self.inner.vault_details().map(|d| {
+            d.assets
+                .iter()
+                .filter_map(|asset| native_non_fungible_asset(asset).map(Into::into))
                 .collect()
         })
     }

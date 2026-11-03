@@ -6,10 +6,13 @@ use miden_client::Word as NativeWord;
 use miden_client::account::component::{
     AccountComponent as NativeAccountComponent,
     AccountComponentMetadata,
-    AuthNetworkAccount,
-    BasicConstantFeePolicy,
-    FeePolicyManager,
 };
+use miden_client::account::standards::auth::{
+    Approver,
+    AuthNetworkAccount,
+    AuthSingleSig as NativeSingleSig,
+};
+use miden_client::account::standards::fees::{BasicConstantFeePolicy, FeePolicyManager};
 use miden_client::account::{
     AccountComponentCode as NativeAccountComponentCode,
     StorageSlot as NativeStorageSlot,
@@ -17,10 +20,8 @@ use miden_client::account::{
 use miden_client::assembly::MastNodeExt;
 use miden_client::asset::AssetAmount;
 use miden_client::auth::{
-    Approver,
     AuthSchemeId as NativeAuthSchemeId,
     AuthSecretKey as NativeSecretKey,
-    AuthSingleSig as NativeSingleSig,
     PublicKeyCommitment,
 };
 use miden_client::note::NoteScriptRoot;

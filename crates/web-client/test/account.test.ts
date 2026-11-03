@@ -1271,7 +1271,6 @@ test.describe("getAccountByKeyCommitment tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const faucet = await client.newFaucet(
         sdk.AccountStorageMode.private(),
-        false,
         "TST",
         "TST",
         8,

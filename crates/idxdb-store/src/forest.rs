@@ -5,7 +5,8 @@ use core::ops::Deref;
 use miden_client::Word;
 use miden_client::account::{Account, AccountId, StorageSlotContent, StorageSlotName};
 use miden_client::crypto::{ForestInMemoryBackend, VersionId};
-use miden_client::store::{AccountSmtForest, AccountUpdate, StoreError};
+use miden_client::store::StoreError;
+use miden_client_core::store::{AccountSmtForest, AccountUpdate};
 
 /// The account vault and storage-map SMTs, which serve asset and storage-map witnesses.
 ///

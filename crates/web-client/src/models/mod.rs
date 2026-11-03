@@ -77,6 +77,7 @@ pub mod merkle_path;
 pub mod network_account_target;
 pub mod network_note_status;
 pub mod non_fungible_asset;
+pub mod non_fungible_faucet_component;
 pub mod note;
 pub mod note_assets;
 pub mod note_attachment;

@@ -48,7 +48,6 @@ export async function setupWalletAndFaucet(
   );
   const faucet = await client.newFaucet(
     sdk.AccountStorageMode.private(),
-    false,
     "DAG",
     "DAG",
     8,

@@ -78,7 +78,6 @@ export function useCreateFaucet(): UseCreateFaucetResult {
         const newFaucet = await runExclusiveSafe(async () => {
           const createdFaucet = await client.newFaucet(
             storageMode,
-            false, // nonFungible - currently only fungible faucets supported
             options.tokenName ?? options.tokenSymbol,
             options.tokenSymbol,
             decimals,

@@ -264,24 +264,33 @@ Hooks accept strings for account IDs, asset IDs, and note IDs (auto-detecting he
 
 ```tsx
 import { useEffect, useState } from "react";
-import { useMiden } from "@miden-sdk/react/lazy";
+import { useAccount, useMiden } from "@miden-sdk/react/lazy";
 import { AccountId } from "@miden-sdk/miden-sdk/lazy";
 
 function IdInspector({ idString }: { idString: string }) {
   const { isReady } = useMiden();
-  const [isFaucet, setIsFaucet] = useState<boolean | null>(null);
+  const [accountId, setAccountId] = useState<AccountId | undefined>();
+  // AccountId has no faucet predicates; load the full Account.
+  const { account } = useAccount(accountId);
 
   useEffect(() => {
     if (!isReady) return;
-    // AccountId.fromBech32/fromHex is synchronous but touches WASM — run it
+    // AccountId.fromBech32/fromHex is synchronous but touches WASM - run it
     // only after the provider reports ready.
     const id = idString.startsWith("miden1")
       ? AccountId.fromBech32(idString)
       : AccountId.fromHex(idString);
-    setIsFaucet(id.isFaucet());
+    setAccountId(id);
   }, [isReady, idString]);
 
-  return <span>{isFaucet === null ? "…" : isFaucet ? "faucet" : "wallet"}</span>;
+  if (!account) return <span>…</span>;
+  // isFaucet() is fungible-only; include non-fungible faucets too.
+  const isFaucet = account.isFaucet() || account.isNonFungibleFaucet();
+  return (
+    <span>
+      {isFaucet ? "faucet" : account.isRegularAccount() ? "wallet" : "…"}
+    </span>
+  );
 }
 ```
 

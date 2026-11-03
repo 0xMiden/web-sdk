@@ -597,7 +597,6 @@ test.describe("submitNewTransactionWithProver tests", () => {
 
         const faucetAccount = await client.newFaucet(
           sdk.AccountStorageMode.private(),
-          false,
           "DAG",
           "DAG",
           8,

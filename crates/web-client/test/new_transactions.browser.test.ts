@@ -109,7 +109,6 @@ export const discardedTransaction = async (
     );
     const faucetAccount = await client.newFaucet(
       window.AccountStorageMode.private(),
-      false,
       "DAG",
       "DAG",
       8,

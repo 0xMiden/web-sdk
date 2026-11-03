@@ -98,14 +98,14 @@ const { accounts, wallets, faucets, isLoading, error, refetch } = useAccounts();
 // faucets  - always `[]`
 ```
 
-An account's faucet-vs-wallet kind is not encoded in the account id, so `wallets` mirrors `accounts` and `faucets` is always empty. Use `accounts` and detect faucets **per-account** via `account.isFaucet()` (load the full `Account` with `useAccount`).
+An account's faucet-vs-wallet kind is not encoded in the account id, so `wallets` mirrors `accounts` and `faucets` is always empty. Use `accounts` and detect faucets **per-account** via `account.isFaucet() || account.isNonFungibleFaucet()` (load the full `Account` with `useAccount`). `isFaucet()` alone identifies only fungible faucets; `isRegularAccount()` identifies wallets.
 
 `useAccounts().error` is always `null`. The hook swallows fetch failures and leaves `accounts` at its last value, so do not gate UI on it. For provider-init failures read `useMiden().error` instead.
 
 ### useAccount(accountId: AccountRef | undefined)
 ```tsx
 const { account, assets, getBalance, isLoading, error, refetch } = useAccount(accountId);
-// account - Account object (.id(), .nonce(), .bech32id(), .isFaucet())
+// account - Account object (.id(), .nonce(), .bech32id(), .isFaucet(), .isNonFungibleFaucet(), .isRegularAccount())
 // assets - AssetBalance[] (assetId, amount, symbol?, decimals?)
 // getBalance(faucetId) - bigint balance for specific token
 ```

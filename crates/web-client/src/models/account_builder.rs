@@ -1,10 +1,10 @@
 use js_export_macro::js_export;
-use miden_client::account::component::BasicWallet;
+use miden_client::account::standards::auth::NoAuth;
+use miden_client::account::standards::wallets::BasicWallet;
 use miden_client::account::{
     AccountBuilder as NativeAccountBuilder,
     AccountBuilderSchemaCommitmentExt,
 };
-use miden_client::auth::NoAuth;
 
 use crate::js_error_with_context;
 use crate::models::account::Account;

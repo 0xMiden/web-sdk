@@ -106,11 +106,16 @@ const WRITE_METHODS = new Set([
   "insertAccountAddress",
   "newAccount",
   "newB2AggTransactionRequest",
+  "newBurnNonFungibleAssetTransactionRequest",
   "newConsumeTransactionRequest",
+  "newMintNonFungibleTransactionRequest",
   "newMintTransactionRequest",
+  "newNetworkMintNonFungibleTransactionRequest",
+  "newNetworkNonFungibleFaucet",
   "newPswapCancelTransactionRequest",
   "newPswapConsumeTransactionRequest",
   "newPswapCreateTransactionRequest",
+  "newSendNonFungibleAssetTransactionRequest",
   "newSendTransactionRequest",
   "newSwapTransactionRequest",
   "pruneAccountHistory",
@@ -970,7 +975,6 @@ class WebClient {
 
   async newFaucet(
     storageMode,
-    nonFungible,
     tokenName,
     tokenSymbol,
     decimals,
@@ -981,7 +985,6 @@ class WebClient {
       const wasmWebClient = await this.getWasmWebClient();
       return await wasmWebClient.newFaucet(
         storageMode,
-        nonFungible,
         tokenName,
         tokenSymbol,
         decimals,
@@ -989,6 +992,23 @@ class WebClient {
         authSchemeId
       );
     }, "newFaucet");
+  }
+
+  async newNonFungibleFaucet(
+    storageMode,
+    tokenName,
+    tokenSymbol,
+    authSchemeId
+  ) {
+    return this._serializeWasmCall(async () => {
+      const wasmWebClient = await this.getWasmWebClient();
+      return await wasmWebClient.newNonFungibleFaucet(
+        storageMode,
+        tokenName,
+        tokenSymbol,
+        authSchemeId
+      );
+    }, "newNonFungibleFaucet");
   }
 
   async newAccount(account, overwrite) {

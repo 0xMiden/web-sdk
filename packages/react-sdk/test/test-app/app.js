@@ -117,7 +117,6 @@ const TestHarness = () => {
         );
         const faucet = await readyClient.newFaucet(
           AccountStorageMode.private(),
-          false,
           "TEST",
           "TEST",
           8,

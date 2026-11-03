@@ -100,8 +100,9 @@ const { accounts, wallets, faucets, isLoading, error, refetch } = useAccounts();
 Protocol 0.15 removed faucet-vs-wallet from the account id, so the two cannot be
 split from headers alone. `wallets` is an alias of `accounts` and `faucets` is
 always empty; both are marked `@deprecated`. Use `accounts`, and detect faucets
-**per-account** with `account.isFaucet()` after loading the full `Account` via
-`useAccount`.
+**per-account** with `account.isFaucet() || account.isNonFungibleFaucet()` after
+loading the full `Account` via `useAccount`. `isFaucet()` alone identifies only
+fungible faucets; `isRegularAccount()` identifies wallets.
 
 `useAccounts().error` is always `null` - the hook swallows fetch failures and
 leaves `accounts` at its last value, so don't gate UI on it. Read
@@ -111,7 +112,7 @@ leaves `accounts` at its last value, so don't gate UI on it. Read
 ```tsx
 const { account, assets, getBalance, isLoading, error, refetch } = useAccount(accountId);
 
-// account   - Account object: .id(), .nonce(), .bech32id(), .isFaucet()
+// account   - Account object: .id(), .nonce(), .bech32id(), .isFaucet(), .isNonFungibleFaucet(), .isRegularAccount()
 // assets    - AssetBalance[] of { assetId, amount, symbol?, decimals? }
 // getBalance(faucetId) - bigint balance for one token
 ```

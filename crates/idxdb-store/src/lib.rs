@@ -34,18 +34,11 @@ use miden_client::block::{AccountWitness, BlockHeader};
 use miden_client::crypto::{InOrderIndex, MmrPeaks};
 use miden_client::note::{BlockNumber, NoteScript, Nullifier};
 use miden_client::store::{
-    AccountRecord,
     AccountStatus,
-    AccountStorageFilter,
     BlockRelevance,
-    ClientAccountType,
-    InputNoteCursor,
     InputNoteRecord,
     NoteFilter,
     OutputNoteRecord,
-    PartialBlockchainFilter,
-    SettingMutation,
-    SettingScope,
     Store,
     StoreError,
     TransactionFilter,
@@ -54,6 +47,15 @@ use miden_client::sync::{NoteTagRecord, StateSyncUpdate};
 use miden_client::transaction::{TransactionRecord, TransactionStoreUpdate};
 use miden_client::utils::RwLock;
 use miden_client::{Felt, Word};
+use miden_client_core::store::{
+    AccountRecord,
+    AccountStorageFilter,
+    ClientAccountType,
+    InputNoteCursor,
+    PartialBlockchainFilter,
+    SettingMutation,
+    SettingScope,
+};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use wasm_bindgen::prelude::*;

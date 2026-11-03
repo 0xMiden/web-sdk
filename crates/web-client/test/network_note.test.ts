@@ -29,7 +29,6 @@ test.describe("network note tests", () => {
       // own fee faucet is the chain's, below.
       const faucet = await client.newFaucet(
         sdk.AccountStorageMode.public(),
-        false,
         "FEE",
         "FEE",
         8,
