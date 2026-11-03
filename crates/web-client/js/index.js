@@ -110,6 +110,8 @@ const WRITE_METHODS = new Set([
   "newConsumeTransactionRequest",
   "newMintNonFungibleTransactionRequest",
   "newMintTransactionRequest",
+  "newNetworkMintNonFungibleTransactionRequest",
+  "newNetworkNonFungibleFaucet",
   "newPswapCancelTransactionRequest",
   "newPswapConsumeTransactionRequest",
   "newPswapCreateTransactionRequest",

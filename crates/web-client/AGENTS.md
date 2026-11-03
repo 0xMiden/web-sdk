@@ -101,6 +101,11 @@ to `symbol`. Only fungible faucets require `decimals` and `maxSupply`;
 non-fungible faucets reject those fields with a `TypeError`. Neither kind
 accepts `components`.
 
+Passing `owner` with `FaucetType.NonFungibleFaucet` creates a network faucet.
+For its rules, how to mint from it, and why a public non-fungible faucet needs
+one for its assets to be burned, see
+[Account Visibility and Faucet Types](README.md#account-visibility-and-faucet-types).
+
 ```typescript
 const faucet = await client.accounts.create({
   type: FaucetType.FungibleFaucet,
@@ -111,6 +116,13 @@ const faucet = await client.accounts.create({
 const collectibles = await client.accounts.create({
   type: FaucetType.NonFungibleFaucet,
   symbol: "NFT",
+});
+// Network faucet: only `owner` can mint, and holders can burn.
+const owner = await client.accounts.create();
+const networkCollectibles = await client.accounts.create({
+  type: FaucetType.NonFungibleFaucet,
+  symbol: "NNFT",
+  owner,
 });
 ```
 

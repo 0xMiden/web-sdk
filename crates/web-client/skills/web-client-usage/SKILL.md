@@ -416,6 +416,14 @@ const collectibles = await client.accounts.create({
   symbol: "NFT",
 });
 
+// Network non-fungible faucet: see "Account Visibility and Faucet Types" in
+// the package README.md for its rules and how to mint from it.
+const networkCollectibles = await client.accounts.create({
+  type: FaucetType.NonFungibleFaucet,
+  symbol: "NFT",
+  owner: wallet,
+});
+
 // Custom contract - selected by passing `components` (NOT by an AccountType
 // member). Requires seed and an AuthSecretKey.
 const component = await client.compile.component({

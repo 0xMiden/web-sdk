@@ -487,10 +487,19 @@ Omit `type` to create a wallet, or pass `components` to create a contract.
 The legacy numeric selectors `0` and `1` select fungible and non-fungible faucets
 respectively. They are also `AccountType.Private` / `AccountType.Public`, so
 never pass a visibility value as `type`. `create()` throws a `TypeError` for
-any other `type`, for faucet fields (`name`, `symbol`, `decimals`, `maxSupply`)
-without a faucet type, for `components` on a faucet, and for missing or
+any other `type`, for faucet fields (`name`, `symbol`, `decimals`, `maxSupply`,
+`owner`) without a faucet type, for `components` on a faucet, and for missing or
 inapplicable faucet fields, so a missed migration fails instead of creating a
 wallet.
+
+Pass `owner` with `FaucetType.NonFungibleFaucet` to create a network faucet. It has no auth key, so it
+rejects `auth` and any `storage` other than `"public"`. Only the owner can mint,
+by submitting the request from
+`WebClient.newNetworkMintNonFungibleTransactionRequest(owner, target, asset)`
+from the owner account; the faucet rejects a MINT note from any other sender.
+Any holder can burn its assets with `newBurnNonFungibleAssetTransactionRequest`.
+A public non-fungible faucet without an `owner` mints with its own key, and the
+network never consumes a BURN note for it, so its assets cannot be burned.
 
 ### Create a New Wallet
 
@@ -546,6 +555,14 @@ const faucet = await client.accounts.create({
 const collectibles = await client.accounts.create({
   type: FaucetType.NonFungibleFaucet,
   symbol: "NFT"
+});
+
+// Network faucet: only `owner` can mint, and holders can burn
+const owner = await client.accounts.create();
+const networkCollectibles = await client.accounts.create({
+  type: FaucetType.NonFungibleFaucet,
+  symbol: "NNFT",
+  owner
 });
 
 console.log(faucet.id().toString());

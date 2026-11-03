@@ -7,7 +7,12 @@ use super::models::account::Account;
 use super::models::account_storage_mode::AccountStorageMode;
 use super::models::auth::AuthScheme;
 use super::models::auth_secret_key::AuthSecretKey as WebAuthSecretKey;
-use crate::helpers::{generate_faucet, generate_non_fungible_faucet, generate_wallet};
+use crate::helpers::{
+    generate_faucet,
+    generate_network_non_fungible_faucet,
+    generate_non_fungible_faucet,
+    generate_wallet,
+};
 use crate::models::account_id::AccountId;
 use crate::platform::{JsErr, from_str_err, js_u64_to_u64, maybe_wrap_send};
 use crate::{WebClient, js_error_with_context};
@@ -113,6 +118,34 @@ impl WebClient {
                 .await?;
 
         self.persist_new_faucet(new_account, &key_pair).await
+    }
+
+    /// Creates, persists, and returns a new public network non-fungible faucet owned by `owner`.
+    #[js_export(js_name = "newNetworkNonFungibleFaucet")]
+    pub async fn new_network_non_fungible_faucet(
+        &self,
+        owner: &AccountId,
+        token_name: String,
+        token_symbol: String,
+    ) -> Result<Account, JsErr> {
+        self.maybe_sync_before_account_creation().await;
+        let fee_faucet_id = self.fee_faucet_id().await?;
+
+        let new_account = generate_network_non_fungible_faucet(
+            owner.into(),
+            token_name,
+            token_symbol,
+            (&fee_faucet_id).into(),
+        )?;
+
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        client
+            .add_account(&new_account, false)
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to insert new faucet"))?;
+
+        Ok(new_account.into())
     }
 
     #[js_export(js_name = "newWallet")]

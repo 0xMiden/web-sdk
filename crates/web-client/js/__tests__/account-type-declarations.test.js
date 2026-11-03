@@ -47,6 +47,9 @@ it("type-checks visibility and faucet selectors through the public declarations"
         type: nonFungibleKind, symbol: "NFT", name: "Collectible",
         storage: "public", auth: "ecdsa"
       };
+      const networkNonFungible: NonFungibleFaucetCreateOptions = {
+        type: nonFungibleKind, symbol: "NFT", owner: "0x1234"
+      };
       const nonFungibleFaucet: FaucetCreateOptions = nonFungible;
       const account: CreateAccountOptions = nonFungibleFaucet;
       // @ts-expect-error Fungible faucets require decimals and maxSupply.

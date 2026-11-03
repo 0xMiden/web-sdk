@@ -1,12 +1,29 @@
 use miden_client::account::component::AccountComponent;
-use miden_client::account::standards::access::{Authority, Pausable, PausableManager};
-use miden_client::account::standards::auth::{Approver, AuthSingleSig};
-use miden_client::account::standards::faucets::{FungibleFaucet, NonFungibleFaucet, TokenName};
+use miden_client::account::standards::access::{
+    AccessControl,
+    Authority,
+    Pausable,
+    PausableManager,
+};
+use miden_client::account::standards::auth::{Approver, AuthNetworkAccount, AuthSingleSig};
+use miden_client::account::standards::faucets::{
+    FungibleFaucet,
+    NonFungibleFaucet,
+    TokenName,
+    create_network_non_fungible_faucet,
+};
+use miden_client::account::standards::fees::{BasicConstantFeePolicy, FeePolicyManager};
 use miden_client::account::standards::policies::{BurnPolicy, MintPolicy, TokenPolicyManager};
 use miden_client::account::standards::wallets::BasicWallet;
-use miden_client::account::{Account, AccountBuilder, AccountBuilderSchemaCommitmentExt};
+use miden_client::account::{
+    Account,
+    AccountBuilder,
+    AccountBuilderSchemaCommitmentExt,
+    AccountId,
+};
 use miden_client::asset::{AssetAmount, TokenSymbol};
 use miden_client::auth::{AuthSchemeId as NativeAuthScheme, AuthSecretKey};
+use miden_client::note::{BurnNote, MintNote};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -131,6 +148,52 @@ pub(crate) async fn generate_non_fungible_faucet(
     ];
 
     build_faucet_account(storage_mode, auth_scheme, faucet_components)
+}
+
+/// Builds a public network non-fungible faucet owned by `owner`.
+///
+/// The network executes the faucet's transactions: it mints when it consumes a MINT note sent by
+/// `owner`, and burns when it consumes a BURN note from any holder. Every note script the faucet
+/// allowlists is priced at zero in `fee_faucet_id`, the chain's fee asset.
+///
+/// # Errors:
+/// - If the token name / symbol are invalid
+/// - If the rust client account builder fails
+pub(crate) fn generate_network_non_fungible_faucet(
+    owner: AccountId,
+    token_name: String,
+    token_symbol: String,
+    fee_faucet_id: AccountId,
+) -> Result<Account, JsErr> {
+    let symbol = TokenSymbol::new(&token_symbol).map_err(|err| from_str_err(&err.to_string()))?;
+    let name = TokenName::new(&token_name).map_err(|err| from_str_err(&err.to_string()))?;
+    let token_policies = TokenPolicyManager::builder()
+        .active_mint_policy(MintPolicy::owner_only())
+        .active_burn_policy(BurnPolicy::allow_all())
+        .build();
+
+    let fee_policy = BasicConstantFeePolicy::new().with_fees(
+        AuthNetworkAccount::default_allowed_note_scripts()
+            .into_iter()
+            .chain([MintNote::script_root(), BurnNote::script_root()])
+            .map(|root| (root, AssetAmount::ZERO)),
+    );
+    let fee_policies = FeePolicyManager::builder()
+        .fee_faucet_id(fee_faucet_id)
+        .active_fee_policy(fee_policy.into())
+        .build();
+
+    let mut init_seed = [0u8; 32];
+    rand::make_rng::<StdRng>().fill_bytes(&mut init_seed);
+
+    create_network_non_fungible_faucet(
+        init_seed,
+        NonFungibleFaucet::builder().name(name).symbol(symbol).build(),
+        AccessControl::Ownable2Step { owner },
+        token_policies,
+        fee_policies,
+    )
+    .map_err(|err| js_error_with_context(err, "failed to create network non-fungible faucet"))
 }
 
 /// Builds a faucet account from its faucet components, together with its authentication key.

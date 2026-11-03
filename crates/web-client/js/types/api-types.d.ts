@@ -359,9 +359,13 @@ export interface NonFungibleFaucetCreateOptions {
   name?: string;
   /** Collection symbol. Required for both faucet kinds. */
   symbol: string;
+  /**
+   * Makes this a public network faucet owned by this account.
+   */
+  owner?: AccountRef;
   /** Storage mode. Defaults to "public". */
   storage?: StorageMode;
-  /** Authentication scheme. Defaults to Falcon. */
+  /** Authentication scheme. Defaults to Falcon. Not accepted with `owner`. */
   auth?: AuthSchemeType;
 }
 

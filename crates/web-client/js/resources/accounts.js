@@ -8,7 +8,7 @@ import {
 // Legacy numeric 0/1 select fungible/non-fungible faucets.
 const FAUCET_TYPES = new Set(["FungibleFaucet", "NonFungibleFaucet", 0, 1]);
 const CONTRACT_TYPES = new Set(["ImmutableContract", "MutableContract"]);
-const FAUCET_FIELDS = ["name", "symbol", "decimals", "maxSupply"];
+const FAUCET_FIELDS = ["name", "symbol", "decimals", "maxSupply", "owner"];
 const REQUIRED_FUNGIBLE_FAUCET_FIELDS = ["symbol", "decimals", "maxSupply"];
 
 function display(value) {
@@ -44,11 +44,16 @@ export class AccountsResource {
    * `FaucetType.NonFungibleFaucet` requires only `symbol` and rejects `decimals`
    * and `maxSupply`. Both accept an optional `name`, defaulting to `symbol`.
    *
+   * A non-fungible faucet with an `owner` is a public network faucet: the
+   * network executes its transactions, so it has no auth key, and only the
+   * owner can mint. It rejects `auth` and any `storage` other than "public".
+   *
    * The legacy 0 and 1 select fungible and non-fungible faucets respectively;
    * they are also AccountType.Private/Public, so a visibility value passed as
    * `type` is read as a faucet selector. Throws a TypeError naming `FaucetType`,
    * before creating anything, for an unrecognised `type`, for faucet fields
-   * (`name`, `symbol`, `decimals`, `maxSupply`) without a faucet type, for
+   * (`name`, `symbol`, `decimals`, `maxSupply`, `owner`) without a faucet type,
+   * for `owner` on a fungible faucet, for
    * `components` on a faucet, or for missing or inapplicable faucet fields.
    */
   async create(opts) {
@@ -70,6 +75,9 @@ export class AccountsResource {
           "decimals and maxSupply only apply to fungible faucets."
         );
       }
+      if (!nonFungible && opts.owner !== undefined) {
+        throw selectorError("owner only applies to non-fungible faucets.");
+      }
       const requiredFields = nonFungible
         ? ["symbol"]
         : REQUIRED_FUNGIBLE_FAUCET_FIELDS;
@@ -79,9 +87,26 @@ export class AccountsResource {
       if (missing.length > 0) {
         throw selectorError(`a faucet request needs ${missing.join(", ")}.`);
       }
+      const name = opts.name ?? opts.symbol;
+      if (nonFungible && opts.owner !== undefined) {
+        if (opts.auth !== undefined) {
+          throw selectorError(
+            "a network faucet (one with an owner) has no auth key, so it takes no auth."
+          );
+        }
+        if (opts.storage !== undefined && opts.storage !== "public") {
+          throw selectorError(
+            "a network faucet (one with an owner) is always public."
+          );
+        }
+        return await this.#inner.newNetworkNonFungibleFaucet(
+          resolveAccountRef(opts.owner, wasm),
+          name,
+          opts.symbol
+        );
+      }
       const storageMode = resolveStorageMode(opts.storage ?? "public", wasm);
       const authScheme = resolveAuthScheme(opts.auth, wasm);
-      const name = opts.name ?? opts.symbol;
       if (nonFungible) {
         return await this.#inner.newNonFungibleFaucet(
           storageMode,

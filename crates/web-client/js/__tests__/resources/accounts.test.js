@@ -41,6 +41,9 @@ function makeInner(overrides = {}) {
     newNonFungibleFaucet: vi
       .fn()
       .mockResolvedValue("newNonFungibleFaucetResult"),
+    newNetworkNonFungibleFaucet: vi
+      .fn()
+      .mockResolvedValue("newNetworkNonFungibleFaucetResult"),
     newWallet: vi.fn().mockResolvedValue("newWalletResult"),
     newAccount: vi.fn().mockResolvedValue(undefined),
     newAccountWithSecretKey: vi.fn().mockResolvedValue(undefined),
@@ -239,6 +242,107 @@ describe("AccountsResource", () => {
         expect(inner.newWallet).not.toHaveBeenCalled();
         expect(wasm.AccountBuilder).not.toHaveBeenCalled();
       });
+
+      it("creates a network faucet when an owner is given", async () => {
+        const resource = makeResource();
+        const result = await resource.create({
+          type,
+          name: "Collectible",
+          symbol: "NFT",
+          owner: "0xowner",
+        });
+
+        expect(wasm.AccountId.fromHex).toHaveBeenCalledWith("0xowner");
+        expect(inner.newNetworkNonFungibleFaucet).toHaveBeenCalledWith(
+          expect.objectContaining({ hex: "0xowner" }),
+          "Collectible",
+          "NFT"
+        );
+        expect(result).toBe("newNetworkNonFungibleFaucetResult");
+        expect(inner.newNonFungibleFaucet).not.toHaveBeenCalled();
+      });
+
+      it("accepts storage 'public' with an owner", async () => {
+        const resource = makeResource();
+        await resource.create({
+          type,
+          symbol: "NFT",
+          owner: "0xowner",
+          storage: "public",
+        });
+
+        expect(inner.newNetworkNonFungibleFaucet).toHaveBeenCalledWith(
+          expect.objectContaining({ hex: "0xowner" }),
+          "NFT",
+          "NFT"
+        );
+      });
+
+      it.each([
+        ["auth", { auth: "ecdsa" }, /network faucet .* takes no auth/],
+        [
+          "private storage",
+          { storage: "private" },
+          /network faucet .* is always public/,
+        ],
+      ])(
+        "rejects an owner combined with %s",
+        async (_label, fields, message) => {
+          const resource = makeResource();
+
+          await expect(
+            resource.create({
+              type,
+              symbol: "NFT",
+              owner: "0xowner",
+              ...fields,
+            })
+          ).rejects.toThrow(
+            expect.objectContaining({
+              name: "TypeError",
+              message: expect.stringMatching(message),
+            })
+          );
+          expect(inner.newNetworkNonFungibleFaucet).not.toHaveBeenCalled();
+          expect(inner.newNonFungibleFaucet).not.toHaveBeenCalled();
+        }
+      );
+    });
+
+    it("rejects an owner on a fungible faucet", async () => {
+      const resource = makeResource();
+
+      await expect(
+        resource.create({
+          type: FaucetType.FungibleFaucet,
+          symbol: "TOK",
+          decimals: 8,
+          maxSupply: 1000n,
+          owner: "0xowner",
+        })
+      ).rejects.toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          message: expect.stringMatching(
+            /owner only applies to non-fungible faucets/
+          ),
+        })
+      );
+      expect(inner.newFaucet).not.toHaveBeenCalled();
+      expect(inner.newNetworkNonFungibleFaucet).not.toHaveBeenCalled();
+    });
+
+    it("rejects an owner without a faucet type", async () => {
+      const resource = makeResource();
+
+      await expect(resource.create({ owner: "0xowner" })).rejects.toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          message: expect.stringMatching(/owner only apply to faucets/),
+        })
+      );
+      expect(inner.newWallet).not.toHaveBeenCalled();
+      expect(inner.newNetworkNonFungibleFaucet).not.toHaveBeenCalled();
     });
 
     it("defaults storage to 'public' when not specified for faucet", async () => {

@@ -9,8 +9,12 @@ use miden_client::asset::{AssetAmount, FungibleAsset, NonFungibleAsset as Native
 use miden_client::crypto::FeltRng;
 use miden_client::note::{
     BlockNumber,
+    MintNote,
+    MintNoteStorage,
     Note as NativeNote,
     NoteAssets as NativeNoteAssets,
+    NoteType as NativeNoteType,
+    P2idNote,
     PswapNote,
 };
 #[cfg(feature = "testing")]
@@ -176,6 +180,57 @@ impl WebClient {
         Ok(request.into())
     }
 
+    /// Builds a transaction request for `owner_account_id` to mint `asset` from a network
+    /// non-fungible faucet to `target_account_id`. The request must be executed by the faucet's
+    /// owner. It creates a public MINT note; when the faucet consumes it, the faucet mints `asset`
+    /// into a public P2ID note for the target. Use
+    /// [`Self::new_mint_non_fungible_transaction_request`] for a faucet that is not a network
+    /// account.
+    #[js_export(js_name = "newNetworkMintNonFungibleTransactionRequest")]
+    pub async fn new_network_mint_non_fungible_transaction_request(
+        &self,
+        owner_account_id: &AccountId,
+        target_account_id: &AccountId,
+        asset: &NonFungibleAsset,
+    ) -> Result<TransactionRequest, JsErr> {
+        let asset: NativeNonFungibleAsset = asset.into();
+        let owner: NativeAccountId = owner_account_id.into();
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| {
+            from_str_err("Client not initialized while generating transaction request")
+        })?;
+
+        let minted_note: NativeNote = P2idNote::builder()
+            .sender(asset.faucet_id())
+            .target(target_account_id.into())
+            .asset(asset)
+            .note_type(NativeNoteType::Public)
+            .generate_serial_number(client.rng())
+            .build()
+            .map_err(|err| js_error_with_context(err, "failed to build the minted P2ID note"))?
+            .into();
+        let mint_storage = MintNoteStorage::new_public(
+            minted_note.recipient().clone(),
+            asset,
+            minted_note.metadata().tag(),
+        )
+        .map_err(|err| js_error_with_context(err, "failed to build the MINT note storage"))?;
+        let mint_note: NativeNote = MintNote::builder()
+            .sender(owner)
+            .mint_storage(mint_storage)
+            .generate_serial_number(client.rng())
+            .build()
+            .map_err(|err| js_error_with_context(err, "failed to build the MINT note"))?
+            .into();
+
+        let builder = fee_aware_builder(client, owner).await?;
+        let request = builder.own_output_notes(vec![mint_note]).build().map_err(|err| {
+            js_error_with_context(err, "failed to create network mint transaction request")
+        })?;
+
+        Ok(request.into())
+    }
+
     /// Builds a transaction request that sends one non-fungible asset from `sender_account_id` to
     /// `target_account_id` in a P2ID note, or a P2IDE note when a reclaim or timelock height is
     /// set. Use [`Self::new_send_transaction_request`] for a fungible asset.
@@ -223,7 +278,8 @@ impl WebClient {
     /// in a public BURN note. The asset is burned when the faucet that issued it consumes the note.
     ///
     /// A BURN note for a public faucet is a network note targeted at that faucet, so a public
-    /// faucet must be a network account. Private faucets are not affected.
+    /// faucet must be a network account, created with `newNetworkNonFungibleFaucet`. Private
+    /// faucets are not affected.
     #[js_export(js_name = "newBurnNonFungibleAssetTransactionRequest")]
     pub async fn new_burn_non_fungible_asset_transaction_request(
         &self,
