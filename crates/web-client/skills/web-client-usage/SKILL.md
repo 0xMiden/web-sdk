@@ -386,7 +386,7 @@ For registry publishing, use `Note.withAttachments()` with a single name asset,
 public metadata, the registry's approved script and inputs, and
 `[new NetworkAccountTarget(registryId).toAttachment()]`. The registry account
 must be public. A tag alone does not make a network note. Consume the returned P2ID note to put
-the asset back in the vault. The amount-based `send` helper remains fungible-only.
+the asset back in the vault.
 
 ## Account Creation
 

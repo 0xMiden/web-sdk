@@ -5,11 +5,12 @@ import {
   hashSeed,
 } from "../utils.js";
 
-// Legacy numeric 0/1 select fungible/non-fungible faucets.
+// Legacy numeric 0 and 1 select a fungible and a non-fungible faucet.
 const FAUCET_TYPES = new Set(["FungibleFaucet", "NonFungibleFaucet", 0, 1]);
 const CONTRACT_TYPES = new Set(["ImmutableContract", "MutableContract"]);
 const FAUCET_FIELDS = ["name", "symbol", "decimals", "maxSupply", "owner"];
 const REQUIRED_FUNGIBLE_FAUCET_FIELDS = ["symbol", "decimals", "maxSupply"];
+const REQUIRED_NON_FUNGIBLE_FAUCET_FIELDS = ["symbol"];
 
 function display(value) {
   try {
@@ -21,7 +22,7 @@ function display(value) {
 
 function selectorError(problem) {
   return new TypeError(
-    `accounts.create(): ${problem} Pass type: FaucetType.FungibleFaucet for a faucet, omit type for a wallet, or pass components for a contract.`
+    `accounts.create(): ${problem} Pass type: FaucetType.FungibleFaucet or FaucetType.NonFungibleFaucet for a faucet, omit type for a wallet, or pass components for a contract.`
   );
 }
 
@@ -50,14 +51,15 @@ export class AccountsResource {
    * A public non-fungible faucet requires an `owner`; `storage` defaults to
    * "public".
    *
-   * The legacy 0 and 1 select fungible and non-fungible faucets respectively;
-   * they are also AccountType.Private/Public, so a visibility value passed as
+   * The legacy 0 and 1 still select a faucet (0 fungible, 1 non-fungible); 0
+   * and 1 are also AccountType.Private/Public, so a visibility value passed as
    * `type` is read as a faucet selector. Throws a TypeError naming `FaucetType`,
    * before creating anything, for an unrecognised `type`, for faucet fields
    * (`name`, `symbol`, `decimals`, `maxSupply`, `owner`) without a faucet type,
-   * for `owner` on a fungible faucet, for a public non-fungible faucet without an
-   * `owner`, for
-   * `components` on a faucet, or for missing or inapplicable faucet fields.
+   * for `components` on a faucet, for a faucet missing `symbol` (or `decimals`
+   * or `maxSupply` when fungible), for a non-fungible faucet given `decimals`
+   * or `maxSupply`, for `owner` on a fungible faucet, and for a public
+   * non-fungible faucet without an `owner`.
    */
   async create(opts) {
     this.#client.assertNotTerminated();
@@ -70,23 +72,26 @@ export class AccountsResource {
       if (opts.components !== undefined) {
         throw selectorError("a faucet request cannot carry components.");
       }
-      if (
-        nonFungible &&
-        (opts.decimals !== undefined || opts.maxSupply !== undefined)
-      ) {
-        throw selectorError(
-          "decimals and maxSupply only apply to fungible faucets."
+      if (nonFungible) {
+        const extra = REQUIRED_FUNGIBLE_FAUCET_FIELDS.filter(
+          (field) =>
+            !REQUIRED_NON_FUNGIBLE_FAUCET_FIELDS.includes(field) &&
+            opts[field] !== undefined
         );
+        if (extra.length > 0) {
+          throw selectorError(
+            `${extra.join(", ")} only apply to fungible faucets.`
+          );
+        }
       }
       if (!nonFungible && opts.owner !== undefined) {
         throw selectorError("owner only applies to non-fungible faucets.");
       }
-      const requiredFields = nonFungible
-        ? ["symbol"]
-        : REQUIRED_FUNGIBLE_FAUCET_FIELDS;
-      const missing = requiredFields.filter(
-        (field) => opts[field] === undefined
-      );
+      const missing = (
+        nonFungible
+          ? REQUIRED_NON_FUNGIBLE_FAUCET_FIELDS
+          : REQUIRED_FUNGIBLE_FAUCET_FIELDS
+      ).filter((field) => opts[field] === undefined);
       if (missing.length > 0) {
         throw selectorError(`a faucet request needs ${missing.join(", ")}.`);
       }

@@ -74,6 +74,107 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
   );
 
   mockTest(
+    "non-fungible flow: create a network NFT faucet, mint, sendNonFungible and burnNonFungible",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const alice = await client.accounts.create();
+        const bob = await client.accounts.create();
+        // A network faucet owned by Alice. The network would execute its
+        // transactions; here the client consumes its notes in place of the
+        // network.
+        const faucet = await client.accounts.create({
+          type: window.FaucetType.NonFungibleFaucet,
+          name: "Collectible",
+          symbol: "NFT",
+          owner: alice,
+        });
+        const value = new window.Word(new BigUint64Array([1n, 2n, 3n, 4n]));
+        const asset = new window.NonFungibleAsset(faucet.id(), value);
+
+        const consumeOutput = async (account, txId) => {
+          client.proveBlock();
+          await client.sync();
+          const [record] = await client.transactions.list({
+            ids: [txId.toHex()],
+          });
+          const noteId = record.outputNotes().notes()[0].id().toString();
+          const { txId: consumeTxId } = await client.transactions.consume({
+            account,
+            notes: noteId,
+          });
+          client.proveBlock();
+          await client.sync();
+          return consumeTxId;
+        };
+        const nfts = async (account) =>
+          (await client.accounts.get(account))
+            .vault()
+            .nonFungibleAssets()
+            .map((nft) => nft.intoWord().toHex());
+
+        // Deploy the faucet before sending it a MINT note, by consuming a
+        // funding note: a network account transaction must consume a note.
+        const fundingFaucet = await client.accounts.create({
+          type: window.FaucetType.FungibleFaucet,
+          symbol: "FUND",
+          decimals: 8,
+          maxSupply: 10_000_000n,
+        });
+        const { txId: fundTxId } = await client.transactions.mint({
+          account: fundingFaucet,
+          to: faucet,
+          amount: 1000n,
+        });
+        await consumeOutput(faucet, fundTxId);
+
+        // Alice, the owner, mints to herself by sending the faucet a MINT note.
+        // The faucet consumes it and creates a P2ID note for Alice.
+        const { txId: mintTxId } =
+          await client.transactions.mintNetworkNonFungible({
+            account: alice,
+            to: alice,
+            nonFungibleAsset: asset,
+          });
+        const faucetMintTxId = await consumeOutput(faucet, mintTxId);
+        await consumeOutput(alice, faucetMintTxId);
+        const aliceAfterMint = await nfts(alice);
+
+        const { txId: sendTxId } = await client.transactions.sendNonFungible({
+          account: alice,
+          to: bob,
+          nonFungibleAsset: asset,
+        });
+        await consumeOutput(bob, sendTxId);
+        const bobAfterSend = await nfts(bob);
+
+        const { txId: burnTxId } = await client.transactions.burnNonFungible({
+          account: bob,
+          nonFungibleAsset: asset,
+        });
+        await consumeOutput(faucet, burnTxId);
+
+        return {
+          isNonFungibleFaucet: faucet.isNonFungibleFaucet(),
+          isNetworkAccount: faucet.isNetworkAccount(),
+          expected: value.toHex(),
+          aliceAfterMint,
+          aliceAfterSend: await nfts(alice),
+          bobAfterSend,
+          bobAfterBurn: await nfts(bob),
+        };
+      });
+
+      expect(result.isNonFungibleFaucet).toBe(true);
+      expect(result.isNetworkAccount).toBe(true);
+      expect(result.aliceAfterMint).toEqual([result.expected]);
+      expect(result.aliceAfterSend).toEqual([]);
+      expect(result.bobAfterSend).toEqual([result.expected]);
+      expect(result.bobAfterBurn).toEqual([]);
+    }
+  );
+
+  mockTest(
     "endpoint: a mock client reports none, an RpcClient its own",
     async ({ page }) => {
       const result = await page.evaluate(async () => {

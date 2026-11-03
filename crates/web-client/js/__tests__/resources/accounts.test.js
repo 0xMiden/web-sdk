@@ -215,7 +215,7 @@ describe("AccountsResource", () => {
           expect.objectContaining({
             name: "TypeError",
             message: expect.stringMatching(
-              /decimals and maxSupply only apply to fungible faucets.*FaucetType/
+              /only apply to fungible faucets.*FaucetType/
             ),
           })
         );
@@ -359,6 +359,26 @@ describe("AccountsResource", () => {
       );
       expect(inner.newWallet).not.toHaveBeenCalled();
       expect(inner.newNetworkNonFungibleFaucet).not.toHaveBeenCalled();
+    });
+
+    it("rejects decimals and maxSupply on a non-fungible faucet", async () => {
+      const resource = makeResource();
+      await expect(
+        resource.create({
+          type: "NonFungibleFaucet",
+          symbol: "NFT",
+          decimals: 0,
+          maxSupply: 1,
+        })
+      ).rejects.toThrow("decimals, maxSupply only apply to fungible faucets");
+      expect(inner.newNonFungibleFaucet).not.toHaveBeenCalled();
+    });
+
+    it("requires only symbol for a non-fungible faucet", async () => {
+      const resource = makeResource();
+      await expect(
+        resource.create({ type: "NonFungibleFaucet" })
+      ).rejects.toThrow("a faucet request needs symbol.");
     });
 
     it("defaults storage to 'public' when not specified for faucet", async () => {
