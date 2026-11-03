@@ -172,11 +172,9 @@ impl TransactionRequestBuilder {
         self.clone()
     }
 
-    /// Sets the authentication argument to the Poseidon2 commitment of `authArgs` and adds
-    /// `authArgs` to the advice map under that commitment, so an auth procedure that reads its
-    /// arguments from the advice map finds them.
-    ///
-    /// `authArgs` must hold a whole number of words: a non-empty multiple of 4 felts.
+    /// Sets the authentication argument to the commitment of `auth_args` and adds their preimage to
+    /// the advice map. `authArgs` must hold a whole number of words: a non-empty multiple of 4
+    /// felts.
     ///
     /// Mutually exclusive with `withFeeConversionSalt`, and the exclusion is enforced by
     /// miden-client rather than reported as an error: each setter clears the other, so whichever
