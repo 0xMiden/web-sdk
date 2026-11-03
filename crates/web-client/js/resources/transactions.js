@@ -331,7 +331,7 @@ export class TransactionsResource {
 
   async mint(opts) {
     rejectUnexpectedAnchor(opts, "mint", "submit()");
-    return this.#mint(opts, false);
+    return this.#mint(opts, (opts, wasm) => this.#buildMintRequest(opts, wasm));
   }
 
   /**
@@ -341,15 +341,28 @@ export class TransactionsResource {
    */
   async mintNonFungible(opts) {
     rejectUnexpectedAnchor(opts, "mintNonFungible", "submit()");
-    return this.#mint(opts, true);
+    return this.#mint(opts, (opts, wasm) =>
+      this.#buildMintNonFungibleRequest(opts, wasm)
+    );
   }
 
-  async #mint(opts, nonFungible) {
+  /**
+   * Mints one non-fungible asset from a network non-fungible faucet. `account`
+   * is the faucet's owner: it sends the faucet a public MINT note, and the
+   * faucet mints `nonFungibleAsset` into a public P2ID note for `to` when it
+   * consumes that note. The faucet rejects a MINT note from any other sender.
+   */
+  async mintNetworkNonFungible(opts) {
+    rejectUnexpectedAnchor(opts, "mintNetworkNonFungible", "submit()");
+    return this.#mint(opts, (opts, wasm) =>
+      this.#buildNetworkMintNonFungibleRequest(opts, wasm)
+    );
+  }
+
+  async #mint(opts, buildRequest) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
-    const { accountId, request } = nonFungible
-      ? await this.#buildMintNonFungibleRequest(opts, wasm)
-      : await this.#buildMintRequest(opts, wasm);
+    const { accountId, request } = await buildRequest(opts, wasm);
 
     const { txId, result } = await this.#submitOrSubmitWithProver(
       accountId,
@@ -1234,6 +1247,18 @@ export class TransactionsResource {
       opts.nonFungibleAsset,
       resolveNoteType(opts.type, wasm)
     );
+    return { accountId, request };
+  }
+
+  async #buildNetworkMintNonFungibleRequest(opts, wasm) {
+    requireNonFungibleAsset(opts, "mintNetworkNonFungible");
+    const accountId = resolveAccountRef(opts.account, wasm);
+    const request =
+      await this.#inner.newNetworkMintNonFungibleTransactionRequest(
+        accountId,
+        resolveAccountRef(opts.to, wasm),
+        opts.nonFungibleAsset
+      );
     return { accountId, request };
   }
 

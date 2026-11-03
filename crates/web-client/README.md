@@ -494,7 +494,8 @@ wallet.
 
 Pass `owner` with `FaucetType.NonFungibleFaucet` to create a network faucet. It has no auth key, so it
 rejects `auth` and any `storage` other than `"public"`. Only the owner can mint,
-by submitting the request from
+with `client.transactions.mintNetworkNonFungible({ account: owner, to, nonFungibleAsset })`,
+or by submitting the request from
 `WebClient.newNetworkMintNonFungibleTransactionRequest(owner, target, asset)`
 from the owner account; the faucet rejects a MINT note from any other sender.
 Any holder can burn its assets with `newBurnNonFungibleAssetTransactionRequest`.

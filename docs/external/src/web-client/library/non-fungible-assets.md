@@ -43,7 +43,11 @@ ID the faucet records as issued, so two different NFTs from one faucet must not
 share them.
 `Account.isNonFungibleFaucet()` is true for it and `Account.isFaucet()` is
 false. `mintNonFungible` requires that `account` is the faucet that
-issued the asset. A faucet issues each token ID once; minting the same token ID
+issued the asset. For a network faucet, created with an `owner`, the owner
+mints instead with
+`client.transactions.mintNetworkNonFungible({ account: owner, to, nonFungibleAsset })`:
+it sends the faucet a public MINT note, and the faucet mints the asset into a
+public P2ID note for `to` when it consumes that note. A faucet issues each token ID once; minting the same token ID
 again fails. `sendNonFungible` takes the same `type`, `reclaimAfter`,
 `timelockUntil` and `returnNote` options as a fungible send. `burnNonFungible`
 creates a public BURN note; the asset is burned only when the faucet that issued

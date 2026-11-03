@@ -226,6 +226,9 @@ function makeInner(overrides = {}) {
     newMintNonFungibleTransactionRequest: vi
       .fn()
       .mockResolvedValue("mintNftRequest"),
+    newNetworkMintNonFungibleTransactionRequest: vi
+      .fn()
+      .mockResolvedValue("networkMintNftRequest"),
     newSendNonFungibleAssetTransactionRequest: vi
       .fn()
       .mockResolvedValue("sendAssetRequest"),
@@ -742,6 +745,42 @@ describe("TransactionsResource", () => {
       expect(inner.newMintNonFungibleTransactionRequest).toHaveBeenCalledTimes(
         2
       );
+    });
+  });
+
+  describe("mintNetworkNonFungible", () => {
+    it("builds a network mint request executed by the owner", async () => {
+      const { resource, inner } = makeResource();
+      const nft = makeNft("0xfaucet");
+      await resource.mintNetworkNonFungible({
+        account: "0xowner",
+        to: "0xrecipient",
+        nonFungibleAsset: nft,
+      });
+      expect(
+        inner.newNetworkMintNonFungibleTransactionRequest
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xowner" }),
+        expect.objectContaining({ hex: "0xrecipient" }),
+        nft
+      );
+      expect(inner.executeTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xowner" }),
+        "networkMintNftRequest"
+      );
+    });
+
+    it("names a missing nonFungibleAsset", async () => {
+      const { resource, inner } = makeResource();
+      await expect(
+        resource.mintNetworkNonFungible({
+          account: "0xowner",
+          to: "0xrecipient",
+        })
+      ).rejects.toThrow("mintNetworkNonFungible requires `nonFungibleAsset`.");
+      expect(
+        inner.newNetworkMintNonFungibleTransactionRequest
+      ).not.toHaveBeenCalled();
     });
   });
 
@@ -1580,6 +1619,7 @@ describe("TransactionsResource", () => {
       "createNetworkNote",
       "mint",
       "mintNonFungible",
+      "mintNetworkNonFungible",
       "burnNonFungible",
       "bridge",
       "consume",

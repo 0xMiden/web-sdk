@@ -647,6 +647,19 @@ export interface MintNonFungibleOptions extends TransactionOptions {
   type?: NoteVisibility;
 }
 
+/** Options for `mintNetworkNonFungible`. */
+export interface MintNetworkNonFungibleOptions extends TransactionOptions {
+  /** Owner of the network faucet (executing account). */
+  account: AccountRef;
+  /** Recipient account. */
+  to: AccountRef;
+  /**
+   * The asset to mint. It must be issued by a network faucet that `account`
+   * owns; build it with `new NonFungibleAsset` or `NonFungibleAsset.fromData`.
+   */
+  nonFungibleAsset: NonFungibleAsset;
+}
+
 /** Options for `burnNonFungible`. */
 export interface BurnNonFungibleOptions extends TransactionOptions {
   /** Account that holds the asset and creates the BURN note. */
@@ -1355,6 +1368,17 @@ export interface TransactionsResource {
    */
   mintNonFungible(
     options: MintNonFungibleOptions
+  ): Promise<TransactionSubmitResult>;
+  /**
+   * Mint one non-fungible asset from a network non-fungible faucet. `account`
+   * is the faucet's owner: it sends the faucet a public MINT note, and the
+   * faucet mints the asset into a public P2ID note for `to` when it consumes
+   * that note. The faucet rejects a MINT note from any other sender.
+   *
+   * @param options - The owner, the recipient, and the non-fungible asset.
+   */
+  mintNetworkNonFungible(
+    options: MintNetworkNonFungibleOptions
   ): Promise<TransactionSubmitResult>;
   /**
    * Send one non-fungible asset back to its faucet in a public BURN note. The
