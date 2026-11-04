@@ -1,6 +1,9 @@
 import { useCallback, useState } from "react";
+import type { AccountId, TransactionRequest } from "@miden-sdk/miden-sdk";
 import { useMiden } from "../context/MidenProvider";
 import type {
+  MintNetworkNonFungibleOptions,
+  MintNonFungibleOptions,
   MintOptions,
   TransactionStage,
   TransactionResult,
@@ -13,6 +16,40 @@ import { getNoteType } from "../utils/noteFilters";
 export interface UseMintResult {
   /** Mint tokens from a faucet to a target account */
   mint: (options: MintOptions) => Promise<TransactionResult>;
+  /** The transaction result */
+  result: TransactionResult | null;
+  /** Whether the transaction is in progress */
+  isLoading: boolean;
+  /** Current stage of the transaction */
+  stage: TransactionStage;
+  /** Error if transaction failed */
+  error: Error | null;
+  /** Reset the hook state */
+  reset: () => void;
+}
+
+export interface UseMintNonFungibleResult {
+  /** Mint one non-fungible asset from a non-fungible faucet to a target account */
+  mintNonFungible: (
+    options: MintNonFungibleOptions
+  ) => Promise<TransactionResult>;
+  /** The transaction result */
+  result: TransactionResult | null;
+  /** Whether the transaction is in progress */
+  isLoading: boolean;
+  /** Current stage of the transaction */
+  stage: TransactionStage;
+  /** Error if transaction failed */
+  error: Error | null;
+  /** Reset the hook state */
+  reset: () => void;
+}
+
+export interface UseMintNetworkNonFungibleResult {
+  /** Mint one non-fungible asset from a network non-fungible faucet, as its owner */
+  mintNetworkNonFungible: (
+    options: MintNetworkNonFungibleOptions
+  ) => Promise<TransactionResult>;
   /** The transaction result */
   result: TransactionResult | null;
   /** Whether the transaction is in progress */
@@ -55,6 +92,140 @@ export interface UseMintResult {
  * ```
  */
 export function useMint(): UseMintResult {
+  return useMintAsset(buildFungibleMint);
+}
+
+/**
+ * Hook to mint one non-fungible asset from a non-fungible faucet. The asset
+ * must be issued by `faucetId`
+ *
+ * @example
+ * ```tsx
+ * const { mintNonFungible, isLoading } = useMintNonFungible();
+ *
+ * await mintNonFungible({
+ *   faucetId,
+ *   targetAccountId,
+ *   nonFungibleAsset: NonFungibleAsset.fromData(
+ *     AccountId.fromHex(faucetId),
+ *     data, // the NFT's data, as bytes
+ *     salt // a random Word; keep it with the data
+ *   ),
+ * });
+ * ```
+ */
+export function useMintNonFungible(): UseMintNonFungibleResult {
+  const { mint, ...state } = useMintAsset(buildNonFungibleMint);
+  return { mintNonFungible: mint, ...state };
+}
+
+/**
+ * Hook to mint one non-fungible asset from a network non-fungible faucet,
+ * created with `useCreateNonFungibleFaucet({ owner })`. `owner` runs the
+ * transaction: it sends the faucet a public MINT note, and the faucet mints the
+ * asset into a public P2ID note for `targetAccountId` when the network consumes
+ * that note. The faucet rejects a MINT note from any other sender.
+ *
+ * @example
+ * ```tsx
+ * const { mintNetworkNonFungible, isLoading } = useMintNetworkNonFungible();
+ *
+ * await mintNetworkNonFungible({
+ *   owner,
+ *   targetAccountId,
+ *   nonFungibleAsset: NonFungibleAsset.fromData(networkFaucetId, data, salt),
+ * });
+ * ```
+ */
+export function useMintNetworkNonFungible(): UseMintNetworkNonFungibleResult {
+  const { mint, ...state } = useMintAsset(buildNetworkNonFungibleMint);
+  return { mintNetworkNonFungible: mint, ...state };
+}
+
+type MidenWebClient = NonNullable<ReturnType<typeof useMiden>["client"]>;
+
+/**
+ * Checks a mint's options and returns the account that runs the transaction and
+ * the call that builds its request. The request is built under the WASM lock.
+ */
+type MintBuilder<O> = (
+  client: MidenWebClient,
+  options: O
+) => {
+  executingAccountId: AccountId;
+  createRequest: () => Promise<TransactionRequest>;
+};
+
+/** Mints fungible tokens: the faucet runs the transaction. */
+const buildFungibleMint: MintBuilder<MintOptions> = (client, options) => {
+  const faucetId = parseAccountId(options.faucetId);
+  const targetAccountId = parseAccountId(options.targetAccountId);
+  const noteType = getNoteType(options.noteType ?? DEFAULTS.NOTE_TYPE);
+  return {
+    executingAccountId: faucetId,
+    createRequest: () =>
+      client.newMintTransactionRequest(
+        targetAccountId,
+        faucetId,
+        noteType,
+        BigInt(options.amount)
+      ),
+  };
+};
+
+/** Mints a non-fungible asset: the faucet that issues it runs the transaction. */
+const buildNonFungibleMint: MintBuilder<MintNonFungibleOptions> = (
+  client,
+  options
+) => {
+  const nonFungibleAsset = options.nonFungibleAsset;
+  if (!nonFungibleAsset) {
+    throw new Error("mintNonFungible requires `nonFungibleAsset`");
+  }
+  const faucetId = parseAccountId(options.faucetId);
+  if (nonFungibleAsset.faucetId().toString() !== faucetId.toString()) {
+    throw new Error(
+      "`nonFungibleAsset` must be issued by the faucet `faucetId`"
+    );
+  }
+  const targetAccountId = parseAccountId(options.targetAccountId);
+  const noteType = getNoteType(options.noteType ?? DEFAULTS.NOTE_TYPE);
+  return {
+    executingAccountId: faucetId,
+    createRequest: () =>
+      client.newMintNonFungibleTransactionRequest(
+        targetAccountId,
+        nonFungibleAsset,
+        noteType
+      ),
+  };
+};
+
+/**
+ * Mints from a network faucet: the owner runs the transaction, which only sends
+ * the faucet a MINT note.
+ */
+const buildNetworkNonFungibleMint: MintBuilder<
+  MintNetworkNonFungibleOptions
+> = (client, options) => {
+  const nonFungibleAsset = options.nonFungibleAsset;
+  if (!nonFungibleAsset) {
+    throw new Error("mintNetworkNonFungible requires `nonFungibleAsset`");
+  }
+  const owner = parseAccountId(options.owner);
+  const targetAccountId = parseAccountId(options.targetAccountId);
+  return {
+    executingAccountId: owner,
+    createRequest: () =>
+      client.newNetworkMintNonFungibleTransactionRequest(
+        owner,
+        targetAccountId,
+        nonFungibleAsset
+      ),
+  };
+};
+
+function useMintAsset<O>(buildRequest: MintBuilder<O>) {
   const { client, isReady, sync, runExclusive, prover } = useMiden();
   const runExclusiveSafe = runExclusive ?? runExclusiveDirect;
 
@@ -64,7 +235,7 @@ export function useMint(): UseMintResult {
   const [error, setError] = useState<Error | null>(null);
 
   const mint = useCallback(
-    async (options: MintOptions): Promise<TransactionResult> => {
+    async (options: O): Promise<TransactionResult> => {
       if (!client || !isReady) {
         throw new Error("Miden client is not ready");
       }
@@ -74,28 +245,22 @@ export function useMint(): UseMintResult {
       setError(null);
 
       try {
-        const noteType = getNoteType(options.noteType ?? DEFAULTS.NOTE_TYPE);
-
-        // Convert string IDs to AccountId objects
-        const targetAccountIdObj = parseAccountId(options.targetAccountId);
-        const faucetIdObj = parseAccountId(options.faucetId);
+        const { executingAccountId, createRequest } = buildRequest(
+          client,
+          options
+        );
 
         setStage("proving");
         const txResult = await runExclusiveSafe(async () => {
-          const txRequest = await client.newMintTransactionRequest(
-            targetAccountIdObj,
-            faucetIdObj,
-            noteType,
-            BigInt(options.amount)
-          );
+          const txRequest = await createRequest();
 
           const txId = prover
             ? await client.submitNewTransactionWithProver(
-                faucetIdObj,
+                executingAccountId,
                 txRequest,
                 prover
               )
-            : await client.submitNewTransaction(faucetIdObj, txRequest);
+            : await client.submitNewTransaction(executingAccountId, txRequest);
 
           return { transactionId: txId.toHex() };
         });
@@ -115,7 +280,7 @@ export function useMint(): UseMintResult {
         setIsLoading(false);
       }
     },
-    [client, isReady, prover, runExclusive, sync]
+    [buildRequest, client, isReady, prover, runExclusive, sync]
   );
 
   const reset = useCallback(() => {
