@@ -43,7 +43,11 @@ export { useMultiSend } from "./hooks/useMultiSend";
 export { useBatch } from "./hooks/useBatch";
 export { useWaitForCommit } from "./hooks/useWaitForCommit";
 export { useWaitForNotes } from "./hooks/useWaitForNotes";
-export { useMint, useMintNonFungible } from "./hooks/useMint";
+export {
+  useMint,
+  useMintNonFungible,
+  useMintNetworkNonFungible,
+} from "./hooks/useMint";
 export { useBurnNonFungible } from "./hooks/useBurnNonFungible";
 export { useBridge } from "./hooks/useBridge";
 export { useConsume } from "./hooks/useConsume";
@@ -105,6 +109,7 @@ export type {
   WaitForNotesOptions,
   MintOptions,
   MintNonFungibleOptions,
+  MintNetworkNonFungibleOptions,
   BurnNonFungibleOptions,
   BridgeOptions,
   CreateNetworkNoteOptions,
@@ -200,7 +205,11 @@ export type { UseMultiSendResult } from "./hooks/useMultiSend";
 export type { UseBatchResult } from "./hooks/useBatch";
 export type { UseWaitForCommitResult } from "./hooks/useWaitForCommit";
 export type { UseWaitForNotesResult } from "./hooks/useWaitForNotes";
-export type { UseMintResult, UseMintNonFungibleResult } from "./hooks/useMint";
+export type {
+  UseMintResult,
+  UseMintNonFungibleResult,
+  UseMintNetworkNonFungibleResult,
+} from "./hooks/useMint";
 export type { UseBurnNonFungibleResult } from "./hooks/useBurnNonFungible";
 export type { UseBridgeResult } from "./hooks/useBridge";
 export type { UseConsumeResult } from "./hooks/useConsume";

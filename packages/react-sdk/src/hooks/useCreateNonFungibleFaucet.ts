@@ -5,6 +5,7 @@ import { AccountStorageMode } from "@miden-sdk/miden-sdk";
 import type { Account } from "@miden-sdk/miden-sdk";
 import type { CreateNonFungibleFaucetOptions } from "../types";
 import { DEFAULTS } from "../types";
+import { parseAccountId } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
 
 export interface UseCreateNonFungibleFaucetResult {
@@ -25,6 +26,7 @@ export interface UseCreateNonFungibleFaucetResult {
 /**
  * Hook to create a non-fungible faucet account, which mints `NonFungibleAsset`s
  * with `useMintNonFungible`. Use `useCreateFaucet` for a fungible token faucet.
+ * Passing `owner` creates a public network faucet instead.
  *
  * @example
  * ```tsx
@@ -65,18 +67,48 @@ export function useCreateNonFungibleFaucet(): UseCreateNonFungibleFaucetResult {
       setError(null);
 
       try {
-        const storageMode = getStorageMode(
-          options.storageMode ?? DEFAULTS.STORAGE_MODE
-        );
-        const authScheme = options.authScheme ?? DEFAULTS.AUTH_SCHEME;
+        const tokenName = options.tokenName ?? options.tokenSymbol;
+        if (options.owner !== undefined) {
+          if (options.authScheme !== undefined) {
+            throw new Error(
+              "A network non-fungible faucet (one with an owner) has no auth key, so it takes no authScheme"
+            );
+          }
+          if (
+            options.storageMode !== undefined &&
+            options.storageMode !== "public"
+          ) {
+            throw new Error(
+              "A network non-fungible faucet (one with an owner) is always public"
+            );
+          }
+        } else if (
+          (options.storageMode ?? DEFAULTS.STORAGE_MODE) === "public"
+        ) {
+          throw new Error(
+            "A public non-fungible faucet must be a network faucet: pass `owner`"
+          );
+        }
+        const owner =
+          options.owner !== undefined
+            ? parseAccountId(options.owner)
+            : undefined;
 
         const newFaucet = await runExclusiveSafe(async () => {
-          const createdFaucet = await client.newNonFungibleFaucet(
-            storageMode,
-            options.tokenName ?? options.tokenSymbol,
-            options.tokenSymbol,
-            authScheme
-          );
+          // With an owner, the faucet is a public network faucet; otherwise it
+          // is a private faucet with its own key.
+          const createdFaucet = owner
+            ? await client.newNetworkNonFungibleFaucet(
+                owner,
+                tokenName,
+                options.tokenSymbol
+              )
+            : await client.newNonFungibleFaucet(
+                AccountStorageMode.private(),
+                tokenName,
+                options.tokenSymbol,
+                options.authScheme ?? DEFAULTS.AUTH_SCHEME
+              );
           const accounts = await client.getAccounts();
           setAccounts(accounts);
           return createdFaucet;
@@ -109,17 +141,4 @@ export function useCreateNonFungibleFaucet(): UseCreateNonFungibleFaucetResult {
     error,
     reset,
   };
-}
-
-function getStorageMode(
-  mode: "private" | "public"
-): ReturnType<typeof AccountStorageMode.private> {
-  switch (mode) {
-    case "private":
-      return AccountStorageMode.private();
-    case "public":
-      return AccountStorageMode.public();
-    default:
-      return AccountStorageMode.private();
-  }
 }

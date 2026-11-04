@@ -191,7 +191,7 @@ A note on `ids`: the hook uses `TransactionFilter.ids(...)` only when every entr
 ## Mutation Hooks
 
 Each returns its own action function plus `error` and `reset`. The families differ in their loading/progress fields:
-- **Transaction hooks** (`useSend`, `useSendNonFungible`, `useMultiSend`, `useBatch`, `useMint`, `useMintNonFungible`, `useBurnNonFungible`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`, `usePswapCancel`, `usePswapCancelByOrder`, `useTransaction`) expose `isLoading` and `stage` (a `TransactionStage`).
+- **Transaction hooks** (`useSend`, `useSendNonFungible`, `useMultiSend`, `useBatch`, `useMint`, `useMintNonFungible`, `useMintNetworkNonFungible`, `useBurnNonFungible`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`, `usePswapCancel`, `usePswapCancelByOrder`, `useTransaction`) expose `isLoading` and `stage` (a `TransactionStage`).
 - **Account create/import hooks** (`useCreateWallet`, `useCreateFaucet`, `useCreateNonFungibleFaucet`, `useImportAccount`) expose `isCreating` (or `isImporting` for the latter) and have **no** `stage`.
 - **Everything else names its own busy flag**: `useChainAnchor().isCapturing`, `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting`.
 
@@ -239,8 +239,17 @@ const { createNonFungibleFaucet, faucet, isCreating, error, reset } =
 const nftFaucet = await createNonFungibleFaucet({
   tokenSymbol: "ART",
   tokenName: "Art Collection",              // optional: defaults to tokenSymbol
-  storageMode: "public",
+  storageMode: "private",                   // default; "public" requires `owner`
   authScheme: 2,
+});
+
+// Network faucet: public, executed by the network, no auth key. Only `owner`
+// mints, with useMintNetworkNonFungible; any holder can burn its assets.
+// A public faucet without `owner` throws: the network would never consume a
+// BURN note for it. `owner` rejects `authScheme` and `storageMode: "private"`.
+const networkFaucet = await createNonFungibleFaucet({
+  tokenSymbol: "NNFT",
+  owner: ownerAccountId,
 });
 ```
 
@@ -349,6 +358,17 @@ await mintNonFungible({
   targetAccountId: recipientId,
   faucetId: nftFaucetId,
   nonFungibleAsset: NonFungibleAsset.fromData(AccountId.fromHex(nftFaucetId), nftDataBytes, salt),
+});
+
+// From a network non-fungible faucet: useMintNetworkNonFungible. The owner runs the
+// transaction and sends the faucet a public MINT note; the faucet mints the
+// asset into a public P2ID note for the target when the network consumes it,
+// and rejects a MINT note from any other sender.
+const { mintNetworkNonFungible } = useMintNetworkNonFungible();
+await mintNetworkNonFungible({
+  owner: ownerAccountId,
+  targetAccountId: recipientId,
+  nonFungibleAsset: NonFungibleAsset.fromData(networkFaucet.id(), nftDataBytes, salt),
 });
 ```
 

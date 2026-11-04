@@ -324,6 +324,7 @@ const ASYNC_IN_RUST = [
   "newSwapTransactionRequest",
   "newSendNonFungibleAssetTransactionRequest",
   "newMintNonFungibleTransactionRequest",
+  "newNetworkMintNonFungibleTransactionRequest",
   "newBurnNonFungibleAssetTransactionRequest",
   "newPswapCreateTransactionRequest",
   "newPswapConsumeTransactionRequest",
@@ -390,6 +391,7 @@ export const createMockWebClient = (
       .fn()
       .mockResolvedValue(createMockAccount({ isFaucet: vi.fn(() => true) })),
     newNonFungibleFaucet: vi.fn().mockResolvedValue(createMockAccount()),
+    newNetworkNonFungibleFaucet: vi.fn().mockResolvedValue(createMockAccount()),
 
     // Sync methods
     syncState: vi.fn().mockResolvedValue(createMockSyncSummary()),
@@ -426,6 +428,9 @@ export const createMockWebClient = (
       .fn()
       .mockResolvedValue(createMockTransactionRequest()),
     newMintNonFungibleTransactionRequest: vi
+      .fn()
+      .mockResolvedValue(createMockTransactionRequest()),
+    newNetworkMintNonFungibleTransactionRequest: vi
       .fn()
       .mockResolvedValue(createMockTransactionRequest()),
     newBurnNonFungibleAssetTransactionRequest: vi
@@ -541,6 +546,7 @@ type MockWebClientType = {
   newWallet: ReturnType<typeof vi.fn>;
   newFaucet: ReturnType<typeof vi.fn>;
   newNonFungibleFaucet: ReturnType<typeof vi.fn>;
+  newNetworkNonFungibleFaucet: ReturnType<typeof vi.fn>;
   syncState: ReturnType<typeof vi.fn>;
   getSyncHeight: ReturnType<typeof vi.fn>;
   getInputNotes: ReturnType<typeof vi.fn>;
@@ -554,6 +560,7 @@ type MockWebClientType = {
   newSwapTransactionRequest: ReturnType<typeof vi.fn>;
   newSendNonFungibleAssetTransactionRequest: ReturnType<typeof vi.fn>;
   newMintNonFungibleTransactionRequest: ReturnType<typeof vi.fn>;
+  newNetworkMintNonFungibleTransactionRequest: ReturnType<typeof vi.fn>;
   newBurnNonFungibleAssetTransactionRequest: ReturnType<typeof vi.fn>;
   newPswapCreateTransactionRequest: ReturnType<typeof vi.fn>;
   newPswapConsumeTransactionRequest: ReturnType<typeof vi.fn>;

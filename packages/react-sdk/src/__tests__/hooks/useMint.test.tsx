@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { useMint, useMintNonFungible } from "../../hooks/useMint";
+import {
+  useMint,
+  useMintNetworkNonFungible,
+  useMintNonFungible,
+} from "../../hooks/useMint";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
 import {
@@ -240,6 +244,99 @@ describe("useMint", () => {
 
       // The faucet account should be used for submission
       expect(mockClient.submitNewTransaction).toHaveBeenCalled();
+    });
+  });
+
+  describe("network mint", () => {
+    it("should send the MINT note from the owner of a network faucet", async () => {
+      const mockTxId = createMockTransactionId("0xtxnetwork");
+      const mockClient = createMockWebClient({
+        submitNewTransaction: vi.fn().mockResolvedValue(mockTxId),
+      });
+      const sync = vi.fn().mockResolvedValue(undefined);
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true, sync });
+      const asset = createMockNonFungibleAsset("0xnetworkfaucet");
+
+      const { result } = renderHook(() => useMintNetworkNonFungible());
+
+      let txResult;
+      await act(async () => {
+        txResult = await result.current.mintNetworkNonFungible({
+          owner: "0xowner",
+          targetAccountId: "0xtarget",
+          nonFungibleAsset: asset as never,
+        });
+      });
+
+      expect(txResult).toEqual({ transactionId: "0xtxnetwork" });
+      const [owner, target, mintedAsset] =
+        mockClient.newNetworkMintNonFungibleTransactionRequest.mock.calls[0];
+      expect((owner as { toString(): string }).toString()).toBe("0xowner");
+      expect((target as { toString(): string }).toString()).toBe("0xtarget");
+      expect(mintedAsset).toBe(asset);
+      expect(
+        mockClient.newMintNonFungibleTransactionRequest
+      ).not.toHaveBeenCalled();
+      const [submitter] = mockClient.submitNewTransaction.mock.calls[0];
+      expect((submitter as { toString(): string }).toString()).toBe("0xowner");
+      expect(result.current.stage).toBe("complete");
+      expect(sync).toHaveBeenCalled();
+    });
+
+    it("should submit with the configured prover from the owner", async () => {
+      const prover = { kind: "remote" };
+      const mockClient = createMockWebClient({
+        submitNewTransactionWithProver: vi
+          .fn()
+          .mockResolvedValue(createMockTransactionId("0xtxprover")),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+        prover,
+      });
+
+      const { result } = renderHook(() => useMintNetworkNonFungible());
+
+      await act(async () => {
+        await result.current.mintNetworkNonFungible({
+          owner: "0xowner",
+          targetAccountId: "0xtarget",
+          nonFungibleAsset: createMockNonFungibleAsset(
+            "0xnetworkfaucet"
+          ) as never,
+        });
+      });
+
+      const [submitter, , usedProver] =
+        mockClient.submitNewTransactionWithProver.mock.calls[0];
+      expect((submitter as { toString(): string }).toString()).toBe("0xowner");
+      expect(usedProver).toBe(prover);
+      expect(mockClient.submitNewTransaction).not.toHaveBeenCalled();
+    });
+
+    it("should reject mintNetworkNonFungible without nonFungibleAsset", async () => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useMintNetworkNonFungible());
+
+      await act(async () => {
+        await expect(
+          result.current.mintNetworkNonFungible({
+            owner: "0xowner",
+            targetAccountId: "0xtarget",
+          } as never)
+        ).rejects.toThrow("mintNetworkNonFungible requires `nonFungibleAsset`");
+      });
+      expect(
+        mockClient.newNetworkMintNonFungibleTransactionRequest
+      ).not.toHaveBeenCalled();
     });
   });
 

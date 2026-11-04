@@ -34,7 +34,7 @@ React hooks library for the Miden Web Client. Provides a simple, ergonomic inter
 - **Session Wallets** - `useSessionAccount()` manages the create-fund-consume lifecycle for temporary wallets
 - **AggLayer Bridge-Out** - `useBridge()` emits a B2AGG note to bridge a fungible asset out to another network via the AggLayer
 - **Network Notes** - `useCreateNetworkNote()` creates custom-script network notes
-- **Non-Fungible Assets** - Create NFT faucets, mint and send NFTs, and list them with `useAccount().nonFungibleAssets`
+- **Non-Fungible Assets** - Create NFT faucets (private, or public network faucets with an `owner`), mint, send and burn NFTs, and list them with `useAccount().nonFungibleAssets`
 - **Concurrency Safety** - Transaction hooks prevent double-sends with built-in concurrency guards
 - **Auto Pre-Sync** - Transaction hooks sync before executing by default (opt out with `skipSync`)
 - **WASM Error Wrapping** - Cryptic WASM errors are intercepted and replaced with actionable messages

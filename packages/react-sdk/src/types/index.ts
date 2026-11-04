@@ -337,9 +337,16 @@ export interface CreateNonFungibleFaucetOptions {
   tokenSymbol: string;
   /** Human-readable collection name. Defaults to `tokenSymbol` when omitted. */
   tokenName?: string;
-  /** Storage mode. Default: private */
+  /**
+   * Makes this a public network faucet owned by this account.
+   */
+  owner?: AccountRef;
+  /**
+   * Storage mode. Default: private, or public when `owner` is set. A public
+   * non-fungible faucet must be a network faucet, so "public" requires `owner`.
+   */
   storageMode?: StorageMode;
-  /** Auth scheme. Default: AuthScheme.AuthRpoFalcon512 */
+  /** Auth scheme. Default: AuthScheme.AuthRpoFalcon512. Not accepted with `owner`. */
   authScheme?: AuthScheme;
 }
 
@@ -500,6 +507,16 @@ export interface MintNonFungibleOptions {
   nonFungibleAsset: NonFungibleAsset;
   /** Note type. Default: private */
   noteType?: NoteVisibility;
+}
+
+/** Options for `useMintNetworkNonFungible`: mint from a network non-fungible faucet. */
+export interface MintNetworkNonFungibleOptions {
+  /** Owner of the network faucet. It runs the transaction that sends the MINT note. */
+  owner: AccountRef;
+  /** Target account to receive the minted asset */
+  targetAccountId: AccountRef;
+  /** The asset to mint. It must be issued by a network faucet that `owner` owns. */
+  nonFungibleAsset: NonFungibleAsset;
 }
 
 /** Options for `useBurnNonFungible`: burn one non-fungible asset. */
