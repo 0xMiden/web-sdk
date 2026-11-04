@@ -1,8 +1,10 @@
 import { useCallback } from "react";
 import { useMiden } from "../context/MidenProvider";
-import { TransactionFilter } from "@miden-sdk/miden-sdk";
 import type { TransactionId } from "@miden-sdk/miden-sdk";
 import type { WaitForCommitOptions } from "../types";
+import { runExclusiveDirect } from "../utils/runExclusive";
+import { waitForTransactionCommit } from "../utils/transactionCommit";
+import type { ClientWithTransactions } from "../utils/transactionCommit";
 
 export interface UseWaitForCommitResult {
   /** Wait for a transaction to be committed on-chain */
@@ -11,20 +13,6 @@ export interface UseWaitForCommitResult {
     options?: WaitForCommitOptions
   ) => Promise<void>;
 }
-
-type ClientWithTransactions = {
-  syncState: () => Promise<unknown>;
-  getTransactions: (filter: TransactionFilter) => Promise<
-    Array<{
-      id: () => { toHex: () => string };
-      transactionStatus: () => {
-        isPending: () => boolean;
-        isCommitted: () => boolean;
-        isDiscarded: () => boolean;
-      };
-    }>
-  >;
-};
 
 export function useWaitForCommit(): UseWaitForCommitResult {
   const { client, isReady } = useMiden();
@@ -41,57 +29,20 @@ export function useWaitForCommit(): UseWaitForCommitResult {
       const intervalMs = Number.isNaN(flooredInterval)
         ? 1_000
         : flooredInterval;
-      const targetHex = normalizeHex(
-        typeof txId === "string" ? txId : txId.toHex()
+
+      // Read the hex once, up front. `TransactionFilter.ids` takes its handles
+      // by value, so the caller's `TransactionId` must never reach a filter:
+      // the wait builds a fresh one for every poll instead.
+      await waitForTransactionCommit(
+        client as unknown as ClientWithTransactions,
+        runExclusiveDirect,
+        typeof txId === "string" ? txId : txId.toHex(),
+        timeoutMs,
+        intervalMs
       );
-      const deadline = Date.now() + timeoutMs;
-
-      while (Date.now() < deadline) {
-        await (client as unknown as ClientWithTransactions).syncState();
-
-        const records = await (
-          client as unknown as ClientWithTransactions
-        ).getTransactions(
-          typeof txId === "string"
-            ? TransactionFilter.all()
-            : TransactionFilter.ids([txId])
-        );
-
-        const record = records.find(
-          (item) => normalizeHex(item.id().toHex()) === targetHex
-        );
-
-        if (record) {
-          const status = record.transactionStatus();
-          if (status.isCommitted()) {
-            return;
-          }
-          if (status.isDiscarded()) {
-            throw new Error("Transaction was discarded before commit");
-          }
-        }
-
-        await new Promise((resolve) =>
-          setTimeout(
-            resolve,
-            Math.max(0, Math.min(intervalMs, deadline - Date.now()))
-          )
-        );
-      }
-
-      throw new Error("Timeout waiting for transaction commit");
     },
     [client, isReady]
   );
 
   return { waitForCommit };
-}
-
-function normalizeHex(value: string): string {
-  const trimmed = value.trim();
-  const normalized =
-    trimmed.startsWith("0x") || trimmed.startsWith("0X")
-      ? trimmed
-      : `0x${trimmed}`;
-  return normalized.toLowerCase();
 }

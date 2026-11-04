@@ -1,13 +1,17 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useTransactionHistory } from "../../hooks/useTransactionHistory";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
-import { TransactionFilter } from "@miden-sdk/miden-sdk";
+import { TransactionFilter, TransactionId } from "@miden-sdk/miden-sdk";
 import {
   createMockTransactionId,
   createMockWebClient,
 } from "../mocks/miden-sdk";
+import {
+  installMoveAwareTransactionMocks,
+  moveAwareGetTransactions,
+} from "../mocks/moveAware";
 
 vi.mock("../../context/MidenProvider", () => ({
   useMiden: vi.fn(),
@@ -260,7 +264,9 @@ describe("useTransactionHistory", () => {
 
     await waitFor(() => expect(result.current.record).not.toBeNull());
 
-    expect(TransactionFilter.ids).toHaveBeenCalledWith([txId]);
+    // Built from the hex snapshot; the caller's handle never reaches a filter.
+    expect(TransactionId.fromHex).toHaveBeenCalledWith("0xdeadbeef");
+    expect(TransactionFilter.ids).not.toHaveBeenCalledWith([txId]);
     expect(result.current.status).toBe("committed");
   });
 
@@ -286,5 +292,64 @@ describe("useTransactionHistory", () => {
     expect(TransactionFilter.all).toHaveBeenCalled();
     expect(result.current.records[0]?.id().toHex()).toBe("0xbbb");
     expect(result.current.status).toBe("discarded");
+  });
+
+  describe("refetch with by-value WASM handles", () => {
+    let restore: () => void;
+
+    beforeEach(() => {
+      restore = installMoveAwareTransactionMocks();
+    });
+
+    afterEach(() => {
+      restore();
+    });
+
+    const renderAndSyncTwice = async (
+      options: Parameters<typeof useTransactionHistory>[0]
+    ) => {
+      const getTransactions = moveAwareGetTransactions(() => [
+        createRecord("0xdeadbeef", "committed"),
+      ]);
+      const mockClient = createMockWebClient({ getTransactions });
+      useMidenStore.getState().setClient(mockClient as any);
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+
+      const { result } = renderHook(() => useTransactionHistory(options));
+      await waitFor(() => expect(getTransactions).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      act(() => {
+        useMidenStore.getState().setSyncState({ lastSyncTime: Date.now() });
+      });
+      await waitFor(() => expect(getTransactions).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      return { result, getTransactions };
+    };
+
+    it("refetches a TransactionId lookup after a sync", async () => {
+      const txId = TransactionId.fromHex("0xdeadbeef");
+      // A module-level constant in an app; kept stable across renders here.
+      const options = { id: txId };
+
+      const { result } = await renderAndSyncTwice(options);
+
+      expect(result.current.error).toBeNull();
+      expect(result.current.status).toBe("committed");
+      // The caller's handle is still alive.
+      expect(txId.toHex()).toBe("0xdeadbeef");
+    });
+
+    it("calls a filter factory for every fetch", async () => {
+      const filter = vi.fn(() => TransactionFilter.uncommitted());
+      const options = { filter };
+
+      const { result } = await renderAndSyncTwice(options);
+
+      expect(result.current.error).toBeNull();
+      expect(result.current.records).toHaveLength(1);
+      expect(filter).toHaveBeenCalledTimes(2);
+    });
   });
 });
