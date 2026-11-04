@@ -72,7 +72,10 @@ describe("useAssetMetadata", () => {
   });
 
   it("should fetch metadata via RPC and store symbol and decimals", async () => {
-    const mockAccount = { id: "mock-account" };
+    const mockAccount = {
+      id: "mock-account",
+      isNonFungibleFaucet: () => false,
+    };
     mockGetAccountDetails.mockResolvedValue({
       account: () => mockAccount,
     });
@@ -129,7 +132,7 @@ describe("useAssetMetadata", () => {
 
   it("should deduplicate asset IDs", async () => {
     mockGetAccountDetails.mockResolvedValue({
-      account: () => ({ id: "mock" }),
+      account: () => ({ id: "mock", isNonFungibleFaucet: () => false }),
     });
     mockFromAccount.mockReturnValue({
       symbol: () => ({ toString: () => "TKN" }),
@@ -168,7 +171,9 @@ describe("useAssetMetadata", () => {
 
   it("defers fetching until a client exists (no RPC before the provider is ready)", async () => {
     useMidenStore.getState().setClient(null);
-    mockGetAccountDetails.mockResolvedValue({ account: () => ({ id: "x" }) });
+    mockGetAccountDetails.mockResolvedValue({
+      account: () => ({ id: "x", isNonFungibleFaucet: () => false }),
+    });
 
     const { result } = renderHook(() => useAssetMetadata(["0xfaucet7"]));
 
@@ -197,7 +202,9 @@ describe("useAssetMetadata", () => {
     useMidenStore.getState().setClient({
       endpoint: () => undefined,
     } as never);
-    mockGetAccountDetails.mockResolvedValue({ account: () => ({ id: "x" }) });
+    mockGetAccountDetails.mockResolvedValue({
+      account: () => ({ id: "x", isNonFungibleFaucet: () => false }),
+    });
 
     const { result } = renderHook(() => useAssetMetadata(["0xfaucet9"]));
 
@@ -218,7 +225,7 @@ describe("useAssetMetadata", () => {
 
   it("should fetch metadata for multiple different asset IDs", async () => {
     mockGetAccountDetails.mockResolvedValue({
-      account: () => ({ id: "mock" }),
+      account: () => ({ id: "mock", isNonFungibleFaucet: () => false }),
     });
     mockFromAccount.mockReturnValue({
       symbol: () => ({ toString: () => "MULTI" }),
@@ -241,7 +248,7 @@ describe("useAssetMetadata", () => {
 
   it("should store fallback when BasicFungibleFaucetComponent throws", async () => {
     mockGetAccountDetails.mockResolvedValue({
-      account: () => ({ id: "bad-faucet" }),
+      account: () => ({ id: "bad-faucet", isNonFungibleFaucet: () => false }),
     });
     mockFromAccount.mockImplementation(() => {
       throw new Error("Not a fungible faucet");
@@ -262,10 +269,7 @@ describe("useAssetMetadata", () => {
 
   it("should read the collection symbol of a non-fungible faucet", async () => {
     mockGetAccountDetails.mockResolvedValue({
-      account: () => ({ id: "nft-faucet" }),
-    });
-    mockFromAccount.mockImplementation(() => {
-      throw new Error("Not a fungible faucet");
+      account: () => ({ id: "nft-faucet", isNonFungibleFaucet: () => true }),
     });
     mockNftFromAccount.mockReturnValue({
       symbol: () => ({ toString: () => "ART" }),

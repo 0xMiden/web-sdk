@@ -36,20 +36,18 @@ const fetchAssetMetadata = async (
 
     if (!account) return null;
 
-    try {
-      const faucet = BasicFungibleFaucetComponent.fromAccount(account as never);
-      return {
-        assetId,
-        symbol: faucet.symbol().toString(),
-        decimals: faucet.decimals(),
-      };
-    } catch {
-      // Not a fungible faucet: read the collection symbol of a non-fungible one.
+    if (account.isNonFungibleFaucet()) {
       const collection = NonFungibleFaucetComponent.fromAccount(
         account as never
       );
       return { assetId, symbol: collection.symbol().toString() };
     }
+    const faucet = BasicFungibleFaucetComponent.fromAccount(account as never);
+    return {
+      assetId,
+      symbol: faucet.symbol().toString(),
+      decimals: faucet.decimals(),
+    };
   } catch {
     return null;
   }
