@@ -8,7 +8,6 @@ import {
   createMockAccount,
   createMockAccountHeader,
   createMockAccountFile,
-  createMockAccountHeader,
   createMockAccountId,
   createMockWebClient,
 } from "../mocks/miden-sdk";

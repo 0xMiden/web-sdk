@@ -435,7 +435,10 @@ mod tests {
         )
         .unwrap();
         let transport = Arc::new(MockRpcApi::new(chain));
-        let rpc = RpcClient { inner: transport.clone() };
+        let rpc = RpcClient {
+            inner: transport.clone(),
+            endpoint: String::new(),
+        };
         (rpc, transport, ProposedBatch(proposal), ProvenBatch(proven), inputs)
     }
 
