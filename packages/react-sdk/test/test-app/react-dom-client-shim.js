@@ -2,7 +2,7 @@ const ReactDOM = window.ReactDOM;
 
 if (!ReactDOM || typeof ReactDOM.createRoot !== "function") {
   throw new Error(
-    "ReactDOM.createRoot not found. Ensure react-dom UMD is loaded."
+    "ReactDOM.createRoot not found. Ensure /vendor/react.js is loaded."
   );
 }
 

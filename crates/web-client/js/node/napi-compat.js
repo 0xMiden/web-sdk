@@ -13,6 +13,8 @@
  * - Array type polyfills (browser has typed WASM arrays, napi accepts plain JS arrays)
  */
 
+import { resolveAuthScheme } from "../utils.js";
+
 // ── Argument normalization ───────────────────────────────────────────
 
 /**
@@ -92,6 +94,13 @@ export function wrapClass(Cls) {
 
 // ── Client wrapping ──────────────────────────────────────────────────
 
+// Position of the AuthScheme argument in the client methods, other than
+// newWallet, whose native signature takes one.
+const AUTH_SCHEME_ARG_INDEX = new Map([
+  ["newFaucet", 6],
+  ["importPublicAccountFromSeed", 1],
+]);
+
 /**
  * Wraps a raw napi WebClient to normalize API differences with the browser SDK.
  *
@@ -100,8 +109,10 @@ export function wrapClass(Cls) {
  * - syncNoteTransport() -> syncNoteTransportImpl()
  * - null -> undefined for Option<T> returns
  * - BigInt/Uint8Array args normalized
+ * - AuthScheme args resolved against `rawSdk.AuthScheme`, as the browser
+ *   WebClient resolves them against the wasm enum
  */
-export function wrapClient(rawClient, storeName) {
+export function wrapClient(rawClient, storeName, rawSdk) {
   return new Proxy(rawClient, {
     get(target, prop) {
       if (prop === "syncState") {
@@ -146,14 +157,30 @@ export function wrapClient(rawClient, storeName) {
         return () => null;
       }
       if (prop === "newWallet") {
-        return (mode, authScheme, seed) => {
+        return async (mode, authScheme, seed) => {
           const normSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
           return target
-            .newWallet(mode, authScheme, normSeed ?? null)
+            .newWallet(
+              mode,
+              resolveAuthScheme(authScheme, rawSdk),
+              normSeed ?? null
+            )
             .then((v) => (v === null ? undefined : v));
+        };
+      }
+      const authSchemeIndex = AUTH_SCHEME_ARG_INDEX.get(prop);
+      if (authSchemeIndex !== undefined) {
+        return async (...args) => {
+          const normalizedArgs = args.map(normalizeArg);
+          normalizedArgs[authSchemeIndex] = resolveAuthScheme(
+            normalizedArgs[authSchemeIndex],
+            rawSdk
+          );
+          const result = await target[prop](...normalizedArgs);
+          return result === null ? undefined : result;
         };
       }
       const val = target[prop];
@@ -177,7 +204,7 @@ export function wrapClient(rawClient, storeName) {
 /**
  * Patches the raw SDK module:
  * - Adds snake_case aliases for camelCase methods
- * - Converts null -> undefined for Option<T> returns
+ * - Converts null -> undefined for Option<T> method returns and getters
  * - Aliases static methods
  */
 function patchSdkPrototypes(rawSdk) {
@@ -225,6 +252,42 @@ function patchSdkPrototypes(rawSdk) {
           return result === null ? undefined : result;
         };
       }
+    }
+  }
+
+  // RPC Option<T> results must be normalized after their Promise resolves.
+  for (const method of ["getNullifierCommitHeight", "getNoteScriptByRoot"]) {
+    const prototype = rawSdk.RpcClient?.prototype;
+    const original = prototype?.[method];
+    if (typeof original === "function") {
+      prototype[method] = function (...args) {
+        return original
+          .apply(this, args)
+          .then((result) => (result === null ? undefined : result));
+      };
+    }
+  }
+
+  // null -> undefined for Option<T> getters. napi-rs defines them as
+  // configurable prototype accessors; any other shape is left as it is.
+  for (const [cls, getters] of [
+    [rawSdk.Endpoint, ["port"]],
+    [rawSdk.FetchedNote, ["note"]],
+    [rawSdk.NetworkNoteStatusInfo, ["lastAttemptBlockNum", "lastError"]],
+    [rawSdk.StorageValueSlotPatch, ["value"]],
+  ]) {
+    if (!cls?.prototype) continue;
+    for (const name of getters) {
+      const desc = Object.getOwnPropertyDescriptor(cls.prototype, name);
+      if (typeof desc?.get !== "function" || !desc.configurable) continue;
+      const original = desc.get;
+      Object.defineProperty(cls.prototype, name, {
+        ...desc,
+        get() {
+          const value = original.call(this);
+          return value === null ? undefined : value;
+        },
+      });
     }
   }
 

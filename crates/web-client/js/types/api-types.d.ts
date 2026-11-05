@@ -105,6 +105,12 @@ export declare const AuthScheme: {
 export type AuthSchemeType = (typeof AuthScheme)[keyof typeof AuthScheme];
 
 /**
+ * The same union under the const's own name, so `AuthScheme` also works as a
+ * type.
+ */
+export type AuthScheme = AuthSchemeType;
+
+/**
  * User-friendly note visibility constants.
  * Use `NoteVisibility.Public` or `NoteVisibility.Private` instead of raw strings.
  */
@@ -184,7 +190,11 @@ export interface MidenObservation {
   /** Client operation name, e.g. `"syncState"`, `"proveTransaction"`. */
   op: string;
   outcome: "ok" | "error";
-  /** Wall time the caller waited, in milliseconds. */
+  /**
+   * Milliseconds from when the call's turn on its client's queue started
+   * until it settled; time queued behind the same client's earlier calls is
+   * not counted.
+   */
   durationMs: number;
   /**
    * Absent unless the client was constructed with `observeSensitive: true`.
@@ -235,6 +245,49 @@ export interface ClientOptions {
    * the accessor reads the configuration the chain commits to.
    */
   feeFaucetId?: string;
+  /**
+   * How many times a private note send is retried after a transient note
+   * transport failure, within the same `notes.sendPrivate` /
+   * `notes.sendPrivateOutput` call. An integer from 0 to 10; defaults to 3.
+   * Together with {@link ClientOptions.noteTransportRetryIntervalMs} the total
+   * computed backoff, `interval * (2^retries - 1)` with an omitted value taken
+   * at its default, may not exceed 120000 ms.
+   *
+   * Retried: a failed connection, and the service answering `Unavailable`,
+   * `DeadlineExceeded`, or `ResourceExhausted` with a `retry-after` value.
+   * Nothing else is, since a retry would get the same answer. In the browser a
+   * failed `fetch` (network down, CORS, DNS) reaches the client as an
+   * `Unknown` status and is **not** retried; a request that times out is.
+   *
+   * The retries run inside the client's serialized call, so a slow or
+   * rate-limiting transport blocks every other call on this client until the
+   * send finishes. A non-zero `retry-after` from the service replaces the
+   * computed delay with no upper bound; a zero one falls back to the computed
+   * delay. Pass `0` to bound a send to a single attempt, which suits a
+   * latency-sensitive UI.
+   *
+   * Validated before the client is built: anything else throws a `TypeError`.
+   * Ignored by `MidenClient.createMock()`, whose note transport is in-process.
+   */
+  noteTransportMaxRetries?: number;
+  /**
+   * Delay before the first of those retries, in milliseconds; each later retry
+   * waits twice as long as the one before. An integer from 0 to 60000;
+   * defaults to 250. Together with
+   * {@link ClientOptions.noteTransportMaxRetries} the total computed backoff,
+   * `interval * (2^retries - 1)` with an omitted value taken at its default,
+   * may not exceed 120000 ms, which is also the longest computed wait.
+   *
+   * The retries run inside the client's serialized call, blocking every other
+   * call on this client until the send finishes. A non-zero `retry-after` from
+   * the service replaces the computed delay with no upper bound, so a
+   * rate-limited send can wait longer than this bound; a zero one falls back to
+   * the computed delay. Use `noteTransportMaxRetries: 0` to rule that out.
+   *
+   * Validated before the client is built: anything else throws a `TypeError`.
+   * Ignored by `MidenClient.createMock()`.
+   */
+  noteTransportRetryIntervalMs?: number;
   /** Sync state on creation (default: false). */
   autoSync?: boolean;
   /** External keystore callbacks. */
@@ -342,7 +395,11 @@ export interface ContractCreateOptions {
   seed: Uint8Array;
   /** Auth secret key. Required. */
   auth: AuthSecretKey;
-  /** Pre-compiled AccountComponent instances. Required for contracts. */
+  /**
+   * Pre-compiled AccountComponent instances. Required for contracts: at least
+   * one must export a non-auth (`@account_procedure`) procedure, or
+   * `accounts.create` rejects the request.
+   */
   components: AccountComponent[];
   /** Storage mode. Defaults to "public" for contracts. */
   storage?: StorageMode;
@@ -448,9 +505,10 @@ export interface AnchoredOptions {
    * whose sync height has since advanced.
    *
    * A multisig request built by
-   * {@link MidenClient.feeAwareTransactionRequestBuilder} does not need one:
-   * its summary binds the block its auth args name, the request declares that
-   * block through `withBlockNumbers`, and so it executes and reproduces its
+   * {@link MidenClient.feeAwareTransactionRequestBuilder}, or given its auth
+   * args by {@link MidenClient.withFeeAwareAuth}, does not need one: its
+   * summary binds the block its auth args name, and miden-client tracks that
+   * block when it executes the request, so it executes and reproduces its
    * summary at the current tip. That keeps working after the node prunes the
    * bound block's account state, which an anchor at that block does not. The
    * executing client must have synced to at least the bound block first.
@@ -1105,6 +1163,20 @@ export interface AccountsResource {
    */
   isAllowed(accountId: AccountRef): Promise<boolean>;
   /**
+   * Whether the invitation code can be used to register an account.
+   *
+   * `true` when the node does not enforce an account allowlist, or when the code
+   * exists and is not registered to an account. Unknown and registered codes
+   * answer `false`. An empty code throws before the node is asked.
+   *
+   * The query does not consume the code and does not identify the account that
+   * holds it. A `true` answer is not a reservation: another account can register
+   * the code before `register` runs, which then fails with `ALREADY_REGISTERED`.
+   *
+   * @param invitationCode - The invitation code the network operator issued.
+   */
+  isInvitationCodeValid(invitationCode: string): Promise<boolean>;
+  /**
    * Retrieve an account by ID. Returns `null` if not found in the local store.
    * Browser stores read a coherent persisted snapshot, including changes made
    * by other clients sharing the database. This does not sync from the network.
@@ -1295,7 +1367,9 @@ export interface TransactionsResource {
    * {@link MidenClient.feeAwareTransactionRequestBuilder} that reproduces the
    * proposal's summary at any later tip, so a co-signer can verify it without
    * the proposer's anchor once its client has synced to at least the bound
-   * block (the largest of `request.blockNumbers()`).
+   * block (the largest of `request.blockNumbers()`). A request from
+   * {@link MidenClient.withFeeAwareAuth} does not declare the bound block, so
+   * that check cannot read it: sync before previewing such a request.
    *
    * @param options - Preview options discriminated by `operation` field.
    */
@@ -1310,8 +1384,10 @@ export interface TransactionsResource {
    * and commits that itself, so a request from `new TransactionRequestBuilder()`
    * pays normally — except against a multisig account, which needs a fee
    * conversion salt declared. Build those from
-   * {@link MidenClient.feeAwareTransactionRequestBuilder}. Raises the same fee
-   * errors {@link executeRequest} does.
+   * {@link MidenClient.feeAwareTransactionRequestBuilder}, or add the auth
+   * args to a finished request you did not build with
+   * {@link MidenClient.withFeeAwareAuth}. Raises the same fee errors
+   * {@link executeRequest} does.
    *
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
@@ -1378,19 +1454,24 @@ export interface TransactionsResource {
    * and commits that itself, so a request from `new TransactionRequestBuilder()`
    * pays normally — except against a multisig account, which needs a fee
    * conversion salt declared. Build those from
-   * {@link MidenClient.feeAwareTransactionRequestBuilder}.
+   * {@link MidenClient.feeAwareTransactionRequestBuilder}, or add the auth
+   * args to a finished request you did not build with
+   * {@link MidenClient.withFeeAwareAuth}.
    *
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
    * @param options - Pass `anchor` to execute against a pinned reference block
    *   instead of the current sync height. Leave it out for a multisig request
-   *   from {@link MidenClient.feeAwareTransactionRequestBuilder}, which executes
-   *   at the tip once this client has synced to its bound block.
+   *   from {@link MidenClient.feeAwareTransactionRequestBuilder} or
+   *   {@link MidenClient.withFeeAwareAuth}, which executes at the tip once this
+   *   client has synced to its bound block.
    * @returns A handle to the executed transaction, ready to prove.
    * @throws `FeeConversionInfoRequired`, naming the auth component, when the
    *   executing account is a multisig and the request declares no fee
    *   conversion salt. Multisig accounts reuse that salt as their summary's
    *   replay guard, so miden-client will not invent one.
+   *   {@link MidenClient.withFeeAwareAuth} adds the auth args to such a
+   *   request.
    * @throws `FeeConversionInfoUnsupported`, naming the auth component, when the
    *   request declares a fee conversion salt the account's auth component never
    *   reads.
@@ -1451,7 +1532,8 @@ export interface TransactionsResource {
    * `FeeConversionInfoRequired`. Note that a batch proves each transaction as it
    * is pushed, so a rejection discovered mid-push has already cost the proofs
    * ahead of it — build multisig requests from
-   * {@link MidenClient.feeAwareTransactionRequestBuilder}.
+   * {@link MidenClient.feeAwareTransactionRequestBuilder}, or pass a finished
+   * one through {@link MidenClient.withFeeAwareAuth} before batching it.
    *
    * @param items - Per-tx (account, request) pairs (must be non-empty).
    * @param options - Optional batch settings (timeout, and `waitForConfirmation`,
@@ -1642,6 +1724,12 @@ export interface NotesResource {
    * output notes prefer {@link NotesResource.sendPrivateOutput}, which reads the proof sync
    * stored on the note and throws if this client has not synced past the commitment.
    *
+   * A rejection means the note did not reach the transport or the outcome is not known, and
+   * it is final. The SDK keeps no queue and no `sync()` sends the note again;
+   * transient transport failures are already retried within the call (see
+   * {@link ClientOptions.noteTransportMaxRetries}). To try again, call this again with the
+   * same note: delivery is idempotent by note id.
+   *
    * @param options - The note, the recipient, and `inclusionProof`.
    */
   sendPrivate(options: SendPrivateOptions): Promise<void>;
@@ -1651,6 +1739,12 @@ export interface NotesResource {
    * The inclusion proof is the one sync stored on the output note. It is absent until this
    * client has synced past the block that committed the note, and the call throws in that
    * case. The note must exist in this client's store as an output note.
+   *
+   * A rejection means the note did not reach the transport or the outcome is not known, and
+   * it is final. The SDK keeps no queue and no `sync()` sends the note again;
+   * transient transport failures are already retried within the call (see
+   * {@link ClientOptions.noteTransportMaxRetries}). To try again, call this again with the
+   * same note id: delivery is idempotent by note id.
    *
    * @param options - The output note id and the recipient.
    */
@@ -1696,8 +1790,11 @@ export interface CompileTxScriptLibrary {
   /** MASM source code for the library. */
   code: string;
   /**
-   * `Linking.Dynamic` (default) — procedures are linked via DYNCALL at runtime.
-   * `Linking.Static` — procedures are inlined at compile time.
+   * `Linking.Dynamic` (default) - the script references the procedures without
+   * copying them, so they must be installed on an account the transaction
+   * reaches (its own or a foreign one). `Linking.Static` - the procedures are
+   * copied into the script, which is what a helper library installed on no
+   * account needs.
    */
   linking?: Linking;
 }
@@ -1707,13 +1804,18 @@ export interface CompileAccountComponentLibrary {
   /** Account component whose installed code should be linked. */
   component: AccountComponent;
   /**
-   * `Linking.Dynamic` (default) — procedures are linked via DYNCALL at runtime.
-   * `Linking.Static` — procedures are inlined at compile time.
+   * `Linking.Dynamic` (default) - the script references the procedures without
+   * copying them, so they must be installed on an account the transaction
+   * reaches (its own or a foreign one). `Linking.Static` - the procedures are
+   * copied into the script.
    */
   linking?: Linking;
 }
 
-/** A script library supplied inline, pre-built, or from an installed account component. */
+/**
+ * A script library supplied inline, pre-built, or from an installed account
+ * component. A pre-built `Library` is always linked dynamically.
+ */
 export type CompileScriptLibrary =
   | CompileTxScriptLibrary
   | CompileAccountComponentLibrary
@@ -1755,6 +1857,12 @@ export declare class CompilerResource {
 
   /**
    * Compile MASM source into an AccountComponent.
+   *
+   * Only exports marked `@account_procedure` or `@auth_script` become component
+   * procedures. A component with none logs a `[miden-sdk]` console warning and
+   * is still returned, since a storage-only component is legitimate beside one
+   * that has procedures; nothing can call into it, and `accounts.create`
+   * rejects a contract none of whose components exports a non-auth procedure.
    *
    * @param options - Component source code, storage slots, and auth options.
    */
@@ -1836,7 +1944,8 @@ export interface KeystoreResource {
 // ════════════════════════════════════════════════════════════════
 
 /**
- * Multisig-only overrides for {@link MidenClient.feeAwareTransactionRequestBuilder}.
+ * Multisig-only overrides for {@link MidenClient.feeAwareTransactionRequestBuilder}
+ * and {@link MidenClient.withFeeAwareAuth}.
  *
  * Each field pins a value the approvers sign over. Omit them all for the party
  * creating a proposal; supply them to reproduce one without transporting the
@@ -1851,12 +1960,15 @@ export interface MultisigAuthOptions {
    */
   approvalExpirationDelta?: number;
   /**
-   * The salt the summary binds. Omitted, one is drawn fresh per build.
+   * The salt the summary binds. If omitted or spent,
+   * {@link MidenClient.feeAwareTransactionRequestBuilder} draws a fresh one;
+   * {@link MidenClient.withFeeAwareAuth} uses the salt the request declares,
+   * or draws a fresh one if it declares none.
    *
    * Consumed by the call: the `Word` is moved across the WASM boundary, so a
    * second call needs a freshly constructed one. Passing a spent handle is not
-   * an error - it arrives as if no salt were given and one is drawn, which is
-   * the divergence pinning the salt exists to prevent.
+   * an error - it arrives as if no salt were given and follows that method's
+   * default, which can change the salt the summary binds.
    */
   feeConversionSalt?: Word;
   /** The block the summary binds. Omitted, the store's sync height. */
@@ -1924,9 +2036,10 @@ export declare class MidenClient {
    * its auth callback doesn't race with the key being cleared. Does NOT
    * wait for calls enqueued after `waitForIdle()` returns.
    *
-   * Caveat for `sync`: a `syncState` blocked on its sync lock (Web
-   * Locks) has not yet reached the internal chain, so `waitForIdle`
-   * does not await it. Other serialized methods are always observed.
+   * A call that takes the store lock, a Web Lock shared by every client on
+   * the same store, is on the internal chain from the moment it is made,
+   * like every other call; the `frontend-pitfalls` skill shipped with this
+   * package lists those calls.
    *
    * Returns immediately if nothing was in flight.
    */
@@ -1946,7 +2059,16 @@ export declare class MidenClient {
   lastAuthError(): unknown;
   /** Returns the client-level default prover. */
   readonly defaultProver: TransactionProver | null;
-  /** Terminates the underlying Web Worker. After this, all method calls throw. */
+  /**
+   * Terminates the client: stops its Web Worker if there is one, and releases
+   * the main-realm wasm client and, through it, its IndexedDB store connection
+   * once the calls already queued or running have settled. After this, all
+   * method calls throw. To wait for the release, dispose of the client with
+   * `await using` or `await client[Symbol.asyncDispose]()`. The release is
+   * browser-only: on the Node.js binding nothing is released.
+   * A store handle you obtain yourself, such as an AccountReader from
+   * `accountReader`, keeps the connection open until you free it.
+   */
   terminate(): void;
 
   /**
@@ -2002,13 +2124,15 @@ export declare class MidenClient {
    *   does not recognise the component and commits nothing, so the transaction
    *   aborts in the VM with `ERR_FEE_CONVERSION_INFO_MISSING`. Attach the
    *   auth args yourself with `TransactionRequestBuilder.withAuthArgs`, which
-   *   sets the commitment and adds its advice-map preimage.
+   *   sets the commitment and adds its advice-map preimage, or on a finished
+   *   request with `request.withAuthArgs(preimage)`.
    *
    * The `new*TransactionRequest` constructors declare it, and so does every
    * `client.transactions` operation that builds its own request — but the ones
    * that take a request from you (`submit`, `executeRequest`, `submitBatch`,
    * and the `custom` operation of `batch` / `preview`) never do, so those are
-   * exactly the paths this method exists for.
+   * exactly the paths this method exists for. For a finished request you did
+   * not build, {@link MidenClient.withFeeAwareAuth} adds the same auth args.
    *
    * `account` is the account that **executes** the request — the one whose
    * auth procedure pays the fee — not the recipient or a note's sender.
@@ -2020,13 +2144,15 @@ export declare class MidenClient {
    * multisig auth procedure resolves its auth args whatever the chain charges,
    * so a multisig gets them on a fee-free chain too.
    *
-   * For a multisig the builder also declares the block the summary binds
-   * through `withBlockNumbers`, so the request executes at the current chain
-   * tip with no anchor. The summary stays bound to that block while foreign
-   * accounts, the fee faucet among them, load at the tip: the request still
-   * executes after the node has pruned the bound block's account state (about
-   * 50 blocks), and {@link TransactionsResource.preview} without an `anchor`
-   * reproduces the proposal's summary at the tip.
+   * For a multisig the request executes at the current chain tip with no
+   * anchor: miden-client tracks the block the summary binds when it executes
+   * the request. The summary stays bound to that block while foreign accounts,
+   * the fee faucet among them, load at the tip: the request still executes
+   * after the node has pruned the bound block's account state (about 50
+   * blocks), and {@link TransactionsResource.preview} without an `anchor`
+   * reproduces the proposal's summary at the tip. The builder also declares
+   * the bound block through `withBlockNumbers`, which only
+   * {@link TransactionsResource.captureAnchor} and the height check below read.
    * Each party's client must first have synced to at least that bound block,
    * the largest of `request.blockNumbers()` and by default the proposer's sync
    * height when it built the request; below it execution fails with
@@ -2068,6 +2194,62 @@ export declare class MidenClient {
     options?: MultisigAuthOptions
   ): Promise<TransactionRequestBuilder>;
 
+  /**
+   * Returns a copy of a finished `TransactionRequest` that carries the auth
+   * args the executing account needs.
+   *
+   * Use this when another party built the request, such as a dApp that gives a
+   * finished request to a wallet, and the executing account is a multisig.
+   * miden-client derives multisig auth args only from a declared fee
+   * conversion salt, so a request without one fails with
+   * `FeeConversionInfoRequired`. For a multisig this sets the same auth args
+   * that {@link MidenClient.feeAwareTransactionRequestBuilder} declares,
+   * through `TransactionRequest.withAuthArgs`: the auth argument and its
+   * advice-map preimage. The auth args replace a declared fee conversion salt. Every other field of the request stays the
+   * same.
+   *
+   * For every other account the request comes back unchanged, auth argument
+   * and all, because miden-client commits the fee conversion info for those
+   * accounts itself.
+   *
+   * When `options.feeConversionSalt` is omitted, the auth args use the salt
+   * that the request declares, or a fresh one if it declares none.
+   *
+   * The copy does not declare the bound block as a block number. miden-client
+   * adds it when it executes the request, so the request executes at the chain
+   * tip with no anchor. An anchor from `chainAnchorForRequest` does not track
+   * the bound block, and a co-signer cannot read it from
+   * `request.blockNumbers()` to check its sync height, so it syncs before
+   * previewing the copy.
+   *
+   * The request passed in is not consumed and not changed.
+   *
+   * @param request - The finished request.
+   * @param account - The account that will execute the request.
+   * @param options - Multisig-only overrides, the same as for
+   *   {@link MidenClient.feeAwareTransactionRequestBuilder}; every field is
+   *   defaulted when omitted and ignored for an account that is not a
+   *   multisig.
+   * @throws An error with `code` `"AUTH_ALREADY_SET"` if the account is a
+   *   multisig and the request already has an auth argument that commits
+   *   anything: its author owns that argument, so it is not replaced
+   *   (`TransactionRequest.withAuthArgs` replaces it without this check). On
+   *   Node.js the code prefixes the message (`"AUTH_ALREADY_SET: ..."`)
+   *   instead.
+   *
+   * @example
+   * ```js
+   * // A wallet executes a request that a dApp built.
+   * const request = await client.withFeeAwareAuth(dappRequest, multisig);
+   * await client.transactions.submit(multisig, request);
+   * ```
+   */
+  withFeeAwareAuth(
+    request: TransactionRequest,
+    account: AccountRef,
+    options?: MultisigAuthOptions
+  ): Promise<TransactionRequest>;
+
   /** Advances the mock chain by one block. Only available on mock clients. */
   proveBlock(): Promise<void>;
   /** Returns true if this client uses a mock chain. */
@@ -2077,7 +2259,16 @@ export declare class MidenClient {
   /** Serializes the mock note transport node state. */
   serializeMockNoteTransportNode(): Promise<Uint8Array>;
 
+  /** Terminates the client without waiting for the release; see `terminate()`. */
   [Symbol.dispose](): void;
+  /**
+   * Terminates the client, then resolves once its wasm client is freed and its
+   * store connection released, so the store can be deleted or reopened once
+   * this settles. On the Node.js binding it releases nothing and resolves at
+   * once.
+   * A store handle you obtain yourself, such as an AccountReader from
+   * `accountReader`, keeps the connection open until you free it.
+   */
   [Symbol.asyncDispose](): Promise<void>;
 }
 
@@ -2127,7 +2318,13 @@ export declare function isConsumableNow(
 /** Exports the entire contents of an IndexedDB store as a JSON string. */
 export declare function exportStore(storeName: string): Promise<string>;
 
-/** Imports store contents from a JSON string, replacing all existing data. */
+/**
+ * Imports store contents from a JSON string, replacing all existing data.
+ *
+ * Rejects, leaving the store unchanged, a dump the store could not have kept: one with no client
+ * version stamp, or stamped by a client older than 0.17.0 (its data belongs to networks that no
+ * longer exist) or newer than this one (upgrade the SDK to import it).
+ */
 export declare function importStore(
   storeName: string,
   storeDump: string

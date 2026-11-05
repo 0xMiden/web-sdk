@@ -16,6 +16,13 @@ quota for the SDK's entire successful call volume. Leave it out, or set a
 threshold you chose on purpose. `@miden-sdk/telemetry-otel` has no equivalent
 guard, so do not reason from one package to the other.
 
+A success over the threshold is not always slow work. `durationMs` runs from
+when the call's turn on its client's queue starts, and a call that takes the
+store lock (the syncs, `importNoteFile`, `fetchPrivateNotes`, and, on a store
+still at genesis only, `syncBeforeAccountCreation` and account creation) waits
+within that time for any other client or tab holding the lock, so a slow
+observation of one of these can be lock wait.
+
 ## Wiring it
 
 ```ts

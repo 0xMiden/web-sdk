@@ -13,11 +13,15 @@ import type {
   TransactionResult,
 } from "../types";
 import { DEFAULTS } from "../types";
-import { parseAccountId, parseAddress } from "../utils/accountParsing";
+import { parseAccountId } from "../utils/accountParsing";
 import { createNoteAttachment, emptyAttachment } from "../utils/noteAttachment";
 import { MidenError, assertSignerConnected } from "../utils/errors";
-import { getNoteType, waitForTransactionCommit } from "../utils/noteFilters";
-import type { ClientWithTransactions } from "../utils/noteFilters";
+import { getNoteType } from "../utils/noteFilters";
+import {
+  readOwedPrivateNotes,
+  recipientRef,
+  settlePrivateNotes,
+} from "../utils/privateNoteDelivery";
 import { proveWithFallback } from "../utils/prover";
 import { useMidenStore } from "../store/MidenStore";
 import { runExclusiveDirect } from "../utils/runExclusive";
@@ -39,6 +43,12 @@ export interface UseMultiSendResult {
 
 /**
  * Hook to create a multi-send transaction (multiple P2ID notes).
+ *
+ * Private notes are relayed to their recipients once the transaction commits,
+ * each one attempted whatever happened to the others. If any is not delivered
+ * after the transaction was submitted, the call rejects with a
+ * `PrivateNoteDeliveryError` carrying the transaction id and the delivered and
+ * undelivered notes; pass the undelivered ones to `useResendPrivateNotes`.
  *
  * @example
  * ```tsx
@@ -97,6 +107,7 @@ export function useMultiSend(): UseMultiSendResult {
       setIsLoading(true);
       setStage("executing");
       setError(null);
+      setResult(null);
 
       try {
         // Auto-sync before send unless opted out
@@ -129,18 +140,17 @@ export function useMultiSend(): UseMultiSendResult {
               resolvedNoteType,
               noteAttachment
             );
-            const recipientAddress = parseAddress(to, receiverId);
             return {
               note,
-              recipientAddress,
+              to: recipientRef(to),
               noteType: resolvedNoteType,
             };
           }
         );
 
         // NoteArray constructor consumes its elements via Vec<Note>; use
-        // push(&note) so each output.note handle stays valid for the
-        // sendPrivateOutputNote loop below.
+        // push(&note) so each output.note handle stays valid for reading the
+        // owed note ids below.
         const ownOutputs = new NoteArray();
         for (const o of outputs) {
           ownOutputs.push(o.note);
@@ -184,29 +194,29 @@ export function useMultiSend(): UseMultiSendResult {
           txResult
         );
 
-        // Save txId hex BEFORE applyTransaction, which consumes the
-        // WASM pointer inside txResult (and any child objects).
+        // Read once the transaction is submitted, so a failure from here on
+        // still reports which transaction it was.
         const txIdHex = txResult.id().toHex();
 
-        await client.applyTransaction(txResult, submissionHeight);
-
-        // Send private notes after commit
-        const hasPrivate = outputs.some((o) => o.noteType === NoteType.Private);
-        if (hasPrivate) {
-          await waitForTransactionCommit(
-            client as unknown as ClientWithTransactions,
-            runExclusiveDirect,
-            txIdHex
-          );
-
-          for (const output of outputs) {
-            if (output.noteType === NoteType.Private) {
-              await client.sendPrivateOutputNote(
-                output.note.id().toString(),
-                output.recipientAddress
-              );
-            }
-          }
+        const apply = () => client.applyTransaction(txResult, submissionHeight);
+        const privateOutputs = outputs.filter(
+          (o) => o.noteType === NoteType.Private
+        );
+        if (privateOutputs.length > 0) {
+          await settlePrivateNotes({
+            client,
+            runExclusiveSafe: runExclusiveDirect,
+            transactionId: txIdHex,
+            owed: readOwedPrivateNotes(() =>
+              privateOutputs.map((o) => ({
+                noteId: o.note.id().toString(),
+                to: o.to,
+              }))
+            ),
+            apply,
+          });
+        } else {
+          await apply();
         }
 
         const txSummary = { transactionId: txIdHex };

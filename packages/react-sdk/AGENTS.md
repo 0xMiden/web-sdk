@@ -28,19 +28,18 @@ import { MidenProvider } from "@miden-sdk/react";
 
 function App() {
   return (
-    <MidenProvider config={{ rpcUrl: "testnet", feeFaucetId: FEE_FAUCET }}>
+    <MidenProvider config={{ rpcUrl: "testnet" }}>
       <YourApp />
     </MidenProvider>
   );
 }
 ```
 
-`feeFaucetId` is required today. Since 0.17 the chain's fee asset lives in a
-protocol configuration the node does not serve over RPC, and the SDK carries a
-per-network default for no network yet, so a provider without it fails at client
-init. It is the faucet the chain mints its fee asset from - ask whoever runs the
-network, or read it from the genesis of a local node. Other snippets in this file
-leave it out to keep the point they make legible; every real provider needs it.
+`feeFaucetId` is optional. Since 0.17 the chain's fee asset lives in the
+protocol configuration, which the client receives from the node when it syncs,
+so a provider does not need the option: it only sets what `client.feeFaucetId()`
+reports before the first sync. Before that sync, a client created without it
+rejects `feeFaucetId()` and asks you to sync first.
 
 ## Configuration
 
@@ -48,12 +47,20 @@ leave it out to keep the point they make legible; every real provider needs it.
 <MidenProvider
   config={{
     rpcUrl: "testnet",          // "devnet" | "testnet" | "localhost" | "local" | custom URL
-    feeFaucetId: FEE_FAUCET,    // REQUIRED: the chain's fee faucet, bech32 or hex
+    feeFaucetId: FEE_FAUCET,    // optional: what feeFaucetId() reports before the first sync
     prover: "testnet",          // "local" | "localhost" | "devnet" | "testnet" | URL
                                 //   | { url, timeoutMs }
                                 //   | { primary, fallback, disableFallback?, onFallback? }
     autoSyncInterval: 15000,    // ms, set to 0 to disable. Default: 15000
     noteTransportUrl: "...",    // optional: for private note delivery
+    noteTransportMaxRetries: 3, // optional: in-call retries of a private note send
+                                //   after a transient transport failure. 0..10, default 3
+    noteTransportRetryIntervalMs: 250, // optional: delay before the first retry, doubling
+                                //   for each later one. 0..60000 ms, default 250.
+                                //   Together: at most 120000 ms of total backoff,
+                                //   interval * (2^retries - 1). Retries hold the
+                                //   provider lock, blocking other client calls;
+                                //   0 retries suits a latency-sensitive UI
     useWorker: true,            // default true; see the warning below before changing
     proverTimeoutMs: 10000,     // optional: remote-prover request timeout
     proverUrls: { testnet: "...", devnet: "..." },  // optional: override network prover URLs
@@ -63,6 +70,11 @@ leave it out to keep the point they make legible; every real provider needs it.
   errorComponent={(error) => <Error error={error} />}  // function form receives the Error
 >
 ```
+
+Keep the `config` object's identity stable: define it outside the component,
+or memoize it with `useMemo` when the component that renders `MidenProvider`
+re-renders. Without a signer provider, each new `config` object makes
+`MidenProvider` re-create its client and leave the replaced one running.
 
 `errorComponent` accepts either a static element or a function. Only the
 function form is handed the `Error`, so use it whenever you want to show what
@@ -173,7 +185,9 @@ in-progress flag, and only the transaction family has a `stage`:
 
 Two more sit outside the pattern entirely: `useWaitForCommit()` returns
 `{ waitForCommit }` and nothing else, and `useCompile()` is not a write hook at
-all (see [Hook Reference](#hook-reference)).
+all (see [Hook Reference](#hook-reference)). `useResendPrivateNotes()` returns
+`{ resend, isLoading, error }`: it has the busy flag but no `result`, `stage` or
+`reset`.
 
 Destructuring `isLoading` off a hook that doesn't return one yields `undefined`,
 which disables no button and reports no error. **The exported `Use*Result`
@@ -187,7 +201,7 @@ const { createWallet, wallet, isCreating, error, reset } = useCreateWallet();
 
 const account = await createWallet({
   storageMode: "private",  // "private" | "public". Default: "private"
-  authScheme: 2,           // 2 = Falcon, 1 = ECDSA. Pass the number - see the trap below
+  authScheme: AuthScheme.Falcon, // AuthScheme.Falcon | AuthScheme.ECDSA. Default: Falcon
   initSeed: seedBytes,     // optional: Uint8Array for a deterministic account id
 });
 ```
@@ -196,15 +210,13 @@ const account = await createWallet({
 no `"network"` storage mode for a wallet - network accounts are built through
 the network-account auth component, not this flag.
 
-> **Pass `authScheme` as a number, and always pass it.** `web-sdk#223` is open:
-> the create/import hooks forward `authScheme` straight to the wasm calls, which
-> expect the numeric enum (`2` Falcon, `1` ECDSA). The friendly `AuthScheme`
-> re-exported from this package is the string const `{ Falcon: "falcon",
-> ECDSA: "ecdsa" }`, so the hooks' own default, `AuthScheme.AuthRpoFalcon512`,
-> resolves to `undefined`. wasm-bindgen then throws `invalid enum value passed`
-> inside a worker closure, where it does not reject the promise - **the call
-> hangs instead of failing.** Omitting `authScheme` hits exactly that default.
-> `skills/react-sdk-patterns/SKILL.md` has the full write-up.
+`authScheme` takes `AuthScheme.Falcon` or `AuthScheme.ECDSA`, the string const
+`{ Falcon: "falcon", ECDSA: "ecdsa" }` this package re-exports, and the same
+holds for `useCreateFaucet`, the seed import of `useImportAccount` and
+`useSessionAccount`'s `walletOptions`. Omitting it uses `DEFAULTS.AUTH_SCHEME`,
+which is `AuthScheme.Falcon`. The numeric wasm enum values `2` (Falcon) and `1`
+(ECDSA) still pass through unchanged; any other value rejects with
+`Unknown auth scheme`.
 
 ### Send Tokens
 ```tsx
@@ -219,6 +231,14 @@ await send({
 });
 ```
 
+A private send relays the note to the recipient once the transaction commits.
+If that does not happen after the transaction was submitted, `send` rejects with
+a `PrivateNoteDeliveryError` (code `PRIVATE_NOTE_DELIVERY_FAILED`) carrying
+`transactionId`, `commitment` (`"committed"` or `"unknown"`), `delivered`,
+`undelivered` and `cause`. The transaction is not undone and the SDK keeps no
+queue, so nothing re-sends the note unless you do; see
+[Retry Undelivered Private Notes](#retry-undelivered-private-notes).
+
 ### Send to Multiple Recipients
 ```tsx
 const { multiSend } = useMultiSend();
@@ -231,6 +251,11 @@ await multiSend({
   ],
 });
 ```
+
+Every private recipient is attempted even if an earlier relay fails; any note
+not delivered rejects the call with the same `PrivateNoteDeliveryError`.
+`useTransaction` behaves the same way for the notes it relays to
+`privateNoteTarget`, which it checks before anything executes.
 
 ### Submit a Multi-Transaction Batch
 ```tsx
@@ -315,7 +340,7 @@ const account = await createFaucet({
   decimals: 8,              // Default: 8
   maxSupply: 1000000n,      // required. bigint | number
   storageMode: "public",    // "private" | "public". Default: "private"
-  authScheme: 2,            // 2 = Falcon. Pass the number - see the trap above
+  authScheme: AuthScheme.Falcon, // AuthScheme.Falcon | AuthScheme.ECDSA. Default: Falcon
 });
 ```
 
@@ -345,6 +370,33 @@ function SendButton() {
 }
 ```
 
+### Retry Undelivered Private Notes
+```tsx
+import {
+  PrivateNoteDeliveryError,
+  useResendPrivateNotes,
+  useSend,
+} from "@miden-sdk/react";
+
+const { send } = useSend();
+const { resend, isLoading, error } = useResendPrivateNotes();
+
+try {
+  await send({ from, to, assetId, amount: 100n, noteType: "private" });
+} catch (err) {
+  if (err instanceof PrivateNoteDeliveryError) {
+    // The transaction went through; only the delivery is outstanding.
+    await resend({ transactionId: err.transactionId, notes: err.undelivered });
+  }
+}
+```
+
+`resend` syncs once and then relays every note through `runExclusive`. A note
+whose transaction has not committed yet still fails and comes back in a new
+`PrivateNoteDeliveryError` with `commitment: "unknown"`; repeating a resend is
+safe because delivery is idempotent by note id. A note whose transaction this
+client could not apply is not in its store, so it cannot be resent from here.
+
 ### Format Token Amounts
 ```tsx
 import { formatAssetAmount, parseAssetAmount } from "@miden-sdk/react";
@@ -355,6 +407,10 @@ const display = formatAssetAmount(balance, 8);
 // User input: "0.01" with 8 decimals → 1000000n
 const amount = parseAssetAmount("0.01", 8);
 ```
+
+`parseAssetAmount` accepts an unsigned decimal string and throws for an empty,
+negative or malformed amount; `formatAssetAmount` puts a single leading minus on
+a negative value.
 
 ### Display Note Summary
 ```tsx
@@ -447,6 +503,16 @@ miden-client has each setter clear the other, so whichever is called last wins
 rather than producing an error. Never call either on a builder this method
 returned for a multisig - it already carries the three-word auth args, and
 either setter discards them. Pass `feeConversionSalt` in the options instead, building a fresh `Word` per call - the parameter is moved across the WASM boundary, so a reused handle arrives as "no salt given" and one is drawn.
+
+A request you did not build, such as a finished one a dApp hands to a wallet,
+cannot go back through the builder. Add the multisig auth args to it with
+`await client.withFeeAwareAuth(request, accountId)`: it returns a copy with the
+auth args the builder would set, and returns any other account's request
+unchanged. For a multisig it refuses a request that already has an auth
+argument (`AUTH_ALREADY_SET`). To set auth args you build yourself, such as a
+custom auth procedure's, on a finished request, use
+`request.withAuthArgs(preimage)`; in the browser build it consumes the `Felt`s
+it is given.
 
 ### Prevent Race Conditions
 ```tsx
@@ -673,7 +739,8 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | `usePswapConsume()` | `pswapConsume({ accountId, note, fillAmount, noteFillAmount? })` - `note` accepts hex string \| `NoteId` \| `InputNoteRecord` \| `Note` | `TransactionResult` (fills PSWAP fully or partially) |
 | `usePswapCancel()` | `pswapCancel({ accountId, note })` - creator only, reclaims unfilled offered asset | `TransactionResult` |
 | `usePswapCancelByOrder()` | `pswapCancelByOrder({ orderId })` - creator only, resolves the current tip + creator from the tracked lineage | `TransactionResult` |
-| `useTransaction()` | `execute({ ..., anchor? })` | `TransactionResult` (custom tx; `anchor` pins the reference block) |
+| `useTransaction()` | `execute({ ..., anchor?, privateNoteTarget? })` | `TransactionResult` (custom tx; `anchor` pins the reference block; `privateNoteTarget` relays the private output notes) |
+| `useResendPrivateNotes()` | `resend({ transactionId, notes })` | `void`; rejects with `PrivateNoteDeliveryError` for notes still undelivered. Returns `{ resend, isLoading, error }` only |
 | `useChainAnchor()` | `captureAnchor({ request })` | `ChainAnchor` (pins the current reference block for later replay) |
 | `usePreview()` | `preview({ accountId, request, anchor? })` | `TransactionSummary` awaiting authorization; rejects `TRANSACTION_ALREADY_AUTHORIZED` when none is pending |
 | `useExecuteProgram()` | `execute(...)` | program output |
@@ -691,9 +758,13 @@ const { noteScript, isReady } = useCompile();
 
 const script = await noteScript({
   code: noteSource,
-  libraries: [{ namespace: "my_lib", code: libSource, linking: Linking.Dynamic }],
+  libraries: [{ namespace: "my_lib", code: libSource, linking: Linking.Static }],
 });
 ```
+
+`Linking.Static` copies a helper library like `my_lib` into the script.
+`Linking.Dynamic` is only for procedures installed on an account the transaction
+reaches; a helper linked dynamically compiles and then fails at execution.
 
 ### Context (provider access)
 
@@ -714,15 +785,19 @@ party, later) executes it, every party has to derive the same summary. How
 depends on what the summary binds.
 
 **Multisig proposals (0.17+): no anchor.** A multisig summary binds a bound
-block named in its auth args. Build the request with
+block named in its auth args, and miden-client tracks that block when it
+executes the request. Build the request with
 `client.feeAwareTransactionRequestBuilder(accountId)`, which binds the current
-sync height and declares it with `withBlockNumbers`, and ship the request
+sync height and also declares it with `withBlockNumbers`, and ship the request
 bytes. Every party previews and executes at its own tip once its client has
 synced to at least the bound block (the largest of `request.blockNumbers()`);
 below it the call fails with `requested block N is after transaction reference
 block M` until it syncs. `usePreview` does not sync, and `useTransaction` syncs
 through the provider's `sync()`, which returns early while another sync runs, so
-sync and then check the height before previewing or executing.
+sync and then check the height before previewing or executing. A request from
+`client.withFeeAwareAuth` does not declare the bound block, so the height check
+below cannot read it: sync before previewing such a request, and sync again on
+`requested block N is after transaction reference block M`.
 
 ```tsx
 import { TransactionRequest } from "@miden-sdk/miden-sdk";

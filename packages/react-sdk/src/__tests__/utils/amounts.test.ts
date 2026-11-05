@@ -48,6 +48,24 @@ describe("formatAssetAmount", () => {
     expect(formatAssetAmount(0n, 6)).toBe("0");
     expect(formatAssetAmount(0n)).toBe("0");
   });
+
+  it("formats negative amounts with a single leading minus sign", () => {
+    // 12345 with 2 decimals = 123.45 → negated = -123.45
+    expect(formatAssetAmount(-12345n, 2)).toBe("-123.45");
+  });
+
+  it("formats negative amounts with no fractional part", () => {
+    expect(formatAssetAmount(-500n, 2)).toBe("-5");
+  });
+
+  it("formats negative amounts smaller than one whole unit", () => {
+    // -50 with 2 decimals = -0.50 → "-0.5"
+    expect(formatAssetAmount(-50n, 2)).toBe("-0.5");
+  });
+
+  it("formats negative whole numbers when decimals is omitted", () => {
+    expect(formatAssetAmount(-42n)).toBe("-42");
+  });
 });
 
 describe("parseAssetAmount", () => {
@@ -108,6 +126,35 @@ describe("parseAssetAmount", () => {
 
   it("trims surrounding whitespace", () => {
     expect(parseAssetAmount("  42  ", 0)).toBe(42n);
+  });
+
+  it("rejects a negative amount", () => {
+    expect(() => parseAssetAmount("-5", 0)).toThrow("must not be negative");
+    expect(() => parseAssetAmount("-42", 0)).toThrow("must not be negative");
+    expect(() => parseAssetAmount("-0.5", 2)).toThrow("must not be negative");
+  });
+
+  it("rejects stray or repeated signs", () => {
+    for (const decimals of [0, 2]) {
+      for (const input of ["--1", "-", "- 5"]) {
+        expect(() => parseAssetAmount(input, decimals)).toThrow(
+          "must not be negative"
+        );
+      }
+    }
+  });
+
+  it("rejects anything that is not plain digits with at most one point", () => {
+    for (const decimals of [0, 2]) {
+      for (const input of ["+5", "1e3", "1 000", "0x10"]) {
+        expect(() => parseAssetAmount(input, decimals)).toThrow(
+          "not a valid number"
+        );
+      }
+    }
+    expect(() => parseAssetAmount(".", 2)).toThrow("not a valid number");
+    expect(() => parseAssetAmount("5.-25", 3)).toThrow("not a valid number");
+    expect(() => parseAssetAmount(".", 0)).toThrow("must be a whole number");
   });
 
   it("round-trips with formatAssetAmount", () => {

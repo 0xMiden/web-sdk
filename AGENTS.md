@@ -6,7 +6,7 @@ Those per-package files are aimed at **consumers** of the published npm packages
 
 ## What this repo is
 
-A pnpm monorepo holding the JS / WASM / React bits previously part of [`0xMiden/miden-client`](https://github.com/0xMiden/miden-client), plus the wallet-adapter, Para and Turnkey packages adopted from their own repos in 0.16. **Nineteen published npm packages** and four crates.io crates:
+A pnpm monorepo holding the JS / WASM / React bits previously part of [`0xMiden/miden-client`](https://github.com/0xMiden/miden-client), plus the wallet-adapter, Para and Turnkey packages adopted from their own repos in 0.16. **Twenty published npm packages** and four crates.io crates:
 
 | Artifact | Path | Registry |
 |---|---|---|
@@ -17,7 +17,7 @@ A pnpm monorepo holding the JS / WASM / React bits previously part of [`0xMiden/
 | `@miden-sdk/miden-wallet-adapter{,-base,-miden,-react,-reactui}` | `packages/adapter/{all,base,miden,react,reactui}` | npm |
 | `@miden-sdk/{para,para-react,create-para-react}` | `packages/para/{core,react,create}` | npm |
 | `@miden-sdk/{turnkey,turnkey-react,create-turnkey-react}` | `packages/turnkey/{core,react,create}` | npm |
-| `@miden-sdk/node-{darwin-arm64,darwin-x64,linux-x64-gnu}` | `packages/node-sdk-*` | npm (platform-specific native binaries; consumed via `optionalDependencies` on `@miden-sdk/miden-sdk`) |
+| `@miden-sdk/node-{darwin-arm64,darwin-x64,linux-x64-gnu,linux-x64-musl}` | `packages/node-sdk-*` | npm (platform-specific native binaries; consumed via `optionalDependencies` on `@miden-sdk/miden-sdk`. Linux ships a glibc (`-gnu`) and a musl/Alpine (`-musl`) binary, and the loader picks one by the runtime C library.) |
 | `miden-idxdb-store`, `js-export-macro`, `miden-mobile-prover`, `miden-client-web` | `crates/*` | crates.io |
 
 The npm publish gates live in three places, so check the right one: `scripts/check-{web-client,react-sdk,vite-plugin}-version-release.sh` for those three; the `node-sdk-*` natives are published inline by `publish-web-sdk.yml` whenever the web-client publishes; everything adopted is gated from [`scripts/publish-manifest.json`](scripts/publish-manifest.json) via `scripts/publish-plan.sh`. **Adding a package to that manifest is all a new adopted package needs.** `@miden-sdk/telemetry-otel` and `@miden-sdk/telemetry-sentry` are shaped and linted for publication (`check:publish`) but are in no manifest and no workflow, so they currently have no route to npm - fix that before promising a release of either.
@@ -117,14 +117,20 @@ Two long-lived branches:
 - **`main`** → npm `latest` dist-tag. Released on GitHub release events.
 - **`next`** → npm `next` dist-tag. Released when a PR merges into `next` carrying the `patch release` label.
 
-GitHub prereleases publish the tagged commit to npm `next`, including tags from a maintenance branch. Stable GitHub releases and workflow dispatch publish to `latest`; use a prerelease rather than dispatch for release candidates. Core SDK publication requires successful builds of all three Node platform packages, and the tagged `Cargo.lock` must remain unchanged.
+GitHub prereleases publish the tagged commit to npm `next`, including tags from a maintenance branch. Stable GitHub releases and workflow dispatch publish to `latest`; use a prerelease rather than dispatch for release candidates. Core SDK publication requires successful builds of the three required Node platform packages (`darwin-arm64`, `darwin-x64`, `linux-x64-gnu`), and the tagged `Cargo.lock` must remain unchanged. The fourth, `linux-x64-musl`, builds in its own `build-native-nodejs-musl` job and is required like the others: a release publishes all four native packages or none.
+
+**One-time musl setup.** npm attaches a trusted publisher only to a package that already exists, and the workflow has no token fallback, so until this setup is done every release that publishes the SDK fails at the musl publish, which runs first so nothing else is published. Before the next release that publishes the SDK, a maintainer with publish rights on the `@miden-sdk` scope runs these from a real terminal, because npm prints its 2FA browser URL redacted outside a TTY:
+
+1. Publish a placeholder version of `@miden-sdk/node-linux-x64-musl` that no release will use, such as `0.0.0-placeholder`, with `--access public`. npm points `latest` at a package's first version whatever `--tag` says; that is harmless here, because the SDK pins the exact version in `optionalDependencies`.
+2. Attach the trusted publisher: `npx --yes npm@12.0.2 trust github @miden-sdk/node-linux-x64-musl --file publish-web-sdk.yml --repo 0xMiden/web-sdk --allow-publish`. It needs npm 12 (npm 11 fails with a bare `400 Bad Request`) and accepts only browser 2FA (`--otp` is rejected).
+3. Deprecate the placeholder: `npm deprecate @miden-sdk/node-linux-x64-musl@0.0.0-placeholder "Placeholder, not a binary; install @miden-sdk/miden-sdk"`.
 
 Both branches have protection enabled; required status checks mirror across the two.
 
 The release-publish gate compares the local `package.json` version against the **npm registry**, not against the previous git commit. So a release tag publishes whichever packages have versions not yet on npm, and bumping a single package is a clean release of just that one. Three gating mechanisms are in play and they do not share code:
 
 - `scripts/check-{web-client,react-sdk,vite-plugin}-version-release.sh` for those three packages.
-- The three `node-sdk-*` natives are tied to the web-client publish, so their `optionalDependencies` versions always match a real published binary.
+- The four `node-sdk-*` natives are tied to the web-client publish, so their `optionalDependencies` versions always match a real published binary. A release run skips a native package whose version is already on npm, so a re-run after a partial publish finishes the rest.
 - The eleven adopted packages are planned from `scripts/publish-manifest.json` by `scripts/publish-plan.sh`, which also builds the plan's first-party dependency closure in level order before publishing anything.
 
 Release WASM size is gated at 25 MiB for ST and 35 MiB for MT. These limits reject both a `wasm-opt` failure and a skipped MASP debug strip before publishing.
@@ -227,7 +233,7 @@ agents read them out of `node_modules`. Because they ship in the tarball they
 are **version-matched to the code**, which is the whole point: a consumer on
 0.15 gets 0.15 guidance.
 
-The three `packages/node-sdk-*` packages are the deliberate exception. Each
+The four `packages/node-sdk-*` packages are the deliberate exception. Each
 holds one file, `miden_client_web.node`, is resolved only through
 `optionalDependencies` on `@miden-sdk/miden-sdk`, and is never imported by hand.
 They carry a short "this is not the SDK, go read `@miden-sdk/miden-sdk`" pointer
@@ -260,7 +266,7 @@ and it needs no build to answer for a docs file. Reading the `files` array and
 reasoning about it is what got this wrong the first time.
 
 **The authoritative list of shipped skills is the filesystem**, not a table in
-this file - a hand-kept list across nineteen packages drifts, and this one did:
+this file - a hand-kept list across twenty packages drifts, and this one did:
 
 ```bash
 find . -name SKILL.md -not -path './node_modules/*'

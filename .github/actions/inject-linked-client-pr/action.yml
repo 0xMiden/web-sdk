@@ -142,8 +142,8 @@ runs:
       run: |
         set -euo pipefail
 
-        # We rewrite the miden-client (and miden-client-sqlite-store, if
-        # present) dep lines IN PLACE rather than emitting a [patch] block.
+        # Rewrite all client family members in place so their protocol types
+        # share the linked source instead of mixing git and registry crates.
         #
         # Why not [patch]? Cargo's [patch."<url>"] section needs the patch
         # source to be DIFFERENT from the original source. Web-sdk's `next`
@@ -180,7 +180,7 @@ runs:
         with open(path) as f:
             lines = f.readlines()
 
-        dep_re = re.compile(r'^(?P<name>miden-client(?:-sqlite-store)?)\s*=\s*(?P<rhs>.+)$')
+        dep_re = re.compile(r'^(?P<name>miden-client(?:-proto|-sqlite-store)?)\s*=\s*(?P<rhs>.+)$')
 
         captured = []
         patched_lines = []
@@ -228,10 +228,15 @@ runs:
         # in-place rewrite is still required for miden-client itself: a
         # [patch] of the same git URL cargo already uses is rejected.
         upstream_toml=$(mktemp)
+        upstream_lock=$(mktemp)
         gh api -H "Accept: application/vnd.github.raw" \
           "repos/${HEAD_OWNER}/${HEAD_REPO}/contents/Cargo.toml?ref=${HEAD_SHA}" > "$upstream_toml"
-        python3 - "$upstream_toml" <<'PY'
-        import sys
+        gh api -H "Accept: application/vnd.github.raw" \
+          "repos/${HEAD_OWNER}/${HEAD_REPO}/contents/Cargo.lock?ref=${HEAD_SHA}" > "$upstream_lock"
+        python3 - "$upstream_toml" "$upstream_lock" <<'PY'
+        import re, sys
+
+        lock_path = sys.argv[2]
 
         mark_begin = "# >>>>>>> linked-client-pr patches (auto-injected by .github/actions/inject-linked-client-pr) >>>>>>>"
         mark_end = "# <<<<<<< linked-client-pr patches <<<<<<<"
@@ -263,6 +268,32 @@ runs:
         if not patches:
             sys.exit(0)
 
+        with open(lock_path) as f:
+            lock = f.read()
+        revisions = {}
+        for block in re.findall(r'^\[\[package\]\]\n(.*?)(?=^\[\[|\Z)', lock, re.M | re.S):
+            fields = dict(re.findall(r'^(name|source)\s*=\s*"([^"]+)"', block, re.M))
+            source = fields.get('source', '')
+            if source.startswith('git+') and '#' in source:
+                url, revision = source[4:].rsplit('#', 1)
+                key = (fields.get('name'), url.split('?')[0].removesuffix('.git'))
+                revisions.setdefault(key, set()).add(revision)
+        lines = []
+        for line in patches.splitlines():
+            entry = re.match(r'^(\s*([A-Za-z0-9_-]+)\s*=\s*\{)(.*)(\}\s*(?:#.*)?)$', line)
+            git = re.search(r'\bgit\s*=\s*"([^"]+)"', entry[3]) if entry else None
+            if git:
+                package = re.search(r'\bpackage\s*=\s*"([^"]+)"', entry[3])
+                name = package[1] if package else entry[2]
+                captured = revisions.get((name, git[1].removesuffix('.git')), set())
+                if len(captured) > 1:
+                    raise SystemExit(f'Ambiguous linked lock revision for {name}')
+                if captured:
+                    fields = re.sub(r'\b(?:branch|tag|rev)\s*=\s*"[^"]*"\s*,?\s*', '', entry[3]).strip().rstrip(',').rstrip()
+                    line = entry[1] + ' ' + fields + f', rev = "{next(iter(captured))}" ' + entry[4]
+            lines.append(line)
+        patches = '\n'.join(lines)
+
         with open("Cargo.toml") as f:
             current = f.read()
         if not current.endswith("\n"):
@@ -281,16 +312,18 @@ runs:
         with open("Cargo.toml", "w") as f:
             f.write(current)
         PY
-        rm -f "$upstream_toml"
+        rm -f "$upstream_toml" "$upstream_lock"
 
         # cargo update -p X requires X to be in the dep tree. main only
         # pins miden-client (crates.io until the rewrite above swaps it
         # to git+branch); next adds miden-client-sqlite-store. Build the
         # -p list dynamically so this works on both branches.
         update_args="-p miden-client"
-        if cargo pkgid -p miden-client-sqlite-store >/dev/null 2>&1; then
-          update_args="$update_args -p miden-client-sqlite-store"
-        fi
+        for member in miden-client-proto miden-client-sqlite-store; do
+          if cargo pkgid -p "$member" >/dev/null 2>&1; then
+            update_args="$update_args -p $member"
+          fi
+        done
         # shellcheck disable=SC2086
         bash scripts/cargo-update-linked-patches.sh $update_args
 

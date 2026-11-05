@@ -26,6 +26,21 @@ const allowed = await client.accounts.isAllowed(wallet);
 `isAllowed` answers `true` when the node does not enforce an allowlist, or when
 the account is registered.
 
+## Checking an invitation code
+
+```typescript
+const valid = await client.accounts.isInvitationCodeValid(invitationCode);
+```
+
+`isInvitationCodeValid` answers `true` when the node does not enforce an
+allowlist, or when the code exists and is not registered to an account. Unknown
+and registered codes answer `false`. An empty code throws.
+
+The query does not consume the code and does not identify the account that
+holds it. A `true` answer is not a reservation: another account can register
+the code before `register` runs, so `register` can still fail with
+`ALREADY_REGISTERED`.
+
 ## Registering an account
 
 ```typescript
@@ -77,7 +92,7 @@ Node.js binding reports the same reason in the error message.
 
 ## Registering without a tracked account
 
-`RpcClient` exposes the two node endpoints directly, for a registration flow
+`RpcClient` exposes the three node endpoints directly, for a registration flow
 that never holds the account's state, such as an onboarding service that
 registers IDs its users hand it:
 
@@ -87,7 +102,10 @@ import { Endpoint, RpcClient, AccountId } from "@miden-sdk/miden-sdk";
 const rpc = new RpcClient(new Endpoint(rpcUrl));
 const accountId = AccountId.fromBech32(address);
 
-if (!(await rpc.isAccountAllowed(accountId))) {
+if (
+  !(await rpc.isAccountAllowed(accountId)) &&
+  (await rpc.isInvitationCodeValid(invitationCode))
+) {
   await rpc.registerAccount(accountId, invitationCode);
 }
 ```
@@ -95,3 +113,5 @@ if (!(await rpc.isAccountAllowed(accountId))) {
 Unlike `accounts.register`, `RpcClient.registerAccount` sends the request as
 given: it does not check that the account is new, and it does not ask the node
 first, so a code spent on an account the node already allows is consumed.
+`RpcClient.isInvitationCodeValid` also sends the code as given: an empty code
+is an error when the node enforces the allowlist.

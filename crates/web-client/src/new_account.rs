@@ -39,11 +39,25 @@ impl WebClient {
 
 #[js_export]
 impl WebClient {
+    /// Syncs the client if it has never been synced (its sync height is still the genesis
+    /// block), as each account creation method does first unless told to skip it. Sync errors
+    /// are ignored.
+    ///
+    /// The sync writes the chain MMR, so the JS `WebClient` runs this under the store lock, both
+    /// here and inside an account creation, which it then calls with `skip_pre_sync` set, so the
+    /// creation itself runs without the lock.
+    #[js_export(js_name = "syncBeforeAccountCreation")]
+    pub async fn sync_before_account_creation(&self) -> Result<(), JsErr> {
+        self.maybe_sync_before_account_creation().await;
+        Ok(())
+    }
+
     /// Creates, persists, and returns a new fungible faucet account.
     ///
     /// Only fungible faucets are supported, so passing `non_fungible = true` fails fast with a
     /// clear message. The faucet is registered with mint and burn policies (both `AllowAll`); its
-    /// secret key is added to the keystore.
+    /// secret key is added to the keystore. It first runs `syncBeforeAccountCreation` unless
+    /// `skip_pre_sync` is `true`.
     #[js_export(js_name = "newFaucet")]
     #[allow(clippy::too_many_arguments)]
     pub async fn new_faucet(
@@ -55,12 +69,15 @@ impl WebClient {
         decimals: u8,
         max_supply: JsU64,
         auth_scheme: AuthScheme,
+        skip_pre_sync: Option<bool>,
     ) -> Result<Account, JsErr> {
         if non_fungible {
             return Err(from_str_err("Non-fungible faucets are not supported yet"));
         }
 
-        self.maybe_sync_before_account_creation().await;
+        if skip_pre_sync != Some(true) {
+            self.maybe_sync_before_account_creation().await;
+        }
         let keystore = self.get_keystore().await?;
 
         let max_supply = js_u64_to_u64(max_supply);
@@ -91,14 +108,19 @@ impl WebClient {
         Ok(new_account.into())
     }
 
+    /// Creates, persists, and returns a new wallet account; its secret key is added to the
+    /// keystore. It first runs `syncBeforeAccountCreation` unless `skip_pre_sync` is `true`.
     #[js_export(js_name = "newWallet")]
     pub async fn new_wallet(
         &self,
         storage_mode: &AccountStorageMode,
         auth_scheme: AuthScheme,
         init_seed: Option<Vec<u8>>,
+        skip_pre_sync: Option<bool>,
     ) -> Result<Account, JsErr> {
-        self.maybe_sync_before_account_creation().await;
+        if skip_pre_sync != Some(true) {
+            self.maybe_sync_before_account_creation().await;
+        }
         let keystore = self.get_keystore().await?;
 
         let (new_account, key_pair) = generate_wallet(storage_mode, init_seed, auth_scheme).await?;
@@ -120,9 +142,18 @@ impl WebClient {
         Ok(new_account.into())
     }
 
+    /// Inserts an account. It first runs `syncBeforeAccountCreation` unless `skip_pre_sync` is
+    /// `true`.
     #[js_export(js_name = "newAccount")]
-    pub async fn new_account(&self, account: &Account, overwrite: bool) -> Result<(), JsErr> {
-        self.maybe_sync_before_account_creation().await;
+    pub async fn new_account(
+        &self,
+        account: &Account,
+        overwrite: bool,
+        skip_pre_sync: Option<bool>,
+    ) -> Result<(), JsErr> {
+        if skip_pre_sync != Some(true) {
+            self.maybe_sync_before_account_creation().await;
+        }
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
         let native_account = account.into();
@@ -137,14 +168,18 @@ impl WebClient {
     /// Inserts an account and its secret key in one call, matching how
     /// `newWallet` / `newFaucet` already work internally.  If the key
     /// insertion fails the account is still persisted (same as wallet/faucet),
-    /// but callers only need a single await instead of two.
+    /// but callers only need a single await instead of two. It first runs
+    /// `syncBeforeAccountCreation` unless `skip_pre_sync` is `true`.
     #[js_export(js_name = "newAccountWithSecretKey")]
     pub async fn new_account_with_secret_key(
         &self,
         account: &Account,
         secret_key: &WebAuthSecretKey,
+        skip_pre_sync: Option<bool>,
     ) -> Result<(), JsErr> {
-        self.maybe_sync_before_account_creation().await;
+        if skip_pre_sync != Some(true) {
+            self.maybe_sync_before_account_creation().await;
+        }
         let native_account: miden_client::account::Account = account.into();
         let account_id = native_account.id();
 
