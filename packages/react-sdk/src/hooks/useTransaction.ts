@@ -11,11 +11,11 @@ import { MidenError } from "../utils/errors";
 import { proveWithFallback } from "../utils/prover";
 import { useMidenStore } from "../store/MidenStore";
 import {
-  waitForTransactionCommit,
   extractFullNotes,
   assertAnchorValueUsable,
   resolveTransactionRequest,
 } from "../utils/transactions";
+import { waitForTransactionCommit } from "../utils/transactionCommit";
 
 export interface UseTransactionResult {
   /** Execute a transaction request end-to-end */
@@ -175,10 +175,12 @@ export function useTransaction(): UseTransactionResult {
           client.applyTransaction(txResult, submissionHeight)
         );
 
-        // Deliver private notes if requested
-        const txId = txResult.id();
+        // Deliver private notes if requested. Keep the id as hex: the commit
+        // wait builds a `TransactionId` per poll, and a handle passed into a
+        // filter is moved into WASM and cannot be read afterwards.
+        const txIdHex = txResult.id().toHex();
         if (options.privateNoteTarget != null) {
-          await waitForTransactionCommit(client, runExclusiveSafe, txId);
+          await waitForTransactionCommit(client, runExclusiveSafe, txIdHex);
 
           const targetAddress = parseAddress(options.privateNoteTarget);
           const fullNotes = extractFullNotes(txResult);
@@ -192,7 +194,7 @@ export function useTransaction(): UseTransactionResult {
           }
         }
 
-        const txSummary = { transactionId: txId.toHex() };
+        const txSummary = { transactionId: txIdHex };
         setStage("complete");
         setResult(txSummary);
         await sync();

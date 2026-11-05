@@ -247,8 +247,15 @@ export interface TransactionHistoryOptions {
   id?: string | TransactionId;
   /** List of transaction IDs to look up. */
   ids?: Array<string | TransactionId>;
-  /** Custom transaction filter (overrides id/ids). */
-  filter?: TransactionFilter;
+  /**
+   * Custom transaction filter (overrides id/ids). Prefer a factory such as
+   * `() => TransactionFilter.uncommitted()`: the hook calls it for every
+   * fetch. A `TransactionFilter` instance is consumed by the first fetch, so
+   * a later refetch (e.g. after a sync) fails with
+   * `null pointer passed to rust`. Keep either form referentially stable
+   * (module scope or `useCallback`); a new value refetches.
+   */
+  filter?: TransactionFilter | (() => TransactionFilter);
   /** Refresh after provider syncs. Default: true */
   refreshOnSync?: boolean;
 }
