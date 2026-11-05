@@ -39,12 +39,12 @@ import { WalletContext as CanonicalWalletContext } from "./useWallet.js";
 // TYPES
 // ================================================================================================
 
-export interface Wallet {
+interface Wallet {
   adapter: Adapter;
   readyState: WalletReadyState;
 }
 
-export interface WalletContextState {
+export interface MidenFiWalletContextState {
   autoConnect: boolean;
   wallets: Wallet[];
   wallet: Wallet | null;
@@ -55,7 +55,11 @@ export interface WalletContextState {
   disconnecting: boolean;
 
   select(walletName: WalletName): void;
-  connect(): Promise<void>;
+  connect(
+    privateDataPermission?: PrivateDataPermission,
+    network?: WalletAdapterNetwork,
+    allowedPrivateData?: AllowedPrivateData
+  ): Promise<void>;
   disconnect(): Promise<void>;
 
   requestTransaction?: MessageSignerWalletAdapterProps["requestTransaction"];
@@ -71,8 +75,8 @@ export interface WalletContextState {
   createAccount?: MessageSignerWalletAdapterProps["createAccount"];
 }
 
-const WalletContext = createContext<WalletContextState>(
-  {} as WalletContextState
+const WalletContext = createContext<MidenFiWalletContextState>(
+  {} as MidenFiWalletContextState
 );
 
 // MIDENFI SIGNER PROVIDER
@@ -815,6 +819,9 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
 /**
  * Hook for MidenFi wallet operations beyond the unified useSigner interface.
  * Use this to access wallet-specific methods like requestTransaction, requestAssets, etc.
+ * A package `WalletContext.Provider` whose value includes a `createAccount` function satisfies the hook, and `WalletProvider` does not.
+ * The exported-context fallback forwards `privateDataPermission`, `network`, and optional `allowedPrivateData`, and rejects with `useMidenFiWallet connect requires privateDataPermission and network` when either required argument is omitted.
+ * The fallback `connect` keeps the identity of the canonical `connect` it forwards to, so a rerender that passes the same function does not rerun an effect that depends on `connect`.
  *
  * @example
  * ```tsx
@@ -827,16 +834,45 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
  * const txId = await requestTransaction({ ... });
  * ```
  */
-export function useMidenFiWallet(): WalletContextState {
+export function useMidenFiWallet(): MidenFiWalletContextState {
   const context = useContext(WalletContext);
+  const canonicalContext = useContext(CanonicalWalletContext);
+  const canonicalConnect = canonicalContext?.connect;
+  const fallbackConnect = useCallback(
+    (
+      privateDataPermission?: PrivateDataPermission,
+      network?: WalletAdapterNetwork,
+      allowedPrivateData?: AllowedPrivateData
+    ) => {
+      if (privateDataPermission === undefined || network === undefined) {
+        return Promise.reject(
+          new Error(
+            "useMidenFiWallet connect requires privateDataPermission and network"
+          )
+        );
+      }
+      return canonicalConnect(
+        privateDataPermission,
+        network,
+        allowedPrivateData
+      );
+    },
+    [canonicalConnect]
+  );
   if (!context || Object.keys(context).length === 0) {
+    if (
+      canonicalContext != null &&
+      typeof (canonicalContext as { createAccount?: unknown }).createAccount ===
+        "function"
+    ) {
+      return {
+        ...canonicalContext,
+        connect: fallbackConnect,
+      };
+    }
     throw new Error(
       "useMidenFiWallet must be used within MidenFiSignerProvider"
     );
   }
   return context;
 }
-
-// Re-export for backward compatibility
-export { WalletContext };
-export type { WalletContextState as MidenFiWalletContextState };
