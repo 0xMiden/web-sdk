@@ -478,7 +478,7 @@ export class MidenClient {
    * auth procedure pays — not the recipient or a note's sender. For an account
    * that is not a multisig the builder comes back untouched, so this is a safe
    * drop-in; a zero base fee is not a second condition, since 0.17 a multisig
-   * resolves its auth args whatever the chain charges. `withAuthArg` and
+   * resolves its auth args whatever the chain charges. `withAuthArgs` and
    * `withFeeConversionSalt` are mutually exclusive: each clears the other, so
    * whichever is called last wins.
    *
@@ -504,7 +504,7 @@ export class MidenClient {
    * height when it built the request; below it execution fails with
    * "requested block N is after transaction reference block M" until it syncs.
    *
-   * Do not call `withFeeConversionSalt` or `withAuthArg` on the builder this
+   * Do not call `withFeeConversionSalt` or `withAuthArgs` on the builder this
    * returns for a multisig: the two setters clear each other, so either one
    * discards the auth args this already set. Pass `feeConversionSalt` here.
    *

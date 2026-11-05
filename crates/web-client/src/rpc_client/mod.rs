@@ -10,7 +10,12 @@ use js_export_macro::js_export;
 use miden_client::block::BlockNumber;
 use miden_client::builder::DEFAULT_GRPC_TIMEOUT_MS;
 use miden_client::note::{NoteId as NativeNoteId, Nullifier};
-use miden_client::rpc::domain::account::{GetAccountRequest, StorageMapFetch, VaultFetch};
+use miden_client::rpc::domain::account::{
+    AccountFetch,
+    GetAccountRequest,
+    StorageMapFetch,
+    VaultFetch,
+};
 use miden_client::rpc::domain::note::FetchedNote as NativeFetchedNote;
 use miden_client::rpc::{
     AccountStateAt,
@@ -178,13 +183,14 @@ impl RpcClient {
         // `get_account_details` returns only `Option<Account>`, without the commitment or block
         // height. Issue the underlying `get_account` request directly (full storage maps + vault)
         // so `FetchedAccount` can report the account commitment and last block height.
-        let request = GetAccountRequest::new()
+        let fetch = AccountFetch::new()
             .with_storage(StorageMapFetch::All)
             .with_vault(VaultFetch::Always);
+        let request = GetAccountRequest::new(native_id).with_fetch(fetch);
 
         let (block_num, proof) = self
             .inner
-            .get_account(native_id, request)
+            .get_account(request)
             .await
             .map_err(|err| js_error_with_context(err, "failed to get account details"))?;
 
@@ -245,14 +251,12 @@ impl RpcClient {
             None => VaultFetch::Skip,
         };
 
-        let request = GetAccountRequest::new()
-            .with_storage(storage_fetch)
-            .at(account_state)
-            .with_vault(vault);
+        let fetch = AccountFetch::new().with_storage(storage_fetch).with_vault(vault);
+        let request = GetAccountRequest::new(native_id).with_fetch(fetch).at(account_state);
 
         let (block_num, proof) = self
             .inner
-            .get_account(native_id, request)
+            .get_account(request)
             .await
             .map_err(|err| js_error_with_context(err, "failed to get account proof"))?;
 

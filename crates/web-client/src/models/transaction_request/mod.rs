@@ -66,12 +66,12 @@ impl TransactionRequest {
 
     /// Returns the authentication argument if present.
     ///
-    /// A request built by a builder that called neither `withAuthArg` nor `withFeeConversionSalt`
+    /// A request built by a builder that called neither `withAuthArgs` nor `withFeeConversionSalt`
     /// has none: the client commits fee conversion info into the auth args while preparing the
     /// transaction, which is after this can observe it.
     ///
     /// There is deliberately no setter here. An auth argument can only be set through
-    /// `TransactionRequestBuilder.withAuthArg`, because miden-client keeps it mutually exclusive
+    /// `TransactionRequestBuilder.withAuthArgs`, because miden-client keeps it mutually exclusive
     /// with the fee conversion salt and enforces that on the builder — a setter on a finished
     /// request would sit outside that exclusion.
     #[js_export(js_name = "authArg")]

@@ -275,7 +275,7 @@ test.describe("fee conversion salt", () => {
     expect(result.roundTrippedSalt).toBe(result.expectedSalt);
   });
 
-  test("withAuthArg and withFeeConversionSalt are mutually exclusive", async ({
+  test("withAuthArgs and withFeeConversionSalt are mutually exclusive", async ({
     run,
   }) => {
     // miden-client keeps these two in the same slot and has each setter clear
@@ -292,21 +292,17 @@ test.describe("fee conversion salt", () => {
         new sdk.Felt(33n),
         new sdk.Felt(44n),
       ]);
-      const authArg = sdk.Word.newFromFelts([
-        new sdk.Felt(55n),
-        new sdk.Felt(66n),
-        new sdk.Felt(77n),
-        new sdk.Felt(88n),
-      ]);
+      const authArgs = () =>
+        new sdk.FeltArray([55n, 66n, 77n, 88n].map((v) => new sdk.Felt(v)));
 
       const saltLast = new sdk.TransactionRequestBuilder()
-        .withAuthArg(authArg)
+        .withAuthArgs(authArgs())
         .withFeeConversionSalt(salt)
         .build();
 
       const authArgLast = new sdk.TransactionRequestBuilder()
         .withFeeConversionSalt(salt)
-        .withAuthArg(authArg)
+        .withAuthArgs(authArgs())
         .build();
 
       return {
@@ -315,7 +311,7 @@ test.describe("fee conversion salt", () => {
         authArgLastSalt: authArgLast.feeConversionSalt()?.toHex() ?? null,
         authArgLastAuthArg: authArgLast.authArg()?.toHex() ?? null,
         expectedSalt: salt.toHex(),
-        expectedAuthArg: authArg.toHex(),
+        expectedAuthArg: sdk.Poseidon2.hashElements(authArgs()).toHex(),
       };
     });
 
@@ -326,6 +322,60 @@ test.describe("fee conversion salt", () => {
     // Auth arg called last: it wins and the declaration is cleared.
     expect(result.authArgLastAuthArg).toBe(result.expectedAuthArg);
     expect(result.authArgLastSalt).toBeNull();
+  });
+
+  test("withAuthArgs sets the commitment and its advice-map preimage", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const values = [1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n];
+
+      const request = new sdk.TransactionRequestBuilder()
+        .withAuthArgs(new sdk.FeltArray(values.map((v) => new sdk.Felt(v))))
+        .build();
+
+      const authArg = request.authArg();
+      const expected = sdk.Poseidon2.hashElements(
+        new sdk.FeltArray(values.map((v) => new sdk.Felt(v)))
+      );
+      const preimage = authArg ? request.adviceMap().get(authArg) : undefined;
+
+      return {
+        authArg: authArg?.toHex() ?? null,
+        expected: expected.toHex(),
+        preimage: preimage?.map((f) => f.asInt().toString()) ?? null,
+      };
+    });
+
+    expect(result.authArg).toBe(result.expected);
+    expect(result.preimage).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
+  });
+
+  test("withAuthArgs rejects input that is not a non-empty multiple of 4 felts", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      let notWholeWordsError = null;
+      try {
+        new sdk.TransactionRequestBuilder().withAuthArgs(
+          new sdk.FeltArray([1n, 2n, 3n].map((v) => new sdk.Felt(v)))
+        );
+      } catch (e) {
+        notWholeWordsError = String(e);
+      }
+
+      let emptyError = null;
+      try {
+        new sdk.TransactionRequestBuilder().withAuthArgs(new sdk.FeltArray([]));
+      } catch (e) {
+        emptyError = String(e);
+      }
+
+      return { notWholeWordsError, emptyError };
+    });
+
+    expect(result.notWholeWordsError).toContain("multiple of 4 felts");
+    expect(result.emptyError).toContain("multiple of 4 felts");
   });
 
   test("feeNote and userOutputNotes split the kernel's fee note off", async ({
