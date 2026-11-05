@@ -128,7 +128,7 @@ export function wrapNodeClient(rawClient: any, storeName?: string): any {
     },
   };
 
-  return new Proxy(wrapClient(rawClient, storeName), {
+  return new Proxy(wrapClient(rawClient, storeName, loadNodeSdk()), {
     get(target, prop, receiver) {
       if (prop === "keystore") {
         return keystoreShim;

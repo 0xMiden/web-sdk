@@ -92,6 +92,7 @@ export const limits = Buffer.concat(
     ["SyncNullifiers", "nullifier_prefix"],
     ["SyncTransactions", "account_id"],
     ["SyncNotes", "note_tag"],
+    ["GetAccount", "vault_asset"],
   ].map(([endpoint, parameter]) =>
     bytesField(
       1,
