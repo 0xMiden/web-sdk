@@ -3,6 +3,63 @@ import test from "./playwright.global.setup";
 import { expect } from "@playwright/test";
 
 test.describe("remote keystore", () => {
+  test("preserves getKey callback error details during export", async ({
+    page,
+  }) => {
+    const message = await page.evaluate(async () => {
+      const client = await window.helpers.createClientWithKeystore(
+        async () => {
+          throw new Error("Callback getKey-test timed out after 1000ms");
+        },
+        async () => {},
+        undefined,
+        `get-key-error-${Date.now()}`
+      );
+      const wallet = await client.newWallet(
+        window.AccountStorageMode.private(),
+        window.AuthScheme.AuthRpoFalcon512,
+        undefined
+      );
+
+      try {
+        await (client as any).exportAccountFile(wallet.id());
+        return "exportAccountFile unexpectedly succeeded";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+
+    expect(message).toContain("Callback getKey-test timed out after 1000ms");
+  });
+
+  test("preserves insertKey callback error details when creating a wallet", async ({
+    page,
+  }) => {
+    const message = await page.evaluate(async () => {
+      const client = await window.helpers.createClientWithKeystore(
+        undefined,
+        async () => {
+          throw new Error("Callback insertKey-test timed out after 1000ms");
+        },
+        undefined,
+        `insert-key-error-${Date.now()}`
+      );
+
+      try {
+        await client.newWallet(
+          window.AccountStorageMode.private(),
+          window.AuthScheme.AuthRpoFalcon512,
+          undefined
+        );
+        return "newWallet unexpectedly succeeded";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+
+    expect(message).toContain("Callback insertKey-test timed out after 1000ms");
+  });
+
   test("should create a client with a remote keystore", async ({ page }) => {
     const client = await page.evaluate(async () => {
       const insertKeyCb = async (

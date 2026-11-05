@@ -168,6 +168,9 @@ Creates a Miden client with Turnkey signing integration.
   - `noteTransportUrl` - Note transport service URL
   - `seed` - Client seed (`Uint8Array`)
   - `accountSeed` - Account derivation seed
+  - `callbackTimeoutMs` - Optional timeout in milliseconds; positive values bound
+    all three callbacks, `0` removes the limit, and omitted leaves signing
+    unlimited. Invalid values throw `TypeError` from `MidenClient.create`.
   - `storageMode` - Storage mode (`AccountStorageMode.public()` or
     `AccountStorageMode.private()`). Required; every other option is optional.
 

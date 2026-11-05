@@ -613,6 +613,10 @@ export class TransactionsResource {
    * page's main thread stays responsive; without a worker (`useWorker: false`,
    * or no `Worker` in the environment), and on a mock client, it proves on the
    * calling thread and blocks it until it settles.
+   * With an external keystore and a worker, `sign` waits without a limit unless
+   * `callbackTimeoutMs` sets one, so a stalled signer holds the batch and later
+   * worker calls. See
+   * https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
    *
    * @param {BatchOptions} opts - Batch options: the operations array, and
    *   `timeout` / `waitForConfirmation` (the latter does not currently work,
@@ -699,16 +703,14 @@ export class TransactionsResource {
    *   In the browser the batch runs in the client's Web Worker where it has
    *   one, so the page's main thread stays responsive; see `batch()` for when
    *   it runs in-thread instead.
-   *   With an external keystore and a worker, each of the batch's signature
-   *   callbacks has the worker's 30s ceiling, and since signing happens at
-   *   push time and this wrapper treats a failed push as fatal, one timeout
-   *   fails the whole batch. A rejection thrown as a non-nullish value with no
-   *   truthy `.message` (a bare string, `{ code }`)
-   *   loses its reason and surfaces as the generic
-   *   `sign callback must return a Uint8Array`. Both are shared with every
-   *   worker-forwarded method; tracked in #316. Relatedly, `lastAuthError()`
-   *   reads the main-thread instance, so it does not report a forwarded
-   *   batch's auth error.
+   *   With an external keystore and a worker, signing happens at push time
+   *   and this wrapper treats a failed push as fatal, so one failed or timed
+   *   out signature callback fails the whole batch. `sign` has no time limit
+   *   unless `callbackTimeoutMs` sets one, so a stalled signer holds the batch
+   *   and later worker calls. See
+   *   https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
+   *   Relatedly, `lastAuthError()` reads the main-thread instance, so it does
+   *   not report a forwarded batch's auth error.
    * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
    *   submission, not the block the batch commits in.
    */

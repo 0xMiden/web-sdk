@@ -674,7 +674,7 @@ console.log(`Batch submitted at chain tip ${blockNumber}`);
 
 Operations are discriminated by `kind`: `"send"`, `"mint"`, `"consume"`, `"swap"`, `"execute"`, and `"custom"` (escape hatch for a pre-built `TransactionRequest`). Each operation specifies its executing `account`; a batch may mix any combination of tracked local accounts, and a later transaction may consume a note produced by an earlier one in the same batch. Beyond `account`, each operation carries the request-building fields of its singular options object (`SendOptions`, `MintOptions`, …) and none of the per-submission ones: neither `prover`, `waitForConfirmation` and `timeout` nor `returnNote`, which selects a different request shape, has any per-operation meaning.
 
-A batch runs in the client's Web Worker where it has one, so the page keeps painting while every transaction and the batch itself are proven; with `useWorker: false`, or where no `Worker` exists, it proves on the calling thread and blocks it. Mock clients always batch on the main thread. On a mock client, call `proveBlock()` after a batch and before submitting anything else: a submitted batch is not part of the serialized mock chain, so a later mock submit that round-trips through the worker would adopt a chain that never saw it. A mock batch also proves for real whether you ask it to or not: the mock client's dummy-prover shortcut applies only when no prover was passed, and the batch builder bypasses it entirely, so budget more time for a mock batch than for other mock submits. A batch is also always proven locally: the batch API takes no prover, so `ClientOptions.proverUrl` applies to `submit()` but not here. The batch proof itself is always local; the per-transaction proofs use the Rust client's configured prover, which this crate never sets.
+A batch runs in the client's Web Worker where it has one, so the page keeps painting while every transaction and the batch itself are proven; with `useWorker: false`, or where no `Worker` exists, it proves on the calling thread and blocks it. Through the worker, a batch with an external keystore signs with no time limit unless `callbackTimeoutMs` sets one, so a stalled `sign` holds the batch and later worker calls in the queue; see [Keystore Callback Timeouts](#keystore-callback-timeouts). Mock clients always batch on the main thread. On a mock client, call `proveBlock()` after a batch and before submitting anything else: a submitted batch is not part of the serialized mock chain, so a later mock submit that round-trips through the worker would adopt a chain that never saw it. A mock batch also proves for real whether you ask it to or not: the mock client's dummy-prover shortcut applies only when no prover was passed, and the batch builder bypasses it entirely, so budget more time for a mock batch than for other mock submits. A batch is also always proven locally: the batch API takes no prover, so `ClientOptions.proverUrl` applies to `submit()` but not here. The batch proof itself is always local; the per-transaction proofs use the Rust client's configured prover, which this crate never sets.
 
 For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders. Pass an array of `{ account, request }` pairs:
 
@@ -954,6 +954,30 @@ client.endpoint(); // "https://rpc.devnet.miden.io"
 const rpc = new RpcClient(new Endpoint(client.endpoint()!));
 const header = await rpc.getBlockHeaderByNumber(100, false);
 ```
+
+### Keystore Callback Timeouts
+
+Under the Web Worker, `keystore` callbacks run on the main thread and the worker waits for each one. `ClientOptions.callbackTimeoutMs` sets that wait. A callback that outlasts it fails the call that needed it with `Callback <id> timed out after <n>ms`.
+
+| `callbackTimeoutMs` | `sign` | `getKey` and `insertKey` |
+|---|---|---|
+| Unset | No limit | 30 seconds |
+| `0` | No limit | No limit |
+| Positive | That value | That value |
+
+A positive value applies to all three callbacks, and a fraction rounds up to a whole millisecond. A negative, non-finite or non-number value, or one above `2147483647`, throws `TypeError` at creation. Callbacks use this timeout only through the Web Worker: with `useWorker: false`, or where no `Worker` exists, it sets no limit on them.
+
+`sign` has no limit by default because it can wait on a person approving in a wallet or on a hardware device. The cost is that a stalled `sign` never fails on its own. The worker runs one call at a time, so it holds its batch or transaction and leaves later worker calls in the queue. If a signer can stall, set a finite timeout:
+
+```typescript
+const client = await MidenClient.create({
+  rpcUrl: "testnet",
+  keystore: { getKey, insertKey, sign },
+  callbackTimeoutMs: 120000, // Fail any callback that takes over two minutes.
+});
+```
+
+A batch signs while it is built, so one failed or timed out `sign` fails the whole batch.
 
 ### Cleanup
 

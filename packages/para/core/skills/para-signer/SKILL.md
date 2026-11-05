@@ -98,7 +98,10 @@ const { client, accountId } = await createParaMidenClient(
 `Opts` fields: `endpoint` (the RPC URL - the field is not called `rpcUrl`),
 `noteTransportUrl` (default `https://transport.miden.io`; `nodeTransportUrl` is
 a deprecated alias), `seed` (client store seed), `accountSeed`, and the required
-`storageMode` (`"public"` or `"private"`).
+`storageMode` (`"public"` or `"private"`). `callbackTimeoutMs` optionally
+bounds each `sign`, `getKey`, and `insertKey` callback in milliseconds; omitted
+leaves signing unlimited, `0` removes the limit for all three, and a positive
+value sets the limit. Invalid values throw `TypeError` from `MidenClient.create`.
 
 In React, `useParaMiden(nodeUrl, storageMode?, opts?, showSigningModal?, customSignConfirmStep?)`
 wraps the same call under a Para `ParaProvider` ancestor and returns

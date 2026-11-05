@@ -283,14 +283,16 @@ describe("MidenClient.create forwards the observability options", () => {
     MidenClient._WasmWebClient = {
       createClient: async (...args) => {
         calls.createClient.push(args);
-        return {};
+        return { syncState: async () => {} };
       },
       createClientWithExternalKeystore: async (...args) => {
         calls.createClientWithExternalKeystore.push(args);
-        return {};
+        return { syncState: async () => {} };
       },
     };
-    MidenClient._getWasmOrThrow = async () => ({});
+    MidenClient._getWasmOrThrow = async () => ({
+      TransactionProver: { newRemoteProver: () => ({}) },
+    });
     return calls;
   }
 
@@ -324,7 +326,7 @@ describe("MidenClient.create forwards the observability options", () => {
     expect(args[7]).toBe("0x1234567890abcdef");
   });
 
-  it("passes feeFaucetId to the external-keystore factory as its last argument", async () => {
+  it("passes feeFaucetId to the external-keystore factory as its eleventh argument", async () => {
     const calls = captureFactory();
     await MidenClient.create({
       rpcUrl: "testnet",
@@ -333,8 +335,58 @@ describe("MidenClient.create forwards the observability options", () => {
     });
     expect(calls.createClientWithExternalKeystore).toHaveLength(1);
     const args = calls.createClientWithExternalKeystore[0];
-    expect(args).toHaveLength(11);
+    expect(args).toHaveLength(12);
     expect(args[10]).toBe("0x1234567890abcdef");
+  });
+
+  it("passes callbackTimeoutMs to the external-keystore factory as its last argument", async () => {
+    const calls = captureFactory();
+    await MidenClient.create({
+      rpcUrl: "testnet",
+      keystore: { getKey: () => {}, insertKey: () => {}, sign: () => {} },
+      callbackTimeoutMs: 120000,
+    });
+    expect(calls.createClientWithExternalKeystore).toHaveLength(1);
+    const args = calls.createClientWithExternalKeystore[0];
+    expect(args).toHaveLength(12);
+    expect(args[11]).toBe(120000);
+  });
+
+  it.each([
+    ["negative", -1],
+    ["non-finite", Number.NaN],
+    ["above the timer limit", 2147483648],
+  ])(
+    "rejects a %s callbackTimeoutMs before either factory runs",
+    async (_, callbackTimeoutMs) => {
+      for (const keystore of [
+        undefined,
+        { getKey: () => {}, insertKey: () => {}, sign: () => {} },
+      ]) {
+        const calls = captureFactory();
+        await expect(
+          MidenClient.create({ rpcUrl: "testnet", keystore, callbackTimeoutMs })
+        ).rejects.toThrow(
+          "callbackTimeoutMs must be a non-negative finite number no greater than 2147483647"
+        );
+        expect(calls.createClient).toHaveLength(0);
+        expect(calls.createClientWithExternalKeystore).toHaveLength(0);
+      }
+    }
+  );
+
+  it.each([
+    ["default create", (options) => MidenClient.create(options)],
+    ["createTestnet", (options) => MidenClient.createTestnet(options)],
+    ["createDevnet", (options) => MidenClient.createDevnet(options)],
+  ])("rejects an invalid callbackTimeoutMs through %s", async (_, create) => {
+    const calls = captureFactory();
+
+    await expect(create({ callbackTimeoutMs: 2147483648 })).rejects.toThrow(
+      "callbackTimeoutMs must be a non-negative finite number no greater than 2147483647"
+    );
+    expect(calls.createClient).toHaveLength(0);
+    expect(calls.createClientWithExternalKeystore).toHaveLength(0);
   });
 
   it("passes the observability options to the external-keystore factory", async () => {
@@ -348,7 +400,7 @@ describe("MidenClient.create forwards the observability options", () => {
     });
     expect(calls.createClientWithExternalKeystore).toHaveLength(1);
     const args = calls.createClientWithExternalKeystore[0];
-    expect(args).toHaveLength(11);
+    expect(args).toHaveLength(12);
     const observability = args[9];
     expect(observability.observer).toBe(observer);
     expect(observability.observeSensitive).toBe(true);
