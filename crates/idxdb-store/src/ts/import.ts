@@ -8,6 +8,7 @@ import {
   getDatabase,
   MIGRATION_BASELINE,
   NOTE_TRANSPORT_OUTBOX_SETTING_KEY,
+  RPC_LIMITS_SETTING_KEY,
   SETTING_SCOPE_CLIENT,
 } from "./schema.js";
 import { logWebStoreError } from "./utils.js";
@@ -149,10 +150,11 @@ export async function forceImportStore(dbId: string, jsonStr: string) {
         await table.bulkPut(transformedRecords);
       }
 
-      // An export taken from a 0.17.1 store can carry the relay queue the v7 upgrade drops.
-      await db.settings.delete([
-        SETTING_SCOPE_CLIENT,
-        NOTE_TRANSPORT_OUTBOX_SETTING_KEY,
+      // An export taken from a 0.17.1 store can carry the relay queue the v7 upgrade drops, and one
+      // from a 0.17 store the RPC limits the v9 upgrade drops.
+      await db.settings.bulkDelete([
+        [SETTING_SCOPE_CLIENT, NOTE_TRANSPORT_OUTBOX_SETTING_KEY],
+        [SETTING_SCOPE_CLIENT, RPC_LIMITS_SETTING_KEY],
       ]);
 
       // The dump brought its own stamp; the store now belongs to the running client, as after an

@@ -270,6 +270,34 @@ describe("forceImportStore", () => {
     ).toEqual(new Uint8Array([2]));
   });
 
+  it("does not restore the client-scope RPC limits from an export", async () => {
+    const dbIdA = await openTestDb();
+    await getDatabase(dbIdA).settings.bulkPut([
+      {
+        scope: SETTING_SCOPE_CLIENT,
+        key: "rpc_limits",
+        value: new Uint8Array([1]),
+      },
+      {
+        scope: SETTING_SCOPE_USER,
+        key: "rpc_limits",
+        value: new Uint8Array([2]),
+      },
+    ]);
+    const jsonStr = await exportStore(dbIdA);
+
+    const dbIdB = await openTestDb();
+    await forceImportStore(dbIdB, jsonStr);
+
+    const dbB = getDatabase(dbIdB);
+    expect(await dbB.settings.get([SETTING_SCOPE_CLIENT, "rpc_limits"])).toBe(
+      undefined
+    );
+    expect(
+      (await dbB.settings.get([SETTING_SCOPE_USER, "rpc_limits"]))!.value
+    ).toEqual(new Uint8Array([2]));
+  });
+
   it("handles double-serialized JSON (string payload)", async () => {
     const dbIdA = await openTestDb();
     const jsonStr = await exportStore(dbIdA);

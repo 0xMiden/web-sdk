@@ -15,6 +15,8 @@ export const MIGRATION_BASELINE = "0.17.0";
 const DATABASES_PROBE_TIMEOUT_MS = 1000;
 /** The client-scope setting a 0.17.1 client queued undelivered private notes under. */
 export const NOTE_TRANSPORT_OUTBOX_SETTING_KEY = "note_transport_outbox";
+/** The client-scope setting the client caches the node's RPC limits under. */
+export const RPC_LIMITS_SETTING_KEY = "rpc_limits";
 /** Mirrors `StorageSlotType::Map`, originally defined in miden-protocol. */
 export const STORAGE_SLOT_TYPE_MAP = 1;
 const textEncoder = new TextEncoder();
@@ -342,6 +344,14 @@ export class MidenDatabase {
             .version(8)
             .stores({})
             .upgrade(clearStoreStampedBelow(MIGRATION_BASELINE));
+        // v9 (miden-client 0.18.0): RpcLimits gained a field, so 0.18 cannot read the limits a 0.17
+        // client cached. The client fetches them from the node again when the row is missing.
+        this.dexie
+            .version(9)
+            .stores({})
+            .upgrade((tx) => tx
+            .table(Table.Settings)
+            .delete([SETTING_SCOPE_CLIENT, RPC_LIMITS_SETTING_KEY]));
         this.accountCodes = this.dexie.table(Table.AccountCode);
         this.latestAccountStorages = this.dexie.table(Table.LatestAccountStorage);
         this.historicalAccountStorages = this.dexie.table(Table.HistoricalAccountStorage);

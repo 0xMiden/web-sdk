@@ -353,6 +353,42 @@ describe("MidenDatabase migrations", () => {
     ).toEqual(new Uint8Array([3]));
     expect(await mdb.settings.count()).toBe(3);
   });
+
+  it("v9 migration deletes only the client-scope RPC limits row of a 0.17 store", async () => {
+    const name = uniqueDbName();
+    const limitsKey = "rpc_limits";
+
+    const dbV8 = trackDb(new Dexie(name));
+    dbV8.version(8).stores(V6_STORES);
+    await dbV8.open();
+    await dbV8.table("accountAuth").put(AUTH_SENTINEL);
+    await dbV8.table("settings").bulkPut([
+      {
+        scope: SETTING_SCOPE_CLIENT,
+        key: CLIENT_VERSION_SETTING_KEY,
+        value: new TextEncoder().encode("0.17.8"),
+      },
+      {
+        scope: SETTING_SCOPE_CLIENT,
+        key: limitsKey,
+        value: new Uint8Array([1]),
+      },
+      { scope: SETTING_SCOPE_USER, key: limitsKey, value: new Uint8Array([2]) },
+    ]);
+    dbV8.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.18.0")).toBe(true);
+
+    expect(await mdb.settings.get([SETTING_SCOPE_CLIENT, limitsKey])).toBe(
+      undefined
+    );
+    expect(
+      (await mdb.settings.get([SETTING_SCOPE_USER, limitsKey]))!.value
+    ).toEqual(new Uint8Array([2]));
+    expect(await mdb.accountAuths.toArray()).toEqual([AUTH_SENTINEL]);
+    expect(await mdb.settings.count()).toBe(2);
+  });
 });
 
 // ============================================================
@@ -907,13 +943,13 @@ describe("a store written by a newer client", () => {
   it("is not confused with a store Dexie patched at this client's own version", async () => {
     const name = uniqueDbName();
     const patched = trackDb(new Dexie(name));
-    patched.version(8).stores({ ...V6_STORES, accountWitnesses: null });
+    patched.version(9).stores({ ...V6_STORES, accountWitnesses: null });
     await patched.open();
     patched.close();
 
-    // The missing table makes Dexie patch the store to native version 81.
+    // The missing table makes Dexie patch the store to native version 91.
     expect(await reopen(name, "0.17.4")).toBeDefined();
-    expect(await nativeVersion(name)).toBe(81);
+    expect(await nativeVersion(name)).toBe(91);
   });
 
   it("refuses it when a newer client upgrades the store under an open connection", async () => {
