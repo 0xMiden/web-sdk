@@ -52,8 +52,10 @@ import { MidenClient } from "@miden-sdk/miden-sdk";
 
 const client = await MidenClient.create({
   endpoint: "https://rpc.testnet.miden.xyz",
-  // Required: the faucet the chain mints its fee asset from. Since 0.17 that
-  // lives in a protocol configuration the node does not serve over RPC.
+  // Optional: the faucet the chain mints its fee asset from, bech32 or hex.
+  // The client receives the chain's protocol configuration, which names the
+  // fee asset, from the node when it syncs; this only sets what
+  // `client.feeFaucetId()` reports before that first sync.
   feeFaucetId: FEE_FAUCET,
 });
 

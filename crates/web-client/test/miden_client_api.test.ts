@@ -190,7 +190,22 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         } catch (error) {
           emptyCodeMessage = String(error.message ?? error);
         }
-        return { allowed, code, message, emptyCodeMessage };
+        const codeValid =
+          await client.accounts.isInvitationCodeValid("invitation-code");
+        let emptyCheckMessage = null;
+        try {
+          await client.accounts.isInvitationCodeValid("");
+        } catch (error) {
+          emptyCheckMessage = String(error.message ?? error);
+        }
+        return {
+          allowed,
+          code,
+          message,
+          emptyCodeMessage,
+          codeValid,
+          emptyCheckMessage,
+        };
       });
       // The mock node enforces no allowlist, so every account is allowed and
       // the client keeps the invitation code rather than spending it.
@@ -198,6 +213,9 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       expect(result.code).toBe("ACCOUNT_ALREADY_ALLOWED");
       expect(result.message).toContain("already allowed");
       expect(result.emptyCodeMessage).toContain("invitationCode");
+      // A node without an allowlist accepts every code.
+      expect(result.codeValid).toBe(true);
+      expect(result.emptyCheckMessage).toContain("invitationCode");
     }
   );
 
@@ -1165,6 +1183,106 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       expect(result.threw).toBe(true);
       expect(result.code).toBe("TRANSACTION_ALREADY_AUTHORIZED");
       expect(result.message).toContain("already fully authorized");
+    }
+  );
+
+  mockTest(
+    "transactions.preview summary names the storage slots and map entries it changes",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+
+        const approverKeys = [
+          window.AuthSecretKey.rpoFalconWithRNG(),
+          window.AuthSecretKey.rpoFalconWithRNG(),
+          window.AuthSecretKey.rpoFalconWithRNG(),
+        ];
+        const seed = new Uint8Array(32);
+        crypto.getRandomValues(seed);
+        const built = new window.AccountBuilder(seed)
+          .storageMode(window.AccountStorageMode.private())
+          .withAuthComponent(
+            window.createAuthFalcon512RpoMultisig(
+              new window.AuthFalcon512RpoMultisigConfig(
+                approverKeys.map((key) => key.publicKey().toCommitment()),
+                2
+              )
+            )
+          )
+          .withBasicWalletComponent()
+          .build();
+        const multisigId = built.account.id().toString();
+        await client.accounts.insert({ account: built.account });
+
+        // A 2-of-3 multisig cannot authorize alone, so the preview returns
+        // the summary awaiting signatures. The account is new, so its patch
+        // creates every slot with its initial content.
+        const request = (
+          await client.feeAwareTransactionRequestBuilder(multisigId)
+        ).build();
+        const summary = await client.transactions.preview({
+          operation: "custom",
+          account: multisigId,
+          request,
+        });
+        const storage = summary.accountDelta().storage();
+        const limbs = (word) => Array.from(word.toU64s(), String);
+
+        return {
+          approverCommitments: approverKeys.map((key) =>
+            key.publicKey().toCommitment().toHex()
+          ),
+          values: storage.values().map(limbs),
+          valueSlots: storage.valueSlots().map((slot) => ({
+            slotName: slot.slotName,
+            operation: slot.operation,
+            value: slot.value ? limbs(slot.value) : null,
+          })),
+          mapSlots: storage.mapSlots().map((slot) => ({
+            slotName: slot.slotName,
+            operation: slot.operation,
+            entries: slot.entries().map((entry) => ({
+              key: limbs(entry.key),
+              value: entry.value.toHex(),
+            })),
+          })),
+          create: window.StoragePatchOperation.Create,
+        };
+      });
+
+      const threshold = result.valueSlots.find(
+        (slot) =>
+          slot.slotName === "miden::standards::auth::multisig::threshold_config"
+      );
+      expect(result.create).toBe(0);
+      // [threshold, num_approvers, 0, 0]
+      expect(threshold).toEqual({
+        slotName: "miden::standards::auth::multisig::threshold_config",
+        operation: result.create,
+        value: ["2", "3", "0", "0"],
+      });
+
+      const approvers = result.mapSlots.find(
+        (slot) =>
+          slot.slotName ===
+          "miden::standards::auth::multisig::approver_public_keys"
+      );
+      expect(approvers?.operation).toBe(result.create);
+      expect(approvers?.entries).toEqual(
+        result.approverCommitments.map((commitment, index) => ({
+          key: [String(index), "0", "0", "0"],
+          value: commitment,
+        }))
+      );
+
+      // No slot is removed, so values() is valueSlots() without the names.
+      expect(result.values).toEqual(
+        result.valueSlots.map((slot) => slot.value)
+      );
+      const names = [...result.valueSlots, ...result.mapSlots].map(
+        (slot) => slot.slotName
+      );
+      expect(new Set(names).size).toBe(names.length);
     }
   );
 

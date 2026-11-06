@@ -1,6 +1,6 @@
 ---
 name: web-client-usage
-description: Conventions for writing JavaScript/TypeScript code that uses the Miden web SDK (`@miden-sdk/miden-sdk`). Use when building apps on Miden, writing integration tests, or calling MidenClient methods - covers initialization, the resource-based API (accounts, transactions, notes, tags, settings, compile, keystore, pswap), sync ordering, type conversions, transaction flows, fees, batching, named storage slots, custom contracts, foreign accounts, private note transport, mock-chain testing, observability, and pitfalls.
+description: Conventions for writing JavaScript/TypeScript code that uses the Miden web SDK (`@miden-sdk/miden-sdk`). Use when building apps on Miden, writing integration tests, or calling MidenClient or RpcClient methods - covers initialization, the resource-based API (accounts, transactions, notes, tags, settings, compile, keystore, pswap), stateless RPC queries and submission, sync ordering, type conversions, transaction flows, fees, batching, named storage slots, custom contracts, foreign accounts, private note transport, mock-chain testing, observability, and pitfalls.
 ---
 
 # Web SDK Usage Patterns
@@ -30,7 +30,7 @@ The SDK exposes a top-level `MidenClient` whose state is split across typed
 | `client.keystore`    | Inserting / fetching / removing secret keys                                                                                                                                    |
 | `client.pswap`       | Partial-swap lineages: `lineages` / `lineagesFor` / `lineage` / `cancelByOrder`                                                                                                |
 
-`MidenClient` is the public surface. The underlying WASM-bound class is
+`MidenClient` is the main public surface. The underlying WASM-bound class is
 exported as `WasmWebClient` (an alias for `WebClient`) for low-level operations
 the resource API does not yet wrap. The client's own handle on it is the
 private field `#inner`, which is **not reachable from outside the class** -
@@ -61,25 +61,122 @@ the low-level surface on every upgrade.
 
 ## Client Initialization
 
+### Stateless RPC
+
+Use `new RpcClient(new Endpoint(rpcUrl))` for an application that manages its
+own account and note state. It opens no local store. On a lazy entry, await
+`MidenClient.ready()` before constructing WASM objects.
+
+`rpc.syncNullifiers(prefixes: Uint16Array, blockFrom, blockTo)` returns
+`NullifierUpdate[]` for the inclusive range, handling request chunking and
+pagination internally. Each update exposes `nullifier(): Word` and
+`blockNum(): number`. Compute a prefix as
+`Number(nullifier.toU64s()[3] >> 48n)`; filter returned matches by the full
+nullifier because unrelated notes can share a prefix. An empty prefix array
+returns `[]`; a reversed block range rejects. Keep `blockTo` at or below the
+node's chain tip, available with
+`(await rpc.getBlockHeaderByNumber()).blockNum()`.
+
+Prefixes are copied before asynchronous work and duplicates are scanned once;
+the caller's array is unchanged. Node.js requires an `ArrayBuffer`-backed
+`Uint16Array` and rejects `SharedArrayBuffer` backing during argument conversion.
+
+`rpc.syncTransactions(blockFrom, blockTo, accountIds: AccountId[])` returns
+`RpcTransactionRecord[]` for an inclusive range. Each record exposes
+`id(): TransactionId`, `accountId(): AccountId` and `blockNum(): number`.
+This is a node result, distinct from a locally tracked `TransactionRecord`.
+The SDK collects every page for every account chunk and verifies that returned
+accounts were requested. Duplicate account IDs are scanned once. An empty account
+list returns `[]` without RPC calls; a reversed range rejects. Keep `blockTo` at
+or below the node's chain tip. In the browser, create a fresh `AccountId` wrapper
+for each array entry because the call consumes them.
+
+```typescript
+const blockTo = (await rpc.getBlockHeaderByNumber()).blockNum();
+if (cursor <= blockTo) {
+  const records = await rpc.syncTransactions(
+    cursor, blockTo, [AccountId.fromHex(accountIdHex)],
+  );
+  const included = records.find((record) => record.id().toHex() === txIdHex);
+  if (included) console.log("Included in block", included.blockNum());
+  cursor = blockTo + 1;
+}
+```
+
+Import `AccountId` from `@miden-sdk/miden-sdk`. Initialize `cursor` to the
+admission tip returned by submission and retain it between polls. Advance it
+only after a successful scan. In the browser, the call consumes the account ID
+wrappers even on rejection, so construct fresh wrappers from saved strings on
+each poll or retry. Match the exact transaction ID, not merely any transaction
+for the account. Confirmation assumes trust in the configured RPC node; these
+records do not independently prove canonical inclusion. A polling timeout means
+unconfirmed, not failed. `syncTransactions` does not poll or update local state.
+
+For externally proved transactions:
+
+```typescript
+import {
+  BlockHeader, ProvenTransaction, RpcClient, TransactionInputs, Word,
+} from "@miden-sdk/miden-sdk";
+
+async function submitProvedTransaction(
+  rpc: RpcClient,
+  proof: ProvenTransaction,
+  inputs: TransactionInputs,
+  genesisCommitment: Word,
+  trustedBlockHeader: BlockHeader,
+): Promise<number> {
+  const key = await rpc.getTransactionEncryptionKey(
+    genesisCommitment, trustedBlockHeader,
+  );
+  return rpc.submitProvenTx(proof, inputs, key);
+}
+```
+
+The genesis commitment and header must already be trusted. Fetching a header
+from the same untrusted RPC without independent validation does not establish
+that trust. The SDK verifies the encryption key's validator attestation and
+seals the complete inputs before submission; the proof alone is insufficient.
+`TransactionInputs.fromTransactionResult(result)` extracts inputs from an SDK
+execution result.
+
+`rpc.submitProvenTxBatch(provenBatch, proposedBatch, transactionInputs, key)`
+requires an actual `ProvenBatch`, its matching `ProposedBatch`, and inputs in
+exact proposal order. Do not pass an array of transaction proofs as a batch.
+`TransactionInputs`, `ProposedBatch` and `ProvenBatch` expose `serialize()` /
+`deserialize(bytes)` using their corresponding
+`miden_objects::proto::transaction` protobuf encodings. These are not native
+`to_bytes()` payloads; `ProvenTransaction` retains its native binary encoding.
+`ProposedBatch.deserialize` verifies transaction proofs and consistency.
+In the browser, the batch call consumes each `TransactionInputs` wrapper even
+if submission fails. Serialize the inputs first and deserialize fresh wrappers
+for a retry. The batch proof, proposal and key remain reusable, as do all
+arguments of `submitProvenTx`.
+
+Both submission methods return the node's chain tip at submission, not a
+commitment receipt. They do not execute, prove, apply local state, track
+confirmation or deliver private notes. `RpcClient` does not cache keys or
+automatically retry a retired-key rejection; fetch and verify a current key
+before retrying.
+
 ### Convenience constructors (recommended)
 
 ```typescript
 import { MidenClient } from "@miden-sdk/miden-sdk";
 
 // Testnet - autoSync on, testnet RPC + prover + note transport
-const client = await MidenClient.createTestnet({ feeFaucetId: FEE_FAUCET });
+const client = await MidenClient.createTestnet();
 
 // Devnet equivalent
-const client = await MidenClient.createDevnet({ feeFaucetId: FEE_FAUCET });
+const client = await MidenClient.createDevnet();
 ```
 
-`feeFaucetId` is not optional today, on any constructor but `createMock`. Since
-0.17 the chain's fee asset lives in a protocol configuration the node does not
-serve over RPC, and the SDK carries a per-network default for no network yet, so
-a client created without it fails with an error naming the option. It is the
-faucet the chain mints its fee asset from: ask whoever runs the network, or read
-it from a local node's genesis. Snippets below leave it out to keep their own
-point legible.
+`feeFaucetId` is optional. Since 0.17 the chain's fee asset lives in the
+protocol configuration, which the client receives from the node when it syncs,
+so execution never needs the option: it only sets what `client.feeFaucetId()`
+reports before the first sync. Before that sync, a client created without it
+rejects `feeFaucetId()` and asks you to sync first; a mock client reports its
+mock chain's own faucet.
 
 Both accept the same `ClientOptions` for overrides:
 
@@ -96,8 +193,10 @@ const client = await MidenClient.createTestnet({
 ```typescript
 const client = await MidenClient.create({
   rpcUrl: "https://rpc.testnet.miden.io", // string URL or "testnet"/"devnet"/"localhost"/"local"
-  feeFaucetId: FEE_FAUCET, // required - the chain's fee faucet, bech32 or hex
+  feeFaucetId: FEE_FAUCET, // optional - what feeFaucetId() reports before the first sync
   noteTransportUrl: "https://transport.miden.io",
+  noteTransportMaxRetries: 3, // optional - in-call retries of a private note send; see below
+  noteTransportRetryIntervalMs: 250, // optional - delay before the first retry, in ms
   storeName: "my-store",
   seed: new Uint8Array(32), // optional - string or Uint8Array; see below
   proverUrl: "testnet", // optional - sets a default prover
@@ -124,6 +223,22 @@ If `rpcUrl` is omitted, `create()` delegates to `createTestnet()`.
 `"https://rpc.testnet.miden.io"` when `rpcUrl` was omitted; a `createMock()`
 client returns `undefined`. Build a standalone `RpcClient` against the same node
 with `new RpcClient(new Endpoint(client.endpoint()!))`.
+
+`noteTransportMaxRetries` (an integer from 0 to 10, default 3) and
+`noteTransportRetryIntervalMs` (0 to 60000, default 250, doubling for each
+later retry) set how a private note send retries a transient transport failure
+**within the same call**: a failed connection, `Unavailable`,
+`DeadlineExceeded`, or `ResourceExhausted` with a `retry-after` value. In the
+browser a failed `fetch` reaches the client as `Unknown` and is not retried.
+Together the two may not exceed 120000 ms of total computed backoff,
+`interval * (2^retries - 1)` with an omitted value taken at its default. The
+retries run inside the client's serialized call, so a slow or rate-limiting
+transport blocks every other call on the client until the send finishes. A
+non-zero service `retry-after` replaces the computed delay with no upper bound
+(a zero one falls back to it), so pass `noteTransportMaxRetries: 0` to bound a
+send to one attempt; that suits a latency-sensitive UI. Anything outside the
+ranges or the total throws a `TypeError` before the client is built.
+`createMock()` ignores both.
 
 `seed` is `string | Uint8Array`. A string is legal: `hashSeed()` SHA-256s it to
 32 bytes before it reaches WASM, and a `Uint8Array` passes through unchanged.
@@ -209,8 +324,14 @@ client.terminate(); // free WASM resources, close the store handle
 After `terminate()`, nearly every method throws `Client terminated` - guard
 against late callbacks on unmount. The exceptions are `usesMockChain()`, the
 `defaultProver` getter and `terminate()` itself, which is idempotent.
-`MidenClient` also implements `[Symbol.dispose]` and `[Symbol.asyncDispose]`,
-both of which just call `terminate()`, so `using client = ...` works.
+`MidenClient` also implements `[Symbol.dispose]`, which calls `terminate()`,
+so `using client = ...` works, and `[Symbol.asyncDispose]`, which calls it and
+then waits until the wasm client is freed and its store connection released.
+The release waits for calls already queued or running to settle. Use
+`await using client = ...` when the code after the block deletes or reopens
+the same store. The release is browser-only: on the Node.js binding
+`terminate()` releases nothing (its inner client's `terminate()` is a no-op)
+and `[Symbol.asyncDispose]` resolves at once.
 
 ## Sync - Always Sync First
 
@@ -421,10 +542,17 @@ const contract = await client.accounts.create({
 });
 ```
 
+`compile.component` only turns exports marked `@account_procedure` or
+`@auth_script` into account procedures. A component with none logs a
+`[miden-sdk]` console warning but is still returned, because a storage-only
+component is legitimate beside one that has procedures; nothing can call into
+it on its own.
+
 A contract is whatever `accounts.create()` call carries `components` - the
 string forms `type: "MutableContract"` / `"ImmutableContract"` also route to a
-contract, but the canonical selector is `components`, and an empty
-`components` array is rejected. There is **no** `AccountType.MutableContract`;
+contract, but the canonical selector is `components`, and `components` none of
+which exports a non-auth (`@account_procedure`) procedure is rejected, an empty
+array included. There is **no** `AccountType.MutableContract`;
 `type: AccountType.MutableContract` is `undefined` and, without `components`,
 would silently create a wallet.
 
@@ -466,6 +594,19 @@ builds exactly the code the Rust client builds:
 
   The older `AccountComponent.createNetworkAuth` no longer exists.
 
+### Check an invitation before registration
+
+```typescript
+if (await client.accounts.isInvitationCodeValid(invitationCode)) {
+  await client.accounts.register({ account: wallet, invitationCode });
+}
+```
+
+The check requires a non-empty string and does not consume or reserve the
+code. Unknown or already registered codes return `false`. A node without an
+allowlist returns `true`. Handle registration errors even after a successful
+check, because another registration can consume the code between calls.
+
 ## Fees
 
 Since protocol 0.16 the verification fee is paid inside the account's auth
@@ -502,10 +643,35 @@ What happens if you skip it:
 - A custom auth procedure that reads conversion info: the transaction aborts in
   the VM with `ERR_FEE_CONVERSION_INFO_MISSING`. Attach the auth args yourself
   with `TransactionRequestBuilder.withAuthArgs`, which sets the commitment and
-  adds its advice-map preimage.
+  adds its advice-map preimage, or on a finished request with
+  `request.withAuthArgs(preimage)`.
 
 `withAuthArgs` and `withFeeConversionSalt` are mutually exclusive - each setter
 clears the other, so whichever is called last wins. Never call either on a builder from `feeAwareTransactionRequestBuilder` for a multisig: that builder already carries the three-word auth args, and either setter discards them, so the transaction aborts in the auth procedure. Pass `feeConversionSalt` to `feeAwareTransactionRequestBuilder` instead - and build a fresh `Word` for every call, because the parameter is moved across the WASM boundary and a spent handle arrives as "no salt given".
+
+A request you did not build, such as a finished one a dApp hands to a wallet,
+cannot go back through the builder. Add the multisig auth args to it instead:
+
+```typescript
+const request = await client.withFeeAwareAuth(dappRequest, multisig);
+await client.transactions.submit(multisig, request);
+```
+
+`withFeeAwareAuth` returns a copy with the auth args the builder would set and
+takes the builder's `options`. Any other account's request comes back
+unchanged, auth argument and all; for a multisig it refuses a request that
+already has an auth argument (`AUTH_ALREADY_SET`). The copy does not declare
+the bound block among its block numbers: it executes at the tip, but a
+co-signer cannot read that block from `request.blockNumbers()`, so it syncs
+before previewing the copy.
+
+To set auth args you build yourself on a finished request, for example for a
+custom auth procedure, use `request.withAuthArgs(preimage)`. It sets the auth
+argument to the Poseidon2 hash of `preimage`, puts `preimage` in the advice map
+under it, and replaces an existing auth argument and a declared salt without a
+check. In the browser build it consumes the `Felt`s it is given: read what you
+need from them first and pass fresh ones to another call, because a spent
+`Felt` fails with `null pointer passed to rust`.
 
 ## Transactions
 
@@ -559,7 +725,8 @@ const { txId, note } = await client.transactions.send({
 });
 
 // Stream the note via the note-transport service. sendPrivateOutput reads the
-// inclusion proof sync stored once the note has committed.
+// inclusion proof sync stored once the note has committed. A rejection is final
+// (nothing re-sends it); call it again with the same note id to retry.
 await client.notes.sendPrivateOutput({ noteId: note.id(), to: "mtst1..." });
 ```
 
@@ -708,7 +875,7 @@ nullified note.
 ```typescript
 const script = await client.compile.txScript({
   code: scriptMasm,
-  libraries: [{ namespace: "my::lib", code: libMasm, linking: "dynamic" }],
+  libraries: [{ component }], // the component `contract` was created with
 });
 
 await client.transactions.execute({
@@ -858,13 +1025,14 @@ per-transaction ids, and the number is the node's chain tip as of submission,
 not the block the batch commits in. `waitForConfirmation` does not currently
 work on a batch (#314): sync and check `transactions.list()` instead. A
 `custom` operation carries a request you built, so the fee rules above apply to
-it: use `client.feeAwareTransactionRequestBuilder(account)`. Every transaction
-is proven inside the batch primitive by the client's built-in local prover, so
-`proverUrl` does not apply, and the V1 batch API has no per-call prover override.
-In the browser the batch runs in the client's Web Worker, so the page stays
-responsive while it proves; with `useWorker: false`, without `Worker` support,
-or on a mock client it proves on the calling thread and blocks it until it
-settles, so keep batches small there.
+it: use `client.feeAwareTransactionRequestBuilder(account)`, or
+`client.withFeeAwareAuth(request, account)` for a finished request you did not
+build. Every transaction is proven inside the batch primitive by the client's
+built-in local prover, so `proverUrl` does not apply, and the V1 batch API has
+no per-call prover override. In the browser the batch runs in the client's Web
+Worker, so the page stays responsive while it proves; with `useWorker: false`,
+without `Worker` support, or on a mock client it proves on the calling thread
+and blocks it until it settles, so keep batches small there.
 
 ### Preview (dry run)
 
@@ -893,7 +1061,12 @@ transaction produces. Only `"custom"` accepts an `anchor`.
 elements; this replaces the removed `salt()`, and the protocol assigns them no
 meaning), `blockCommitment()`, `expirationDelta()` and `toCommitment()`. Its
 `accountDelta()` is still **relative**, unlike the absolute
-`ExecutedTransaction.accountPatch()` below.
+`ExecutedTransaction.accountPatch()` below. Its `storage()` is the same
+absolute `AccountStoragePatch` in both: `valueSlots()` and `mapSlots()` name
+each changed slot with its `StoragePatchOperation` (`Create`, `Update`,
+`Remove`), its final `value` or, for a map, its changed `entries()`; `values()`
+returns only the bare final values. Every slot of a new account reads as
+`Create`.
 
 ### Reading output notes
 
@@ -998,6 +1171,16 @@ because the published build enables the `testing` feature. `to` accepts a
 bech32 string, a 0x-hex string, an `Account`, or an `AccountId`; it does **not**
 accept a pre-parsed `Address` object.
 
+A rejected `sendPrivate` / `sendPrivateOutput` means the note did not reach the
+transport or the outcome is not known, and it is final. The SDK keeps no queue,
+and neither `sync()` nor `syncNoteTransport()` sends the note again. Transient
+transport failures are retried inside the call (`noteTransportMaxRetries` and
+`noteTransportRetryIntervalMs` on `ClientOptions`, at most 120000 ms of backoff
+in total; in the browser a failed `fetch` is not one of them), and the retries
+hold the client's serialized call, so other calls wait for them. To try again,
+call it again with the same note:
+delivery is idempotent by note id, so a repeat cannot duplicate it.
+
 `fetchPrivate()` takes no arguments. The `{ mode: "all" }` full re-scan was
 removed; after adding a tag, just `sync()`.
 
@@ -1036,10 +1219,24 @@ slots to a `StorageResult`. Reach the protocol-level `AccountStorage` through
 not tracked.
 
 For a single asset balance without loading the full vault, prefer
-`client.accounts.getBalance(account, token)` (returns `bigint`). It wraps the
-WASM client's `accountReader(id)` lazy reader, which lives on the low-level
-client: reach it through `client._withInnerWebClient(async (inner) => inner.accountReader(id))`,
-not through the private `#inner` field.
+`client.accounts.getBalance(account, token)` (returns `bigint`), which frees
+the reader it uses. It wraps the WASM client's `accountReader(id)` lazy reader,
+which lives on the low-level client: reach it through
+`client._withInnerWebClient(async (inner) => inner.accountReader(id))`, not
+through the private `#inner` field. A reader you obtain yourself holds the
+client's store, so free it when you are done; an unfreed one keeps the store
+open after `terminate()` and `await using`:
+
+```typescript
+const balance = await client._withInnerWebClient(async (inner) => {
+  const reader = await inner.accountReader(accountId);
+  try {
+    return await reader.getBalance(faucetId);
+  } finally {
+    reader.free?.();
+  }
+});
+```
 
 ## Storage - slots are named, not indexed
 
@@ -1121,13 +1318,25 @@ from; use the same namespace when linking that component into a script.
 
 `libraries` entries take three forms:
 
-- `{ namespace, code, linking? }` - built and linked inline.
+- `{ namespace, code, linking? }` - built and linked inline. `code` is a
+  library, not a program: it exports `pub proc`s and has no `begin ... end`
+  block. A `begin ... end` block makes it a program, and compilation fails with
+  `invalid program: procedure exports are not allowed` when it also has
+  `pub proc`s, or with `found an executable entrypoint in a package declared
+  with non-executable type` when it has none.
 - `{ component, linking? }` - links the **exact** code an `AccountComponent`
   installed. Use this when a script calls procedures installed on an account, so
   procedure identities match.
-- a pre-built `Library` object, linked dynamically.
+- a pre-built `Library` object, always linked dynamically: this form takes no
+  `linking`.
 
-`linking` is `"dynamic"` (default) or `"static"`.
+`linking` is `"dynamic"` (default) or `"static"`. Dynamic is for procedures that
+are installed on an account the transaction reaches, its own or a foreign one. A
+helper library whose procedures are not installed on any account has to be
+`"static"`, which copies its code into the script, so pass it as
+`{ namespace, code, linking: "static" }`, never as a pre-built `Library`. With
+`"dynamic"` such a script still compiles, then fails at execution with
+`procedure with root digest 0x...`.
 
 ### MASM shape
 
@@ -1214,10 +1423,14 @@ while (true) {
 3. **Building a request from a bare `TransactionRequestBuilder`.** Use
    `client.feeAwareTransactionRequestBuilder(account)` for anything you hand to
    `submit` / `executeRequest` / `submitBatch` / a `custom` preview, or a
-   multisig account fails with `FeeConversionInfoRequired`.
+   multisig account fails with `FeeConversionInfoRequired`. A finished request
+   you did not build gets the same auth args from
+   `client.withFeeAwareAuth(request, account)`.
 4. **`notes.sendPrivate()` without `inclusionProof`.** It throws. For your own
    output notes, wait until the transaction commits and call
    `notes.sendPrivateOutput({ noteId, to })`, which reads the stored proof.
+   Either call's rejection is final: no `sync()` re-sends the note, so retry by
+   sending the same note again.
 5. **`number` literals above 2^53 for amounts.** Amount fields accept
    `number | bigint` and coerce via `BigInt()` (no `TypeError`), but a numeric
    literal above `Number.MAX_SAFE_INTEGER` loses precision _before_ coercion.
@@ -1239,14 +1452,19 @@ while (true) {
     the faucet account, not the target.
 13. **Private notes without transport** - must call `notes.sendPrivateOutput()`
     / `notes.sendPrivate()` (or pass `returnNote: true` to `transactions.send`
-    and deliver out-of-band).
+    and deliver out-of-band). A failed send is not queued and no `sync()`
+    retries it; keep the note id and send it again.
 14. **Holding WASM-owned objects across `terminate()`** - every `Account`,
     `Note`, `AccountId`, `NoteAndArgsArray` etc. owns Rust memory through the
     WASM ArrayBuffer. After `terminate()` they panic with "null pointer
-    passed to rust" - drop references on unmount.
+    passed to rust" - drop references on unmount. A handle that holds the
+    client's store, such as an `AccountReader`, must be freed, not just
+    dropped: an unfreed one keeps the store open after `terminate()` and
+    `await using`.
 15. **Calling `accountReader(...)` in parallel with a write** - the readers
     share the WASM client. Wrap concurrent flows with `client.waitForIdle()`
-    or rely on the React SDK's `runExclusive`.
+    or rely on the React SDK's `runExclusive`, and release each reader in a
+    `finally` (`try { ... } finally { reader.free?.() }`).
 16. **Assuming `TransactionProver.newLocalProver()` is cheap.** It now produces
     Poseidon2 proofs, matching the client's default prover, and is roughly
     1.6-2.6x slower than the old Blake3 default.

@@ -795,7 +795,7 @@ export async function createMidenClient(sdk: any): Promise<any> {
         normalizeArg(serializedMockChain) ?? null,
         normalizeArg(serializedNoteTransport) ?? null
       );
-      return wrapClient(client, "mock");
+      return wrapClient(client, "mock", rawSdk);
     },
   };
 
@@ -826,7 +826,7 @@ export async function createMidenClient(sdk: any): Promise<any> {
         // from client.js failed no node-mode test.
         feeFaucetId ?? process.env.TEST_MIDEN_FEE_FAUCET_ID ?? null
       );
-      return wrapClient(client, storeName);
+      return wrapClient(client, storeName, rawSdk);
     },
   };
 

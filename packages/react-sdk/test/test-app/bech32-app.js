@@ -49,6 +49,11 @@ window.addEventListener("unhandledrejection", (event) => {
 // created with the same rpcUrl would report: the SDK's own `Endpoint`
 // normalization, defaulting to testnet. An own property wins over the proxy's
 // forwarding to the WASM client.
+//
+// The client is also exposed as `window.__mockClient` for tests that need an
+// account. Every MockWebClient opens the same IndexedDB store, so a second
+// mock client on this page would read the chain this one wrote and reject it:
+// each mock chain has its own validator keys.
 const patchWebClient = () => {
   WasmWebClient.createClient = async (rpcUrl) => {
     const client = await MockWebClient.createClient();
@@ -56,6 +61,7 @@ const patchWebClient = () => {
       rpcUrl ? new Endpoint(rpcUrl) : Endpoint.testnet()
     ).toString();
     client.endpoint = () => endpoint;
+    window.__mockClient = client;
     return client;
   };
 };

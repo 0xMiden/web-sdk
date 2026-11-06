@@ -71,6 +71,8 @@ export function useParaMiden(
           );
 
         if (cancelled) {
+          // Never handed out, so nothing else would terminate it.
+          midenParaClient.terminate();
           return;
         }
 

@@ -42,6 +42,17 @@ const COUNTER_CODE = `
 
 const COUNTER_SLOT_NAME = "miden::tutorials::counter";
 
+// A component whose only export is not marked `@account_procedure`, so it
+// compiles to a component with no account procedures.
+const STORAGE_ONLY_CODE = `
+  use miden::core::sys
+
+  pub proc helper
+      exec.sys::truncate_stack
+  end
+`;
+const STORAGE_ONLY_SLOT_NAME = "miden::tests::storage_only";
+
 // ════════════════════════════════════════════════════════════════
 // compile.component()
 // ════════════════════════════════════════════════════════════════
@@ -504,6 +515,73 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
       const msg = e.message ?? String(e);
       expect(msg).toContain("at least one non-auth procedure");
     }
+  });
+
+  test("contract whose only component has no account procedure rejects", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+
+    const storageOnly = await client.compile.component({
+      code: STORAGE_ONLY_CODE,
+      namespace: "external_contract::storage_only",
+      slots: [sdk.StorageSlot.emptyValue(STORAGE_ONLY_SLOT_NAME)],
+    });
+
+    const seed = new Uint8Array(32);
+    seed.fill(0x05);
+    const auth = sdk.AuthSecretKey.rpoFalconWithRNG(seed);
+
+    let message = null;
+    try {
+      await client.accounts.create({
+        type: "ImmutableContract",
+        storage: "public",
+        seed,
+        auth,
+        components: [storageOnly],
+      });
+    } catch (e: any) {
+      message = String(e?.message ?? e);
+    }
+
+    expect(storageOnly.getProcedures().length).toBe(0);
+    expect(message).toContain("at least one non-auth procedure");
+  });
+
+  test("a storage-only component beside a callable one creates the contract", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+
+    const storageOnly = await client.compile.component({
+      code: STORAGE_ONLY_CODE,
+      namespace: "external_contract::storage_only",
+      slots: [sdk.StorageSlot.emptyValue(STORAGE_ONLY_SLOT_NAME)],
+    });
+    const counter = await client.compile.component({
+      code: COUNTER_CODE,
+      namespace: "external_contract::counter_contract",
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+
+    const seed = new Uint8Array(32);
+    seed.fill(0x06);
+    const auth = sdk.AuthSecretKey.rpoFalconWithRNG(seed);
+
+    const account = await client.accounts.create({
+      type: "ImmutableContract",
+      storage: "public",
+      seed,
+      auth,
+      components: [storageOnly, counter],
+    });
+
+    expect(account.isPublic()).toBe(true);
   });
 
   test("same seed yields same account ID across two builds", async ({
