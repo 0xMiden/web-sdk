@@ -186,12 +186,14 @@ impl IdxdbStore {
 
         // Tags for tracked expected notes are keyed by the note's details
         // commitment (`NoteTagSource::Note`), which `encode_tag_source` writes
-        // into the `tags.sourceNoteId` column. To prune those tags once their
-        // notes commit, collect the details-commitment hex of every committed
-        // input note so the JS layer can delete the matching rows.
+        // into the `tags.sourceNoteId` column. Prune those tags once the note
+        // is no longer inclusion-pending (committed, consumed, or invalidated),
+        // matching sqlite-store. Collecting only `is_committed()` missed notes
+        // that went expected → consumed during catch-up without a committed
+        // sync update, which left shared pair-tag rows forever (#525).
         let committed_note_tag_sources: Vec<String> = note_updates
             .updated_input_notes()
-            .filter(|update| update.inner().is_committed())
+            .filter(|update| !update.inner().is_inclusion_pending())
             .map(|update| update.inner().details_commitment().to_hex())
             .collect();
 
