@@ -72,10 +72,15 @@ export function useNoteStream(
   const handledIdsRef = useRef<Set<string>>(new Set());
   const [handledVersion, setHandledVersion] = useState(0);
 
-  // Store amountFilter in a ref so the streamedNotes useMemo doesn't depend
-  // on the function reference (callers typically pass inline lambdas).
+  // Store amountFilter in a ref so unstable inline lambdas do not defeat
+  // memoization of note decoding. Bump filterEpoch when the predicate (or
+  // its absence) changes so the derived list recomputes without refetching.
   const amountFilterRef = useRef(options.amountFilter);
-  amountFilterRef.current = options.amountFilter;
+  const [filterEpoch, setFilterEpoch] = useState(0);
+  if (amountFilterRef.current !== options.amountFilter) {
+    amountFilterRef.current = options.amountFilter;
+    setFilterEpoch((epoch) => epoch + 1);
+  }
 
   // Serialize excludeIds to a stable key so array literals don't defeat memoization.
   // Uses \0 separator (note IDs are hex strings that never contain null bytes).
@@ -126,8 +131,9 @@ export function useNoteStream(
 
   // Build StreamedNote array with all filters applied
   const streamedNotes = useMemo((): StreamedNote[] => {
-    // Force recalculation when handled IDs change
+    // Force recalculation when handled IDs or the amount predicate change
     void handledVersion;
+    void filterEpoch;
 
     const result: StreamedNote[] = [];
 
@@ -168,7 +174,15 @@ export function useNoteStream(
     result.sort((a, b) => a.firstSeenAt - b.firstSeenAt);
 
     return result;
-  }, [allNotes, noteFirstSeen, excludeIdSet, sender, since, handledVersion]);
+  }, [
+    allNotes,
+    noteFirstSeen,
+    excludeIdSet,
+    sender,
+    since,
+    handledVersion,
+    filterEpoch,
+  ]);
 
   const latest = useMemo(
     () =>
