@@ -115,6 +115,7 @@ const WRITE_METHODS = new Set([
   "newSwapTransactionRequest",
   "pruneAccountHistory",
   "registerAccount",
+  "removeAccount",
   "removeAccountAddress",
   "removeTag",
   "removeSetting",

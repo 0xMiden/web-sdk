@@ -269,6 +269,22 @@ export class AccountsResource {
   }
 
   /**
+   * Removes an account's local state, history, addresses, and witness
+   * registration. Notes, transaction records, and signing keys are kept.
+   * Returns `true` when the account was removed, `false` if it was not
+   * stored. Rejects when the account has a pending transaction.
+   *
+   * @param {string | object} ref Account id, bech32, or account-like object.
+   * @returns {Promise<boolean>}
+   */
+  async remove(ref) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const id = resolveAccountRef(ref, wasm);
+    return await this.#inner.removeAccount(id);
+  }
+
+  /**
    * Binds an invitation code to a tracked account on the network allowlist,
    * so the account's first transaction can create it on chain.
    *

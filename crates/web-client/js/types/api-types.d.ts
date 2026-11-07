@@ -1168,6 +1168,15 @@ export interface AccountsResource {
    * @param address - The Bech32 address string to remove.
    */
   removeAddress(accountId: AccountRef, address: string): Promise<void>;
+  /**
+   * Remove an account's local state, history, addresses, and witness registration.
+   * Preserves notes, transaction records, and signing keys. Returns `true` when
+   * removed, `false` if the account was not stored. Rejects when the account has
+   * a pending transaction.
+   *
+   * @param accountId - The account to remove from local storage.
+   */
+  remove(accountId: AccountRef): Promise<boolean>;
 }
 
 export interface TransactionsResource {

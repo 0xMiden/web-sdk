@@ -23,6 +23,7 @@ import {
   getForeignAccountCode,
   lockAccount,
   pruneAccountHistory,
+  removeAccount,
   undoAccountStates,
 } from "./accounts.js";
 import { uniqueDbName } from "./test-utils.js";
@@ -1091,6 +1092,68 @@ describe("pruneAccountHistory", () => {
 });
 
 // ============================================================
+// removeAccount
+// ============================================================
+describe("removeAccount", () => {
+  it("returns false when the account is absent", async () => {
+    const dbId = await openTestDb();
+    expect(await removeAccount(dbId, "0xmissing")).toBe(false);
+  });
+
+  it("removes account state, addresses, witnesses, and account-source tags", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await seedAccount(dbId);
+    await insertAccountAddress(dbId, ACC, new Uint8Array([1, 2, 3]));
+    await db.accountWitnesses.put({ accountId: ACC, witness: null });
+    await db.tags.put({
+      tag: "dGFnQWNjdA==",
+      sourceNoteId: "",
+      sourceAccountId: ACC,
+    });
+    await db.tags.put({
+      tag: "dGFnVXNlcg==",
+      sourceNoteId: "",
+      sourceAccountId: "",
+    });
+    await upsertAccountCode(dbId, "0xothercode", new Uint8Array([9]));
+    await db.foreignAccountCode.put({
+      accountId: "0xforeign",
+      codeRoot: "0xothercode",
+    });
+
+    expect(await removeAccount(dbId, ACC)).toBe(true);
+    expect(await removeAccount(dbId, ACC)).toBe(false);
+    expect(await db.latestAccountHeaders.get(ACC)).toBeUndefined();
+    expect(await db.addresses.where("id").equals(ACC).count()).toBe(0);
+    expect(await db.accountWitnesses.get(ACC)).toBeUndefined();
+    const tags = await db.tags.toArray();
+    expect(tags.map((t) => t.tag)).toEqual(["dGFnVXNlcg=="]);
+    expect(await db.accountCodes.get(CODE_ROOT)).toBeUndefined();
+    expect(await db.accountCodes.get("0xothercode")).toBeDefined();
+  });
+
+  it("rejects when a pending transaction for the account exists", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await seedAccount(dbId);
+    await db.transactions.put({
+      id: "tx-pending",
+      details: new Uint8Array([1]),
+      blockNum: 1,
+      statusVariant: 0,
+      status: new Uint8Array([0]),
+      accountId: ACC,
+    });
+
+    await expect(removeAccount(dbId, ACC)).rejects.toThrow(
+      /AccountHasPendingTransactions/
+    );
+    expect(await db.latestAccountHeaders.get(ACC)).toBeDefined();
+  });
+});
+
+// ============================================================
 // undoAccountStates
 // ============================================================
 describe("undoAccountStates", () => {
@@ -1449,6 +1512,10 @@ describe("error paths: unregistered dbId re-throws", () => {
 
   it("pruneAccountHistory rejects on bad dbId", async () => {
     await expect(pruneAccountHistory(BAD_DB, "0xacc", "10")).rejects.toThrow();
+  });
+
+  it("removeAccount rejects on bad dbId", async () => {
+    await expect(removeAccount(BAD_DB, "0xacc")).rejects.toThrow();
   });
 });
 

@@ -2,7 +2,8 @@
 # Local-dev mirror of .github/actions/inject-linked-client-pr.
 #
 # Appends a [patch] block to Cargo.toml that retargets miden-client (and
-# miden-client-sqlite-store) at a linked rust-sdk PR's head branch,
+# miden-client-sqlite-store / miden-client-proto when present) at a linked
+# rust-sdk PR's head branch,
 # wrapped in begin/end markers so it can be removed cleanly with --clear.
 # A pre-commit hook (lefthook.yml) blocks committing while the marked
 # block is present, so you can't accidentally ship the patch.
@@ -43,9 +44,11 @@ clear_block() {
   #   # Original lines (do not edit):
   #   #  miden-client = ...
   #   #  miden-client-sqlite-store = ...
+  #   #  miden-client-proto = ...
   #   $MARK_END
   #   miden-client = { rev = "<linked head sha>", ... }     <-- patched
   #   miden-client-sqlite-store = { rev = "<linked head sha>", ... }  <-- patched (if present)
+  #   miden-client-proto = { rev = "<linked head sha>", ... }  <-- patched (if present)
   #
   awk -v b="$MARK_BEGIN" -v e="$MARK_END" -v pb="$PATCH_BEGIN" -v pe="$PATCH_END" '
     function restore() {
@@ -91,6 +94,9 @@ build_cargo_update_args() {
     args="-p miden-client"
     if cargo pkgid -p miden-client-sqlite-store >/dev/null 2>&1; then
       args="$args -p miden-client-sqlite-store"
+    fi
+    if cargo pkgid -p miden-client-proto >/dev/null 2>&1; then
+      args="$args -p miden-client-proto"
     fi
   fi
   printf '%s' "$args"
@@ -149,7 +155,7 @@ url="https://github.com/${head_owner}/${head_repo}.git"
 # Sanity-check there's a miden-client dep line at all. The Python block
 # below does the actual capture + rewrite; we exit early here only if
 # the file is structurally not what we expect.
-if ! grep -qE '^miden-client(-sqlite-store)?[^a-z-]' "$CARGO_TOML"; then
+if ! grep -qE '^miden-client(-sqlite-store|-proto)?[^a-z-]' "$CARGO_TOML"; then
   echo "Could not find a miden-client dep line in $CARGO_TOML." >&2
   exit 1
 fi
@@ -165,7 +171,7 @@ mark_end = """$MARK_END"""
 with open(path) as f:
     lines = f.readlines()
 
-dep_re = re.compile(r'^(?P<name>miden-client(?:-sqlite-store)?)\s*=\s*(?P<rhs>.+)$')
+dep_re = re.compile(r'^(?P<name>miden-client(?:-sqlite-store|-proto)?)\s*=\s*(?P<rhs>.+)$')
 captured = []
 patched = []
 out = []

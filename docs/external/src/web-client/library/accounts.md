@@ -44,3 +44,23 @@ a `TypeError` for any other `type`, for faucet fields (`name`, `symbol`,
 and for a faucet missing `symbol`, `decimals` or `maxSupply`.
 
 Wallets default to private storage; faucets and contracts default to public.
+
+## Remove a local account
+
+Use `client.accounts.remove(ref)` to drop an account's local state after a
+short-lived import without resetting the whole database:
+
+```typescript
+const removed = await client.accounts.remove(accountId);
+assert(removed);
+assert((await client.accounts.get(accountId)) == null);
+```
+
+The call returns `true` when it removes the account and `false` if the account
+was not stored. It deletes the current state, history, addresses, witness
+registration, and note tags whose source is that account. Notes, transaction
+records, signing keys, and tags from other sources remain. Public accounts that
+still exist on-chain can be imported again afterward.
+
+Removal fails when the account has a pending transaction. Sync until those
+transactions are committed or discarded, then retry.

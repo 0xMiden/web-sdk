@@ -211,6 +211,21 @@ impl WebClient {
         }
     }
 
+    /// Removes an account's current state and history from local storage.
+    ///
+    /// Returns `true` when the account was removed, `false` if it was not stored. Fails when the
+    /// account has a pending transaction. Notes, transaction records, and keystore entries are
+    /// preserved. Public accounts that exist on-chain can be imported again afterward.
+    #[js_export(js_name = "removeAccount")]
+    pub async fn remove_account(&self, account_id: &AccountId) -> Result<bool, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        client
+            .remove_account(account_id.into())
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to remove account"))
+    }
+
     /// Prunes historical account states for the specified account up to the given nonce.
     ///
     /// Deletes all historical entries with `replaced_at_nonce <= up_to_nonce` and any

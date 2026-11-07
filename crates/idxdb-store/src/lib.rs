@@ -280,6 +280,10 @@ impl Store for IdxdbStore {
         self.insert_account(account, initial_address, client_account_type).await
     }
 
+    async fn remove_account(&self, account_id: AccountId) -> Result<bool, StoreError> {
+        self.remove_account(account_id).await
+    }
+
     async fn update_account(&self, new_account_state: &Account) -> Result<(), StoreError> {
         self.update_account(new_account_state).await
     }

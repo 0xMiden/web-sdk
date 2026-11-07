@@ -142,8 +142,11 @@ runs:
       run: |
         set -euo pipefail
 
-        # We rewrite the miden-client (and miden-client-sqlite-store, if
-        # present) dep lines IN PLACE rather than emitting a [patch] block.
+        # We rewrite the miden-client (and miden-client-sqlite-store /
+        # miden-client-proto, if present) dep lines IN PLACE rather than
+        # emitting a [patch] block. Proto must move with the client: leaving
+        # it on crates.io while the client comes from git resolves two
+        # miden-client graphs and breaks ProtobufValue / ProtoDecodeError.
         #
         # Why not [patch]? Cargo's [patch."<url>"] section needs the patch
         # source to be DIFFERENT from the original source. Web-sdk's `next`
@@ -180,7 +183,7 @@ runs:
         with open(path) as f:
             lines = f.readlines()
 
-        dep_re = re.compile(r'^(?P<name>miden-client(?:-sqlite-store)?)\s*=\s*(?P<rhs>.+)$')
+        dep_re = re.compile(r'^(?P<name>miden-client(?:-sqlite-store|-proto)?)\s*=\s*(?P<rhs>.+)$')
 
         captured = []
         patched_lines = []
@@ -285,11 +288,15 @@ runs:
 
         # cargo update -p X requires X to be in the dep tree. main only
         # pins miden-client (crates.io until the rewrite above swaps it
-        # to git+branch); next adds miden-client-sqlite-store. Build the
-        # -p list dynamically so this works on both branches.
+        # to git+branch); next adds miden-client-sqlite-store and
+        # miden-client-proto. Build the -p list dynamically so this works
+        # on both branches.
         update_args="-p miden-client"
         if cargo pkgid -p miden-client-sqlite-store >/dev/null 2>&1; then
           update_args="$update_args -p miden-client-sqlite-store"
+        fi
+        if cargo pkgid -p miden-client-proto >/dev/null 2>&1; then
+          update_args="$update_args -p miden-client-proto"
         fi
         # shellcheck disable=SC2086
         bash scripts/cargo-update-linked-patches.sh $update_args

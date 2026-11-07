@@ -48,6 +48,7 @@ function makeInner(overrides = {}) {
     exportAccountFile: vi.fn().mockResolvedValue("exportedFile"),
     insertAccountAddress: vi.fn().mockResolvedValue(undefined),
     removeAccountAddress: vi.fn().mockResolvedValue(undefined),
+    removeAccount: vi.fn().mockResolvedValue(true),
     accountReader: vi.fn().mockReturnValue({
       getBalance: vi.fn().mockResolvedValue(BigInt(100)),
     }),
