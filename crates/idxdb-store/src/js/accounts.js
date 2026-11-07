@@ -903,7 +903,10 @@ export async function removeAccount(dbId, accountId) {
                 codeRoots.add(h.codeRoot);
             }
             await db.latestAccountHeaders.where("id").equals(accountId).delete();
-            await db.historicalAccountHeaders.where("id").equals(accountId).delete();
+            await db.historicalAccountHeaders
+                .where("id")
+                .equals(accountId)
+                .delete();
             await db.latestAccountStorages
                 .where("accountId")
                 .equals(accountId)
