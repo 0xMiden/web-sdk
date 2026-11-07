@@ -1012,6 +1012,7 @@ await client.accounts.insert({ account, overwrite }); // start tracking an exist
 await client.accounts.getBalance(account, token); // single-asset balance, returns bigint
 await client.accounts.addAddress(ref, address); // track / untrack an address
 await client.accounts.removeAddress(ref, address);
+const removed = await client.accounts.remove(ref);
 
 await client.accounts.import(ref); // by id - fetches state from the network
 await client.accounts.import({ file }); // from an exported AccountFile

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+* [FEATURE][web] Added local account removal through `client.accounts.remove(ref)` / `WebClient.removeAccount`, backed by `Store::remove_account` in IndexedDB. Removal deletes the account's current state, history, addresses, witness registration, and account-source note tags; preserves notes, transaction records, and signing keys; rejects pending transactions atomically; and returns `false` when the account is already absent ([#494](https://github.com/0xMiden/web-sdk/issues/494), [rust-sdk#2794](https://github.com/0xMiden/rust-sdk/pull/2794)).
+
+### Breaking Changes
+
+* [BREAKING][store] `IdxdbStore` implements the required upstream `Store::remove_account` method and handles `StoreError::AccountHasPendingTransactions` ([#494](https://github.com/0xMiden/web-sdk/issues/494), [rust-sdk#2794](https://github.com/0xMiden/rust-sdk/pull/2794)).
+
 ## 0.18.0 (2026-11-05)
 
 ### Enhancements

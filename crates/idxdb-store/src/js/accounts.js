@@ -845,6 +845,119 @@ export async function lockAccount(dbId, accountId) {
     }
 }
 /**
+ * Removes an account's current state and history from local storage.
+ *
+ * Deletes latest and historical headers/storage/maps/assets, addresses,
+ * account witness rows, and note tags whose `sourceAccountId` is this account.
+ * Removes account code only when no remaining header or foreign-code row
+ * references it. Notes, transaction records, and other tags are preserved.
+ *
+ * Returns `true` when the account was removed, `false` if it was already
+ * absent. Throws with a message containing `AccountHasPendingTransactions`
+ * when a pending transaction for this account exists; the check and deletes
+ * run in one IndexedDB transaction.
+ */
+export async function removeAccount(dbId, accountId) {
+    try {
+        const db = getDatabase(dbId);
+        let removed = false;
+        await db.dexie.transaction("rw", [
+            db.latestAccountHeaders,
+            db.historicalAccountHeaders,
+            db.latestAccountStorages,
+            db.historicalAccountStorages,
+            db.latestStorageMapEntries,
+            db.historicalStorageMapEntries,
+            db.latestAccountAssets,
+            db.historicalAccountAssets,
+            db.accountCodes,
+            db.foreignAccountCode,
+            db.addresses,
+            db.accountWitnesses,
+            db.tags,
+            db.transactions,
+        ], async () => {
+            const header = await db.latestAccountHeaders.get(accountId);
+            if (!header) {
+                removed = false;
+                return;
+            }
+            const pending = await db.transactions
+                .filter((tx) => tx.statusVariant === 0)
+                .toArray();
+            for (const tx of pending) {
+                // Prefer the denormalized accountId when present (written by newer
+                // upserts). Older rows without it cannot be attributed here; the
+                // Rust Store path checks decoded TransactionDetails before calling.
+                if (tx.accountId === accountId) {
+                    throw new Error(`AccountHasPendingTransactions:${accountId}`);
+                }
+            }
+            const codeRoots = new Set();
+            codeRoots.add(header.codeRoot);
+            const historical = await db.historicalAccountHeaders
+                .where("id")
+                .equals(accountId)
+                .toArray();
+            for (const h of historical) {
+                codeRoots.add(h.codeRoot);
+            }
+            await db.latestAccountHeaders.where("id").equals(accountId).delete();
+            await db.historicalAccountHeaders.where("id").equals(accountId).delete();
+            await db.latestAccountStorages
+                .where("accountId")
+                .equals(accountId)
+                .delete();
+            await db.historicalAccountStorages
+                .where("accountId")
+                .equals(accountId)
+                .delete();
+            await db.latestStorageMapEntries
+                .where("accountId")
+                .equals(accountId)
+                .delete();
+            await db.historicalStorageMapEntries
+                .where("accountId")
+                .equals(accountId)
+                .delete();
+            await db.latestAccountAssets
+                .where("accountId")
+                .equals(accountId)
+                .delete();
+            await db.historicalAccountAssets
+                .where("accountId")
+                .equals(accountId)
+                .delete();
+            await db.addresses.where("id").equals(accountId).delete();
+            await db.accountWitnesses.where("accountId").equals(accountId).delete();
+            await db.tags.where("sourceAccountId").equals(accountId).delete();
+            if (codeRoots.size > 0) {
+                const latestHeaders = await db.latestAccountHeaders.toArray();
+                const remainingHistorical = await db.historicalAccountHeaders.toArray();
+                const foreignCodes = await db.foreignAccountCode.toArray();
+                const referenced = new Set();
+                for (const h of latestHeaders)
+                    referenced.add(h.codeRoot);
+                for (const h of remainingHistorical)
+                    referenced.add(h.codeRoot);
+                for (const f of foreignCodes)
+                    referenced.add(f.codeRoot);
+                for (const root of codeRoots) {
+                    if (!referenced.has(root)) {
+                        await db.accountCodes.where("root").equals(root).delete();
+                    }
+                }
+            }
+            removed = true;
+        });
+        return removed;
+    }
+    catch (error) {
+        logWebStoreError(error, `Error removing account: ${accountId}`);
+        throw error;
+    }
+}
+/**
  * Prunes historical account states for a single account up to the given nonce.
  *
  * Deletes all historical entries with `replacedAtNonce <= upToNonce` and any

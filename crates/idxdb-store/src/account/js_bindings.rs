@@ -174,6 +174,10 @@ extern "C" {
         account_id: String,
         up_to_nonce: String,
     ) -> js_sys::Promise;
+
+    /// Removes an account's local state. Resolves to `true` when removed, `false` if absent.
+    #[wasm_bindgen(js_name = removeAccount)]
+    pub fn idxdb_remove_account(db_id: &str, account_id: String) -> js_sys::Promise;
 }
 
 // VAULT ASSET

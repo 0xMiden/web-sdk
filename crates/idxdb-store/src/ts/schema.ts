@@ -175,6 +175,8 @@ export interface ITransaction {
   scriptRoot?: string;
   statusVariant: number;
   status: Uint8Array;
+  /** Denormalized account id for local filters such as account removal. */
+  accountId?: string;
 }
 
 export interface ITransactionScript {

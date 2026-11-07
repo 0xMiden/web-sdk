@@ -39,6 +39,7 @@ use miden_client::store::{
     AccountUpdate,
     ClientAccountType,
     StoreError,
+    TransactionFilter,
 };
 use miden_client::{AccountError, Felt, Word};
 use miden_client_proto::{decode_unchecked, encode};
@@ -68,6 +69,7 @@ use js_bindings::{
     idxdb_get_foreign_account_code,
     idxdb_lock_account,
     idxdb_prune_account_history,
+    idxdb_remove_account,
     idxdb_undo_account_states,
     idxdb_upsert_foreign_account_code,
 };
@@ -801,5 +803,32 @@ impl IdxdbStore {
             up_to_nonce.as_canonical_u64().to_string(),
         );
         await_js(promise, "failed to prune account history").await
+    }
+
+    pub(crate) async fn remove_account(&self, account_id: AccountId) -> Result<bool, StoreError> {
+        if self.get_account_header(account_id).await?.is_none() {
+            return Ok(false);
+        }
+
+        // Pending check mirrors SQLite: reject before mutating when this account has an
+        // uncommitted transaction. The IndexedDB delete path re-checks denormalized
+        // `accountId` fields inside its write transaction.
+        let pending = self.get_transactions(TransactionFilter::Uncommitted).await?;
+        if pending.iter().any(|tx| tx.details.account_id == account_id) {
+            return Err(StoreError::AccountHasPendingTransactions(account_id));
+        }
+
+        let promise = idxdb_remove_account(self.db_id(), account_id.to_string());
+        match await_js::<bool>(promise, "failed to remove account").await {
+            Ok(removed) => Ok(removed),
+            Err(err) => {
+                let msg = err.to_string();
+                if msg.contains("AccountHasPendingTransactions") {
+                    Err(StoreError::AccountHasPendingTransactions(account_id))
+                } else {
+                    Err(err)
+                }
+            },
+        }
     }
 }
