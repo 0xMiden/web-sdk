@@ -4,7 +4,7 @@
 
 ### Fixes
 
-* [FIX][react] `useAssetMetadata` discards responses started before a client replacement or cache reset, and a pending stale read no longer blocks the current client's request for the same asset.
+* [FIX][react] `useAssetMetadata` discards responses started before a client replacement or cache reset, and a pending stale read no longer blocks the current client's request for the same asset ([#535](https://github.com/0xMiden/web-sdk/pull/535)).
 
 ## 0.18.0 (2026-11-05)
 
