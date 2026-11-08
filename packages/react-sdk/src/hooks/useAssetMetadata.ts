@@ -5,10 +5,11 @@ import {
   RpcClient,
 } from "@miden-sdk/miden-sdk";
 import { useAssetMetadataStore, useMidenStore } from "../store/MidenStore";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import type { AssetMetadata } from "../types";
 import { parseAccountId } from "../utils/accountParsing";
 
-const inflight = new Map<string, Promise<void>>();
+const inflight = new Map<string, () => boolean>();
 const rpcClients = new Map<string, RpcClient>();
 
 const getRpcClient = (rpcUrl: string): RpcClient | null => {
@@ -53,6 +54,8 @@ const fetchAssetMetadata = async (
  * `client.endpoint()`. Nothing is fetched until `MidenProvider` has a client,
  * nor for a client that reports no endpoint (a mock client). An asset whose
  * fetch fails is cached as `{ assetId }` without `symbol` or `decimals`.
+ * Responses started before a client replacement or cache reset are discarded;
+ * the current client can fetch the same asset without waiting for an old read.
  *
  * @param assetIds - Faucet account IDs, hex or bech32. Pass an array even for
  *   one asset.
@@ -65,6 +68,7 @@ export function useAssetMetadata(assetIds: string[] = []) {
   // has created it against the configured node, so there is no window in which
   // an unset URL could fall back to a default network.
   const client = useMidenStore((state) => state.client);
+  const cacheGeneration = useMidenStore((state) => state.cacheGeneration);
   const rpcClient = useMemo(() => {
     const endpoint = client?.endpoint();
     return endpoint ? getRpcClient(endpoint) : null;
@@ -76,25 +80,36 @@ export function useAssetMetadata(assetIds: string[] = []) {
   );
 
   useEffect(() => {
-    if (!rpcClient || uniqueAssetIds.length === 0) return;
+    if (!client || !rpcClient || uniqueAssetIds.length === 0) return;
+    const isCurrent = captureClientReadGuard(client);
 
     uniqueAssetIds.forEach((assetId) => {
       const existing = assetMetadata.get(assetId);
       const hasMetadata =
         existing?.symbol !== undefined || existing?.decimals !== undefined;
-      if (hasMetadata || inflight.has(assetId)) return;
+      if (hasMetadata || inflight.get(assetId)?.()) return;
 
-      const promise = fetchAssetMetadata(rpcClient, assetId)
+      inflight.set(assetId, isCurrent);
+      fetchAssetMetadata(rpcClient, assetId)
         .then((metadata) => {
-          setAssetMetadata(assetId, metadata ?? { assetId });
+          if (isCurrent()) {
+            setAssetMetadata(assetId, metadata ?? { assetId });
+          }
         })
         .finally(() => {
-          inflight.delete(assetId);
+          if (inflight.get(assetId) === isCurrent) {
+            inflight.delete(assetId);
+          }
         });
-
-      inflight.set(assetId, promise);
     });
-  }, [uniqueAssetIds, assetMetadata, setAssetMetadata, rpcClient]);
+  }, [
+    uniqueAssetIds,
+    assetMetadata,
+    setAssetMetadata,
+    rpcClient,
+    client,
+    cacheGeneration,
+  ]);
 
   return { assetMetadata };
 }

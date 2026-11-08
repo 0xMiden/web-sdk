@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.1 (TBD)
+
+### Fixes
+
+* [FIX][react] `useAssetMetadata` discards responses started before a client replacement or cache reset, and a pending stale read no longer blocks the current client's request for the same asset.
+
 ## 0.18.0 (2026-11-05)
 
 ### Enhancements
