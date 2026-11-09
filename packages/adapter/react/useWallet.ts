@@ -84,80 +84,40 @@ const DEFAULT_CONTEXT = {
     _network: WalletAdapterNetwork,
     _allowedPrivateData?: AllowedPrivateData
   ) {
-    return Promise.reject(
-      console.error(constructMissingProviderErrorMessage("get", "connect"))
-    );
+    return rejectMissingProvider("connect");
   },
   disconnect() {
-    return Promise.reject(
-      console.error(constructMissingProviderErrorMessage("get", "disconnect"))
-    );
+    return rejectMissingProvider("disconnect");
   },
   requestTransaction(_transaction: MidenTransaction) {
-    return Promise.reject(
-      console.error(
-        constructMissingProviderErrorMessage("get", "requestTransaction")
-      )
-    );
+    return rejectMissingProvider("requestTransaction");
   },
   requestAssets() {
-    return Promise.reject(
-      console.error(
-        constructMissingProviderErrorMessage("get", "requestAssets")
-      )
-    );
+    return rejectMissingProvider("requestAssets");
   },
   requestGuardianInfo() {
-    return Promise.reject(
-      console.error(
-        constructMissingProviderErrorMessage("get", "requestGuardianInfo")
-      )
-    );
+    return rejectMissingProvider("requestGuardianInfo");
   },
   requestPrivateNotes(_noteFilterType: NoteFilterTypes, _noteIds?: string[]) {
-    return Promise.reject(
-      console.error(
-        constructMissingProviderErrorMessage("get", "requestPrivateNotes")
-      )
-    );
+    return rejectMissingProvider("requestPrivateNotes");
   },
   signBytes(_message: Uint8Array, _kind: SignKind) {
-    return Promise.reject(
-      console.error(constructMissingProviderErrorMessage("get", "signBytes"))
-    );
+    return rejectMissingProvider("signBytes");
   },
   importPrivateNote(_note: Uint8Array) {
-    return Promise.reject(
-      console.error(
-        constructMissingProviderErrorMessage("get", "importPrivateNote")
-      )
-    );
+    return rejectMissingProvider("importPrivateNote");
   },
   requestConsumableNotes() {
-    return Promise.reject(
-      console.error(
-        constructMissingProviderErrorMessage("get", "requestConsumableNotes")
-      )
-    );
+    return rejectMissingProvider("requestConsumableNotes");
   },
   waitForTransaction(_txId: string, _timeout?: number) {
-    return Promise.reject(
-      console.error(
-        constructMissingProviderErrorMessage("get", "waitForTransaction")
-      )
-    );
+    return rejectMissingProvider("waitForTransaction");
   },
   requestSend(_transaction) {
-    return Promise.reject(
-      console.error(constructMissingProviderErrorMessage("get", "requestSend"))
-    );
+    return rejectMissingProvider("requestSend");
   },
   requestConsume(_transaction) {
-    return Promise.reject(
-      console.error(
-        constructMissingProviderErrorMessage("get", "requestConsume")
-      )
-    );
+    return rejectMissingProvider("requestConsume");
   },
 } as WalletContextState;
 Object.defineProperty(DEFAULT_CONTEXT, "wallets", {
@@ -184,6 +144,12 @@ Object.defineProperty(DEFAULT_CONTEXT, "publicKey", {
     return null;
   },
 });
+
+function rejectMissingProvider<T = never>(valueName: string): Promise<T> {
+  const message = constructMissingProviderErrorMessage("get", valueName);
+  console.error(message);
+  return Promise.reject(new Error(message));
+}
 
 function constructMissingProviderErrorMessage(
   action: string,
