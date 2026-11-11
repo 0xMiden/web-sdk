@@ -855,6 +855,88 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     expect(result.allAccountsCount).toBeGreaterThanOrEqual(1);
   });
 
+  mockTest(
+    "listAvailable and consumeAll leave out a public PSWAP order",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const maker = await client.accounts.create();
+        const taker = await client.accounts.create();
+        const faucet = (symbol) =>
+          client.accounts.create({
+            type: window.FaucetType.FungibleFaucet,
+            symbol,
+            decimals: 8,
+            maxSupply: 10_000_000n,
+          });
+        const offered = await faucet("OFR");
+        const requested = await faucet("REQ");
+
+        await client.transactions.mint({
+          account: offered,
+          to: maker,
+          amount: 1000n,
+        });
+        await client.transactions.mint({
+          account: requested,
+          to: taker,
+          amount: 1000n,
+        });
+        client.proveBlock();
+        await client.sync();
+        // Both mints are P2ID notes, so consumeAll takes them.
+        const funded = [
+          await client.transactions.consumeAll({ account: maker }),
+          await client.transactions.consumeAll({ account: taker }),
+        ].map((r) => r.consumed);
+        client.proveBlock();
+        await client.sync();
+
+        await client.transactions.pswapCreate({
+          account: maker,
+          offer: { token: offered, amount: 100n },
+          request: { token: requested, amount: 50n },
+          type: "public",
+        });
+        client.proveBlock();
+        await client.sync();
+
+        // The taker holds the requested asset, so a trial fill succeeds and the
+        // screener lists the maker's order for it.
+        const listed = await client.notes.listConsumable({ account: taker });
+        const available = await client.notes.listAvailable({ account: taker });
+        const takerResult = await client.transactions.consumeAll({
+          account: taker,
+        });
+        const makerAvailable = await client.notes.listAvailable({
+          account: maker,
+        });
+        const takerAccount = await client.accounts.get(taker);
+
+        return {
+          funded,
+          listedCount: listed.length,
+          availableCount: available.length,
+          takerConsumed: takerResult.consumed,
+          takerTxId: takerResult.txId,
+          makerAvailableCount: makerAvailable.length,
+          takerRequestedBalance: takerAccount
+            .vault()
+            .getBalance(requested.id())
+            .toString(),
+        };
+      });
+
+      expect(result.funded).toEqual([1, 1]);
+      expect(result.listedCount).toBe(1);
+      expect(result.availableCount).toBe(0);
+      expect(result.takerConsumed).toBe(0);
+      expect(result.takerTxId).toBeNull();
+      expect(result.makerAvailableCount).toBe(0);
+      expect(result.takerRequestedBalance).toBe("1000");
+    }
+  );
+
   mockTest("terminate prevents resource operations", async ({ page }) => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.createMock();

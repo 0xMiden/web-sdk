@@ -109,17 +109,28 @@ export const createMockTransactionResult = (
 });
 
 // Mock InputNoteRecord
+// Script roots the `isStandardPayment` mock in `setup.ts` treats as P2ID and
+// P2IDE; any other root stands for a note such as a public PSWAP order.
+export const MOCK_P2ID_SCRIPT_ROOT = "0xp2idscript";
+export const MOCK_P2IDE_SCRIPT_ROOT = "0xp2idescript";
+export const MOCK_PSWAP_SCRIPT_ROOT = "0xpswapscript";
+
 export const createMockInputNoteRecord = (
   id: string = "0xnote1",
   consumed: boolean = false,
-  noteOverride?: ReturnType<typeof createMockNote>
+  noteOverride?: ReturnType<typeof createMockNote>,
+  scriptRoot: string = MOCK_P2ID_SCRIPT_ROOT
 ) => {
   const note = noteOverride ?? createMockNote(id);
 
   return {
     id: vi.fn(() => ({ toString: () => id, toHex: () => id })),
     state: vi.fn(() => (consumed ? "consumed" : "committed")),
-    details: vi.fn(() => ({})),
+    details: vi.fn(() => ({
+      recipient: () => ({
+        script: () => ({ root: () => ({ toHex: () => scriptRoot }) }),
+      }),
+    })),
     metadata: vi.fn(() => ({})),
     commitment: vi.fn(() => ({ toString: () => "0xcommitment" })),
     inclusionProof: vi.fn(() => null),
@@ -139,9 +150,12 @@ export const createMockConsumableNoteRecord = (
   // The account the record was screened for; hooks keep only entries matching
   // the account they queried.
   accountIdHex: string = "0x1234567890abcdef",
-  consumableNow: boolean = true
+  consumableNow: boolean = true,
+  scriptRoot: string = MOCK_P2ID_SCRIPT_ROOT
 ) => ({
-  inputNoteRecord: vi.fn(() => createMockInputNoteRecord(noteId)),
+  inputNoteRecord: vi.fn(() =>
+    createMockInputNoteRecord(noteId, false, undefined, scriptRoot)
+  ),
   noteConsumability: vi.fn(() => [
     {
       accountId: vi.fn(() => createMockAccountId(accountIdHex)),
