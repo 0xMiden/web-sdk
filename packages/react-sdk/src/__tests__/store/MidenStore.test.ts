@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import {
   useMidenStore,
@@ -472,6 +472,67 @@ describe("MidenStore", () => {
 
       expect(useMidenStore.getState().noteFirstSeen.has("0xnote2")).toBe(true);
     });
+
+    it("should update notes when a note's state changes but its ID does not", () => {
+      const pending = createMockInputNoteRecord("0xnote1", false);
+      useMidenStore.getState().setNotes([pending] as any);
+
+      const consumed = createMockInputNoteRecord("0xnote1", true);
+      useMidenStore.getState().setNotesIfChanged([consumed] as any);
+
+      const stored = useMidenStore.getState().notes;
+      expect(stored).toHaveLength(1);
+      expect(stored[0].isConsumed()).toBe(true);
+    });
+
+    it("should keep firstSeen when only a note's state changes", () => {
+      const pending = createMockInputNoteRecord("0xnote1", false);
+      useMidenStore.getState().setNotes([pending] as any);
+      const seenAt = useMidenStore.getState().noteFirstSeen.get("0xnote1");
+
+      const consumed = createMockInputNoteRecord("0xnote1", true);
+      useMidenStore.getState().setNotesIfChanged([consumed] as any);
+
+      expect(useMidenStore.getState().noteFirstSeen.get("0xnote1")).toBe(
+        seenAt
+      );
+    });
+
+    it("falls back to the note ID when state() throws", () => {
+      const withBrokenState = (id: string) => ({
+        ...createMockInputNoteRecord(id),
+        state: () => {
+          throw new Error("state explosion");
+        },
+      });
+      useMidenStore.getState().setNotes([withBrokenState("0xnote1")] as any);
+      const firstRef = useMidenStore.getState().notes;
+
+      useMidenStore
+        .getState()
+        .setNotesIfChanged([withBrokenState("0xnote1")] as any);
+      expect(useMidenStore.getState().notes).toBe(firstRef);
+
+      useMidenStore
+        .getState()
+        .setNotesIfChanged([withBrokenState("0xnote2")] as any);
+      expect(useMidenStore.getState().notes).not.toBe(firstRef);
+    });
+
+    it("ignores notes whose id() throws when comparing", () => {
+      const note1 = createMockInputNoteRecord("0xnote1");
+      const brokenNote = {
+        id: () => {
+          throw new Error("note id explosion");
+        },
+      };
+      useMidenStore.getState().setNotes([note1] as any);
+      const firstRef = useMidenStore.getState().notes;
+
+      // The id-less record adds no key, so the key sets still match.
+      useMidenStore.getState().setNotesIfChanged([note1, brokenNote] as any);
+      expect(useMidenStore.getState().notes).toBe(firstRef);
+    });
   });
 
   describe("setConsumableNotesIfChanged", () => {
@@ -494,6 +555,23 @@ describe("MidenStore", () => {
       useMidenStore.getState().setConsumableNotesIfChanged([cn1b] as any);
 
       expect(useMidenStore.getState().consumableNotes).toBe(firstRef);
+    });
+
+    it("should update consumable notes when a note's state changes but its ID does not", () => {
+      const cn1 = createMockConsumableNoteRecord("0xcn1");
+      useMidenStore.getState().setConsumableNotes([cn1] as any);
+
+      const cn1Consumed = {
+        ...createMockConsumableNoteRecord("0xcn1"),
+        inputNoteRecord: vi.fn(() => createMockInputNoteRecord("0xcn1", true)),
+      };
+      useMidenStore
+        .getState()
+        .setConsumableNotesIfChanged([cn1Consumed] as any);
+
+      const stored = useMidenStore.getState().consumableNotes;
+      expect(stored).toHaveLength(1);
+      expect(stored[0].inputNoteRecord().isConsumed()).toBe(true);
     });
 
     it("setNotes skips notes whose id() throws (catch arm)", () => {
