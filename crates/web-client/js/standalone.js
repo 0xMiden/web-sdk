@@ -1,4 +1,8 @@
-import { resolveAccountRef, resolveNoteType } from "./utils.js";
+import {
+  isStandardPaymentNote,
+  resolveAccountRef,
+  resolveNoteType,
+} from "./utils.js";
 
 // Module-level WASM reference, set by index.js after initialization
 let _wasm = null;
@@ -71,6 +75,16 @@ export function createP2IDENote(opts) {
     noteType,
     attachment
   );
+}
+
+/**
+ * True when the note runs the standard P2ID or P2IDE payment script.
+ *
+ * @param {ConsumableNoteRecord | InputNoteRecord} record - The note to check.
+ * @returns {boolean} True for a P2ID or P2IDE note.
+ */
+export function isStandardPayment(record) {
+  return isStandardPaymentNote(record, getWasm());
 }
 
 /**

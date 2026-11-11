@@ -137,7 +137,8 @@ a string, so it throws if you hand it the same value.
 const { notes, consumableNotes, noteSummaries, consumableNoteSummaries } = useNotes();
 
 // notes - all input notes for this account
-// consumableNotes - subset that's ready to claim
+// consumableNotes - payments (P2ID and P2IDE notes) ready to claim; other
+//   scripts, such as another trader's public PSWAP order, are left out
 // noteSummaries / consumableNoteSummaries - same lists, projected to UI-friendly summaries
 ```
 

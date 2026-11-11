@@ -128,7 +128,9 @@ const { account, assets, getBalance, isLoading, error, refetch } = useAccount(ac
 ```tsx
 const { notes, consumableNotes, noteSummaries, consumableNoteSummaries, isLoading, error, refetch } = useNotes();
 // notes - InputNoteRecord[] (filtered ONLY by `status`)
-// consumableNotes - ConsumableNoteRecord[] (filtered ONLY by `accountId`)
+// consumableNotes - ConsumableNoteRecord[] (filtered ONLY by `accountId`): payments
+//   (P2ID and P2IDE notes) consumable now; another trader's public PSWAP order and
+//   any other script are left out, because consuming one can spend from the account
 // noteSummaries - NoteSummary[] (id, assets, sender) - also filtered by `sender` and `excludeIds`
 // consumableNoteSummaries - NoteSummary[] - also filtered by `sender` and `excludeIds`
 
@@ -406,6 +408,7 @@ await waitForCommit(result.txId, {  // useSend returns { txId, note }; other hoo
 ### useWaitForNotes()
 ```tsx
 const { waitForConsumableNotes } = useWaitForNotes();
+// Resolves with payments (P2ID and P2IDE notes) only, like useNotes().consumableNotes
 await waitForConsumableNotes({
   accountId: myAccountId,
   minCount: 1,         // Default: 1

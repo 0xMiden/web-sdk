@@ -12,6 +12,7 @@ import {
   createMockAccountId,
   createMockAccountHeader,
   createMockConsumableNoteRecord,
+  MOCK_PSWAP_SCRIPT_ROOT,
 } from "../mocks/miden-sdk";
 
 vi.mock("../../context/MidenProvider", () => ({
@@ -661,6 +662,111 @@ describe("useSessionAccount", () => {
       );
       expect(Date.now() - start).toBeLessThan(1000);
     }, 10000);
+
+    it("funds from the payment only, never another trader's PSWAP order", async () => {
+      // A public PSWAP order is listed for any account holding the asset it
+      // requests; consuming it would fill the order from the session wallet.
+      const mockWallet = createMockAccount({
+        id: vi.fn(() => ({
+          toString: vi.fn(() => "0xsession_wallet"),
+          toHex: vi.fn(() => "0xsession_wallet"),
+          isFaucet: vi.fn(() => false),
+          isRegularAccount: vi.fn(() => true),
+          free: vi.fn(),
+        })),
+      });
+      const order = createMockConsumableNoteRecord(
+        "0xorder",
+        "0xsession_wallet",
+        true,
+        MOCK_PSWAP_SCRIPT_ROOT
+      );
+      const funding = createMockConsumableNoteRecord(
+        "0xfunding",
+        "0xsession_wallet"
+      );
+      const mockClient = createMockWebClient({
+        newWallet: vi.fn().mockResolvedValue(mockWallet),
+        getConsumableNotes: vi.fn().mockResolvedValue([order, funding]),
+        newConsumeTransactionRequest: vi.fn().mockResolvedValue({}),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
+      });
+
+      const { result } = renderHook(() =>
+        useSessionAccount({
+          fund: vi.fn().mockResolvedValue(undefined),
+          assetId: "0xfaucet",
+          pollIntervalMs: 1,
+          maxWaitMs: 1000,
+        })
+      );
+
+      await act(async () => {
+        await result.current.initialize();
+      });
+
+      expect(mockClient.newConsumeTransactionRequest).toHaveBeenCalledTimes(1);
+      const [notes] = (
+        mockClient.newConsumeTransactionRequest as ReturnType<typeof vi.fn>
+      ).mock.calls[0] as [Array<{ id: () => { toString: () => string } }>];
+      expect(notes.map((note) => note.id().toString())).toEqual(["0xfunding"]);
+    });
+
+    it("does not consume when the only note is another trader's PSWAP order", async () => {
+      const mockWallet = createMockAccount({
+        id: vi.fn(() => ({
+          toString: vi.fn(() => "0xorder_only_wallet"),
+          toHex: vi.fn(() => "0xorder_only_wallet"),
+          isFaucet: vi.fn(() => false),
+          isRegularAccount: vi.fn(() => true),
+          free: vi.fn(),
+        })),
+      });
+      const order = createMockConsumableNoteRecord(
+        "0xorder",
+        "0xorder_only_wallet",
+        true,
+        MOCK_PSWAP_SCRIPT_ROOT
+      );
+      const mockClient = createMockWebClient({
+        newWallet: vi.fn().mockResolvedValue(mockWallet),
+        getConsumableNotes: vi.fn().mockResolvedValue([order]),
+        newConsumeTransactionRequest: vi.fn().mockResolvedValue({}),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
+      });
+
+      const { result } = renderHook(() =>
+        useSessionAccount({
+          fund: vi.fn().mockResolvedValue(undefined),
+          assetId: "0xfaucet",
+          pollIntervalMs: 1,
+          maxWaitMs: 5,
+        })
+      );
+
+      await act(async () => {
+        await result.current.initialize().catch(() => {});
+      });
+
+      expect(mockClient.newConsumeTransactionRequest).not.toHaveBeenCalled();
+      expect(mockClient.submitNewTransaction).not.toHaveBeenCalled();
+    });
 
     it("should create wallet and call fund callback", async () => {
       const mockWallet = createMockAccount({

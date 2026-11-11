@@ -1,13 +1,13 @@
 import { useCallback } from "react";
 import { useMiden } from "../context/MidenProvider";
-import { isConsumableNow } from "@miden-sdk/miden-sdk";
+import { isConsumableNow, isStandardPayment } from "@miden-sdk/miden-sdk";
 import type { ConsumableNoteRecord } from "@miden-sdk/miden-sdk";
 import type { WaitForNotesOptions } from "../types";
 import { parseAccountId } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
 
 export interface UseWaitForNotesResult {
-  /** Wait until an account has consumable notes */
+  /** Wait until an account has payments (P2ID or P2IDE notes) it can consume now */
   waitForConsumableNotes: (
     options: WaitForNotesOptions
   ) => Promise<ConsumableNoteRecord[]>;
@@ -49,7 +49,10 @@ export function useWaitForNotes(): UseWaitForNotesResult {
           await runExclusiveSafe(() =>
             (client as unknown as ClientWithNotes).getConsumableNotes(accountId)
           )
-        ).filter((record) => isConsumableNow(record, accountIdHex));
+        ).filter(
+          (record) =>
+            isConsumableNow(record, accountIdHex) && isStandardPayment(record)
+        );
         // A block-locked note is not something to stop waiting for: it cannot
         // be consumed yet, and the caller asked for notes it can use.
         if (consumable.length >= minCount) {
