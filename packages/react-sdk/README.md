@@ -788,7 +788,6 @@ function SendForm() {
 
         // Optional parameters
         noteType: 'private',      // 'private' | 'public' (default: 'private')
-        recallHeight: 1000,       // Sender can reclaim after this block
         attachment: [1n, 2n, 3n], // Arbitrary data payload
         skipSync: false,          // Skip auto-sync before send (default: false)
         sendAll: false,           // Send full balance (ignores amount)

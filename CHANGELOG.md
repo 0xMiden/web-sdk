@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.10 (TBD)
+
+### Fixes
+
+* [FIX][react] `useSend({ returnNote: true })` now rejects `recallHeight` and `timelockHeight` instead of silently ignoring them, and carries a supplied `attachment` on the returned note ([web-sdk#520](https://github.com/0xMiden/web-sdk/pull/520)).
+
 ## 0.17.9 (2026-11-11)
 
 ### Fixes

@@ -269,8 +269,6 @@ await send({
   assetId: faucetId,       // token faucet ID
   amount: 1000n,           // bigint!
   noteType: "private",     // "private" | "public". Default: "private"
-  recallHeight: 100,       // optional: sender can reclaim after this block
-  timelockHeight: 50,      // optional: recipient can consume after this block
   sendAll: true,           // optional: send entire balance (ignores amount)
   attachment: [1n, 2n],    // optional: arbitrary data attached to the note
   returnNote: true,        // optional: populate result.note with the built Note, e.g. for
@@ -282,6 +280,8 @@ await send({
 `amount` is optional in the type (it is ignored when `sendAll: true`) and accepts `bigint | number`, but pass `bigint` - a `number` silently loses precision above `Number.MAX_SAFE_INTEGER`.
 
 **Combining `attachment` with `recallHeight` or `timelockHeight` throws**, before anything is built: `"recallHeight and timelockHeight are not supported when attachment is provided"`. The attachment path constructs the P2ID note by hand and has nowhere to put either height. Pick one or the other.
+
+`returnNote: true` has the same limit: with `recallHeight` or `timelockHeight` it throws `"recallHeight and timelockHeight are not supported when returnNote is true"`, matching `MidenClient.transactions.send({ returnNote })`. An `attachment` is carried on the returned note.
 
 **Private notes need an explicit delivery push, and the hook does it for you.** For `noteType: "private"` `useSend` waits for the transaction to commit and then calls `client.sendPrivateOutputNote(noteId, recipientAddress)` to hand the note details to the recipient over the note-transport layer. That call reads the inclusion proof sync stored on the output note and throws if this client has not synced past the commitment. The same push happens in `useMultiSend` (once per private recipient, after one shared commit wait) and in `useTransaction` when `privateNoteTarget` is set. Without it a private note is **never delivered** - the recipient has no way to learn it exists. A public note needs no such push. If you hand-roll a private send through `useTransaction`, either pass `privateNoteTarget` or make the `sendPrivateOutputNote` call yourself.
 
