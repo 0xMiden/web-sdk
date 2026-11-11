@@ -7,7 +7,11 @@ import {
   useConsumableNotesStore,
   useSyncStateStore,
 } from "../store/MidenStore";
-import { isConsumableNow, NoteFilter } from "@miden-sdk/miden-sdk";
+import {
+  isConsumableNow,
+  isStandardPayment,
+  NoteFilter,
+} from "@miden-sdk/miden-sdk";
 import type { NotesFilter, NotesResult, NoteSummary } from "../types";
 import { getNoteSummary } from "../utils/notes";
 import { useAssetMetadata } from "./useAssetMetadata";
@@ -17,6 +21,11 @@ import { getNoteFilterType } from "../utils/noteFilters";
 
 /**
  * Hook to list notes.
+ *
+ * `consumableNotes` holds only payments (P2ID and P2IDE notes) consumable now,
+ * the set `notes.listAvailable` returns: another trader's public PSWAP order is
+ * consumable by any account holding the asset it requests, and consuming it
+ * would fill the order from this account's vault.
  *
  * @param options - Optional filter options
  *
@@ -94,23 +103,26 @@ export function useNotes(options?: NotesFilter): NotesResult {
       const fetchedNotes = await client.getInputNotes(filter);
       if (!isCurrent()) return;
 
-      // Block-locked notes come back from the screener but cannot be consumed
-      // yet, so they are not "consumable" here either - the same rule
-      // notes.listAvailable and transactions.consumeAll apply.
+      // Payments consumable now: the rule notes.listAvailable and
+      // transactions.consumeAll apply. The screener also returns block-locked
+      // notes, and any note a trial consume succeeds for, such as another
+      // trader's public PSWAP order, which consuming would fill from the
+      // account's vault.
       let fetchedConsumable;
       if (accountKey !== "default") {
         const accountIdObj = parseAccountId(accountKey);
         const accountIdHex = accountIdObj.toString();
         const consumable = await client.getConsumableNotes(accountIdObj);
         if (!isCurrent()) return;
-        fetchedConsumable = consumable.filter((record) =>
-          isConsumableNow(record, accountIdHex)
+        fetchedConsumable = consumable.filter(
+          (record) =>
+            isConsumableNow(record, accountIdHex) && isStandardPayment(record)
         );
       } else {
         const consumable = await client.getConsumableNotes();
         if (!isCurrent()) return;
-        fetchedConsumable = consumable.filter((record) =>
-          isConsumableNow(record)
+        fetchedConsumable = consumable.filter(
+          (record) => isConsumableNow(record) && isStandardPayment(record)
         );
       }
 

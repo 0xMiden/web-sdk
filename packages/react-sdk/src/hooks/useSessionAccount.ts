@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import { captureClientCurrency, useMidenStore } from "../store/MidenStore";
-import { AccountStorageMode, isConsumableNow } from "@miden-sdk/miden-sdk";
+import {
+  AccountStorageMode,
+  isConsumableNow,
+  isStandardPayment,
+} from "@miden-sdk/miden-sdk";
 import type { ConsumableNoteRecord } from "@miden-sdk/miden-sdk";
 import type {
   UseSessionAccountOptions,
@@ -313,10 +317,13 @@ async function waitAndConsume(
     const accountIdHex = accountIdObj.toString();
     // One block-locked note would fail the whole consume transaction, and
     // waiting is the right answer for it, so keep only what is consumable now.
+    // Only a payment funds the wallet: any other script, such as another
+    // trader's public PSWAP order, can spend from it when consumed.
     const records = await client.getConsumableNotes(accountIdObj);
     if (!isCurrent()) return;
-    const consumable = records.filter((record) =>
-      isConsumableNow(record, accountIdHex)
+    const consumable = records.filter(
+      (record) =>
+        isConsumableNow(record, accountIdHex) && isStandardPayment(record)
     );
     if (consumable.length > 0) {
       const notes = consumable.map((c) => c.inputNoteRecord().toNote());
