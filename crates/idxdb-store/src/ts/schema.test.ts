@@ -130,10 +130,12 @@ describe("MidenDatabase migrations", () => {
     const dbV1 = trackDb(new Dexie(name));
     dbV1.version(1).stores(V1_STORES);
     await dbV1.open();
+    // Account-sourced tag: v2 only looks at note-source rows tied to output
+    // notes, and v7 only deletes rows with a sourceNoteId, so this survives.
     await dbV1.table("tags").put({
       tag: "dGFnMQ==",
-      sourceNoteId: "0x" + "aa".repeat(32),
-      sourceAccountId: "",
+      sourceNoteId: "",
+      sourceAccountId: "0xacct",
     });
     dbV1.close();
 
@@ -141,6 +143,7 @@ describe("MidenDatabase migrations", () => {
     await mdb.open("0.15.5");
 
     expect(await mdb.tags.count()).toBe(1);
+    expect((await mdb.tags.toArray())[0].sourceAccountId).toBe("0xacct");
   });
 
   // v3: rekeys the input-note consumption index on detailsCommitment, which is what
@@ -251,6 +254,54 @@ describe("MidenDatabase migrations", () => {
       accountId: "0xacc",
       witness: null,
     });
+  });
+
+  // v7 (#525): prune note-source tags once the note is no longer inclusion-pending
+  // (expected → consumed during catch-up never hit the old committed-only sync prune).
+  it("v7 migration prunes note-source tags for notes that are no longer inclusion-pending", async () => {
+    const name = uniqueDbName();
+    const consumedCommitment = "0x" + "dd".repeat(32);
+    const pendingCommitment = "0x" + "ee".repeat(32);
+
+    const dbV1 = trackDb(new Dexie(name));
+    dbV1.version(1).stores(V1_STORES);
+    await dbV1.open();
+
+    // No matching outputNotes rows, so the v2 upgrade leaves these tags alone.
+    await dbV1.table("inputNotes").bulkPut([
+      {
+        detailsCommitment: consumedCommitment,
+        noteId: "0xconsumed",
+        // ConsumedExternally — not inclusion-pending.
+        stateDiscriminant: 3,
+      },
+      {
+        detailsCommitment: pendingCommitment,
+        noteId: "0xpending",
+        stateDiscriminant: 0,
+      },
+    ]);
+    await dbV1.table("tags").bulkPut([
+      {
+        tag: "dGFnQ29uc3VtZWQ=",
+        sourceNoteId: consumedCommitment,
+        sourceAccountId: "",
+      },
+      {
+        tag: "dGFnUGVuZGluZw==",
+        sourceNoteId: pendingCommitment,
+        sourceAccountId: "",
+      },
+      { tag: "dGFnQWNjdA==", sourceNoteId: "", sourceAccountId: "0xacct" },
+    ]);
+    dbV1.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.18.0")).toBe(true);
+
+    const remaining = await mdb.tags.toArray();
+    const remainingTags = remaining.map((t) => t.tag).sort();
+    expect(remainingTags).toEqual(["dGFnQWNjdA==", "dGFnUGVuZGluZw=="]);
   });
 });
 

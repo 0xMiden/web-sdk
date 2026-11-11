@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+* [FIX][web] IndexedDB sync now drops note-source tags for any input note that is no longer inclusion-pending, matching sqlite-store / rust-sdk#2323. Dexie schema v7 also prunes already-leaked tags left by the old committed-only path ([#525](https://github.com/0xMiden/web-sdk/issues/525)).
+
+
 ## 0.18.0 (2026-11-05)
 
 ### Enhancements

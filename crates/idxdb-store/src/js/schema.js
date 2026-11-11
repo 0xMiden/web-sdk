@@ -221,6 +221,27 @@ export class MidenDatabase {
         this.dexie.version(6).stores({
             [Table.AccountWitnesses]: indexes("&accountId"),
         });
+        // v7 (#525): prune note-source tags whose notes are no longer inclusion-pending.
+        // Sync used to delete note-source tags only for committed input notes, so a
+        // note that went expected → consumed during catch-up (common for fast-filled
+        // PSWAP orders) left its tag row forever and the account kept tracking the
+        // shared pair tag. sqlite-store already deletes once `!is_inclusion_pending`.
+        // This upgrade cleans already-leaked rows; sync now matches that rule going
+        // forward. Keep a tag while an Expected (0) or Unverified (1) input note
+        // still needs it; leave account/subscription sourced tags alone.
+        this.dexie
+            .version(7)
+            .stores({})
+            .upgrade(async (tx) => {
+            const pendingInputNoteCommitments = new Set(await tx.inputNotes
+                .where("stateDiscriminant")
+                .anyOf([0, 1])
+                .primaryKeys());
+            await tx.tags
+                .filter((tag) => !!tag.sourceNoteId &&
+                !pendingInputNoteCommitments.has(tag.sourceNoteId))
+                .delete();
+        });
         this.accountCodes = this.dexie.table(Table.AccountCode);
         this.latestAccountStorages = this.dexie.table(Table.LatestAccountStorage);
         this.historicalAccountStorages = this.dexie.table(Table.HistoricalAccountStorage);
