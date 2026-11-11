@@ -110,6 +110,20 @@ function makeTxRequestBuilder() {
   return self;
 }
 
+const P2ID_ROOT = "0xp2id";
+const P2IDE_ROOT = "0xp2ide";
+const PSWAP_ROOT = "0xpswap";
+
+const scriptWithRoot = (root) => ({ root: () => ({ toHex: () => root }) });
+
+// An InputNoteRecord for `note` whose recipient runs the script with `root`.
+const noteRecord = (note, root = P2ID_ROOT) => ({
+  toNote: vi.fn().mockReturnValue(note),
+  details: () => ({
+    recipient: () => ({ script: () => scriptWithRoot(root) }),
+  }),
+});
+
 function makeWasm(overrides = {}) {
   const networkTarget = {
     targetId: vi.fn(() => "targetIdObj"),
@@ -119,6 +133,10 @@ function makeWasm(overrides = {}) {
     AccountId: {
       fromHex: vi.fn((hex) => ({ hex, toString: () => hex })),
       fromBech32: vi.fn((b) => ({ bech32: b, toString: () => b })),
+    },
+    NoteScript: {
+      p2id: vi.fn(() => scriptWithRoot(P2ID_ROOT)),
+      p2ide: vi.fn(() => scriptWithRoot(P2IDE_ROOT)),
     },
     EthAddress: {
       fromHex: vi.fn((hex) => ({ hex, toHex: () => hex })),
@@ -775,10 +793,8 @@ describe("TransactionsResource", () => {
 
     // A ConsumableNoteRecord: consumable now, or block-locked when a height is
     // given (the screener's `ConsumableAfter`).
-    const consumableNote = (note, afterBlock = null) => ({
-      inputNoteRecord: vi
-        .fn()
-        .mockReturnValue({ toNote: vi.fn().mockReturnValue(note) }),
+    const consumableNote = (note, afterBlock = null, root = P2ID_ROOT) => ({
+      inputNoteRecord: vi.fn().mockReturnValue(noteRecord(note, root)),
       noteConsumability: vi.fn().mockReturnValue([
         {
           accountId: () => ({ toString: () => ACC }),
@@ -793,9 +809,7 @@ describe("TransactionsResource", () => {
     // A never-consumable status reports no unlock block either, so only the
     // status reader keeps it out of the request.
     const neverConsumableNote = (note) => ({
-      inputNoteRecord: vi
-        .fn()
-        .mockReturnValue({ toNote: vi.fn().mockReturnValue(note) }),
+      inputNoteRecord: vi.fn().mockReturnValue(noteRecord(note)),
       noteConsumability: vi.fn().mockReturnValue([
         {
           accountId: () => ({ toString: () => ACC }),
@@ -907,11 +921,43 @@ describe("TransactionsResource", () => {
       expect(result.consumed).toBe(1);
     });
 
+    it("consumes only P2ID and P2IDE payments, never another trader's PSWAP order", async () => {
+      // The screener lists a public PSWAP order for any account holding the
+      // asset it requests. Consuming it fills the order from this vault at the
+      // creator's price, so consumeAll must leave it for an explicit consume.
+      const { resource, inner } = makeResource({
+        getConsumableNotes: vi
+          .fn()
+          .mockResolvedValue([
+            consumableNote("p2id", null, P2ID_ROOT),
+            consumableNote("pswapOrder", null, PSWAP_ROOT),
+            consumableNote("p2ide", null, P2IDE_ROOT),
+          ]),
+      });
+      const result = await resource.consumeAll({ account: ACC });
+      expect(inner.newConsumeTransactionRequest).toHaveBeenCalledWith(
+        ["p2id", "p2ide"],
+        expect.objectContaining({ hex: ACC })
+      );
+      expect(result.consumed).toBe(2);
+      expect(result.remaining).toBe(0);
+    });
+
+    it("submits nothing when the only consumable note is not a payment", async () => {
+      const { resource, inner } = makeResource({
+        getConsumableNotes: vi
+          .fn()
+          .mockResolvedValue([consumableNote("pswapOrder", null, PSWAP_ROOT)]),
+      });
+      const result = await resource.consumeAll({ account: ACC });
+      expect(result).toEqual({ txId: null, consumed: 0, remaining: 0 });
+      expect(inner.newConsumeTransactionRequest).not.toHaveBeenCalled();
+      expect(inner.executeTransaction).not.toHaveBeenCalled();
+    });
+
     it("reads the queried account's entry, not another account's", async () => {
       const mixed = {
-        inputNoteRecord: vi
-          .fn()
-          .mockReturnValue({ toNote: vi.fn().mockReturnValue("mixed") }),
+        inputNoteRecord: vi.fn().mockReturnValue(noteRecord("mixed")),
         noteConsumability: vi.fn().mockReturnValue([
           {
             accountId: () => ({ toString: () => ACC }),
@@ -2156,9 +2202,7 @@ describe("TransactionsResource", () => {
       };
       const tx = { transactionStatus: () => committedStatus };
       const note1 = {
-        inputNoteRecord: vi
-          .fn()
-          .mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }),
+        inputNoteRecord: vi.fn().mockReturnValue(noteRecord("n1")),
         noteConsumability: vi.fn().mockReturnValue([
           {
             accountId: () => ({ toString: () => "0xaccHex" }),
