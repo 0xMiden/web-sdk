@@ -1,10 +1,15 @@
 # Changelog
 
+## 0.17.10 (TBD)
+
+### Fixes
+
+* [FIX][react] `useSend({ returnNote: true })` now rejects `recallHeight` and `timelockHeight` instead of silently ignoring them, and carries a supplied `attachment` on the returned note ([web-sdk#520](https://github.com/0xMiden/web-sdk/pull/520)).
+
 ## 0.17.9 (2026-11-11)
 
 ### Fixes
 
-* [FIX][react] `useSend({ returnNote: true })` no longer drops `recallHeight`, `timelockHeight` and `attachment`. It sent a plain P2ID note without them, so a note meant to be timelocked could be consumed right away. With either height it now throws "recallHeight and timelockHeight are not supported when returnNote is true", like `MidenClient.transactions.send`, and the attachment is put on the returned note ([#520](https://github.com/0xMiden/web-sdk/pull/520)).
 * [FIX][web,react] `notes.listAvailable`, `transactions.consumeAll`, `useNotes().consumableNotes`, `useWaitForNotes()` and the `useSessionAccount` funding poll now take only payments: P2ID and P2IDE notes. The note screener lists every note a trial consume succeeds for, so another trader's public PSWAP order was listed for any account holding the asset it requests, and `consumeAll` filled that order from the account's vault at the other trader's price. `notes.listConsumable` and `getConsumableNotes` still return every note; check the new `isStandardPayment(record)` before consuming from them. To consume a note running another script, pass it to `transactions.consume({ account, notes })` by name ([wallet#2118](https://github.com/0xMiden/wallet/issues/2118), [#537](https://github.com/0xMiden/web-sdk/pull/537)).
 * [FIX][docs] The shipped agent guides no longer call `feeFaucetId` required. The `@miden-sdk/react` and `@miden-sdk/miden-sdk` `AGENTS.md`, the `web-client-usage` skill, the root README and the Turnkey React example said a client or provider created without it fails; since 0.17 the client receives the fee asset with the protocol configuration when it syncs, and the option only sets what `client.feeFaucetId()` reports before the first sync. The guides now say so, including that `feeFaucetId()` rejects before the first sync on a client created without it ([#515](https://github.com/0xMiden/web-sdk/issues/515), [#517](https://github.com/0xMiden/web-sdk/pull/517)).
 * [FIX][web] `MockWebClient` no longer fails `syncState()` intermittently with "chain tip block header 0 does not carry valid validator signatures". Its Web Worker built a second mock chain, with its own validator keys, in the same IndexedDB store, and whichever chain's genesis header was stored first won. The worker now starts from the main thread's mock chain ([#503](https://github.com/0xMiden/web-sdk/pull/503)).
