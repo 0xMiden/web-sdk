@@ -111,7 +111,7 @@ export const createMockTransactionResult = (
 // Mock InputNoteRecord
 // Script roots the `isStandardPayment` mock in `setup.ts` treats as P2ID and
 // P2IDE; any other root stands for a note such as a public PSWAP order.
-export const MOCK_P2ID_SCRIPT_ROOT = "0xp2idscript";
+const MOCK_P2ID_SCRIPT_ROOT = "0xp2idscript";
 export const MOCK_P2IDE_SCRIPT_ROOT = "0xp2idescript";
 export const MOCK_PSWAP_SCRIPT_ROOT = "0xpswapscript";
 
