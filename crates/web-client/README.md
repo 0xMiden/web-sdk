@@ -578,19 +578,27 @@ const txId = await client.transactions.send({
 ### Consume Notes
 
 ```typescript
+import { isStandardPayment } from "@miden-sdk/miden-sdk";
+
 // Sync state to discover new notes
 await client.sync();
 
-// Consume the notes this account can consume right now. Notes that unlock at a
-// later block are left alone, and are counted in neither number below.
+// Consume the payments (P2ID and P2IDE notes) this account can consume right
+// now. Notes that unlock at a later block, and notes running any other script,
+// are left alone and counted in neither number below.
 const result = await client.transactions.consumeAll({ account: wallet });
 console.log(`Consumed ${result.consumed} notes, ${result.remaining} remaining`);
 
-// `remaining === 0` therefore means "nothing consumable now", not "no notes".
-// To see block-locked notes too, with their unlock block:
+// `remaining === 0` therefore means "no payment consumable now", not "no notes".
+// To see block-locked notes and other scripts too, with their unlock block:
 const walletId = wallet.id().toString();
 const all = await client.notes.listConsumable({ account: wallet });
 for (const record of all) {
+  // Not every note here is a payment. Another trader's public PSWAP order is
+  // listed for any account holding the asset it requests, and consuming it
+  // fills the order from this account's vault. Consume such a note only on
+  // purpose, by name, with `transactions.consume`.
+  if (!isStandardPayment(record)) continue;
   // Match the entry to the account you asked about rather than taking the
   // first: a record can carry one status per account.
   const entry = record

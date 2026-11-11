@@ -6,6 +6,7 @@ import { useMidenStore } from "../../store/MidenStore";
 import {
   createMockConsumableNoteRecord,
   createMockWebClient,
+  MOCK_PSWAP_SCRIPT_ROOT,
 } from "../mocks/miden-sdk";
 
 // Mock useMiden
@@ -147,6 +148,41 @@ describe("useWaitForNotes", () => {
     ).rejects.toThrow("Timeout waiting for consumable notes");
     expect(Date.now() - start).toBeLessThan(300);
   }, 10000);
+
+  it("does not count another trader's PSWAP order as a note to consume", async () => {
+    // A public PSWAP order is listed for any account holding the asset it
+    // requests. It is not a payment, so the wait returns only the P2ID note.
+    const order = createMockConsumableNoteRecord(
+      "0xorder",
+      "0xaccount",
+      true,
+      MOCK_PSWAP_SCRIPT_ROOT
+    );
+    const payment = createMockConsumableNoteRecord("0xpayment", "0xaccount");
+    const mockClient = createMockWebClient({
+      syncState: vi.fn().mockResolvedValue({}),
+      getConsumableNotes: vi
+        .fn()
+        .mockResolvedValueOnce([order])
+        .mockResolvedValueOnce([order, payment]),
+    });
+
+    mockUseMiden.mockReturnValue({
+      client: mockClient,
+      isReady: true,
+    });
+
+    const { result } = renderHook(() => useWaitForNotes());
+
+    const notes = await result.current.waitForConsumableNotes({
+      accountId: "0xaccount",
+      timeoutMs: 20,
+      intervalMs: 1,
+    });
+
+    expect(mockClient.getConsumableNotes).toHaveBeenCalledTimes(2);
+    expect(notes).toEqual([payment]);
+  });
 
   it("should resolve when consumable notes are available", async () => {
     const note = createMockConsumableNoteRecord("0xnote1", "0xaccount");
