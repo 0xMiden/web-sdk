@@ -869,8 +869,8 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
             decimals: 8,
             maxSupply: 10_000_000n,
           });
-        const offered = await faucet("OFR");
-        const requested = await faucet("REQ");
+        const offered = await faucet("SELL");
+        const requested = await faucet("BUY");
 
         await client.transactions.mint({
           account: offered,
