@@ -1,5 +1,6 @@
 import {
   isConsumableNow,
+  isStandardPaymentNote,
   resolveAccountRef,
   resolveNoteType,
   resolveTransactionIdHex,
@@ -330,12 +331,15 @@ export class TransactionsResource {
     // Save hex so we can reconstruct for submitNewTransaction.
     const accountId = resolveAccountRef(opts.account, wasm);
     const accountIdHex = accountId.toString();
-    // Block-locked notes cannot be consumed yet and would fail the whole
-    // transaction, so they are not "available" here either (notes.listAvailable
-    // applies the same rule).
+    // The set notes.listAvailable returns. A block-locked note would fail the
+    // whole transaction. Any script but P2ID or P2IDE can spend from the
+    // account: consuming another trader's public PSWAP order fills it from this
+    // vault, so such a note is consumed only when the caller names it.
     const consumable = (
       (await this.#inner.getConsumableNotes(accountId)) ?? []
-    ).filter((c) => isConsumableNow(c, accountIdHex));
+    ).filter(
+      (c) => isConsumableNow(c, accountIdHex) && isStandardPaymentNote(c, wasm)
+    );
 
     if (consumable.length === 0) {
       return { txId: null, consumed: 0, remaining: 0 };
