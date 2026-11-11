@@ -162,6 +162,28 @@ vi.mock("@miden-sdk/miden-sdk", () => {
               nc.accountId().toString() === accountIdHex) &&
             nc.consumptionStatus().isConsumableNow()
         ),
+    // The real rule over the roots `MOCK_P2ID_SCRIPT_ROOT` and
+    // `MOCK_P2IDE_SCRIPT_ROOT` in `mocks/miden-sdk.ts`, which this hoisted
+    // factory cannot import.
+    isStandardPayment: (record: { inputNoteRecord?: () => unknown }) => {
+      try {
+        const input = (
+          typeof record.inputNoteRecord === "function"
+            ? record.inputNoteRecord()
+            : record
+        ) as {
+          details: () => {
+            recipient: () => {
+              script: () => { root: () => { toHex: () => string } };
+            };
+          };
+        };
+        const root = input.details().recipient().script().root().toHex();
+        return root === "0xp2idscript" || root === "0xp2idescript";
+      } catch {
+        return false;
+      }
+    },
     WebClient,
     WasmWebClient: WebClient,
     AccountId: {

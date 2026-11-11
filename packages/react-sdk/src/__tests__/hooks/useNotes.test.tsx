@@ -8,6 +8,8 @@ import {
   createMockInputNoteRecord,
   createMockConsumableNoteRecord,
   createMockAccountHeader,
+  MOCK_P2IDE_SCRIPT_ROOT,
+  MOCK_PSWAP_SCRIPT_ROOT,
 } from "../mocks/miden-sdk";
 
 // Mock useMiden
@@ -218,6 +220,82 @@ describe("useNotes", () => {
         n.inputNoteRecord().id()?.toString()
       );
       expect(ids).toEqual(["0xready"]);
+    });
+
+    it("keeps only P2ID and P2IDE payments in consumableNotes", async () => {
+      // The screener lists another trader's public PSWAP order for any account
+      // holding the asset it requests; consuming it would fill the order from
+      // this account's vault, so it is not offered as a note to claim.
+      const mockConsumable = [
+        createMockConsumableNoteRecord("0xp2id", "0xaccount123"),
+        createMockConsumableNoteRecord(
+          "0xp2ide",
+          "0xaccount123",
+          true,
+          MOCK_P2IDE_SCRIPT_ROOT
+        ),
+        createMockConsumableNoteRecord(
+          "0xorder",
+          "0xaccount123",
+          true,
+          MOCK_PSWAP_SCRIPT_ROOT
+        ),
+      ];
+      const mockClient = createMockWebClient({
+        getInputNotes: vi.fn().mockResolvedValue([]),
+        getConsumableNotes: vi.fn().mockResolvedValue(mockConsumable),
+      });
+
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as any);
+      });
+
+      const { result } = renderHook(() =>
+        useNotes({ accountId: "0xaccount123" })
+      );
+
+      await waitFor(() => {
+        expect(result.current.consumableNotes.length).toBe(2);
+      });
+      const ids = result.current.consumableNotes.map((n) =>
+        n.inputNoteRecord().id()?.toString()
+      );
+      expect(ids).toEqual(["0xp2id", "0xp2ide"]);
+      expect(
+        result.current.consumableNoteSummaries.map((summary) => summary.id)
+      ).toEqual(["0xp2id", "0xp2ide"]);
+    });
+
+    it("keeps only payments when listing for every account", async () => {
+      const mockClient = createMockWebClient({
+        getInputNotes: vi.fn().mockResolvedValue([]),
+        getConsumableNotes: vi
+          .fn()
+          .mockResolvedValue([
+            createMockConsumableNoteRecord("0xp2id"),
+            createMockConsumableNoteRecord(
+              "0xorder",
+              undefined,
+              true,
+              MOCK_PSWAP_SCRIPT_ROOT
+            ),
+          ]),
+      });
+
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as any);
+      });
+
+      const { result } = renderHook(() => useNotes());
+
+      await waitFor(() => {
+        expect(result.current.consumableNotes.length).toBe(1);
+      });
+      expect(
+        result.current.consumableNotes[0].inputNoteRecord().id()?.toString()
+      ).toBe("0xp2id");
     });
 
     it("should refetch notes after sync updates", async () => {
