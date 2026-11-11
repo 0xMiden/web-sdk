@@ -517,10 +517,11 @@ What happens if you skip it:
 - Multisig / smart multisig / guarded multisig: `FeeConversionInfoRequired`,
   naming the component.
 - A custom auth procedure that reads conversion info: the transaction aborts in
-  the VM with `ERR_FEE_CONVERSION_INFO_MISSING`. Attach the commitment yourself
-  with `TransactionRequestBuilder.withAuthArg` plus `extendAdviceMap`.
+  the VM with `ERR_FEE_CONVERSION_INFO_MISSING`. Attach the auth args yourself
+  with `TransactionRequestBuilder.withAuthArgs`, which sets the commitment and
+  adds its advice-map preimage.
 
-`withAuthArg` and `withFeeConversionSalt` are mutually exclusive - each setter
+`withAuthArgs` and `withFeeConversionSalt` are mutually exclusive - each setter
 clears the other, so whichever is called last wins. Never call either on a builder from `feeAwareTransactionRequestBuilder` for a multisig: that builder already carries the three-word auth args, and either setter discards them, so the transaction aborts in the auth procedure. Pass `feeConversionSalt` to `feeAwareTransactionRequestBuilder` instead - and build a fresh `Word` for every call, because the parameter is moved across the WASM boundary and a spent handle arrives as "no salt given".
 
 ## Transactions
@@ -664,15 +665,23 @@ await client.transactions.consume({
   waitForConfirmation: true,
 });
 
-// Drain everything consumable for the account
+// Drain the payments (P2ID and P2IDE notes) consumable for the account
 const { txId, consumed, remaining } = await client.transactions.consumeAll({
   account: wallet,
   maxNotes: 50, // optional cap
 });
 ```
 
-`ConsumeAllResult.txId` is `TransactionId | null`: when the account has nothing
-consumable, `consumeAll` submits no transaction and resolves to
+`consumeAll` and `notes.listAvailable` take only P2ID and P2IDE notes. Any
+other script can spend from the consuming account: the screener lists another
+trader's public PSWAP order for every account holding the asset it requests,
+and consuming it fills the order from that vault. `notes.listConsumable` and the
+low-level `getConsumableNotes` list those notes too, so filter with
+`isStandardPayment(record)` before consuming from them, and consume any other
+script only by name with `transactions.consume`.
+
+`ConsumeAllResult.txId` is `TransactionId | null`: when the account has no
+payment consumable, `consumeAll` submits no transaction and resolves to
 `{ txId: null, consumed: 0, remaining: 0 }`. Check `txId` before dereferencing
 it. (With `maxNotes: 0` it also returns a null `txId`, but `remaining` then
 carries the full count.)
@@ -973,7 +982,7 @@ await client.notes.list({ status: "committed" }); // "consumed" | "committed" | 
 await client.notes.list({ scriptRoots: [noteScript.root()] }); // hex strings or Word instances
 await client.notes.get(noteId); // single record
 await client.notes.listSent(); // output notes
-await client.notes.listAvailable({ account: wallet }); // consumable for an account
+await client.notes.listAvailable({ account: wallet }); // payments the account can consume now
 
 // Import/export
 const idHex = await client.notes.import(noteFile); // hex string, NOT a NoteId

@@ -1169,11 +1169,7 @@ async fn fee_aware_builder_with(
     // loads foreign accounts (the fee faucet among them) at a block the node prunes after ~50
     // blocks.
     let auth_args = multisig_auth_args(client, overrides).await?;
-    let commitment = auth_args.to_commitment();
-    builder = builder
-        .auth_arg(commitment)
-        .extend_advice_map([(commitment, auth_args.to_elements())])
-        .block_numbers([auth_args.bound_block_num()]);
+    builder = builder.auth_args(&auth_args).block_numbers([auth_args.bound_block_num()]);
     Ok(builder)
 }
 

@@ -449,7 +449,7 @@ test.describe("chain anchor", () => {
   test("a multisig proposal reproduces its summary at a later tip without an anchor", async ({
     run,
   }) => {
-    const result = await run(async ({ client, sdk, helpers }) => {
+    const result = await run(async ({ client, helpers }) => {
       const { multisigAccountId } =
         await helpers.setupMultisigWithConsumableNote();
 
@@ -477,20 +477,6 @@ test.describe("chain anchor", () => {
         lateAnchor
       );
 
-      // The same auth args without the declared block: the kernel cannot
-      // authenticate the bound block at the tip, which is what the declaration
-      // on the fee-aware request fixes.
-      const undeclared = new sdk.TransactionRequestBuilder()
-        .withAuthArg(request.authArg())
-        .extendAdviceMap(request.adviceMap())
-        .build();
-      let undeclaredError = null;
-      try {
-        await client.executeForSummary(multisigAccountId, undeclared);
-      } catch (err) {
-        undeclaredError = String(err?.message ?? err);
-      }
-
       return {
         boundBlock,
         declared: Array.from(request.blockNumbers()),
@@ -499,8 +485,6 @@ test.describe("chain anchor", () => {
         original: original.toCommitment().toHex(),
         atTip: atTip.toCommitment().toHex(),
         atLateAnchor: atLateAnchor.toCommitment().toHex(),
-        undeclaredBlocks: Array.from(undeclared.blockNumbers()),
-        undeclaredError,
       };
     });
 
@@ -509,12 +493,6 @@ test.describe("chain anchor", () => {
     expect(result.lateAnchorBlock).toBe(result.tip);
     expect(result.atTip).toBe(result.original);
     expect(result.atLateAnchor).toBe(result.original);
-    // The control differs from the request only by the declaration, and fails
-    // for exactly that reason.
-    expect(result.undeclaredBlocks).toEqual([]);
-    expect(result.undeclaredError).toContain(
-      "failed to lookup value in Merkle store"
-    );
   });
   // The node-backed counterpart of the test above, and the regression for
   // web-sdk#432. A node serves account state only ~50 blocks back, so a

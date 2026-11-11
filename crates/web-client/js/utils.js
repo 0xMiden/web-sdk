@@ -84,6 +84,42 @@ export function isConsumableNow(record, accountIdHex) {
     );
 }
 
+const standardPaymentRoots = new WeakMap();
+
+/**
+ * True when `record`'s note runs the standard P2ID or P2IDE script.
+ *
+ * Consuming such a note only moves its assets into the consuming account, and
+ * the screener reports it consumable only for the account it pays, or for its
+ * sender once a P2IDE note can be reclaimed. Any other script can also spend
+ * from the consumer: anyone holding the requested asset can consume another
+ * trader's public PSWAP order, and doing so fills it from their vault at the
+ * creator's price. A record whose script cannot be read is not a payment.
+ *
+ * @param {ConsumableNoteRecord | InputNoteRecord} record - The note to check.
+ * @param {object} wasm - The WASM module.
+ * @returns {boolean} True for a P2ID or P2IDE note.
+ */
+export function isStandardPaymentNote(record, wasm) {
+  let roots = standardPaymentRoots.get(wasm);
+  if (!roots) {
+    roots = new Set([
+      wasm.NoteScript.p2id().root().toHex(),
+      wasm.NoteScript.p2ide().root().toHex(),
+    ]);
+    standardPaymentRoots.set(wasm, roots);
+  }
+  try {
+    const input =
+      typeof record.inputNoteRecord === "function"
+        ? record.inputNoteRecord()
+        : record;
+    return roots.has(input.details().recipient().script().root().toHex());
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Resolves a NoteVisibility string to a WASM NoteType value.
  *

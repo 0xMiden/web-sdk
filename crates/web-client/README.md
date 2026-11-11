@@ -578,19 +578,27 @@ const txId = await client.transactions.send({
 ### Consume Notes
 
 ```typescript
+import { isStandardPayment } from "@miden-sdk/miden-sdk";
+
 // Sync state to discover new notes
 await client.sync();
 
-// Consume the notes this account can consume right now. Notes that unlock at a
-// later block are left alone, and are counted in neither number below.
+// Consume the payments (P2ID and P2IDE notes) this account can consume right
+// now. Notes that unlock at a later block, and notes running any other script,
+// are left alone and counted in neither number below.
 const result = await client.transactions.consumeAll({ account: wallet });
 console.log(`Consumed ${result.consumed} notes, ${result.remaining} remaining`);
 
-// `remaining === 0` therefore means "nothing consumable now", not "no notes".
-// To see block-locked notes too, with their unlock block:
+// `remaining === 0` therefore means "no payment consumable now", not "no notes".
+// To see block-locked notes and other scripts too, with their unlock block:
 const walletId = wallet.id().toString();
 const all = await client.notes.listConsumable({ account: wallet });
 for (const record of all) {
+  // Not every note here is a payment. Another trader's public PSWAP order is
+  // listed for any account holding the asset it requests, and consuming it
+  // fills the order from this account's vault. Consume such a note only on
+  // purpose, by name, with `transactions.consume`.
+  if (!isStandardPayment(record)) continue;
   // Match the entry to the account you asked about rather than taking the
   // first: a record can carry one status per account.
   const entry = record
@@ -736,7 +744,7 @@ The argument is the account that will **execute** the request — the one whose 
 
 To set the salt yourself — which co-signers must do when they need to agree on it without transporting the proposer's bytes — pass it to `feeAwareTransactionRequestBuilder`, together with the block the summary binds: `client.feeAwareTransactionRequestBuilder(multisig, { feeConversionSalt: salt, boundBlockNum: block })`. Both are bound by the summary, so two parties who disagree on either can never derive the same one. Each call consumes the `Word`: it is moved across the WASM boundary, so a second build needs a freshly constructed one, and a spent handle arrives as "no salt given" rather than as an error. A co-signer who has the proposer's serialized request needs neither — it carries the auth argument and its advice-map preimage.
 
-Do **not** reach for `builder.withFeeConversionSalt(salt)` on that builder. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive, and miden-client enforces that by having each setter clear the other, so calling it discards the three-word multisig auth args the builder already carries and the transaction aborts in the auth procedure. On a bare `new TransactionRequestBuilder()` the setter is still a declaration rather than a commitment — `request.feeConversionSalt()` reports it back, `request.authArg()` stays empty, and it survives serialization — which is what a single-sig or custom-auth caller wants. For a custom auth procedure that reads `AUTH_ARGS` as conversion info, compute the commitment yourself and attach it with `withAuthArg` plus `extendAdviceMap` — setting an auth argument opts the request out of the client's fee machinery, which commits only when the request carries none. Declaring a salt against such an account instead is rejected with `FeeConversionInfoUnsupported`.
+Do **not** reach for `builder.withFeeConversionSalt(salt)` on that builder. `withAuthArgs` and `withFeeConversionSalt` are mutually exclusive, and miden-client enforces that by having each setter clear the other, so calling it discards the three-word multisig auth args the builder already carries and the transaction aborts in the auth procedure. On a bare `new TransactionRequestBuilder()` the setter is still a declaration rather than a commitment — `request.feeConversionSalt()` reports it back, `request.authArg()` stays empty, and it survives serialization — which is what a single-sig or custom-auth caller wants. For a custom auth procedure that reads `AUTH_ARGS` as conversion info, attach the auth args yourself with `withAuthArgs`, which sets the commitment and adds its advice-map preimage — setting an auth argument opts the request out of the client's fee machinery, which commits only when the request carries none. Declaring a salt against such an account instead is rejected with `FeeConversionInfoUnsupported`.
 
 One path the SDK cannot declare a salt on: `client.pswap.cancelByOrder` builds its request inside miden-client, so there is no builder. An ordinary creator has its conversion info committed and pays normally; a multisig creator fails with `FeeConversionInfoRequired`, so cancel by note with `client.transactions.pswapCancel` there. See the [transactions guide](https://docs.miden.xyz/builder/tools/clients/web-client/library/transactions) for the full narrative.
 

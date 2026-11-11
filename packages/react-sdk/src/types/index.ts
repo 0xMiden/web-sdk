@@ -252,6 +252,11 @@ export interface NotesFilter {
 
 export interface NotesResult {
   notes: InputNoteRecord[];
+  /**
+   * Payments (P2ID and P2IDE notes) consumable now. Other scripts, such as
+   * another trader's public PSWAP order, are left out: consuming one can spend
+   * from the account.
+   */
   consumableNotes: ConsumableNoteRecord[];
   noteSummaries: NoteSummary[];
   consumableNoteSummaries: NoteSummary[];
