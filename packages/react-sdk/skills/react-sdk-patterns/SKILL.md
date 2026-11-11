@@ -267,8 +267,6 @@ await send({
   assetId: faucetId,       // token faucet ID
   amount: 1000n,           // bigint!
   noteType: "private",     // "private" | "public". Default: "private"
-  recallHeight: 100,       // optional: sender can reclaim after this block
-  timelockHeight: 50,      // optional: recipient can consume after this block
   sendAll: true,           // optional: send entire balance (ignores amount)
   attachment: [1n, 2n],    // optional: arbitrary data attached to the note
   returnNote: true,        // optional: populate result.note with the built Note, e.g. for
