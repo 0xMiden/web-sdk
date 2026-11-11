@@ -12,6 +12,11 @@ import {
   createMockNote,
   createMockChainAnchor,
 } from "../mocks/miden-sdk";
+import {
+  createMoveAwareTransactionId,
+  installMoveAwareTransactionMocks,
+  moveAwareGetTransactions,
+} from "../mocks/moveAware";
 
 // Mock useMiden
 vi.mock("../../context/MidenProvider", () => ({
@@ -489,6 +494,62 @@ describe("useTransaction", () => {
       expect(mockClient.sendPrivateOutputNote).toHaveBeenCalledTimes(1);
       expect(result.current.stage).toBe("complete");
       expect(mockSync).toHaveBeenCalled();
+    });
+
+    it("returns the transaction id after a commit wait of several polls (by-value handles)", async () => {
+      const restore = installMoveAwareTransactionMocks();
+      try {
+        const mockTxResult = {
+          ...createMockTxResultWithPrivateNotes(),
+          // Like the binding: every id() call hands out a new handle.
+          id: vi.fn(() => createMoveAwareTransactionId("0xtx_private")),
+        };
+        const committedOnPoll = [false, true];
+        let poll = 0;
+        const mockClient = createMockWebClient({
+          executeTransaction: vi.fn().mockResolvedValue(mockTxResult),
+          proveTransaction: vi.fn().mockResolvedValue({}),
+          submitProvenTransaction: vi.fn().mockResolvedValue(100),
+          applyTransaction: vi.fn().mockResolvedValue({}),
+          getTransactions: moveAwareGetTransactions(() => {
+            const committed = committedOnPoll[poll++] ?? true;
+            return [
+              {
+                id: () => ({ toHex: () => "0xtx_private" }),
+                transactionStatus: () => ({
+                  isPending: () => !committed,
+                  isCommitted: () => committed,
+                  isDiscarded: () => false,
+                }),
+              },
+            ];
+          }),
+          sendPrivateOutputNote: vi.fn().mockResolvedValue(undefined),
+        });
+
+        mockUseMiden.mockReturnValue({
+          client: mockClient,
+          isReady: true,
+          sync: vi.fn().mockResolvedValue(undefined),
+        });
+
+        const { result } = renderHook(() => useTransaction());
+
+        let txResult: any;
+        await act(async () => {
+          txResult = await result.current.execute({
+            accountId: "0xaccount",
+            request: createMockTransactionRequest(),
+            privateNoteTarget: "0xrecipient",
+          });
+        });
+
+        expect(txResult.transactionId).toBe("0xtx_private");
+        expect(mockClient.getTransactions).toHaveBeenCalledTimes(2);
+        expect(mockClient.sendPrivateOutputNote).toHaveBeenCalledTimes(1);
+      } finally {
+        restore();
+      }
     });
 
     it("should not deliver notes when there are no private output notes", async () => {

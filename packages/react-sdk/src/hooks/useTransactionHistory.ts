@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { TransactionFilter } from "@miden-sdk/miden-sdk";
-import type { TransactionId, TransactionRecord } from "@miden-sdk/miden-sdk";
+import { TransactionFilter, TransactionId } from "@miden-sdk/miden-sdk";
+import type { TransactionRecord } from "@miden-sdk/miden-sdk";
 import { useMiden } from "../context/MidenProvider";
 import { useMidenStore, useSyncStateStore } from "../store/MidenStore";
 import { captureClientReadGuard } from "../store/clientReadGuard";
@@ -140,22 +140,32 @@ type FilterBuildResult = {
   localFilterHexes?: string[];
 };
 
+// `getTransactions` takes its filter by value and `TransactionFilter.ids` takes
+// its ids by value, so every refetch builds a fresh filter: a handle that has
+// been through one query is gone, and reusing it fails with
+// `null pointer passed to rust`.
 function buildFilter(
   filter: TransactionHistoryOptions["filter"],
   ids: Array<string | TransactionId> | null,
   idsHex: string[] | null
 ): FilterBuildResult {
   if (filter) {
-    return { filter };
+    return { filter: typeof filter === "function" ? filter() : filter };
   }
 
   if (!ids || ids.length === 0) {
     return { filter: TransactionFilter.all() };
   }
 
+  // Build the ids from the hex snapshot rather than handing on the caller's
+  // handles, which the first query would consume.
   const allTransactionIds = ids.every((id) => typeof id !== "string");
   if (allTransactionIds) {
-    return { filter: TransactionFilter.ids(ids as TransactionId[]) };
+    return {
+      filter: TransactionFilter.ids(
+        (idsHex ?? []).map((hex) => TransactionId.fromHex(hex))
+      ),
+    };
   }
 
   return {

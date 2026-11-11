@@ -178,11 +178,25 @@ const { records, record, status, isLoading, error, refetch } = useTransactionHis
 //   id      - string | TransactionId. Populates `record` and `status`.
 //   ids     - Array<string | TransactionId>. `record` and `status` are populated only
 //             when exactly one id was supplied; with several they stay null.
-//   filter  - a raw TransactionFilter. It OVERRIDES id/ids entirely: when `filter`
-//             is set the hook queries with it and applies no local id narrowing.
+//   filter  - () => TransactionFilter (preferred) or a TransactionFilter. It OVERRIDES
+//             id/ids entirely: when `filter` is set the hook queries with it and
+//             applies no local id narrowing.
 //   refreshOnSync - re-fetch after every provider sync. Default: true
 //                   (only `refreshOnSync: false` turns it off).
 ```
+
+Pass `filter` as a factory: `getTransactions` takes its filter by value, so a `TransactionFilter` instance is consumed by the first fetch and the next refetch (after a sync, by default) fails with `null pointer passed to rust`. The factory is called for every fetch. Keep it referentially stable - define it at module scope or wrap it in `useCallback` - because a new `filter` value triggers a refetch:
+
+```tsx
+const uncommitted = () => TransactionFilter.uncommitted();
+
+function PendingTxs() {
+  const { records } = useTransactionHistory({ filter: uncommitted });
+  // ...
+}
+```
+
+`id` / `ids` need no such care: the hook reads each `TransactionId`'s hex once and builds fresh handles for every fetch, so the caller's handles stay usable.
 
 A note on `ids`: the hook uses `TransactionFilter.ids(...)` only when every entry is a real `TransactionId`. A list containing any hex string falls back to `TransactionFilter.all()` plus a local hex comparison, so it fetches everything and filters in JS.
 

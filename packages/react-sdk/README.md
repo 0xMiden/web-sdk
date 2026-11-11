@@ -957,8 +957,11 @@ function WaitForTx({ txId }: { txId: string }) {
 #### `useTransactionHistory()`
 
 Query transaction history and get live state for a single transaction. You can
-pass a single ID, multiple IDs, or a custom `TransactionFilter`. Results refresh
-after each successful sync by default.
+pass a single ID, multiple IDs, or a custom filter. Results refresh
+after each successful sync by default. Pass a custom filter as a factory, e.g.
+`filter: () => TransactionFilter.uncommitted()` defined at module scope: a
+`TransactionFilter` instance is consumed by the first fetch, so a refetch with
+it fails.
 It hides the filter plumbing and provides a single-record convenience view.
 The hook keeps lists fresh on sync so you don't wire manual refreshes.
 
