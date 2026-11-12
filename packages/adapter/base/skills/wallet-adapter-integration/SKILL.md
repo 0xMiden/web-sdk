@@ -190,12 +190,10 @@ signal. The wallet signs `"word"` and a Blind or Arbitrary `"signingInputs"`
 as `domainSeparatedSignCommitment(data, kind)`, and a transaction summary as
 its own commitment. Current wallets verify with
 `publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)`.
-Older wallets signed the raw value. A dApp that also accepts wallets
-released before this scheme can optionally check that value: for `"word"`,
-`publicKey.verify(Word.deserialize(data), signature)`; for `"signingInputs"`,
-`publicKey.verifyData(SigningInputs.deserialize(data), signature)`. A
-transaction summary's commitment is the same in both generations, so the
-current check already covers it.
+Wallets released before this scheme signed the raw value, so their `"word"`,
+Blind and Arbitrary signatures do not verify against it. A transaction
+summary's commitment is the same in both generations, so the current check
+already covers it.
 
 Everything the wallet returns about private state is gated by the
 `AllowedPrivateData` bitmask you connected with: `None`, `Assets`, `Notes`,

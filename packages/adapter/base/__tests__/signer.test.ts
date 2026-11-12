@@ -39,10 +39,17 @@ describe("signBytes verification docs", () => {
       expect(text).toContain(
         "publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)"
       );
-      expect(text).toContain("Word.deserialize");
-      expect(text).toContain("SigningInputs.deserialize");
-      expect(text).toContain("verifyData");
-      expect(text).not.toContain("when the wallet is known to be older");
+      expect(text).toContain("its own commitment");
+      expect(text).toContain("do not verify against it");
+      for (const recipe of [
+        "Word.deserialize",
+        "SigningInputs.deserialize",
+        "verifyData",
+        "optionally check",
+        "when the wallet is known to be older",
+      ]) {
+        expect(text).not.toContain(recipe);
+      }
     });
   }
 });

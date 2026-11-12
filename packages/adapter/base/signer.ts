@@ -52,11 +52,8 @@ export interface MessageSignerWalletAdapterProps<
    * The result carries no scheme signal: the adapter returns only the
    * signature. Current wallets:
    * `publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)`.
-   * Older wallets signed the raw value. A dApp that also accepts wallets
-   * released before this scheme can optionally check that value: for
-   * `"word"`, `publicKey.verify(Word.deserialize(data), signature)`; for
-   * `"signingInputs"`,
-   * `publicKey.verifyData(SigningInputs.deserialize(data), signature)`. A
+   * Wallets released before this scheme signed the raw value, so their
+   * `"word"`, Blind and Arbitrary signatures do not verify against it. A
    * transaction summary's commitment is the same in both generations, so the
    * current check already covers it.
    */
