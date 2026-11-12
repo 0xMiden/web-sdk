@@ -41,6 +41,19 @@ export interface MessageSignerWalletAdapterProps<
     noteFilterType: NoteFilterTypes,
     noteIds?: string[]
   ): Promise<InputNoteDetails[]>;
+  /**
+   * Signs `data` with the connected account's key and returns the signature.
+   *
+   * Per kind, the wallet signs: `"word"` and a `"signingInputs"` Blind or
+   * Arbitrary payload, the domain-separated commitment
+   * `domainSeparatedSignCommitment(data, kind)` from `@miden-sdk/miden-sdk`;
+   * a `"signingInputs"` transaction summary, its own commitment.
+   *
+   * To verify a domain-separated signature, check
+   * `publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)`.
+   * Wallets older than this scheme signed the raw value, so verify against
+   * the raw value when the wallet is known to be older.
+   */
   signBytes(data: Uint8Array, kind: SignKind): Promise<Uint8Array>;
   importPrivateNote(note: Uint8Array): Promise<string>;
   requestConsumableNotes(): Promise<InputNoteDetails[]>;

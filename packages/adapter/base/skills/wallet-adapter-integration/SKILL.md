@@ -178,10 +178,10 @@ with `WalletNotConnectedError` while disconnected. Always guard.
 | `requestTransaction(tx)`                | transaction id            | A `MidenTransaction` envelope. Dispatches by `type` to the send and consume endpoints; anything else goes to the wallet's generalized endpoint. |
 | `waitForTransaction(txId, timeout?)`    | `{ txHash, outputNotes }` | `outputNotes` are `Note` objects from `@miden-sdk/miden-sdk`.                                                                                   |
 | `requestAssets()`                       | `{ faucetId, amount }[]`  | `amount` is a string.                                                                                                                           |
-| `requestConsumableNotes()`              | `InputNoteDetails[]`      | From the wallet's store.                                                                                                                        |
+| `requestConsumableNotes()`              | `InputNoteDetails[]`      | From the wallet's store. `standardPayment` is true only for a P2ID or P2IDE payment; check it before treating a note as incoming funds.        |
 | `requestPrivateNotes(filter, noteIds?)` | `InputNoteDetails[]`      | `filter` is a `NoteFilterTypes` from `@miden-sdk/miden-sdk`.                                                                                    |
 | `importPrivateNote(bytes)`              | note id                   | `bytes` is a serialized note.                                                                                                                   |
-| `signBytes(data, kind)`                 | `Uint8Array`              | `kind` is `"word"` or `"signingInputs"`.                                                                                                        |
+| `signBytes(data, kind)`                 | `Uint8Array`              | `kind` is `"word"` or `"signingInputs"`. Verify with `publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)`; a transaction summary verifies as its own commitment. |
 | `createAccount(params?)`                | account id                | Only on `MidenFiSignerProvider`'s context. See the traps.                                                                                       |
 | `requestGuardianInfo()`                 | `GuardianInfo`            | Whether the connected account is a guardian account, and its endpoint, provider and sync status.                                                |
 
