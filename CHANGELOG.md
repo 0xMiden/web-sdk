@@ -1,12 +1,27 @@
 # Changelog
 
-## 0.17.9 (TBD)
+## 0.17.11 (TBD)
 
 ### Fixes
 
+* [FIX][docs] The `@miden-sdk/react` `AGENTS.md` example and hook table for `useMultiSend` now call `sendMany` with `assetId` at the top level, as `MultiSendOptions` declares; they called a `multiSend` the hook does not return and put `assetId` on each recipient, so the example did not compile. The package README no longer documents `useInternalTransfer` or imports its `InternalTransferOptions`, `InternalTransferChainOptions` and `InternalTransferResult` types, all removed in 0.14.0 in favour of `useSend` and `useConsume` ([#519](https://github.com/0xMiden/web-sdk/pull/519)).
+
+## 0.17.10 (2026-11-12)
+
+### Fixes
+
+* [BREAKING][behavior][web,adapter] Bread now signs a domain-separated commitment for signBytes(data, "word") and for "signingInputs" holding a Blind or Arbitrary payload: domainSeparatedSignCommitment(data, kind), the commitment of SigningInputs.newArbitrary([tag, ...payload]) where the tag is Poseidon2 of "miden-wallet/sign-bytes/v1". A transaction summary is signed as before. Verify such a signature with publicKey.verify(domainSeparatedSignCommitment(data, kind), signature); the window provider's signBytes also returns the signed word as signedCommitment (wallet#2161, #541).
+* [FIX][web,react,adapter] getConsumableNotes documents that consumable means a trial consume succeeded, useNoteStream marks each StreamedNote with standardPayment, useConsume no longer says consuming claims a note's assets, and InputNoteDetails gains an optional standardPayment that wallets report (#541).
+* [FIX][react] `useSend({ returnNote: true })` now rejects `recallHeight` and `timelockHeight` instead of silently ignoring them, and carries a supplied `attachment` on the returned note ([web-sdk#520](https://github.com/0xMiden/web-sdk/pull/520)).
+* [FIX][web] New `domainSeparatedSignCommitment(data, kind)` export computes the commitment a wallet signs for a dApp's `signBytes` request under its domain tag, so a dApp can verify the returned signature with `publicKey.verify(...)`.
+
+## 0.17.9 (2026-11-11)
+
+### Fixes
+
+* [FIX][web,react] `notes.listAvailable`, `transactions.consumeAll`, `useNotes().consumableNotes`, `useWaitForNotes()` and the `useSessionAccount` funding poll now take only payments: P2ID and P2IDE notes. The note screener lists every note a trial consume succeeds for, so another trader's public PSWAP order was listed for any account holding the asset it requests, and `consumeAll` filled that order from the account's vault at the other trader's price. `notes.listConsumable` and `getConsumableNotes` still return every note; check the new `isStandardPayment(record)` before consuming from them. To consume a note running another script, pass it to `transactions.consume({ account, notes })` by name ([wallet#2118](https://github.com/0xMiden/wallet/issues/2118), [#537](https://github.com/0xMiden/web-sdk/pull/537)).
 * [FIX][docs] The shipped agent guides no longer call `feeFaucetId` required. The `@miden-sdk/react` and `@miden-sdk/miden-sdk` `AGENTS.md`, the `web-client-usage` skill, the root README and the Turnkey React example said a client or provider created without it fails; since 0.17 the client receives the fee asset with the protocol configuration when it syncs, and the option only sets what `client.feeFaucetId()` reports before the first sync. The guides now say so, including that `feeFaucetId()` rejects before the first sync on a client created without it ([#515](https://github.com/0xMiden/web-sdk/issues/515), [#517](https://github.com/0xMiden/web-sdk/pull/517)).
 * [FIX][web] `MockWebClient` no longer fails `syncState()` intermittently with "chain tip block header 0 does not carry valid validator signatures". Its Web Worker built a second mock chain, with its own validator keys, in the same IndexedDB store, and whichever chain's genesis header was stored first won. The worker now starts from the main thread's mock chain ([#503](https://github.com/0xMiden/web-sdk/pull/503)).
-* [FIX][docs] The `@miden-sdk/react` `AGENTS.md` example and hook table for `useMultiSend` now call `sendMany` with `assetId` at the top level, as `MultiSendOptions` declares; they called a `multiSend` the hook does not return and put `assetId` on each recipient, so the example did not compile. The package README no longer documents `useInternalTransfer` or imports its `InternalTransferOptions`, `InternalTransferChainOptions` and `InternalTransferResult` types, all removed in 0.14.0 in favour of `useSend` and `useConsume` ([#519](https://github.com/0xMiden/web-sdk/pull/519)).
 
 ## 0.17.8 (2026-10-28)
 

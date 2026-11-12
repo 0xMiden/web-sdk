@@ -10,6 +10,8 @@ import {
   createP2IDENote,
   buildSwapTag,
   buildNetworkNote,
+  isStandardPayment,
+  domainSeparatedSignCommitment,
   _setWasm as _setStandaloneWasm,
   _setWebClient as _setStandaloneWebClient,
 } from "./standalone.js";
@@ -33,7 +35,14 @@ export {
 export { isConsumableNow } from "./utils.js";
 export { MidenClient };
 export { CompilerResource };
-export { createP2IDNote, createP2IDENote, buildSwapTag, buildNetworkNote };
+export {
+  createP2IDNote,
+  createP2IDENote,
+  buildSwapTag,
+  buildNetworkNote,
+  isStandardPayment,
+  domainSeparatedSignCommitment,
+};
 export { StorageView, StorageResult, wordToBigInt };
 
 // Internal exports — used by integration tests that need direct access to the low-level WebClient proxy.

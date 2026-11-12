@@ -1,4 +1,10 @@
-import { resolveAccountRef, resolveNoteType } from "./utils.js";
+import {
+  isStandardPaymentNote,
+  resolveAccountRef,
+  resolveNoteType,
+} from "./utils.js";
+
+const SIGN_BYTES_DOMAIN_TAG = "miden-wallet/sign-bytes/v1";
 
 // Module-level WASM reference, set by index.js after initialization
 let _wasm = null;
@@ -71,6 +77,16 @@ export function createP2IDENote(opts) {
     noteType,
     attachment
   );
+}
+
+/**
+ * True when the note runs the standard P2ID or P2IDE payment script.
+ *
+ * @param {ConsumableNoteRecord | InputNoteRecord} record - The note to check.
+ * @returns {boolean} True for a P2ID or P2IDE note.
+ */
+export function isStandardPayment(record) {
+  return isStandardPaymentNote(record, getWasm());
 }
 
 /**
@@ -188,4 +204,74 @@ function buildRecipient(opts, wasm) {
     new wasm.FeltArray((opts.inputs ?? []).map((value) => new wasm.Felt(value)))
   );
   return wasm.NoteRecipient.fromScript(opts.script, storage);
+}
+
+/**
+ * Computes the commitment Bread signs for a dApp's `signBytes` request, so a
+ * dApp can check the returned signature with
+ * `publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)`.
+ *
+ * The wallet signs under a domain tag. The tag is the Poseidon2 hash of the
+ * string `miden-wallet/sign-bytes/v1`, one field element per UTF-8 byte; its
+ * four elements are `0x38a8bcdddf30cacf`, `0x240d1b8455bc2c58`,
+ * `0x18162f6af29602dd` and `0x5385955edcd341a4`. What is signed per `kind`:
+ *
+ * - `"word"`: `data` is a serialized `Word`. The signed commitment is that of
+ *   `SigningInputs.newArbitrary([...tag, ...word.toFelts()])`.
+ * - `"signingInputs"`: `data` is serialized `SigningInputs`. A Blind payload
+ *   signs `[...tag, ...word.toFelts()]`, an Arbitrary payload signs
+ *   `[...tag, ...payload]` (the tag alone when the payload is empty), both as
+ *   Arbitrary inputs. A TransactionSummary is signed unchanged, so its own
+ *   commitment is returned.
+ *
+ * Any other `kind` or variant throws. Wallets released before this change
+ * signed the raw value instead.
+ *
+ * Needs the SDK's WASM to be loaded: with a lazy entry, await
+ * `MidenClient.ready()` first.
+ *
+ * @param {Uint8Array} data - The serialized payload the dApp sent.
+ * @param {"word" | "signingInputs"} kind - The request kind.
+ * @returns {Word} The commitment the wallet signed.
+ */
+export function domainSeparatedSignCommitment(data, kind) {
+  const wasm = getWasm();
+  const sign = (payload) => {
+    // The browser binding consumes Felts and FeltArrays by value, so build
+    // fresh ones for every call instead of reusing any.
+    const tagInput = new wasm.FeltArray(
+      Array.from(
+        new TextEncoder().encode(SIGN_BYTES_DOMAIN_TAG),
+        (b) => new wasm.Felt(BigInt(b))
+      )
+    );
+    const tag = wasm.Poseidon2.hashElements(tagInput).toFelts();
+    const felts = [...tag, ...payload.map((f) => new wasm.Felt(f.asInt()))];
+    return wasm.SigningInputs.newArbitrary(felts).toCommitment();
+  };
+
+  if (kind === "word") {
+    return sign(wasm.Word.deserialize(data).toFelts());
+  }
+  if (kind !== "signingInputs") {
+    throw new Error(`Unknown sign kind: ${String(kind)}`);
+  }
+  const inputs = wasm.SigningInputs.deserialize(data);
+  const types = wasm.SigningInputsType;
+  switch (inputs.variantType) {
+    case types.TransactionSummary:
+      return inputs.toCommitment();
+    case types.Blind:
+      return sign(inputs.blindPayload().toFelts());
+    case types.Arbitrary: {
+      // FeltArray (length()/get(i)) in the browser, a plain array on Node.
+      const payload = inputs.arbitraryPayload();
+      const felts = Array.isArray(payload)
+        ? payload
+        : Array.from({ length: payload.length() }, (_, i) => payload.get(i));
+      return sign(felts);
+    }
+    default:
+      throw new Error("Unsupported SigningInputs variant");
+  }
 }

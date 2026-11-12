@@ -976,10 +976,11 @@ export interface WaitOptions {
 }
 
 /**
- * Result of consumeAll. `consumed` and `remaining` count only notes consumable
- * at the last synced block, so `remaining === 0` means nothing is consumable
- * now, not that the account has no unconsumed notes: block-locked notes appear
- * in neither count. Use {@link NotesResource.listConsumable} to see those.
+ * Result of consumeAll. `consumed` and `remaining` count only the P2ID and
+ * P2IDE notes consumable at the last synced block, so `remaining === 0` means
+ * no payment is consumable now, not that the account has no unconsumed notes:
+ * block-locked notes and notes running any other script appear in neither
+ * count. Use {@link NotesResource.listConsumable} to see those.
  */
 export interface ConsumeAllResult {
   txId: TransactionId | null;
@@ -1303,10 +1304,13 @@ export interface TransactionsResource {
    */
   pswapCancel(options: PswapCancelOptions): Promise<TransactionSubmitResult>;
   /**
-   * Consume the notes an account can consume right now, up to an optional
-   * limit. Block-locked notes are skipped, the same set
-   * {@link NotesResource.listAvailable} returns. Returns the count of remaining
-   * notes for pagination.
+   * Consume the payments an account can consume right now, up to an optional
+   * limit: the set {@link NotesResource.listAvailable} returns. Only P2ID and
+   * P2IDE notes are taken, and block-locked ones are skipped. A note running
+   * any other script can spend from the account (consuming another trader's
+   * public PSWAP order fills it from this account's vault), so pass such a note
+   * to {@link TransactionsResource.consume} by name. Returns the count of
+   * remaining payments for pagination.
    *
    * @param options - Options including the account and optional max notes limit.
    */
@@ -1625,23 +1629,35 @@ export interface NotesResource {
   listSent(query?: NoteQuery): Promise<OutputNoteRecord[]>;
 
   /**
-   * List notes a specific account can consume, as of the client's last sync.
+   * List the payments a specific account can consume, as of the client's last
+   * sync: P2ID and P2IDE notes only, see {@link isStandardPayment}.
    *
-   * Excludes block-locked notes (status `consumableAfterBlock`). Consumability
-   * is what miden-client's note screener reports at the last synced block, so
+   * Excludes block-locked notes (status `consumableAfterBlock`) and notes
+   * running any other script. The screener lists a note for every tracked
+   * account that a trial consume succeeds for, so another trader's public
+   * PSWAP order shows up for an account holding the asset it requests, and
+   * consuming it fills the order from that account's vault. Consumability is
+   * what miden-client's note screener reports at the last synced block, so
    * sync first for a current answer. Use {@link NotesResource.listConsumable}
-   * to include block-locked notes, with their consumability metadata.
+   * to include the other notes, with their consumability metadata.
    *
    * @param options - Options containing the account to check availability for.
    */
   listAvailable(options: { account: AccountRef }): Promise<InputNoteRecord[]>;
 
   /**
-   * List notes consumable by an account, including block-locked ones, keeping
-   * each note's consumability metadata. `noteConsumability()` holds one status
-   * per account; its `consumableAfterBlock()` is set when the note unlocks at a
-   * later block. Like {@link NotesResource.listAvailable}, it reflects the last
-   * sync.
+   * List notes consumable by an account, including block-locked ones and
+   * notes running any script, keeping each note's consumability metadata.
+   * `noteConsumability()` holds one status per account; its
+   * `consumableAfterBlock()` is set when the note unlocks at a later block.
+   * Like {@link NotesResource.listAvailable}, it reflects the last sync.
+   *
+   * Not every note here is a payment. Consuming a note that is not a P2ID or
+   * P2IDE note can spend from the consuming account: another trader's public
+   * PSWAP order is listed for any account holding the asset it requests, and
+   * consuming it fills the order at their price. Check
+   * {@link isStandardPayment} before consuming a note from this list unless
+   * you know its script.
    *
    * @param options - Optional account to check; omit to list notes consumable
    *   by any tracked account.
@@ -2254,15 +2270,65 @@ export declare function buildSwapTag(
  * client's last sync.
  *
  * `getConsumableNotes` also returns notes that unlock at a later block. This is
- * the rule {@link NotesResource.listAvailable} and
+ * one of the two rules {@link NotesResource.listAvailable} and
  * {@link TransactionsResource.consumeAll} apply, exported for code that reads
- * the low-level client directly. With `accountIdHex`, only that account's
+ * the low-level client directly; {@link isStandardPayment} is the other. With `accountIdHex`, only that account's
  * consumability entry counts; without one, any account's entry does.
  */
 export declare function isConsumableNow(
   record: ConsumableNoteRecord,
   accountIdHex?: string
 ): boolean;
+
+/**
+ * True when the note runs the standard P2ID or P2IDE payment script.
+ *
+ * Consuming such a note only moves its assets into the consuming account, and
+ * the screener reports it consumable only for the account it pays, or for its
+ * sender once a P2IDE note can be reclaimed. A note running any other script
+ * can also spend from the consumer: anyone holding the requested asset can
+ * consume another trader's public PSWAP order, and doing so fills it from
+ * their vault at the creator's price. `getConsumableNotes` and
+ * {@link NotesResource.listConsumable} list such notes; this is the rule
+ * {@link NotesResource.listAvailable} and
+ * {@link TransactionsResource.consumeAll} apply to leave them out. A note whose
+ * script cannot be read is not a payment.
+ *
+ * Needs the SDK's WASM to be loaded: with a lazy entry, await
+ * `MidenClient.ready()` first.
+ */
+export declare function isStandardPayment(
+  record: ConsumableNoteRecord | InputNoteRecord
+): boolean;
+
+/**
+ * Computes the commitment Bread signs for a dApp's `signBytes` request.
+ * Verify a returned signature with
+ * `publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)`.
+ *
+ * The wallet signs under a domain tag: the Poseidon2 hash of the string
+ * `miden-wallet/sign-bytes/v1`, one field element per UTF-8 byte. Its four
+ * elements are `0x38a8bcdddf30cacf`, `0x240d1b8455bc2c58`,
+ * `0x18162f6af29602dd` and `0x5385955edcd341a4`.
+ *
+ * - `"word"`: `data` is a serialized `Word`; the signed commitment is that of
+ *   `SigningInputs.newArbitrary([...tag, ...word.toFelts()])`.
+ * - `"signingInputs"`: `data` is serialized `SigningInputs`. A Blind payload
+ *   signs `[...tag, ...word.toFelts()]` and an Arbitrary payload signs
+ *   `[...tag, ...payload]` (the tag alone when empty), both as Arbitrary
+ *   inputs. A TransactionSummary is signed unchanged, so its own commitment
+ *   is returned.
+ *
+ * Any other `kind` or variant throws. Wallets released before this change
+ * signed the raw value instead.
+ *
+ * Needs the SDK's WASM to be loaded: with a lazy entry, await
+ * `MidenClient.ready()` first.
+ */
+export declare function domainSeparatedSignCommitment(
+  data: Uint8Array,
+  kind: "word" | "signingInputs"
+): Word;
 
 /** Exports the entire contents of an IndexedDB store as a JSON string. */
 export declare function exportStore(storeName: string): Promise<string>;
