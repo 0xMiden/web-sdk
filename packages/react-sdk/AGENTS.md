@@ -125,7 +125,8 @@ a string, so it throws if you hand it the same value.
 const { notes, consumableNotes, noteSummaries, consumableNoteSummaries } = useNotes();
 
 // notes - all input notes for this account
-// consumableNotes - subset that's ready to claim
+// consumableNotes - payments (P2ID and P2IDE notes) ready to claim; other
+//   scripts, such as another trader's public PSWAP order, are left out
 // noteSummaries / consumableNoteSummaries - same lists, projected to UI-friendly summaries
 ```
 
@@ -442,7 +443,7 @@ The argument is the account that **executes** the request - the one whose auth
 procedure pays - not the recipient. For any account that is not a multisig the builder comes
 back untouched, so it is a safe drop-in; a zero base fee is not a second
 condition, since 0.17 a multisig resolves its auth args whatever the chain
-charges. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive:
+charges. `withAuthArgs` and `withFeeConversionSalt` are mutually exclusive:
 miden-client has each setter clear the other, so whichever is called last wins
 rather than producing an error. Never call either on a builder this method
 returned for a multisig - it already carries the three-word auth args, and

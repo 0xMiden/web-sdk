@@ -15,5 +15,5 @@ version.workspace      = true
 # nothing, exits 1, wasm-opt is skipped, and the artifact ships at several times its budget.
 # Bump these with `miden-client`.
 [dependencies]
-miden-core         = { default-features = false, features = ["std"], version = "0.33" }
-miden-mast-package = { default-features = false, features = ["std"], version = "0.33" }
+miden-core         = { default-features = false, features = ["std"], version = "0.36" }
+miden-mast-package = { default-features = false, features = ["std"], version = "0.36" }

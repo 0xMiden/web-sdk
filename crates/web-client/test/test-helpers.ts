@@ -16,7 +16,8 @@ import { getRpcUrl, RUN_ID } from "./playwright.global.setup";
 import path from "path";
 import fs from "fs";
 import os from "os";
-import { normalizeArg, wrapClass } from "../js/node/napi-compat.js";
+import { normalizeArg, wrapClient } from "../js/node/napi-compat.js";
+import { getNodeSdk } from "./node-adapter.ts";
 
 let _helperCounter = 0;
 
@@ -752,143 +753,12 @@ export async function createFreshMockClient(
     serializedNoteTransport ?? null
   );
 
-  return wrapNodeClient(rawClient, rawSdk);
+  return wrapNodeClient(rawClient);
 }
 
 // ── MidenClient factory ──────────────────────────────────────────────
 
 let _midenClientClass: any = null;
-
-function makeArrayPolyfill() {
-  return function (items: any[]) {
-    const arr =
-      items === undefined || items === null
-        ? []
-        : Array.isArray(items)
-          ? [...items]
-          : [items];
-    (arr as any).get = (i: number) => arr[i];
-    (arr as any).replaceAt = (i: number, val: any) => {
-      arr[i] = val;
-      return arr;
-    };
-    return arr;
-  };
-}
-
-/**
- * Wraps a raw napi WebClient for MidenClient compatibility.
- * Handles syncState → syncStateImpl (and the new split-sync siblings),
- * BigInt → Number, null → undefined.
- */
-function wrapClientForMidenClient(
-  rawClient: any,
-  rawSdk: any,
-  storeName?: string
-): any {
-  return new Proxy(rawClient, {
-    get(target, prop) {
-      if (prop === "syncState")
-        return (...args: any[]) => target.syncStateImpl(...args);
-      if (prop === "syncChain")
-        return (...args: any[]) => target.syncChainImpl(...args);
-      if (prop === "syncNoteTransport")
-        return (...args: any[]) => target.syncNoteTransportImpl(...args);
-      if (prop === "storeName") return storeName || "mock";
-      if (prop === "wasmWebClient") return target;
-      if (prop === "proveBlock") return async () => target.proveBlock();
-      if (prop === "newWallet") {
-        return (mode: any, authScheme: any, seed?: any) => {
-          const normSeed =
-            seed instanceof Uint8Array || Buffer.isBuffer(seed)
-              ? Array.from(seed)
-              : seed;
-          return target.newWallet(mode, authScheme, normSeed ?? null);
-        };
-      }
-      if (prop === "newFaucet") {
-        return (
-          mode: any,
-          nonFungible: any,
-          name: any,
-          symbol: any,
-          decimals: any,
-          maxSupply: any,
-          auth: any,
-          seed?: any
-        ) =>
-          target.newFaucet(
-            mode,
-            nonFungible,
-            name,
-            symbol,
-            decimals,
-            normalizeArg(maxSupply),
-            auth,
-            seed
-          );
-      }
-      if (prop === "newMintTransactionRequest") {
-        return (wallet: any, faucet: any, noteType: any, amount: any) =>
-          target.newMintTransactionRequest(
-            wallet,
-            faucet,
-            noteType,
-            normalizeArg(amount)
-          );
-      }
-      if (prop === "newSendTransactionRequest") {
-        return (
-          sender: any,
-          targetId: any,
-          faucet: any,
-          noteType: any,
-          amount: any,
-          ...rest: any[]
-        ) =>
-          target.newSendTransactionRequest(
-            sender,
-            targetId,
-            faucet,
-            noteType,
-            normalizeArg(amount),
-            ...rest
-          );
-      }
-      if (prop === "newSwapTransactionRequest") {
-        return (
-          accountId: any,
-          assetAFaucet: any,
-          assetAAmount: any,
-          assetBFaucet: any,
-          assetBAmount: any,
-          ...rest: any[]
-        ) =>
-          target.newSwapTransactionRequest(
-            accountId,
-            assetAFaucet,
-            normalizeArg(assetAAmount),
-            assetBFaucet,
-            normalizeArg(assetBAmount),
-            ...rest
-          );
-      }
-      const val = target[prop];
-      if (typeof val === "function") {
-        const bound = val.bind(target);
-        return (...args: any[]) => {
-          const normalizedArgs = args.map(normalizeArg);
-          const result = bound(...normalizedArgs);
-          if (result && typeof result.then === "function") {
-            return result.then((v: any) => (v === null ? undefined : v));
-          }
-          return result === null ? undefined : result;
-        };
-      }
-      return val;
-    },
-  });
-}
 
 /**
  * Loads, configures, and returns the MidenClient class for Node.js.
@@ -906,36 +776,8 @@ export async function createMidenClient(sdk: any): Promise<any> {
   }
   const jsDir = path.resolve(import.meta.dirname, "..", "js");
 
-  const arrayPolyfills: Record<string, any> = {};
-  for (const name of [
-    "AccountArray",
-    "AccountIdArray",
-    "ForeignAccountArray",
-    "NoteArray",
-    "NoteRecipientArray",
-    "OutputNoteArray",
-    "StorageSlotArray",
-    "TransactionScriptInputPairArray",
-    "FeltArray",
-    "OutputNotesArray",
-    "NoteAndArgsArray",
-    "NoteDetailsAndTagArray",
-    "NoteIdAndArgsArray",
-  ]) {
-    arrayPolyfills[name] = makeArrayPolyfill();
-  }
-
-  const wrappedTypes = {
-    ...rawSdk,
-    ...arrayPolyfills,
-    AccountBuilder: wrapClass(rawSdk.AccountBuilder),
-    AccountComponent: wrapClass(rawSdk.AccountComponent),
-    AuthSecretKey: wrapClass(rawSdk.AuthSecretKey),
-    Felt: wrapClass(rawSdk.Felt),
-    FungibleAsset: wrapClass(rawSdk.FungibleAsset),
-    Word: wrapClass(rawSdk.Word),
-    NoteTag: wrapClass(rawSdk.NoteTag),
-  };
+  // The SDK object the shipped Node entry hands MidenClient.
+  const wrappedTypes = getNodeSdk();
 
   // MockWasmWebClient matching browser's arg order: (serializedMockChain, serializedNoteTransport, seed)
   const MockWasmWebClient = {
@@ -953,7 +795,7 @@ export async function createMidenClient(sdk: any): Promise<any> {
         normalizeArg(serializedMockChain) ?? null,
         normalizeArg(serializedNoteTransport) ?? null
       );
-      return wrapClientForMidenClient(client, rawSdk, "mock");
+      return wrapClient(client, "mock");
     },
   };
 
@@ -984,7 +826,7 @@ export async function createMidenClient(sdk: any): Promise<any> {
         // from client.js failed no node-mode test.
         feeFaucetId ?? process.env.TEST_MIDEN_FEE_FAUCET_ID ?? null
       );
-      return wrapClientForMidenClient(client, rawSdk, storeName);
+      return wrapClient(client, storeName);
     },
   };
 

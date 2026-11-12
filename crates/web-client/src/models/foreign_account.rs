@@ -1,5 +1,6 @@
 use js_export_macro::js_export;
 use miden_client::account::Account as NativeAccount;
+use miden_client::rpc::domain::account::{AccountFetch, StorageMapFetch};
 use miden_client::transaction::ForeignAccount as NativeForeignAccount;
 
 use crate::js_error_with_context;
@@ -20,9 +21,10 @@ impl ForeignAccount {
         account_id: &AccountId,
         storage_requirements: AccountStorageRequirements,
     ) -> Result<ForeignAccount, JsErr> {
-        let native_foreign_account =
-            NativeForeignAccount::public(account_id.into(), storage_requirements.into())
-                .map_err(|e| js_error_with_context(e, "Failed to create public foreign account"));
+        let fetch =
+            AccountFetch::new().with_storage(StorageMapFetch::Slots(storage_requirements.into()));
+        let native_foreign_account = NativeForeignAccount::public(account_id.into(), fetch)
+            .map_err(|e| js_error_with_context(e, "Failed to create public foreign account"));
 
         Ok(ForeignAccount(native_foreign_account?))
     }
@@ -39,7 +41,10 @@ impl ForeignAccount {
     /// Returns the required storage slots/keys for this foreign account.
     #[js_export(js_name = "storageSlotRequirements")]
     pub fn storage_slot_requirements(&self) -> AccountStorageRequirements {
-        self.0.storage_slot_requirements().into()
+        match self.0.fetch().map(AccountFetch::storage) {
+            Some(StorageMapFetch::Slots(requirements)) => requirements.clone().into(),
+            _ => miden_client::rpc::domain::account::AccountStorageRequirements::default().into(),
+        }
     }
 
     /// Returns the ID of the foreign account.

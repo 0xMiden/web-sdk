@@ -608,7 +608,7 @@ import { useNotes } from '@miden-sdk/react';
 function NotesList() {
   const {
     notes,            // All notes matching filter
-    consumableNotes,  // Notes ready to be consumed
+    consumableNotes,  // Payments (P2ID and P2IDE notes) ready to be consumed
     noteSummaries,    // Summary objects with asset metadata
     isLoading,
     error,
@@ -1019,6 +1019,7 @@ function WaitForNotes({ accountId }: { accountId: string }) {
       timeoutMs: 10_000,
       intervalMs: 1_000,
     });
+    // Payments only (P2ID and P2IDE notes), as in useNotes().consumableNotes.
     console.log('Notes ready:', notes.length);
   };
 

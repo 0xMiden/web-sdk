@@ -278,13 +278,13 @@ Each call **consumes** the `Word` you pass: it is moved across the WASM boundary
 
 The salt is a *declaration*, not a commitment: `request.feeConversionSalt()` reports it back, `request.authArg()` is still empty, and miden-client computes `hash(CONVERSION_INFO || SALT)` from it during preparation. It survives serialization, so a proposal transported to its co-signers still names the salt its summary was derived under.
 
-`withAuthArg` and `withFeeConversionSalt` are **mutually exclusive**, and miden-client enforces that by having each setter clear the other — so whichever you call last simply wins, rather than producing an error. That makes either setter destructive on a builder from `feeAwareTransactionRequestBuilder` for a multisig: it already carries the component's three-word auth args, and clearing them leaves the auth procedure piping a preimage that was never written. Pass `feeConversionSalt` to the builder instead, as above.
+`withAuthArgs` and `withFeeConversionSalt` are **mutually exclusive**, and miden-client enforces that by having each setter clear the other — so whichever you call last simply wins, rather than producing an error. That makes either setter destructive on a builder from `feeAwareTransactionRequestBuilder` for a multisig: it already carries the component's three-word auth args, and clearing them leaves the auth procedure piping a preimage that was never written. Pass `feeConversionSalt` to the builder instead, as above.
 
 ### Custom auth procedures
 
 miden-client only commits conversion info for auth components it recognises. If you have written your own, which way out applies depends on the procedure:
 
-- **It reads the conversion info from `AUTH_ARGS`** (it calls `fee::load_conversion_info`, like the standard signature components). Compute the commitment yourself and attach it with `TransactionRequestBuilder.withAuthArg`, plus `extendAdviceMap` for the preimage. Setting an auth argument opts the request out of the client's fee machinery entirely — it commits only when the request carries none — so the word you set is the one the procedure reads.
+- **It reads the conversion info from `AUTH_ARGS`** (it calls `fee::load_conversion_info`, like the standard signature components). Attach the auth args yourself with `TransactionRequestBuilder.withAuthArgs`, which sets the commitment and adds its advice-map preimage. Setting an auth argument opts the request out of the client's fee machinery entirely — it commits only when the request carries none — so the word you set is the one the procedure reads.
 - **It is still yours to write.** Read the chain's native conversion info in the procedure instead, the way the no-auth and network-account components do, and the transaction needs no auth argument at all.
 
 Note that declaring a *salt* against such an account does not work: miden-client rejects a salt whose auth component it cannot see reading it, with `FeeConversionInfoUnsupported` naming the component.
