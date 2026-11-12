@@ -91,6 +91,7 @@ export async function createMidenTurnkeyClient(
       insertKey: async () => {},
       sign: signCb(turnkeyConfig),
     },
+    callbackTimeoutMs: opts.callbackTimeoutMs,
     autoSync: true,
   });
   const accountId = await createAccount(

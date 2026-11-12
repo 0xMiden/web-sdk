@@ -1,6 +1,11 @@
 import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
 import { withSyncLock } from "./syncLock.js";
+import {
+  appendAuthError,
+  serializeCallbackError,
+  validateCallbackTimeoutMs,
+} from "./callbackBridge.js";
 import { emitObservation, hasObserver, setObserver } from "./observability.js";
 import { assertBatchItems } from "./utils.js";
 import { MidenClient } from "./client.js";
@@ -419,6 +424,9 @@ class WebClient {
    *   as a bech32 address or a hex account ID. Optional: the client receives the
    *   protocol configuration, which names the fee asset, from the node when it
    *   syncs, so this only sets what `feeFaucetId()` reports before the first sync.
+   * @param {number | undefined} [callbackTimeoutMs] - The `callbackTimeoutMs`
+   *   field of `ClientOptions`: how long the Web Worker waits for each external
+   *   keystore callback. See `callbackTimeoutFor` in `callbackBridge.js`.
    */
   constructor(
     rpcUrl,
@@ -431,7 +439,8 @@ class WebClient {
     logLevel,
     useWorker = true,
     observability,
-    feeFaucetId
+    feeFaucetId,
+    callbackTimeoutMs
   ) {
     this.rpcUrl = rpcUrl;
     this.noteTransportUrl = noteTransportUrl;
@@ -446,6 +455,7 @@ class WebClient {
     // property called `feeFaucetId` would shadow the WASM accessor of that name
     // and `client.feeFaucetId()` would return this string instead of calling it.
     this._feeFaucetId = feeFaucetId;
+    this._callbackTimeoutMs = validateCallbackTimeoutMs(callbackTimeoutMs);
     this.useWorker = useWorker !== false;
 
     // Check if Web Workers are available AND the caller didn't opt out via
@@ -540,12 +550,18 @@ class WebClient {
             }
 
             this.worker.postMessage({
+              callbackOk: true,
               callbackResult: result,
               callbackRequestId: requestId,
             });
           } catch (error) {
+            // A callback may throw any value, including one with no `.message`
+            // (a string, `{ code: 4001 }`, `null`), so send an explicit failure
+            // flag and the cloneable fields the worker needs to rebuild the
+            // error, including when causes cycle or properties are unreadable.
             this.worker.postMessage({
-              callbackError: error.message,
+              callbackOk: false,
+              callbackError: serializeCallbackError(error, callbackType),
               callbackRequestId: requestId,
             });
           }
@@ -787,6 +803,7 @@ class WebClient {
         this.logLevel,
         numThreads,
         this._feeFaucetId,
+        this._callbackTimeoutMs,
       ],
     });
   }
@@ -825,6 +842,8 @@ class WebClient {
    *   hex account ID. Optional: the client receives the protocol configuration, which names the
    *   fee asset, from the node when it syncs, so this only sets what `feeFaucetId()` reports
    *   before the first sync.
+   * @param {number | undefined} [callbackTimeoutMs] - How long to wait for external keystore
+   *   callbacks. Invalid values reject before WASM initialization.
    */
   static async createClient(
     rpcUrl,
@@ -834,7 +853,8 @@ class WebClient {
     logLevel,
     useWorker = true,
     observability,
-    feeFaucetId
+    feeFaucetId,
+    callbackTimeoutMs
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -848,7 +868,8 @@ class WebClient {
       logLevel,
       useWorker,
       observability,
-      feeFaucetId
+      feeFaucetId,
+      callbackTimeoutMs
     );
 
     // Set up logging on the main thread before creating the client.
@@ -891,6 +912,8 @@ class WebClient {
    * @returns {Promise<WebClient>} The fully initialized WebClient.
    * @param {{observer?: (observation: object) => void, observeSensitive?: boolean}} [observability]
    *   - Observability fields of `ClientOptions`; see the constructor.
+   * @param {string | undefined} [feeFaucetId] - See the constructor.
+   * @param {number | undefined} [callbackTimeoutMs] - See the constructor.
    */
   static async createClientWithExternalKeystore(
     rpcUrl,
@@ -903,7 +926,8 @@ class WebClient {
     logLevel,
     useWorker = true,
     observability,
-    feeFaucetId
+    feeFaucetId,
+    callbackTimeoutMs
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -917,7 +941,8 @@ class WebClient {
       logLevel,
       useWorker,
       observability,
-      feeFaucetId
+      feeFaucetId,
+      callbackTimeoutMs
     );
 
     // Set up logging on the main thread before creating the client.
@@ -951,6 +976,10 @@ class WebClient {
    */
   async callMethodWithWorker(methodName, ...args) {
     await this.ready;
+    // `await` can yield after readiness has resolved but before posting.
+    if (this._workerTerminated) {
+      throw new Error("Worker terminated");
+    }
     // Create a unique request ID.
     const requestId = `${methodName}-${Date.now()}-${Math.random()}`;
     return new Promise((resolve, reject) => {
@@ -1116,7 +1145,18 @@ class WebClient {
   async _submitBatchInThread(items) {
     try {
       const wasmWebClient = await this.getWasmWebClient();
-      return await wasmWebClient.submitNewTransactionBatch(items);
+      try {
+        return await wasmWebClient.submitNewTransactionBatch(items);
+      } catch (error) {
+        const authError = wasmWebClient.lastAuthError();
+        if (typeof error === "string") {
+          throw appendAuthError(error, authError);
+        }
+        if (error instanceof Error) {
+          error.message = appendAuthError(error.message, authError);
+        }
+        throw error;
+      }
     } catch (error) {
       console.error(
         "INDEX.JS: Error in submitNewTransactionBatch (in-thread):",
@@ -1168,10 +1208,21 @@ class WebClient {
       try {
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
-          return await wasmWebClient.executeTransaction(
-            accountId,
-            transactionRequest
-          );
+          try {
+            return await wasmWebClient.executeTransaction(
+              accountId,
+              transactionRequest
+            );
+          } catch (error) {
+            const authError = wasmWebClient.lastAuthError();
+            if (typeof error === "string") {
+              throw appendAuthError(error, authError);
+            }
+            if (error instanceof Error) {
+              error.message = appendAuthError(error.message, authError);
+            }
+            throw error;
+          }
         }
 
         const wasm = await getWasmOrThrow();
@@ -1207,11 +1258,22 @@ class WebClient {
 
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
-          return await wasmWebClient.executeTransactionAt(
-            accountId,
-            transactionRequest,
-            anchor
-          );
+          try {
+            return await wasmWebClient.executeTransactionAt(
+              accountId,
+              transactionRequest,
+              anchor
+            );
+          } catch (error) {
+            const authError = wasmWebClient.lastAuthError();
+            if (typeof error === "string") {
+              throw appendAuthError(error, authError);
+            }
+            if (error instanceof Error) {
+              error.message = appendAuthError(error.message, authError);
+            }
+            throw error;
+          }
         }
 
         const wasm = await getWasmOrThrow();
@@ -1398,9 +1460,21 @@ class WebClient {
    * After calling terminate(), the WebClient should not be used.
    */
   terminate() {
-    if (this.worker) {
-      this.worker.terminate();
+    if (!this.worker) {
+      return;
     }
+    // A second call must not reject promises that already settled.
+    if (!this._workerTerminated) {
+      this._workerTerminated = true;
+      const terminationError = new Error("Worker terminated");
+      for (const { reject } of this.pendingRequests.values()) {
+        reject(terminationError);
+      }
+      this.pendingRequests.clear();
+      // Rejecting unblocks calls still waiting on initialization.
+      this.readyRejecter(terminationError);
+    }
+    this.worker.terminate();
   }
 }
 

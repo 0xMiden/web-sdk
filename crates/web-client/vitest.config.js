@@ -1,6 +1,25 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  plugins: [
+    {
+      name: "worker-wasm-test-module",
+      enforce: "pre",
+      resolveId(source, importer) {
+        if (
+          source === "../../dist/wasm.js" &&
+          importer?.includes("web-client-methods-worker.js")
+        ) {
+          return "\0worker-wasm-test-module";
+        }
+      },
+      load(id) {
+        if (id === "\0worker-wasm-test-module") {
+          return "export default async () => globalThis.__midenWorkerWasm;";
+        }
+      },
+    },
+  ],
   test: {
     environment: "node",
     include: ["js/__tests__/**/*.test.js"],
@@ -11,8 +30,8 @@ export default defineConfig({
       exclude: [
         "js/__tests__/**",
         "js/types/**",
-        // Web Worker code: tested separately by Playwright integration tests
-        // since the worker pattern doesn't unit-test cleanly in node.
+        // The callback INIT and reply path is unit-tested with the worker's
+        // WASM import stubbed. Method handlers still use real WASM in Playwright.
         "js/workers/**",
         // Node.js binding entry + napi adapters: depend on the platform-
         // specific napi binary which isn't available in the node-test env

@@ -52,14 +52,11 @@ struct JsCallbacks {
     get_key: Option<GetKeyCallback>,
     insert_key: Option<InsertKeyCallback>,
     sign: Option<SignCallback>,
-    /// The raw [`JsValue`] that the JS sign callback most recently threw, or
-    /// [`JsValue::NULL`] if the last sign call succeeded (or no call has
-    /// happened yet). Consumers read this from [`crate::WebClient::last_auth_error`]
-    /// to recover structured info the thrown JS error carried (e.g. a
-    /// `reason` property indicating the wallet was locked). Single-writer,
-    /// single-reader in practice: all mutating `WebClient` calls are serialized
-    /// through `_serializeWasmCall`, so no race.
-    last_sign_error: RefCell<JsValue>,
+    /// The latest raw sign rejection or readable external getKey failure.
+    /// Mutating `WebClient` calls are serialized, so this slot has a single writer.
+    last_auth_error: RefCell<JsValue>,
+    /// A failed getKey lookup remains available for the transaction error even if sign also fails.
+    last_get_key_error: RefCell<Option<String>>,
 }
 
 // Since Function / JsValue are not Send/Sync, we need to explicitly mark
@@ -77,7 +74,8 @@ impl<R: Rng> WebKeyStore<R> {
                 get_key: None,
                 insert_key: None,
                 sign: None,
-                last_sign_error: RefCell::new(JsValue::NULL),
+                last_auth_error: RefCell::new(JsValue::NULL),
+                last_get_key_error: RefCell::new(None),
             }),
             db_id,
         }
@@ -98,33 +96,38 @@ impl<R: Rng> WebKeyStore<R> {
                 get_key: get_key.map(GetKeyCallback),
                 insert_key: insert_key.map(InsertKeyCallback),
                 sign: sign.map(SignCallback),
-                last_sign_error: RefCell::new(JsValue::NULL),
+                last_auth_error: RefCell::new(JsValue::NULL),
+                last_get_key_error: RefCell::new(None),
             }),
             db_id,
         }
     }
 
-    /// Returns the raw [`JsValue`] that the JS sign callback most recently
-    /// threw. Returns [`JsValue::NULL`] if the last sign call succeeded or
-    /// no sign call has happened yet.
-    ///
-    /// Exposed publicly so [`crate::WebClient`] can surface it to JS
-    /// consumers.
-    pub fn last_sign_error(&self) -> JsValue {
-        self.callbacks.last_sign_error.borrow().clone()
+    /// Returns the latest raw sign rejection or readable external getKey failure.
+    /// Returns [`JsValue::NULL`] after a successful sign or `getKey` callback,
+    /// or when `executeTransaction` starts.
+    pub fn last_auth_error(&self) -> JsValue {
+        self.callbacks.last_auth_error.borrow().clone()
     }
 
-    /// Records the raw [`JsValue`] thrown by the JS sign callback, or clears
-    /// it on success. Called internally by [`WebKeyStore::get_signature`]
-    /// around invocations of the sign callback.
-    fn record_sign_error(&self, err: JsValue) {
-        *self.callbacks.last_sign_error.borrow_mut() = err;
+    pub(crate) fn last_get_key_error(&self) -> Option<String> {
+        self.callbacks.last_get_key_error.borrow().clone()
     }
 
-    /// Clears any previously recorded sign error (call before a successful
-    /// sign completes so consumers don't see stale data).
-    fn clear_sign_error(&self) {
-        *self.callbacks.last_sign_error.borrow_mut() = JsValue::NULL;
+    /// Records a raw sign rejection or readable getKey failure.
+    fn record_auth_error(&self, err: JsValue) {
+        *self.callbacks.last_auth_error.borrow_mut() = err;
+    }
+
+    fn record_get_key_error(&self, detail: String) {
+        *self.callbacks.last_get_key_error.borrow_mut() = Some(detail.clone());
+        self.record_auth_error(JsValue::from_str(&detail));
+    }
+
+    /// Clears callback detail before a new transaction or key lookup.
+    pub(crate) fn clear_auth_error(&self) {
+        *self.callbacks.last_auth_error.borrow_mut() = JsValue::NULL;
+        *self.callbacks.last_get_key_error.borrow_mut() = None;
     }
 
     /// Adds a secret key to the keystore without updating account mappings.
@@ -195,11 +198,11 @@ impl<R: Rng> TransactionAuthenticator for WebKeyStore<R> {
         if let Some(sign_cb) = &self.callbacks.as_ref().sign {
             match sign_cb.sign(pub_key.into(), signing_inputs).await {
                 Ok(sig) => {
-                    self.clear_sign_error();
+                    self.clear_auth_error();
                     return Ok(sig);
                 },
                 Err(err) => {
-                    self.record_sign_error(err.raw);
+                    self.record_auth_error(err.raw);
                     return Err(err.auth_err);
                 },
             }
@@ -292,7 +295,13 @@ impl<R: Rng> Keystore for WebKeyStore<R> {
         pub_key: PublicKeyCommitment,
     ) -> Result<Option<AuthSecretKey>, KeyStoreError> {
         if let Some(get_key_cb) = &self.callbacks.as_ref().get_key {
-            return get_key_cb.get_secret_key(pub_key).await;
+            self.clear_auth_error();
+            let result = get_key_cb.get_secret_key(pub_key).await;
+            if let Err(err) = &result {
+                // get_public_key returns Option, so retain the failure before it is discarded.
+                self.record_get_key_error(err.to_string());
+            }
+            return result;
         }
         let pub_key_commitment = NativeWord::from(pub_key).to_hex();
         let secret_key_hex =

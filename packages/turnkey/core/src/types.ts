@@ -28,6 +28,8 @@ export interface MidenClientOpts {
   noteTransportUrl?: string;
   seed?: Uint8Array;
   accountSeed?: string;
+  /** Optional callback timeout in milliseconds. Omitted leaves signing unlimited. */
+  callbackTimeoutMs?: number;
 }
 
 export interface MidenAccountOpts {

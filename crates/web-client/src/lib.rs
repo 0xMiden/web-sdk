@@ -390,16 +390,14 @@ impl WebClient {
         Ok(keystore_api::WebKeystoreApi::new(ks))
     }
 
-    /// Returns the raw JS value that the most recent sign-callback invocation
-    /// threw, or `null` if the last sign call succeeded (or no call has
-    /// happened yet).
+    /// Returns the latest raw sign callback rejection or readable external `getKey` failure.
+    /// Returns `null` after a successful sign or `getKey` callback,
+    /// or when `executeTransaction` starts.
     ///
-    /// Combined with the serialized-call discipline enforced at the JS
-    /// `WebClient` wrapper, this lets a caller that caught a failed
-    /// `executeTransaction` / `submitNewTransaction` recover the original
-    /// JS error the signing callback threw — preserving any structured
-    /// metadata (e.g. a `reason: 'locked'` property) that the kernel-level
-    /// `auth::request` diagnostic would otherwise have erased.
+    /// With `useWorker: false`, callers can recover structured sign error metadata such as
+    /// `reason: 'locked'`. Failed `getKey` lookups return a string, since the native public-key
+    /// lookup cannot propagate errors directly. Transaction errors include any missing readable
+    /// callback detail on both the direct and worker paths.
     ///
     /// # Usage (TS)
     /// ```ts
@@ -416,7 +414,7 @@ impl WebClient {
     pub fn last_auth_error(&self) -> JsValue {
         let guard = self.inner.borrow();
         match guard.as_ref().and_then(|c| c.authenticator()) {
-            Some(keystore) => keystore.last_sign_error(),
+            Some(keystore) => keystore.last_auth_error(),
             None => JsValue::NULL,
         }
     }
