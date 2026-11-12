@@ -260,8 +260,8 @@ Map an observed symptom to its cause before proposing a fix.
 | Co-signer's summary never matches the proposer's | For a summary that binds the reference block: anchor not passed to `preview` (R2). For any flow: the request was re-resolved instead of transported (R1, R2). A multisig proposal takes no anchor (R0) |
 | Co-signers' summaries differ and every other check passes | The request used `withInputNotes`, so each client chose the consumption mode from its own store. Rebuild with `withExplicitInputNote` (R3) |
 | `FeeConversionInfoRequired` naming the auth component | The executing account is a multisig and the request declares no fee conversion salt. Build it from `await client.feeAwareTransactionRequestBuilder(account)` rather than a bare `TransactionRequestBuilder` |
-| `FeeConversionInfoUnsupported` naming the auth component | A salt was declared against an auth component that never reads it. Drop the salt, or use `withAuthArg` plus `extendAdviceMap` |
-| `ERR_FEE_CONVERSION_INFO_MISSING` aborting in the VM | A custom auth procedure reads conversion info that nothing committed. Attach it yourself with `withAuthArg` |
+| `FeeConversionInfoUnsupported` naming the auth component | A salt was declared against an auth component that never reads it. Drop the salt, or attach the auth args with `withAuthArgs` |
+| `ERR_FEE_CONVERSION_INFO_MISSING` aborting in the VM | A custom auth procedure reads conversion info that nothing committed. Attach it yourself with `withAuthArgs` |
 | `preview` fails to find the account on the co-signer | Verification runs a real execution, so the account must already be in that participant's store. `accounts.getOrImport` for a public account; a private one needs its state transferred out of band (R2) |
 | Anchored execution fails naming a foreign account and a block | The anchor is older than the node's account-history window. Capture it closer to execution and re-capture an aged one (R4). For a multisig, stop anchoring and execute at the tip (R0) |
 | A multisig proposal fails with `block N has been pruned`, often naming the fee faucet | It is being re-executed at an anchor. Execute at the tip instead (R0) |

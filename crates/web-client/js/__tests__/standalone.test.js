@@ -5,6 +5,7 @@ import {
   createP2IDNote,
   createP2IDENote,
   buildSwapTag,
+  isStandardPayment,
 } from "../standalone.js";
 
 // ── WASM mock ─────────────────────────────────────────────────────────────────
@@ -270,5 +271,40 @@ describe("buildSwapTag", () => {
       BigInt(5)
     );
     expect(result).toBe("swapTag");
+  });
+});
+
+// ── isStandardPayment ─────────────────────────────────────────────────────────
+
+describe("isStandardPayment", () => {
+  const scriptWithRoot = (root) => ({ root: () => ({ toHex: () => root }) });
+  const record = (root) => ({
+    inputNoteRecord: () => ({
+      details: () => ({
+        recipient: () => ({ script: () => scriptWithRoot(root) }),
+      }),
+    }),
+  });
+
+  afterEach(() => {
+    _setWasm(null);
+  });
+
+  it("checks the note against the loaded module's P2ID and P2IDE scripts", () => {
+    _setWasm({
+      NoteScript: {
+        p2id: () => scriptWithRoot("0xp2id"),
+        p2ide: () => scriptWithRoot("0xp2ide"),
+      },
+    });
+    expect(isStandardPayment(record("0xp2id"))).toBe(true);
+    expect(isStandardPayment(record("0xp2ide"))).toBe(true);
+    expect(isStandardPayment(record("0xpswap"))).toBe(false);
+  });
+
+  it("throws when WASM is not initialized", () => {
+    expect(() => isStandardPayment(record("0xp2id"))).toThrow(
+      "WASM not initialized"
+    );
   });
 });
