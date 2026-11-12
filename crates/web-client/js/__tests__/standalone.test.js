@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   _setWasm,
   _setWebClient,
@@ -462,5 +463,29 @@ describe("domainSeparatedSignCommitment", () => {
     expect(() =>
       domainSeparatedSignCommitment(new Uint8Array([1]), "word")
     ).toThrow("WASM not initialized");
+  });
+});
+
+// The export ships with no other documentation, so each surface its sibling
+// isStandardPayment uses must carry the verification recipe.
+describe("domainSeparatedSignCommitment docs", () => {
+  const repo = new URL("../../../../", import.meta.url);
+  it.each([
+    "crates/web-client/README.md",
+    "crates/web-client/skills/web-client-usage/SKILL.md",
+    "docs/external/src/web-client/library/sign-bytes.md",
+  ])("%s documents the export", (path) => {
+    const text = readFileSync(new URL(path, repo), "utf8");
+    for (const fact of [
+      "domainSeparatedSignCommitment",
+      "publicKey.verify",
+      "MidenClient.ready",
+      "miden-wallet/sign-bytes/v1",
+      "signed the raw value",
+      "TransactionSummary",
+      "throws",
+    ]) {
+      expect(text).toContain(fact);
+    }
   });
 });
