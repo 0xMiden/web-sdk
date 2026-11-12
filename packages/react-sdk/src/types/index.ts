@@ -689,6 +689,12 @@ export interface StreamedNote {
   firstSeenAt: number;
   /** Pre-decoded attachment values, or null if no attachment */
   attachment: bigint[] | null;
+  /**
+   * True only for a P2ID or P2IDE payment (`isStandardPayment(record)`).
+   * `useNoteStream` always sets it; optional so code that builds a
+   * `StreamedNote` keeps compiling.
+   */
+  standardPayment?: boolean;
 }
 
 export interface UseNoteStreamOptions {
