@@ -231,4 +231,86 @@ test.describe("signing inputs", () => {
     expect(result.isValid).toBe(true);
     expect(result.isValidOther).toBe(false);
   });
+  test("domainSeparatedSignCommitment matches the published tag and vectors", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const b64 = (s: string) =>
+        Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+      const hex = (w: any) => w.toHex();
+      const tag = sdk.Poseidon2.hashElements(
+        new sdk.FeltArray(
+          Array.from(
+            new TextEncoder().encode("miden-wallet/sign-bytes/v1"),
+            (b) => new sdk.Felt(BigInt(b))
+          )
+        )
+      );
+      return {
+        tag: Array.from(tag.toU64s() as BigUint64Array, (v) => v.toString(16)),
+        word: hex(
+          sdk.domainSeparatedSignCommitment(
+            b64("AQAAAAAAAAACAAAAAAAAAAMAAAAAAAAABAAAAAAAAAA="),
+            "word"
+          )
+        ),
+        blind: hex(
+          sdk.domainSeparatedSignCommitment(
+            b64("AgEAAAAAAAAAAgAAAAAAAAADAAAAAAAAAAQAAAAAAAAA"),
+            "signingInputs"
+          )
+        ),
+        arbitrary: hex(
+          sdk.domainSeparatedSignCommitment(
+            b64("AQcFAAAAAAAAAAYAAAAAAAAABwAAAAAAAAA="),
+            "signingInputs"
+          )
+        ),
+      };
+    });
+    expect(result.tag).toEqual([
+      "38a8bcdddf30cacf",
+      "240d1b8455bc2c58",
+      "18162f6af29602dd",
+      "5385955edcd341a4",
+    ]);
+    const wordVector =
+      "0x110a1b1c3b8cc8a4e0ed9acebb00996abdb93e7228280e2547edbdf9c268bee9";
+    expect(result.word).toBe(wordVector);
+    expect(result.blind).toBe(wordVector);
+    expect(result.arbitrary).toBe(
+      "0x8d7fafd3929b6cb5b0375bf0a5ab4f17b1a1948baefea1bb8067807021571d57"
+    );
+  });
+
+  test("a signature over it does not verify as the raw word", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const secretKey = sdk.AuthSecretKey.ecdsaWithRNG();
+      const word = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
+      const tag = sdk.Poseidon2.hashElements(
+        new sdk.FeltArray(
+          Array.from(
+            new TextEncoder().encode("miden-wallet/sign-bytes/v1"),
+            (b) => new sdk.Felt(BigInt(b))
+          )
+        )
+      );
+      const signature = secretKey.signData(
+        sdk.SigningInputs.newArbitrary([...tag.toFelts(), ...word.toFelts()])
+      );
+      const publicKey = secretKey.publicKey();
+      const domain = sdk.domainSeparatedSignCommitment(
+        word.serialize(),
+        "word"
+      );
+      return {
+        domain: publicKey.verify(domain, signature),
+        raw: publicKey.verify(word, signature),
+      };
+    });
+    expect(result.domain).toBe(true);
+    expect(result.raw).toBe(false);
+  });
 });

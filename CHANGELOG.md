@@ -5,6 +5,7 @@
 ### Fixes
 
 * [FIX][react] `useSend({ returnNote: true })` now rejects `recallHeight` and `timelockHeight` instead of silently ignoring them, and carries a supplied `attachment` on the returned note ([web-sdk#520](https://github.com/0xMiden/web-sdk/pull/520)).
+* [FIX][web] New `domainSeparatedSignCommitment(data, kind)` export computes the commitment a wallet signs for a dApp's `signBytes` request under its domain tag, so a dApp can verify the returned signature with `publicKey.verify(...)`.
 
 ## 0.17.9 (2026-11-11)
 

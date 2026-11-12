@@ -2301,6 +2301,35 @@ export declare function isStandardPayment(
   record: ConsumableNoteRecord | InputNoteRecord
 ): boolean;
 
+/**
+ * Computes the commitment Bread signs for a dApp's `signBytes` request.
+ * Verify a returned signature with
+ * `publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)`.
+ *
+ * The wallet signs under a domain tag: the Poseidon2 hash of the string
+ * `miden-wallet/sign-bytes/v1`, one field element per UTF-8 byte. Its four
+ * elements are `0x38a8bcdddf30cacf`, `0x240d1b8455bc2c58`,
+ * `0x18162f6af29602dd` and `0x5385955edcd341a4`.
+ *
+ * - `"word"`: `data` is a serialized `Word`; the signed commitment is that of
+ *   `SigningInputs.newArbitrary([...tag, ...word.toFelts()])`.
+ * - `"signingInputs"`: `data` is serialized `SigningInputs`. A Blind payload
+ *   signs `[...tag, ...word.toFelts()]` and an Arbitrary payload signs
+ *   `[...tag, ...payload]` (the tag alone when empty), both as Arbitrary
+ *   inputs. A TransactionSummary is signed unchanged, so its own commitment
+ *   is returned.
+ *
+ * Any other `kind` or variant throws. Wallets released before this change
+ * signed the raw value instead.
+ *
+ * Needs the SDK's WASM to be loaded: with a lazy entry, await
+ * `MidenClient.ready()` first.
+ */
+export declare function domainSeparatedSignCommitment(
+  data: Uint8Array,
+  kind: "word" | "signingInputs"
+): Word;
+
 /** Exports the entire contents of an IndexedDB store as a JSON string. */
 export declare function exportStore(storeName: string): Promise<string>;
 
