@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach, afterAll } from "vitest";
 vi.mock("../../Cargo.toml", () => ({}));
 import { WasmWebClient } from "../index.js";
-import { CallbackType, WorkerAction } from "../constants.js";
+import { CallbackType, MethodName, WorkerAction } from "../constants.js";
 import {
   DEFAULT_CALLBACK_TIMEOUT_MS,
   appendAuthError,
@@ -115,6 +115,42 @@ describe("the production WebClient worker bridge", () => {
       );
     });
   }
+
+  it("posts a flat failure reply when posting the serialized failure throws", async () => {
+    vi.stubGlobal("Worker", RecordingWorker);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const thrown = new Error("cause 0");
+    let current = thrown;
+    for (let depth = 1; depth <= 12000; depth++) {
+      current.cause = new Error(`cause ${depth}`);
+      current = current.cause;
+    }
+    const { worker } = createClient({ sign: () => Promise.reject(thrown) });
+    const postMessage = worker.postMessage.bind(worker);
+    let failFirstFailureReply = true;
+    worker.postMessage = (message) => {
+      if (message.callbackOk === false && failFirstFailureReply) {
+        failFirstFailureReply = false;
+        throw new RangeError("simulated postMessage clone failure");
+      }
+      postMessage(message);
+    };
+
+    await worker
+      .emit({
+        action: WorkerAction.EXECUTE_CALLBACK,
+        callbackType: CallbackType.SIGN,
+        args: [],
+        requestId: "req-deep",
+      })
+      .catch(() => {});
+
+    expect(worker.messages).toContainEqual({
+      callbackOk: false,
+      callbackError: { message: "sign callback threw an unreadable value" },
+      callbackRequestId: "req-deep",
+    });
+  });
 
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -493,6 +529,28 @@ describe("a callback that throws", () => {
 
     expect(serialized).toEqual({ message: "wallet locked" });
     expect(() => structuredClone(serialized)).not.toThrow();
+  });
+
+  it("keeps a 12000-cause chain cloneable and truncates past 8", () => {
+    const thrown = new Error("cause 0");
+    let current = thrown;
+    for (let depth = 1; depth <= 12000; depth++) {
+      current.cause = new Error(`cause ${depth}`);
+      current = current.cause;
+    }
+
+    const serialized = serializeCallbackError(thrown, "sign");
+
+    expect(() => structuredClone(serialized)).not.toThrow();
+    current = serialized;
+    for (let depth = 0; depth < 8; depth++) {
+      expect(current.message).toBe(`cause ${depth}`);
+      current = current.cause;
+    }
+    expect(current.message).toBe("cause 8");
+    expect(current.cause).toEqual({
+      message: "sign callback threw a cause nested too deeply",
+    });
   });
 
   it("does not invoke coercion hooks on thrown objects", () => {
@@ -1056,6 +1114,110 @@ describe("executeTransaction auth error boundaries", () => {
           messages.find((message) => message.requestId === "tx-invalid")
         ).toMatchObject({ error: { message: "invalid transaction request" } })
       );
+    } finally {
+      log.mockRestore();
+      delete globalThis.self;
+      delete globalThis.__midenWorkerWasm;
+    }
+  });
+
+  it("enriches direct submit errors", async () => {
+    const wasmWebClient = {
+      lastAuthError: () => "wallet locked",
+    };
+    const client = Object.assign(Object.create(WasmWebClient.prototype), {
+      worker: null,
+      wasmWebClient,
+      getWasmWebClient: async () => wasmWebClient,
+      _withInnerLockDepth: 0,
+      _wasmCallChain: Promise.resolve(),
+    });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      for (const [method, args] of [
+        ["submitNewTransaction", ["account", {}]],
+        ["submitNewTransactionWithProver", ["account", {}, {}]],
+      ]) {
+        const error = Object.assign(new Error("authentication failed"), {
+          code: "AUTH",
+        });
+        wasmWebClient[method] = async () => {
+          throw error;
+        };
+
+        await expect(client[method](...args)).rejects.toBe(error);
+        expect(error.message).toBe("authentication failed: wallet locked");
+        expect(error.code).toBe("AUTH");
+      }
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("enriches worker submit errors", async () => {
+    vi.resetModules();
+    const messages = [];
+    class WorkerWebClient {
+      async createClient() {}
+      async executeTransaction() {
+        throw Object.assign(new Error("authentication failed"), {
+          code: "AUTH",
+        });
+      }
+      lastAuthError() {
+        return "wallet locked";
+      }
+    }
+    globalThis.self = {
+      postMessage: (message) => messages.push(structuredClone(message)),
+    };
+    globalThis.__midenWorkerWasm = {
+      WebClient: WorkerWebClient,
+      setupLogging() {},
+      AccountId: { fromHex: (value) => value },
+      TransactionRequest: { deserialize: () => ({}) },
+    };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      await import("../workers/web-client-methods-worker.js");
+      globalThis.self.onmessage({
+        data: { action: WorkerAction.INIT, args: [] },
+      });
+      await vi.waitFor(() => expect(messages).toContainEqual({ ready: true }));
+
+      for (const [methodName, args, requestId] of [
+        [
+          MethodName.SUBMIT_NEW_TRANSACTION,
+          ["account", new Uint8Array()],
+          "submit",
+        ],
+        [
+          MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER,
+          ["account", new Uint8Array(), undefined],
+          "submit-with-prover",
+        ],
+      ]) {
+        globalThis.self.onmessage({
+          data: {
+            action: WorkerAction.CALL_METHOD,
+            methodName,
+            requestId,
+            args,
+          },
+        });
+        await vi.waitFor(() =>
+          expect(
+            messages.find((message) => message.requestId === requestId)
+          ).toMatchObject({
+            error: {
+              message: "authentication failed: wallet locked",
+              code: "AUTH",
+            },
+          })
+        );
+      }
     } finally {
       log.mockRestore();
       delete globalThis.self;

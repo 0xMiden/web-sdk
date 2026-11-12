@@ -117,6 +117,128 @@ test.describe("remote keystore", () => {
   }
 
   for (const useWorker of [true, false]) {
+    test(`includes getKey failure details in summaries and clears stale details (worker: ${useWorker})`, async ({
+      page,
+    }) => {
+      const result = await page.evaluate(async (useWorker) => {
+        let failGetKey = true;
+        let getKeyCalls = 0;
+        const keys = new Map<string, Uint8Array>();
+        const client =
+          await window.WasmWebClient.createClientWithExternalKeystore(
+            window.rpcUrl,
+            undefined,
+            undefined,
+            `${window.storeName}-summary-get-key-error-${useWorker}`,
+            (commitment: Uint8Array) => {
+              getKeyCalls++;
+              if (failGetKey) {
+                return Promise.reject(
+                  new Error("Callback getKey-summary denied")
+                );
+              }
+              return Promise.resolve(
+                keys.get(Array.from(commitment).join(","))
+              );
+            },
+            async (commitment: Uint8Array, key: Uint8Array) => {
+              keys.set(Array.from(commitment).join(","), key);
+            },
+            undefined,
+            undefined,
+            useWorker,
+            undefined,
+            window.feeFaucetId
+          );
+        const faucet = await client.newFaucet(
+          window.AccountStorageMode.private(),
+          false,
+          "DAG",
+          "DAG",
+          8,
+          BigInt(10000000),
+          window.AuthScheme.AuthRpoFalcon512
+        );
+        await client.syncState();
+        const wallet = await client.newWallet(
+          window.AccountStorageMode.private(),
+          window.AuthScheme.AuthRpoFalcon512,
+          undefined
+        );
+        await client.syncState();
+        const request = await (client as any).newMintTransactionRequest(
+          wallet.id(),
+          faucet.id(),
+          window.NoteType.Public,
+          BigInt(1000)
+        );
+        const anchor = await client.chainAnchorForRequest(request);
+
+        const captureError = async (attempt: () => Promise<unknown>) => {
+          try {
+            await attempt();
+            return "summary unexpectedly succeeded";
+          } catch (error) {
+            return error instanceof Error ? error.message : String(error);
+          }
+        };
+        const summaryMessage = await captureError(() =>
+          client.executeForSummary(faucet.id(), request)
+        );
+        const anchoredMessage = await captureError(() =>
+          client.executeForSummaryAt(faucet.id(), request, anchor)
+        );
+        const authError = client.lastAuthError();
+        const authErrorMessage =
+          authError instanceof Error
+            ? authError.message
+            : typeof authError === "string"
+              ? authError
+              : null;
+
+        failGetKey = false;
+        const staleAccountId = window.AccountId.fromHex(
+          "0x69817bcc6fb9f99127c2245f6979c5"
+        );
+        const emptyRequest = new window.TransactionRequestBuilder().build();
+        const callsBeforeStaleChecks = getKeyCalls;
+        await captureError(() =>
+          client.executeForSummary(staleAccountId, emptyRequest)
+        );
+        const summaryAuthError = client.lastAuthError();
+        await captureError(() =>
+          client.executeForSummaryAt(staleAccountId, emptyRequest, anchor)
+        );
+
+        return {
+          summaryMessage,
+          anchoredMessage,
+          getKeyCalls,
+          callsBeforeStaleChecks,
+          authErrorMessage,
+          summaryAuthError,
+          finalAuthError: client.lastAuthError(),
+        };
+      }, useWorker);
+
+      for (const message of [result.summaryMessage, result.anchoredMessage]) {
+        expect(message).toContain("Callback getKey-summary denied");
+        expect(message.match(/Callback getKey-summary denied/g)).toHaveLength(
+          1
+        );
+        expect(message).not.toContain("JsValue(");
+      }
+      expect(result.getKeyCalls).toBeGreaterThan(0);
+      expect(result.authErrorMessage).toBe(
+        "Failed to get secret key via callback: Callback getKey-summary denied"
+      );
+      expect(result.callsBeforeStaleChecks).toBe(result.getKeyCalls);
+      expect(result.summaryAuthError).toBeNull();
+      expect(result.finalAuthError).toBeNull();
+    });
+  }
+
+  for (const useWorker of [true, false]) {
     test(`preserves sign callback errors separately from getKey (worker: ${useWorker})`, async ({
       page,
     }) => {
