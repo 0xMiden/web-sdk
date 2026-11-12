@@ -30,7 +30,6 @@ use miden_client::transaction::{
     TransactionRequestBuilder as NativeTransactionRequestBuilder,
 };
 use miden_client::{Client, ClientError, Word as NativeWord};
-use miden_protocol::crypto::SequentialCommit;
 #[cfg(feature = "browser")]
 use wasm_bindgen::JsValue;
 
