@@ -162,6 +162,8 @@ const { notes } = useNoteStream({ excludeIds: new Set(["0xnote1"]) });
 const { notes } = useNoteStream({ amountFilter: (amount) => amount > 100n });
 ```
 
+A streamed note is any input note in the status, not necessarily a payment. Check `note.standardPayment` (true only for a P2ID or P2IDE payment) before treating it as incoming funds or consuming it: consuming runs the note's script, which can also spend from the account.
+
 ### useSyncState()
 ```tsx
 const { syncHeight, isSyncing, lastSyncTime, sync, error } = useSyncState();
@@ -337,6 +339,8 @@ await consume({
   notes: [noteId1, noteId2],   // accepts: hex string IDs, NoteId, InputNoteRecord, or Note
 });
 ```
+
+Consuming runs each note's script. A P2ID or P2IDE payment moves its assets into the account, and a note running another script can also move assets out. Check `isStandardPayment(record)` first when the note's origin is unknown.
 
 ### useSwap()
 ```tsx
