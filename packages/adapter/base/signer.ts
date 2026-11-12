@@ -49,10 +49,16 @@ export interface MessageSignerWalletAdapterProps<
    * `domainSeparatedSignCommitment(data, kind)` from `@miden-sdk/miden-sdk`;
    * a `"signingInputs"` transaction summary, its own commitment.
    *
-   * To verify a domain-separated signature, check
+   * The result carries no scheme signal: the adapter returns only the
+   * signature. Current wallets:
    * `publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)`.
-   * Wallets older than this scheme signed the raw value, so verify against
-   * the raw value when the wallet is known to be older.
+   * Older wallets signed the raw value. A dApp that also accepts wallets
+   * released before this scheme can optionally check that value: for
+   * `"word"`, `publicKey.verify(Word.deserialize(data), signature)`; for
+   * `"signingInputs"`,
+   * `publicKey.verifyData(SigningInputs.deserialize(data), signature)`. A
+   * transaction summary's commitment is the same in both generations, so the
+   * current check already covers it.
    */
   signBytes(data: Uint8Array, kind: SignKind): Promise<Uint8Array>;
   importPrivateNote(note: Uint8Array): Promise<string>;

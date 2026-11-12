@@ -181,9 +181,21 @@ with `WalletNotConnectedError` while disconnected. Always guard.
 | `requestConsumableNotes()`              | `InputNoteDetails[]`      | From the wallet's store. `standardPayment` is true only for a P2ID or P2IDE payment; check it before treating a note as incoming funds.        |
 | `requestPrivateNotes(filter, noteIds?)` | `InputNoteDetails[]`      | `filter` is a `NoteFilterTypes` from `@miden-sdk/miden-sdk`.                                                                                    |
 | `importPrivateNote(bytes)`              | note id                   | `bytes` is a serialized note.                                                                                                                   |
-| `signBytes(data, kind)`                 | `Uint8Array`              | `kind` is `"word"` or `"signingInputs"`. Verify with `publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)`; a transaction summary verifies as its own commitment. |
+| `signBytes(data, kind)`                 | `Uint8Array`              | `kind` is `"word"` or `"signingInputs"`. The result carries no scheme signal.                                                                   |
 | `createAccount(params?)`                | account id                | Only on `MidenFiSignerProvider`'s context. See the traps.                                                                                       |
 | `requestGuardianInfo()`                 | `GuardianInfo`            | Whether the connected account is a guardian account, and its endpoint, provider and sync status.                                                |
+
+`signBytes` returns only the signature, so the result carries no scheme
+signal. The wallet signs `"word"` and a Blind or Arbitrary `"signingInputs"`
+as `domainSeparatedSignCommitment(data, kind)`, and a transaction summary as
+its own commitment. Current wallets verify with
+`publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)`.
+Older wallets signed the raw value. A dApp that also accepts wallets
+released before this scheme can optionally check that value: for `"word"`,
+`publicKey.verify(Word.deserialize(data), signature)`; for `"signingInputs"`,
+`publicKey.verifyData(SigningInputs.deserialize(data), signature)`. A
+transaction summary's commitment is the same in both generations, so the
+current check already covers it.
 
 Everything the wallet returns about private state is gated by the
 `AllowedPrivateData` bitmask you connected with: `None`, `Assets`, `Notes`,
