@@ -330,8 +330,9 @@ function createNodeSdkWrapper(rawSdk: any): any {
   // Expose the StorageView JS wrapper on `sdk.*` so tests can reach it via the
   // same namespace on both platforms (browser exposes it on `window.*`).
   const sv = require("../js/storageView.js");
+  const standalone = require("../js/standalone.js");
 
-  return {
+  const sdk = {
     ...rawSdk,
     // Wrap classes whose constructors/static methods accept Uint8Array or BigInt args
     AccountBuilder: wrapClass(rawSdk.AccountBuilder),
@@ -355,6 +356,13 @@ function createNodeSdkWrapper(rawSdk: any): any {
     // accept bigint[] for Vec<u64> parameters.
     u64Array: (vals: number[]) => vals.map(BigInt),
   };
+  // standalone.js has one wasm slot, and createMidenClient plus node-adapter
+  // also write it, so point that slot at this wrapper on every call.
+  sdk.domainSeparatedSignCommitment = (data: Uint8Array, kind: string) => {
+    standalone._setWasm(sdk);
+    return standalone.domainSeparatedSignCommitment(data, kind);
+  };
+  return sdk;
 }
 
 // ── Test helpers ──────────────────────────────────────────────────────

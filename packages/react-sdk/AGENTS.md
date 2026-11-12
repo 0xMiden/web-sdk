@@ -265,6 +265,10 @@ await consume({
 });
 ```
 
+Consuming runs each note's script. A P2ID or P2IDE payment moves its assets
+into the account, and a note running another script can also move assets out.
+Check `isStandardPayment(record)` first when the note's origin is unknown.
+
 ### Mint Tokens (Faucet Owner)
 ```tsx
 const { mint } = useMint();
@@ -680,7 +684,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | `useAccounts()` | `accounts` (`wallets` mirrors it, `faucets` is always `[]`; both deprecated) | List local accounts. `error` is always `null` |
 | `useAccount(id)` | `account`, `assets`, `getBalance(faucetId)` | Account details + balances |
 | `useNotes(filter?)` | `notes`, `consumableNotes`, `noteSummaries`, `consumableNoteSummaries` | Input notes + UI summaries |
-| `useNoteStream(filter?)` | streaming variant of `useNotes` | Auto-updates as notes arrive |
+| `useNoteStream(filter?)` | streaming variant of `useNotes` | Auto-updates as notes arrive. Each `StreamedNote` has `standardPayment` (true only for P2ID/P2IDE); check it before treating a note as funds or consuming it |
 | `useSyncState()` | `syncHeight`, `isSyncing`, `lastSyncTime`, `sync()` | Sync status + manual trigger |
 | `useSyncControl()` | `pauseSync()`, `resumeSync()`, `isPaused` | Pause/resume the auto-sync timer |
 | `useAssetMetadata(ids?)` | `assetMetadata: Map<string, AssetMetadata>` | Token info. Takes a `string[]`, never a bare string |
@@ -705,7 +709,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | `useMint()` | `mint({ faucetId, to, amount })` | `TransactionResult` |
 | `useBridge()` | `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress })` | `TransactionResult` (emits an AggLayer B2AGG bridge-out note) |
 | `useCreateNetworkNote()` | `createNetworkNote({ accountId, target, script \| recipient, ... })` | `NetworkNoteResult` (`{ txId, note }`; note satisfies `note.isNetworkNote()`) |
-| `useConsume()` | `consume({ accountId, notes })` | `TransactionResult` |
+| `useConsume()` | `consume({ accountId, notes })` | `TransactionResult`. Runs each note script; a P2ID or P2IDE payment moves assets in, other scripts can move assets out; check `isStandardPayment(record)` first |
 | `useSwap()` | `swap({ ... })` | `TransactionResult` |
 | `usePswapCreate()` | `pswapCreate({ accountId, offeredFaucetId, offeredAmount, requestedFaucetId, requestedAmount, ... })` | `TransactionResult` (creates partial-swap note) |
 | `usePswapConsume()` | `pswapConsume({ accountId, note, fillAmount, noteFillAmount? })` - `note` accepts hex string \| `NoteId` \| `InputNoteRecord` \| `Note` | `TransactionResult` (fills PSWAP fully or partially) |

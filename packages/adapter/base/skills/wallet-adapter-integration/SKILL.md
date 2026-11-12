@@ -178,12 +178,22 @@ with `WalletNotConnectedError` while disconnected. Always guard.
 | `requestTransaction(tx)`                | transaction id            | A `MidenTransaction` envelope. Dispatches by `type` to the send and consume endpoints; anything else goes to the wallet's generalized endpoint. |
 | `waitForTransaction(txId, timeout?)`    | `{ txHash, outputNotes }` | `outputNotes` are `Note` objects from `@miden-sdk/miden-sdk`.                                                                                   |
 | `requestAssets()`                       | `{ faucetId, amount }[]`  | `amount` is a string.                                                                                                                           |
-| `requestConsumableNotes()`              | `InputNoteDetails[]`      | From the wallet's store.                                                                                                                        |
+| `requestConsumableNotes()`              | `InputNoteDetails[]`      | From the wallet's store. `standardPayment` is true only for a P2ID or P2IDE payment; check it before treating a note as incoming funds.        |
 | `requestPrivateNotes(filter, noteIds?)` | `InputNoteDetails[]`      | `filter` is a `NoteFilterTypes` from `@miden-sdk/miden-sdk`.                                                                                    |
 | `importPrivateNote(bytes)`              | note id                   | `bytes` is a serialized note.                                                                                                                   |
-| `signBytes(data, kind)`                 | `Uint8Array`              | `kind` is `"word"` or `"signingInputs"`.                                                                                                        |
+| `signBytes(data, kind)`                 | `Uint8Array`              | `kind` is `"word"` or `"signingInputs"`. The result carries no scheme signal.                                                                   |
 | `createAccount(params?)`                | account id                | Only on `MidenFiSignerProvider`'s context. See the traps.                                                                                       |
 | `requestGuardianInfo()`                 | `GuardianInfo`            | Whether the connected account is a guardian account, and its endpoint, provider and sync status.                                                |
+
+`signBytes` returns only the signature, so the result carries no scheme
+signal. The wallet signs `"word"` and a Blind or Arbitrary `"signingInputs"`
+as `domainSeparatedSignCommitment(data, kind)`, and a transaction summary as
+its own commitment. Current wallets verify with
+`publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)`.
+Wallets released before this scheme signed the raw value, so their `"word"`,
+Blind and Arbitrary signatures do not verify against it. A transaction
+summary's commitment is the same in both generations, so the current check
+already covers it.
 
 Everything the wallet returns about private state is gated by the
 `AllowedPrivateData` bitmask you connected with: `None`, `Assets`, `Notes`,

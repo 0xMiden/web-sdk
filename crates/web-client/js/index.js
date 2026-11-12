@@ -11,6 +11,7 @@ import {
   buildSwapTag,
   buildNetworkNote,
   isStandardPayment,
+  domainSeparatedSignCommitment,
   _setWasm as _setStandaloneWasm,
   _setWebClient as _setStandaloneWebClient,
 } from "./standalone.js";
@@ -40,6 +41,7 @@ export {
   buildSwapTag,
   buildNetworkNote,
   isStandardPayment,
+  domainSeparatedSignCommitment,
 };
 export { StorageView, StorageResult, wordToBigInt };
 
