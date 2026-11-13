@@ -372,7 +372,7 @@ export interface SendOptions {
   skipSync?: boolean;
   /** Send the full balance of this asset. When true, amount is ignored. */
   sendAll?: boolean;
-  /** true = build note in JS and return the Note object (e.g. for out-of-band delivery). Default: false */
+  /** true = build note in JS and return the Note object (e.g. for out-of-band delivery). Cannot be combined with recallHeight or timelockHeight. Default: false */
   returnNote?: boolean;
 }
 
@@ -713,6 +713,12 @@ export interface StreamedNote {
   firstSeenAt: number;
   /** Pre-decoded attachment values, or null if no attachment */
   attachment: bigint[] | null;
+  /**
+   * True only for a P2ID or P2IDE payment (`isStandardPayment(record)`).
+   * `useNoteStream` always sets it; optional so code that builds a
+   * `StreamedNote` keeps compiling.
+   */
+  standardPayment?: boolean;
 }
 
 export interface UseNoteStreamOptions {

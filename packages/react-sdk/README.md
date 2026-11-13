@@ -664,8 +664,12 @@ Temporal note tracking with a unified model. Replaces the common pattern of
 Returns `StreamedNote` objects that merge summary data with the underlying
 record and pre-decode attachments.
 
+A streamed note is any input note in the status, not necessarily a payment.
+Check `note.standardPayment` (true only for a P2ID or P2IDE payment) before
+treating it as incoming funds or consuming it.
+
 Features:
-- **Unified `StreamedNote` type** with sender (bech32), amount, assets, attachment, and `firstSeenAt` timestamp
+- **Unified `StreamedNote` type** with sender (bech32), amount, assets, attachment, `standardPayment`, and `firstSeenAt` timestamp
 - **Built-in filtering** by sender, status, `since` timestamp, `excludeIds`, and custom `amountFilter`
 - **`markHandled` / `markAllHandled`** to exclude processed notes without removing them from the store
 - **`snapshot()`** to capture current note IDs and timestamp for passing to the next phase
@@ -790,7 +794,6 @@ function SendForm() {
 
         // Optional parameters
         noteType: 'private',      // 'private' | 'public' (default: 'private')
-        recallHeight: 1000,       // Sender can reclaim after this block
         attachment: [1n, 2n, 3n], // Arbitrary data payload
         skipSync: false,          // Skip auto-sync before send (default: false)
         sendAll: false,           // Send full balance (ignores amount)
@@ -1089,8 +1092,10 @@ function MintForm() {
 
 #### `useConsume()`
 
-Consume notes to claim tokens sent to your account. Supports multiple note IDs
-and handles proof generation and submission automatically.
+Consume notes with your account. Supports multiple note IDs and handles proof
+generation and submission automatically. Consuming runs each note's script: a
+P2ID or P2IDE payment moves its assets in, and a note running another script
+can also move assets out, so check `isStandardPayment(record)` first.
 It wraps the multi-step consume pipeline so you don't have to string calls
 together. That prevents common snags like forgetting to sync or submit.
 

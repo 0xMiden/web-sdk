@@ -28,6 +28,15 @@
 * [FIX][web] On Node.js, `BasicFungibleFaucetComponent.description()`, `logoUri()` and `externalLink()` now return `undefined` when the metadata is unset, as in the browser, instead of `null` ([#426](https://github.com/0xMiden/web-sdk/issues/426), [#514](https://github.com/0xMiden/web-sdk/pull/514)).
 * [FIX][web] A browser store written by a 0.17 client opens with 0.18 and keeps its accounts, keys and notes. The first open drops the RPC limits the store had cached, which 0.18 cannot read, and the client fetches them from the node on its next sync. `importStore` drops them from an imported dump as well ([#531](https://github.com/0xMiden/web-sdk/pull/531)).
 
+## 0.17.10 (2026-11-12)
+
+### Fixes
+
+* [BREAKING][behavior][web,adapter] Bread now signs a domain-separated commitment for signBytes(data, "word") and for "signingInputs" holding a Blind or Arbitrary payload: domainSeparatedSignCommitment(data, kind), the commitment of SigningInputs.newArbitrary([tag, ...payload]) where the tag is Poseidon2 of "miden-wallet/sign-bytes/v1". A transaction summary is signed as before. Verify such a signature with publicKey.verify(domainSeparatedSignCommitment(data, kind), signature); the window provider's signBytes also returns the signed word as signedCommitment (wallet#2161, #541).
+* [FIX][web,react,adapter] getConsumableNotes documents that consumable means a trial consume succeeded, useNoteStream marks each StreamedNote with standardPayment, useConsume no longer says consuming claims a note's assets, and InputNoteDetails gains an optional standardPayment that wallets report (#541).
+* [FIX][react] `useSend({ returnNote: true })` now rejects `recallHeight` and `timelockHeight` instead of silently ignoring them, and carries a supplied `attachment` on the returned note ([web-sdk#520](https://github.com/0xMiden/web-sdk/pull/520)).
+* [FIX][web] New `domainSeparatedSignCommitment(data, kind)` export computes the commitment a wallet signs for a dApp's `signBytes` request under its domain tag, so a dApp can verify the returned signature with `publicKey.verify(...)`.
+
 ## 0.17.9 (2026-11-11)
 
 ### Fixes

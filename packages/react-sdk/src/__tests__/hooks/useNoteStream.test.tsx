@@ -20,7 +20,8 @@ beforeEach(() => {
 function createStreamableNote(
   id: string,
   sender: string = "0xsender",
-  amount: bigint = 100n
+  amount: bigint = 100n,
+  scriptRoot: string = "0xp2idscript"
 ) {
   return {
     id: vi.fn(() => ({ toString: () => id, toHex: () => id })),
@@ -36,6 +37,11 @@ function createStreamableNote(
             amount: vi.fn(() => amount),
           },
         ]),
+      })),
+      recipient: vi.fn(() => ({
+        script: vi.fn(() => ({
+          root: vi.fn(() => ({ toHex: () => scriptRoot })),
+        })),
       })),
     })),
     state: vi.fn(() => "committed"),
@@ -348,6 +354,40 @@ describe("useNoteStream", () => {
         "0xcurrent",
       ]);
       expect(useMidenStore.getState()).toBe(retainedState);
+    });
+
+    it("marks each streamed note with whether it is a standard payment", async () => {
+      const noteRecords = [
+        createStreamableNote("0xp2id", "0xsender", 1n, "0xp2idscript"),
+        createStreamableNote("0xp2ide", "0xsender", 2n, "0xp2idescript"),
+        createStreamableNote("0xswap", "0xsender", 3n, "0xpswapscript"),
+      ];
+      const mockClient = createMockWebClient({
+        getInputNotes: vi.fn().mockResolvedValue(noteRecords),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as never);
+      });
+      useMidenStore.getState().setNotes(noteRecords as any, "committed");
+
+      const { result } = renderHook(() => useNoteStream());
+
+      await waitFor(() => {
+        expect(result.current.notes).toHaveLength(3);
+      });
+      const flags = Object.fromEntries(
+        result.current.notes.map((n) => [n.id, n.standardPayment])
+      );
+      expect(flags).toEqual({
+        "0xp2id": true,
+        "0xp2ide": true,
+        "0xswap": false,
+      });
     });
 
     it("should fetch and build StreamedNote objects", async () => {

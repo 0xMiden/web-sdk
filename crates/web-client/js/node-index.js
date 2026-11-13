@@ -28,6 +28,7 @@ import {
   buildSwapTag,
   buildNetworkNote,
   isStandardPayment,
+  domainSeparatedSignCommitment,
   _setWasm as _setStandaloneWasm,
   _setWebClient as _setStandaloneWebClient,
 } from "./standalone.js";
@@ -84,6 +85,7 @@ export {
   buildSwapTag,
   buildNetworkNote,
   isStandardPayment,
+  domainSeparatedSignCommitment,
 };
 // Standalone helpers must be re-exported here too: this entry is what the
 // package's "node" condition resolves to, while both entries share one .d.ts.

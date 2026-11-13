@@ -160,6 +160,12 @@ export function useSend(): UseSendResult {
 
         // returnNote path: build note in JS, submit as output note, return Note object
         if (options.returnNote === true) {
+          if (options.recallHeight != null || options.timelockHeight != null) {
+            throw new Error(
+              "recallHeight and timelockHeight are not supported when returnNote is true"
+            );
+          }
+
           const returnResult = await runExclusiveSafe(async () => {
             const fromId = parseAccountId(options.from);
             const toId = parseAccountId(options.to);
@@ -173,7 +179,9 @@ export function useSend(): UseSendResult {
               toId,
               assets,
               noteType,
-              emptyAttachment()
+              hasAttachment
+                ? createNoteAttachment(options.attachment!)
+                : emptyAttachment()
             );
 
             // NoteArray constructor consumes its elements; use push(&note)

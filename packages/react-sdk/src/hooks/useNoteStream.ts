@@ -7,7 +7,7 @@ import {
   useNoteFirstSeenStore,
 } from "../store/MidenStore";
 import { captureClientReadGuard } from "../store/clientReadGuard";
-import { NoteFilter } from "@miden-sdk/miden-sdk";
+import { isStandardPayment, NoteFilter } from "@miden-sdk/miden-sdk";
 import type { InputNoteRecord } from "@miden-sdk/miden-sdk";
 import type {
   StreamedNote,
@@ -27,6 +27,11 @@ import { getNoteFilterType } from "../utils/noteFilters";
  * and dual-track note decoding. Returns `StreamedNote` objects that merge
  * summary data with the underlying record and pre-decode attachments.
  *
+ * A streamed note is any input note in the requested status, not necessarily
+ * a payment. Check `standardPayment` before treating a note as incoming funds
+ * or consuming it: consuming runs the note's script, which can also spend
+ * from the account.
+ *
  * @example
  * ```tsx
  * function IncomingNotes({ opponentId }: { opponentId: string }) {
@@ -42,7 +47,8 @@ import { getNoteFilterType } from "../utils/noteFilters";
  *     }
  *   }, [latest, markHandled]);
  *
- *   return <div>{notes.length} unhandled notes</div>;
+ *   const payments = notes.filter((note) => note.standardPayment);
+ *   return <div>{payments.length} unhandled payments</div>;
  * }
  * ```
  */
@@ -252,6 +258,7 @@ function buildStreamedNote(
       record,
       firstSeenAt,
       attachment,
+      standardPayment: isStandardPayment(record),
     };
   } catch {
     return null;
