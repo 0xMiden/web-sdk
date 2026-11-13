@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.11 (TBD)
+
+### Fixes
+
+* [FIX][docs] The `@miden-sdk/react` `AGENTS.md` example and hook table for `useMultiSend` now call `sendMany` with `assetId` at the top level, as `MultiSendOptions` declares; they called a `multiSend` the hook does not return and put `assetId` on each recipient, so the example did not compile. The package README no longer documents `useInternalTransfer` or imports its `InternalTransferOptions`, `InternalTransferChainOptions` and `InternalTransferResult` types, all removed in 0.14.0 in favour of `useSend` and `useConsume` ([#519](https://github.com/0xMiden/web-sdk/pull/519)).
+
 ## 0.17.10 (2026-11-12)
 
 ### Fixes
