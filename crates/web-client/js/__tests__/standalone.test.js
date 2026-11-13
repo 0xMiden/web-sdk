@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   _setWasm,
   _setWebClient,
@@ -6,6 +7,7 @@ import {
   createP2IDENote,
   buildSwapTag,
   isStandardPayment,
+  domainSeparatedSignCommitment,
 } from "../standalone.js";
 
 // ── WASM mock ─────────────────────────────────────────────────────────────────
@@ -306,5 +308,184 @@ describe("isStandardPayment", () => {
     expect(() => isStandardPayment(record("0xp2id"))).toThrow(
       "WASM not initialized"
     );
+  });
+});
+
+// ── domainSeparatedSignCommitment ─────────────────────────────────────────────
+
+const TAG_U64S = [11n, 22n, 33n, 44n];
+
+function makeSignWasm({ variant, blind, arbitrary, summary } = {}) {
+  const calls = { hashed: [], arbitrary: [] };
+  class Felt {
+    constructor(v) {
+      this.v = BigInt(v);
+    }
+    asInt() {
+      return this.v;
+    }
+  }
+  class FeltArray {
+    constructor(items) {
+      this.items = items;
+    }
+    length() {
+      return this.items.length;
+    }
+    get(i) {
+      return this.items[i];
+    }
+  }
+  const wordOf = (u64s) => ({
+    toFelts: () => u64s.map((u) => new Felt(u)),
+  });
+  const wasm = {
+    Felt,
+    FeltArray,
+    Poseidon2: {
+      hashElements: vi.fn((arr) => {
+        calls.hashed.push(arr.items.map((f) => f.v));
+        return wordOf(TAG_U64S);
+      }),
+    },
+    Word: { deserialize: vi.fn(() => wordOf([1n, 2n, 3n, 4n])) },
+    SigningInputsType: { TransactionSummary: 0, Arbitrary: 1, Blind: 2 },
+    SigningInputs: {
+      newArbitrary: vi.fn((felts) => {
+        calls.arbitrary.push(felts.map((f) => f.v));
+        return { toCommitment: () => ({ committed: calls.arbitrary.at(-1) }) };
+      }),
+      deserialize: vi.fn(() => ({
+        variantType: variant,
+        blindPayload: () => blind,
+        arbitraryPayload: () => arbitrary,
+        toCommitment: () => summary,
+      })),
+    },
+  };
+  return { wasm, calls };
+}
+
+describe("domainSeparatedSignCommitment", () => {
+  afterEach(() => {
+    _setWasm(null);
+  });
+
+  it("hashes the tag then the word for kind word", () => {
+    const { wasm, calls } = makeSignWasm();
+    _setWasm(wasm);
+    const out = domainSeparatedSignCommitment(new Uint8Array([1]), "word");
+    expect(calls.hashed[0]).toEqual(
+      [..."miden-wallet/sign-bytes/v1"].map((c) => BigInt(c.charCodeAt(0)))
+    );
+    expect(calls.arbitrary[0]).toEqual([...TAG_U64S, 1n, 2n, 3n, 4n]);
+    expect(out).toEqual({ committed: calls.arbitrary[0] });
+  });
+
+  it("returns a transaction summary's own commitment", () => {
+    const summary = { summaryCommitment: true };
+    const { wasm, calls } = makeSignWasm({ variant: 0, summary });
+    _setWasm(wasm);
+    expect(
+      domainSeparatedSignCommitment(new Uint8Array([1]), "signingInputs")
+    ).toBe(summary);
+    expect(calls.arbitrary).toHaveLength(0);
+  });
+
+  it("domain-separates a Blind payload", () => {
+    const { wasm, calls } = makeSignWasm({
+      variant: 2,
+      blind: { toFelts: () => [5n, 6n, 7n, 8n].map((v) => new wasmFelt(v)) },
+    });
+    function wasmFelt(v) {
+      return new wasm.Felt(v);
+    }
+    _setWasm(wasm);
+    domainSeparatedSignCommitment(new Uint8Array([1]), "signingInputs");
+    expect(calls.arbitrary[0]).toEqual([...TAG_U64S, 5n, 6n, 7n, 8n]);
+  });
+
+  it("reads an Arbitrary payload from a browser FeltArray and from a Node array", () => {
+    for (const asNode of [false, true]) {
+      const { wasm, calls } = makeSignWasm({ variant: 1 });
+      const felts = [5n, 6n, 7n].map((v) => new wasm.Felt(v));
+      const payload = asNode ? felts : new wasm.FeltArray(felts);
+      wasm.SigningInputs.deserialize = vi.fn(() => ({
+        variantType: 1,
+        arbitraryPayload: () => payload,
+      }));
+      _setWasm(wasm);
+      domainSeparatedSignCommitment(new Uint8Array([1]), "signingInputs");
+      expect(calls.arbitrary[0]).toEqual([...TAG_U64S, 5n, 6n, 7n]);
+    }
+  });
+
+  it("builds fresh felts per call", () => {
+    const { wasm } = makeSignWasm({ variant: 1 });
+    const payload = [new wasm.Felt(5n)];
+    wasm.SigningInputs.deserialize = vi.fn(() => ({
+      variantType: 1,
+      arbitraryPayload: () => payload,
+    }));
+    const seen = [];
+    wasm.SigningInputs.newArbitrary = vi.fn((felts) => {
+      seen.push(...felts);
+      return { toCommitment: () => null };
+    });
+    _setWasm(wasm);
+    domainSeparatedSignCommitment(new Uint8Array([1]), "signingInputs");
+    expect(seen).not.toContain(payload[0]);
+  });
+
+  it("commits to the tag alone for an empty Arbitrary payload", () => {
+    const { wasm, calls } = makeSignWasm({
+      variant: 1,
+      arbitrary: [],
+    });
+    _setWasm(wasm);
+    domainSeparatedSignCommitment(new Uint8Array([1]), "signingInputs");
+    expect(calls.arbitrary[0]).toEqual(TAG_U64S);
+  });
+
+  it("throws for an unknown kind or variant", () => {
+    const { wasm } = makeSignWasm({ variant: 99 });
+    _setWasm(wasm);
+    expect(() =>
+      domainSeparatedSignCommitment(new Uint8Array([1]), "raw")
+    ).toThrow(/kind/);
+    expect(() =>
+      domainSeparatedSignCommitment(new Uint8Array([1]), "signingInputs")
+    ).toThrow(/variant/);
+  });
+
+  it("throws when WASM is not initialized", () => {
+    _setWasm(null);
+    expect(() =>
+      domainSeparatedSignCommitment(new Uint8Array([1]), "word")
+    ).toThrow("WASM not initialized");
+  });
+});
+
+// The export ships with no other documentation, so each surface its sibling
+// isStandardPayment uses must carry the verification recipe.
+describe("domainSeparatedSignCommitment docs", () => {
+  const repo = new URL("../../../../", import.meta.url);
+  it.each([
+    "crates/web-client/README.md",
+    "crates/web-client/skills/web-client-usage/SKILL.md",
+    "docs/external/src/web-client/library/sign-bytes.md",
+  ])("%s documents the export", (path) => {
+    const text = readFileSync(new URL(path, repo), "utf8");
+    for (const fact of [
+      "domainSeparatedSignCommitment",
+      "publicKey.verify",
+      "MidenClient.ready",
+      "miden-wallet/sign-bytes/v1",
+      "signed the raw value",
+      "TransactionSummary",
+      "throws",
+    ]) {
+      expect(text).toContain(fact);
+    }
   });
 });

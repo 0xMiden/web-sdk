@@ -12,13 +12,13 @@ WEB_CLIENT_DIR=crates/web-client
 
 .PHONY: clippy-wasm
 clippy-wasm: rust-client-ts-build ## Run Clippy for the WASM packages (web client and idxdb store)
-	cargo +nightly clippy --package miden-client-web --target wasm32-unknown-unknown --all-targets -- -D warnings
-	cargo +nightly clippy --package miden-idxdb-store --target wasm32-unknown-unknown --all-targets -- -D warnings
+	cargo clippy --package miden-client-web --target wasm32-unknown-unknown --all-targets -- -D warnings
+	cargo clippy --package miden-idxdb-store --target wasm32-unknown-unknown --all-targets -- -D warnings
 
 .PHONY: fix-wasm
 fix-wasm: ## Run Fix for the WASM packages (web client and idxdb store)
-	cargo +nightly fix --package miden-client-web --target wasm32-unknown-unknown --allow-staged --allow-dirty --all-targets
-	cargo +nightly fix --package miden-idxdb-store --target wasm32-unknown-unknown --allow-staged --allow-dirty --all-targets
+	cargo fix --package miden-client-web --target wasm32-unknown-unknown --allow-staged --allow-dirty --all-targets
+	cargo fix --package miden-idxdb-store --target wasm32-unknown-unknown --allow-staged --allow-dirty --all-targets
 
 .PHONY: format
 format: ## Run format using nightly toolchain
@@ -177,6 +177,22 @@ require-fee-faucet:
 test-web-client-nodejs: require-fee-faucet ## Run web client tests on Node.js (mock chain, no browser needed)
 	cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
 	cd ./crates/web-client && SKIP_WEB_SERVER=1 pnpm exec playwright test --project=nodejs --workers=1
+
+.PHONY: test-web-client-rpc
+RUST_TEST_PROFILE ?= test
+test-web-client-rpc: ## Run native RPC contract tests (no node or local store required)
+	# Dynamic symbols let the Rust test executable link without a Node.js host.
+	cargo test -p miden-client-web --no-default-features --features nodejs,testing,napi/dyn-symbols --profile $(RUST_TEST_PROFILE) --lib rpc_client::
+
+.PHONY: test-web-client-rpc-nodejs
+test-web-client-rpc-nodejs: ## Run native RPC binding tests (no Miden node or local store required)
+	cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
+	cd ./crates/web-client && SKIP_WEB_SERVER=1 pnpm exec playwright test rpc_client.node.test.ts --project=nodejs --workers=1
+
+.PHONY: test-web-client-rpc-browser
+test-web-client-rpc-browser: build-web-client ## Run browser RPC binding tests (no Miden node required)
+	pnpm --filter @miden-sdk/miden-sdk exec playwright install chromium webkit
+	pnpm --filter @miden-sdk/miden-sdk exec playwright test rpc_client.browser.test.ts --project=chromium --project=webkit
 
 .PHONY: integration-test-web-client
 SHARD_PARAMETER ?= ""

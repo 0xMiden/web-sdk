@@ -352,8 +352,10 @@ test.describe("chain anchor", () => {
   });
 
   // A multisig proposal binds its summary to the block its auth args name, and
-  // the fee-aware builder declares that block on the request. Re-executing at a
-  // later tip, with no anchor, must reproduce the summary the approvers signed.
+  // the fee-aware builder declares that block on the request, so an anchor
+  // from `chainAnchorForRequest` tracks it. Re-executing at a later tip, with
+  // no anchor or at a late anchor, must reproduce the summary the approvers
+  // signed.
   test("a multisig proposal reproduces its summary at a later tip without an anchor", async ({
     run,
   }) => {

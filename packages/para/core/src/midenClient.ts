@@ -161,11 +161,18 @@ export async function createParaMidenClient(
     autoSync: true,
   });
 
-  const accountId = await createAccount(
-    client,
-    publicKey,
-    opts as MidenAccountOpts
-  );
+  let accountId: string;
+  try {
+    accountId = await createAccount(
+      client,
+      publicKey,
+      opts as MidenAccountOpts
+    );
+  } catch (error) {
+    // Never handed to the caller, so nothing else would terminate it.
+    client.terminate();
+    throw error;
+  }
 
   return { client, accountId };
 }

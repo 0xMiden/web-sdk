@@ -480,6 +480,8 @@ async function processMessage(event) {
         logLevel,
         numThreads,
         feeFaucetId,
+        noteTransportMaxRetries,
+        noteTransportRetryIntervalMs,
       ] = args;
       const wasm = await getWasmOrThrow();
 
@@ -516,7 +518,9 @@ async function processMessage(event) {
           feeFaucetId,
           hasGetKeyCb ? callbackProxies.getKey : undefined,
           hasInsertKeyCb ? callbackProxies.insertKey : undefined,
-          hasSignCb ? callbackProxies.sign : undefined
+          hasSignCb ? callbackProxies.sign : undefined,
+          noteTransportMaxRetries,
+          noteTransportRetryIntervalMs
         );
       } else {
         await wasmWebClient.createClient(
@@ -524,7 +528,9 @@ async function processMessage(event) {
           noteTransportUrl,
           seed,
           storeName,
-          feeFaucetId
+          feeFaucetId,
+          noteTransportMaxRetries,
+          noteTransportRetryIntervalMs
         );
       }
 
@@ -533,7 +539,13 @@ async function processMessage(event) {
       self.postMessage({ ready: true });
       return;
     } else if (action === WorkerAction.INIT_MOCK) {
-      const [seed, logLevel, numThreads] = args;
+      const [
+        seed,
+        logLevel,
+        numThreads,
+        serializedMockChain,
+        serializedMockNoteTransportNode,
+      ] = args;
       const wasm = await getWasmOrThrow();
 
       if (logLevel) {
@@ -553,7 +565,13 @@ async function processMessage(event) {
       }
 
       wasmWebClient = new wasm.WebClient();
-      await wasmWebClient.createMockClient(seed, undefined, undefined);
+      await wasmWebClient.createMockClient(
+        seed,
+        serializedMockChain ? new Uint8Array(serializedMockChain) : undefined,
+        serializedMockNoteTransportNode
+          ? new Uint8Array(serializedMockNoteTransportNode)
+          : undefined
+      );
 
       wasmSeed = seed;
       ready = true;
