@@ -165,6 +165,9 @@ so a bare string throws a runtime `TypeError`.
 
 Metadata is read from the node the provider's client was created against
 (`client.endpoint()`), so nothing is fetched until the provider is ready.
+Reads from a previous client or cache generation cannot repopulate the cache
+after a reset. The current client can fetch the same asset while an old read
+is still pending.
 
 ## Writing Data (Mutation Hooks)
 
