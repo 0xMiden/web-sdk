@@ -287,3 +287,86 @@ test("useParaMiden terminates a client created after unmount and never stores it
     restore();
   }
 });
+
+test("useParaMiden drops the client on logout and rebuilds it for the next Para user", async () => {
+  const state = {
+    para: { id: "para" },
+    isConnected: true,
+    wallets: [{ id: "evm-a", type: "EVM" }],
+  };
+  const calls = [];
+  const clients = [];
+  const { useParaMiden, restore } = loadUseParaMiden({
+    ...buildMocks(state, calls, null),
+    "@miden-sdk/para": {
+      createParaMidenClient: async (...args) => {
+        calls.push(args);
+        const walletId = args[1][0].id;
+        const client = { id: `client-${walletId}`, terminate: test.mock.fn() };
+        clients.push(client);
+        return { client, accountId: `acc-${walletId}` };
+      },
+    },
+  });
+  const args = ["https://rpc.testnet.miden.io", "public"];
+
+  try {
+    const { getLatest, rerender } = await renderHook(useParaMiden, args);
+    assert.strictEqual(getLatest().client.id, "client-evm-a");
+    assert.strictEqual(getLatest().accountId, "acc-evm-a");
+
+    state.isConnected = false;
+    state.wallets = [];
+    await rerender(args);
+    assert.strictEqual(getLatest().client, null);
+    assert.strictEqual(getLatest().accountId, "");
+    assert.strictEqual(clients[0].terminate.mock.callCount(), 1);
+
+    state.isConnected = true;
+    state.wallets = [{ id: "evm-b", type: "EVM" }];
+    await rerender(args);
+    assert.strictEqual(calls.length, 2);
+    assert.strictEqual(calls[1][1][0].id, "evm-b");
+    assert.strictEqual(getLatest().client.id, "client-evm-b");
+    assert.strictEqual(getLatest().accountId, "acc-evm-b");
+  } finally {
+    restore();
+  }
+});
+
+test("useParaMiden rebuilds the client when the Para wallet changes without a logout", async () => {
+  const state = {
+    para: { id: "para" },
+    isConnected: true,
+    wallets: [{ id: "evm-a", type: "EVM" }],
+  };
+  const calls = [];
+  const clients = [];
+  const { useParaMiden, restore } = loadUseParaMiden({
+    ...buildMocks(state, calls, null),
+    "@miden-sdk/para": {
+      createParaMidenClient: async (...args) => {
+        calls.push(args);
+        const walletId = args[1][0].id;
+        const client = { id: `client-${walletId}`, terminate: test.mock.fn() };
+        clients.push(client);
+        return { client, accountId: `acc-${walletId}` };
+      },
+    },
+  });
+  const args = ["https://rpc.testnet.miden.io", "public"];
+
+  try {
+    const { getLatest, rerender } = await renderHook(useParaMiden, args);
+    assert.strictEqual(getLatest().accountId, "acc-evm-a");
+
+    state.wallets = [{ id: "evm-b", type: "EVM" }];
+    await rerender(args);
+    assert.strictEqual(calls.length, 2);
+    assert.strictEqual(clients[0].terminate.mock.callCount(), 1);
+    assert.strictEqual(getLatest().client.id, "client-evm-b");
+    assert.strictEqual(getLatest().accountId, "acc-evm-b");
+  } finally {
+    restore();
+  }
+});

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.11 (TBD)
+
+### Fixes
+
+* [FIX][para] `useParaMiden` now terminates and clears its client when the Para session logs out or the EVM wallet changes, and builds a new one for the next user instead of keeping the previous user's client and account id ([web-sdk#540](https://github.com/0xMiden/web-sdk/pull/540)).
+
 ## 0.17.10 (2026-11-12)
 
 ### Fixes
