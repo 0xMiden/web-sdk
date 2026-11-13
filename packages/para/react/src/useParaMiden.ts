@@ -35,6 +35,9 @@ export function useParaMiden(
   const para = useClient();
   const { isConnected, embedded } = useAccount();
   const clientRef = useRef<MidenClient | null>(null);
+  // Which EVM wallets the client in clientRef was built for, so a logout or a
+  // different Para user does not keep using the previous user's client.
+  const clientWalletKeyRef = useRef<string>("");
   const [accountId, setAccountId] = useState<string>("");
   const [error, setError] = useState<string>("");
 
@@ -42,18 +45,35 @@ export function useParaMiden(
     () => embedded.wallets?.filter((wallet) => wallet.type === "EVM"),
     [embedded.wallets]
   );
+  const walletKey = useMemo(
+    () => (evmWallets ?? []).map((wallet) => wallet.id).join(","),
+    [evmWallets]
+  );
 
   useEffect(() => {
     let cancelled = false;
 
+    const dropClient = () => {
+      clientRef.current?.terminate();
+      clientRef.current = null;
+      clientWalletKeyRef.current = "";
+      setAccountId("");
+      setError("");
+    };
+
     async function setupClient() {
-      if (
-        !isConnected ||
-        !para ||
-        !embedded.wallets?.length ||
-        clientRef.current
-      ) {
+      if (!isConnected || !para || !embedded.wallets?.length) {
+        if (clientRef.current) {
+          dropClient();
+        }
         return;
+      }
+
+      if (clientRef.current) {
+        if (clientWalletKeyRef.current === walletKey) {
+          return;
+        }
+        dropClient();
       }
 
       try {
@@ -77,6 +97,7 @@ export function useParaMiden(
         }
 
         clientRef.current = midenParaClient;
+        clientWalletKeyRef.current = walletKey;
         setAccountId(aId);
         setError("");
       } catch (err) {
@@ -95,6 +116,7 @@ export function useParaMiden(
   }, [
     isConnected,
     evmWallets,
+    walletKey,
     para,
     nodeUrl,
     showSigningModal,
