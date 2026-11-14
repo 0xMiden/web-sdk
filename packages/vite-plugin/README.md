@@ -117,6 +117,7 @@ midenVitePlugin({
 - **Type:** `string | false`
 - **Default:** `"https://rpc.testnet.miden.io"`
 - gRPC-web proxy target URL for the dev server. Set to `false` to disable.
+- A client whose `rpcUrl` points at the dev server's `rpcProxyPath` talks to this node, so set it to the RPC of the network the app uses, for example `"https://rpc.mainnet.miden.io"` for mainnet.
 
 ### `rpcProxyPath`
 - **Type:** `string`

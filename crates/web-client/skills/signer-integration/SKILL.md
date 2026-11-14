@@ -96,7 +96,7 @@ import { WalletAdapterNetwork } from "@miden-sdk/miden-wallet-adapter-base";
 
 <MidenFiSignerProvider
   appName="My App"                                        // optional: passed to MidenWalletAdapter
-  network={WalletAdapterNetwork.Testnet}                  // WalletAdapterNetwork enum: Devnet | Testnet | Localnet
+  network={WalletAdapterNetwork.Testnet}                  // WalletAdapterNetwork enum: Mainnet | Devnet | Testnet | Localnet
   autoConnect                                             // reconnect on mount. Default: false
   storageMode="public"                                    // "private" | "public". Default: "public"
   customComponents={[myComponent]}                        // optional: custom AccountComponents

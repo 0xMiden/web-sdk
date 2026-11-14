@@ -493,6 +493,25 @@ describe("MidenWalletAdapter", () => {
       expect(connectHandler).toHaveBeenCalledWith("0xmockaddress");
     });
 
+    it("asks the wallet for mainnet as the network name it accepts", async () => {
+      const mockWallet = createMockWallet();
+      (window as any).midenWallet = mockWallet;
+
+      const adapter = new MidenWalletAdapter();
+      adapter.readyState = WalletReadyState.Installed;
+
+      await adapter.connect(
+        PrivateDataPermission.UponRequest,
+        WalletAdapterNetwork.Mainnet
+      );
+
+      expect(mockWallet.connect).toHaveBeenCalledWith(
+        PrivateDataPermission.UponRequest,
+        "mainnet",
+        undefined
+      );
+    });
+
     it("throws WalletConnectionError if wallet has no address after connect", async () => {
       const mockWallet = createMockWallet({ address: undefined });
       (window as any).midenWallet = mockWallet;

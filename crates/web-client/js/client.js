@@ -278,6 +278,29 @@ export class MidenClient {
   }
 
   /**
+   * Creates a client preconfigured for mainnet use.
+   *
+   * Defaults: rpcUrl "mainnet", proverUrl "mainnet", noteTransportUrl "mainnet", autoSync true.
+   * All defaults can be overridden via options.
+   *
+   * `feeFaucetId` is optional: the client receives the chain's protocol
+   * configuration, which names the fee asset, from the node when it syncs. The
+   * option only sets what `feeFaucetId()` reports before that first sync.
+   *
+   * @param {ClientOptions} [options] - Options to override defaults.
+   * @returns {Promise<MidenClient>} A fully initialized mainnet client.
+   */
+  static async createMainnet(options) {
+    return MidenClient.create({
+      rpcUrl: "mainnet",
+      proverUrl: "mainnet",
+      noteTransportUrl: "mainnet",
+      autoSync: true,
+      ...options,
+    });
+  }
+
+  /**
    * Resolves once the WASM module is initialized and safe to use.
    *
    * Idempotent and shared across callers: the underlying loader memoizes the
@@ -667,6 +690,7 @@ export class MidenClient {
 }
 
 const RPC_URLS = {
+  mainnet: "https://rpc.mainnet.miden.io",
   testnet: "https://rpc.testnet.miden.io",
   devnet: "https://rpc.devnet.miden.io",
   localhost: "http://localhost:57291",
@@ -676,7 +700,8 @@ const RPC_URLS = {
 /**
  * Resolves an rpcUrl shorthand or raw URL into a concrete endpoint string.
  *
- * @param {string | undefined} rpcUrl - "testnet", "devnet", "localhost", "local", or a raw URL.
+ * @param {string | undefined} rpcUrl - "mainnet", "testnet", "devnet", "localhost", "local", or a
+ *   raw URL.
  * @returns {string | undefined} A fully qualified URL, or undefined to use the SDK default.
  */
 function resolveRpcUrl(rpcUrl) {
@@ -685,11 +710,13 @@ function resolveRpcUrl(rpcUrl) {
 }
 
 const PROVER_URLS = {
+  mainnet: "https://tx-prover.mainnet.miden.io",
   devnet: "https://tx-prover.devnet.miden.io",
   testnet: "https://tx-prover.testnet.miden.io",
 };
 
 const NOTE_TRANSPORT_URLS = {
+  mainnet: "https://transport.mainnet.miden.io",
   testnet: "https://transport.miden.io",
   devnet: "https://transport.devnet.miden.io",
 };
@@ -697,7 +724,7 @@ const NOTE_TRANSPORT_URLS = {
 /**
  * Resolves a noteTransportUrl shorthand or raw URL into a concrete endpoint string.
  *
- * @param {string | undefined} noteTransportUrl - "testnet", "devnet", or a raw URL.
+ * @param {string | undefined} noteTransportUrl - "mainnet", "testnet", "devnet", or a raw URL.
  * @returns {string | undefined} A fully qualified URL, or undefined if omitted.
  */
 function resolveNoteTransportUrl(noteTransportUrl) {
@@ -711,7 +738,7 @@ function resolveNoteTransportUrl(noteTransportUrl) {
 /**
  * Resolves a proverUrl shorthand or raw URL into a TransactionProver.
  *
- * @param {string} proverUrl - "local", "devnet", "testnet", or a raw URL.
+ * @param {string} proverUrl - "local", "mainnet", "devnet", "testnet", or a raw URL.
  * @param {object} wasm - Loaded WASM module.
  * @returns {object} A TransactionProver instance.
  */

@@ -56,7 +56,10 @@ returning. No Miden private key exists anywhere: the account's auth component
 commits to the Para-held EVM key.
 
 The third argument is `Opts`: `endpoint` (the RPC URL, not `rpcUrl`),
-`noteTransportUrl` (defaults to `https://transport.miden.io`), `seed` (client
+`noteTransportUrl` (defaults to the transport of the network `endpoint` names:
+`https://transport.mainnet.miden.io` for mainnet,
+`https://transport.devnet.miden.io` for devnet and `https://transport.miden.io`
+otherwise), `seed` (client
 store seed), `accountSeed`, and the required `storageMode`, which is `"public"`
 or `"private"`. Two optional arguments follow it: `showSigningModal` (default
 `true`) and `customSignConfirmStep`.

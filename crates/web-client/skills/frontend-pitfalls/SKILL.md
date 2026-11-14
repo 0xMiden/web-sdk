@@ -223,7 +223,7 @@ Both hex and bech32 formats work in all hooks. Prefer hex for constants, bech32 
 
 **Gotcha: the HRP is inferred from the endpoint URL, not from the chain.** `bech32id()` (and `toBech32AccountId()`) read `client.endpoint()` from the provider's client, the URL of the node it was created against, lowercase it, and look for substrings in this order: `devnet` or `mdev` -> devnet, `mainnet` -> mainnet, `testnet` or `mtst` -> testnet, `localhost` or `127.0.0.1` -> devnet. An unset `rpcUrl` is not a gap here: the client defaulted to testnet and reports that endpoint.
 
-**Anything matching none of them renders the hex ID**, and so does every call made before `MidenProvider` has a client. `MidenConfig.rpcUrl` resolves only the shorthands `"testnet"`, `"devnet"` and `"localhost"` / `"local"` to concrete URLs and passes any other value through verbatim, so a private or self-hosted RPC endpoint whose hostname names no network shows hex IDs where you might expect bech32.
+**Anything matching none of them renders the hex ID**, and so does every call made before `MidenProvider` has a client. `MidenConfig.rpcUrl` resolves only the shorthands `"mainnet"`, `"testnet"`, `"devnet"` and `"localhost"` / `"local"` to concrete URLs and passes any other value through verbatim, so a private or self-hosted RPC endpoint whose hostname names no network shows hex IDs where you might expect bech32.
 
 If you run a custom network, do not rely on `bech32id()` producing bech32 - key off hex, and render bech32 yourself with `AccountId.toBech32(networkId, ...)` where you control the network mapping.
 
@@ -458,8 +458,8 @@ Three companions to the same boundary:
 
 **Config cannot carry a prover instance.** Neither `ClientOptions.proverUrl` nor the React
 SDK's `ProverTarget` / `ProverConfig` has an arm that accepts a `TransactionProver`. The
-raw client takes `proverUrl?: "local" | "devnet" | "testnet" | (string & {})`, and
-`ProverTarget` widens that to `"local" | "localhost" | "devnet" | "testnet" | string |
+raw client takes `proverUrl?: "local" | "mainnet" | "devnet" | "testnet" | (string & {})`, and
+`ProverTarget` widens that to `"local" | "localhost" | "mainnet" | "devnet" | "testnet" | string |
 { url, timeoutMs? }`, with `ProverConfig` adding `{ primary, fallback }` around it - every
 arm is a URL or a name, never a handle. So a callback prover cannot be supplied through
 config at all; it has to be passed at the call that proves, which is why the

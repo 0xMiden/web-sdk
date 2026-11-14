@@ -1,6 +1,7 @@
 import type { InputNoteState, Note, NoteType } from "@miden-sdk/miden-sdk";
 
 export enum WalletAdapterNetwork {
+  Mainnet = "mainnet",
   Devnet = "devnet",
   Testnet = "testnet",
   Localnet = "localnet",
