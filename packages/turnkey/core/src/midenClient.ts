@@ -93,12 +93,19 @@ export async function createMidenTurnkeyClient(
     },
     autoSync: true,
   });
-  const accountId = await createAccount(
-    client,
-    opts.storageMode,
-    turnkeyConfig,
-    opts
-  );
+  let accountId: string;
+  try {
+    accountId = await createAccount(
+      client,
+      opts.storageMode,
+      turnkeyConfig,
+      opts
+    );
+  } catch (error) {
+    // Never handed to the caller, so nothing else would terminate it.
+    client.terminate();
+    throw error;
+  }
   return { client, accountId };
 }
 

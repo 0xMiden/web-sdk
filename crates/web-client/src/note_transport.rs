@@ -13,6 +13,12 @@ impl WebClient {
     /// block. The proof exists once the creating transaction is committed and this client has
     /// synced past it. For one of this client's own output notes, prefer
     /// [`WebClient::send_private_output_note`], which reads the stored proof.
+    ///
+    /// A rejection means the note did not reach the transport or the outcome is not known, and
+    /// it is final: the client keeps no queue and no sync sends the note again. Transient
+    /// transport failures are already retried within the call, as the client's
+    /// `noteTransportMaxRetries` option sets. To try again later, send the same note again; a
+    /// send is idempotent by note id.
     #[js_export(js_name = "sendPrivateNote")]
     pub async fn send_private_note(
         &self,
@@ -41,6 +47,12 @@ impl WebClient {
     /// client has synced past the block that committed the note, and the call fails in that
     /// case rather than relaying a note the recipient cannot locate. The note must exist in
     /// this client's store as an output note (its transaction has been applied).
+    ///
+    /// A rejection means the note did not reach the transport or the outcome is not known, and
+    /// it is final: the client keeps no queue and no sync sends the note again. Transient
+    /// transport failures are already retried within the call, as the client's
+    /// `noteTransportMaxRetries` option sets. To try again later, call this again with the same
+    /// note id; a send is idempotent by note id.
     #[js_export(js_name = "sendPrivateOutputNote")]
     pub async fn send_private_output_note(
         &self,

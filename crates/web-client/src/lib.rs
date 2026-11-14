@@ -26,7 +26,9 @@ use miden_client::builder::{ClientBuilder, DEFAULT_GRPC_TIMEOUT_MS};
 use miden_client::keystore::FilesystemKeyStore;
 use miden_client::note_transport::NoteTransportClient;
 use miden_client::note_transport::grpc::GrpcNoteTransportClient;
-use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, RpcError, VerifyingRpcClient};
+#[cfg(feature = "browser")]
+use miden_client::rpc::RpcError;
+use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, VerifyingRpcClient};
 use miden_client::store::{Store, StoreError};
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::MockNoteTransportApi;
@@ -184,6 +186,39 @@ pub fn sequential_sum_bench(n: u64) -> u64 {
 
 #[cfg(feature = "browser")]
 const BASE_STORE_NAME: &str = "MidenClientDB";
+
+/// The node endpoint a browser client connects to: `node_url`, else testnet.
+#[cfg(feature = "browser")]
+fn node_endpoint(node_url: Option<String>) -> Result<Endpoint, JsValue> {
+    node_url.map_or(Ok(Endpoint::testnet()), |url| {
+        Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
+    })
+}
+
+/// The name of the store a browser client opens: `store_name`, else
+/// `MidenClientDB_{network_id}` of the endpoint.
+#[cfg(feature = "browser")]
+fn store_name_for(endpoint: &Endpoint, store_name: Option<String>) -> String {
+    store_name.unwrap_or_else(|| format!("{}_{}", BASE_STORE_NAME, endpoint.to_network_id()))
+}
+
+/// Returns the name of the `IndexedDB` store `createClient` and `createClientWithExternalKeystore`
+/// open for these arguments: `store_name` when given, else `MidenClientDB_{network_id}`, where
+/// `network_id` is derived from `node_url` (testnet when `None`).
+///
+/// The JS client keys its store lock by this name, so every client on one store takes one lock
+/// whichever way it named the store.
+///
+/// # Errors
+/// Fails with "Invalid node URL" when `node_url` is not a valid endpoint, as client creation does.
+#[cfg(feature = "browser")]
+#[wasm_bindgen(js_name = "resolveStoreName")]
+pub fn resolve_store_name(
+    node_url: Option<String>,
+    store_name: Option<String>,
+) -> Result<String, JsValue> {
+    Ok(store_name_for(&node_endpoint(node_url)?, store_name))
+}
 
 /// Initializes the `tracing` subscriber that routes Rust log output to the
 /// browser console via `console.log` / `console.warn` / `console.error`.
@@ -436,7 +471,12 @@ impl WebClient {
     /// * `fee_faucet_id`: Optional fee faucet of the chain, as a bech32 address or a hex account
     ///   ID. Only what `feeFaucetId()` reports before the first sync delivers the protocol
     ///   configuration from the node; execution does not need it.
+    /// * `note_transport_max_retries`: Optional retries of a private note send after a transient
+    ///   transport failure. `None` keeps the transport's default.
+    /// * `note_transport_retry_interval_ms`: Optional delay before the first such retry, doubling
+    ///   for each later one. `None` keeps the transport's default.
     #[wasm_bindgen(js_name = "createClient")]
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_client(
         &self,
         node_url: Option<String>,
@@ -444,27 +484,29 @@ impl WebClient {
         seed: Option<Vec<u8>>,
         store_name: Option<String>,
         fee_faucet_id: Option<String>,
+        note_transport_max_retries: Option<u32>,
+        note_transport_retry_interval_ms: Option<u32>,
     ) -> Result<JsValue, JsValue> {
-        let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
-            Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
-        })?;
+        let endpoint = node_endpoint(node_url)?;
 
         let web_rpc_client =
             Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
         let note_transport_client = node_note_transport_url.map(|url| {
-            Arc::new(GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS))
-                as Arc<dyn NoteTransportClient>
+            build_note_transport_client(
+                url,
+                note_transport_max_retries,
+                note_transport_retry_interval_ms,
+            )
         });
 
-        let store_name =
-            store_name.unwrap_or(format!("{}_{}", BASE_STORE_NAME, endpoint.to_network_id()));
+        let store_name = store_name_for(&endpoint, store_name);
 
         let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
             IdxdbStore::new(store_name.clone())
                 .await
-                .map_err(|_| JsValue::from_str("Failed to initialize IdxdbStore"))?,
+                .map_err(|err| idxdb_store_init_error(&err))?,
         );
         let keystore = WebKeyStore::new_with_callbacks(
             StdRng::from_rng(&mut rng),
@@ -508,6 +550,10 @@ impl WebClient {
     /// * `get_key_cb`: Callback to retrieve the secret key bytes for a given public key.
     /// * `insert_key_cb`: Callback to persist a secret key.
     /// * `sign_cb`: Callback to produce serialized signature bytes for the provided inputs.
+    /// * `note_transport_max_retries`: Optional retries of a private note send after a transient
+    ///   transport failure. `None` keeps the transport's default.
+    /// * `note_transport_retry_interval_ms`: Optional delay before the first such retry, doubling
+    ///   for each later one. `None` keeps the transport's default.
     #[wasm_bindgen(js_name = "createClientWithExternalKeystore")]
     #[allow(clippy::too_many_arguments)]
     pub async fn create_client_with_external_keystore(
@@ -520,27 +566,29 @@ impl WebClient {
         get_key_cb: Option<Function>,
         insert_key_cb: Option<Function>,
         sign_cb: Option<Function>,
+        note_transport_max_retries: Option<u32>,
+        note_transport_retry_interval_ms: Option<u32>,
     ) -> Result<JsValue, JsValue> {
-        let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
-            Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
-        })?;
+        let endpoint = node_endpoint(node_url)?;
 
         let web_rpc_client =
             Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
         let note_transport_client = node_note_transport_url.map(|url| {
-            Arc::new(GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS))
-                as Arc<dyn NoteTransportClient>
+            build_note_transport_client(
+                url,
+                note_transport_max_retries,
+                note_transport_retry_interval_ms,
+            )
         });
 
-        let store_name =
-            store_name.unwrap_or(format!("{}_{}", BASE_STORE_NAME, endpoint.to_network_id()));
+        let store_name = store_name_for(&endpoint, store_name);
 
         let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
             IdxdbStore::new(store_name.clone())
                 .await
-                .map_err(|_| JsValue::from_str("Failed to initialize IdxdbStore"))?,
+                .map_err(|err| idxdb_store_init_error(&err))?,
         );
         let keystore = WebKeyStore::new_with_callbacks(
             StdRng::from_rng(&mut rng),
@@ -625,7 +673,12 @@ impl WebClient {
     /// * `fee_faucet_id`: Optional fee faucet of the chain, as a bech32 address or a hex account
     ///   ID. Only what `feeFaucetId()` reports before the first sync delivers the protocol
     ///   configuration from the node; execution does not need it.
+    /// * `note_transport_max_retries`: Optional retries of a private note send after a transient
+    ///   transport failure. `None` keeps the transport's default.
+    /// * `note_transport_retry_interval_ms`: Optional delay before the first such retry, doubling
+    ///   for each later one. `None` keeps the transport's default.
     #[napi(js_name = "createClient")]
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_client(
         &self,
         node_url: Option<String>,
@@ -634,6 +687,8 @@ impl WebClient {
         db_path: String,
         keystore_path: String,
         fee_faucet_id: Option<String>,
+        note_transport_max_retries: Option<u32>,
+        note_transport_retry_interval_ms: Option<u32>,
     ) -> Result<String, JsErr> {
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| from_str_err("Invalid node URL"))
@@ -642,12 +697,13 @@ impl WebClient {
         let rpc_client =
             Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
-        let note_transport_client = if let Some(url) = node_note_transport_url {
-            let client = GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS);
-            Some(Arc::new(client) as Arc<dyn NoteTransportClient>)
-        } else {
-            None
-        };
+        let note_transport_client = node_note_transport_url.map(|url| {
+            build_note_transport_client(
+                url,
+                note_transport_max_retries,
+                note_transport_retry_interval_ms,
+            )
+        });
 
         let rng = create_rng(seed)?;
 
@@ -720,6 +776,27 @@ impl WebClient {
     }
 }
 
+// NOTE TRANSPORT
+// ================================================================================================
+
+/// Builds the note transport client every create path uses, so their retry policy cannot diverge.
+/// A `None` keeps the transport's own default for that setting. The JS wrappers bound both values
+/// before they get here: wasm-bindgen wraps an out-of-range number into a `u32` silently.
+fn build_note_transport_client(
+    url: String,
+    max_retries: Option<u32>,
+    retry_interval_ms: Option<u32>,
+) -> Arc<dyn NoteTransportClient> {
+    let mut client = GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS);
+    if let Some(max_retries) = max_retries {
+        client = client.with_max_retries(max_retries);
+    }
+    if let Some(retry_interval_ms) = retry_interval_ms {
+        client = client.with_retry_interval_ms(u64::from(retry_interval_ms));
+    }
+    Arc::new(client)
+}
+
 // FEE FAUCET
 // ================================================================================================
 
@@ -753,6 +830,17 @@ pub(crate) fn create_rng(seed: Option<Vec<u8>>) -> Result<StdRng, JsErr> {
 
 // ERROR HANDLING HELPERS
 // ================================================================================================
+
+/// The error a client constructor reports when the browser store fails to open, carrying the
+/// store's own reason, such as a store written by a newer client.
+#[cfg(feature = "browser")]
+pub(crate) fn idxdb_store_init_error(err: &JsValue) -> JsErr {
+    let cause = match err.dyn_ref::<js_sys::Error>() {
+        Some(error) => String::from(error.message()),
+        None => err.as_string().unwrap_or_else(|| format!("{err:?}")),
+    };
+    from_str_err(&format!("Failed to initialize IdxdbStore: {cause}"))
+}
 
 pub(crate) fn js_error_with_context<T>(err: T, context: &str) -> JsErr
 where

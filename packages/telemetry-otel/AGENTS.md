@@ -38,6 +38,12 @@ only once it has finished, so the span is reconstructed: it ends when the
 observation arrived, is backdated by the duration, and has no parent. A broken
 tracer cannot fail the operation; the observer never throws.
 
+The duration runs from when the call's turn on its client's queue starts. A call
+that takes the store lock (the syncs, `importNoteFile`, `fetchPrivateNotes`, and,
+on a store still at genesis only, `syncBeforeAccountCreation` and account
+creation) waits within that time for any other client or tab holding the lock,
+so a long span of one of these can be lock wait, not work.
+
 ## `observer` and `observeSensitive` on the client
 
 `ClientOptions.observer` is registered process-wide and the newest registration

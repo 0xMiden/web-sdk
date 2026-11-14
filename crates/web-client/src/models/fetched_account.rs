@@ -63,7 +63,9 @@ impl FetchedAccount {
     /// endpoint, paired with the block height the proof was taken at.
     ///
     /// The full account state is only present for public accounts; private accounts carry only
-    /// their on-chain commitment, so `account` is left `None`.
+    /// their on-chain commitment, so `account` is left `None`. Public details become an account
+    /// only when the reconstructed commitment matches the proof. A mismatch returns
+    /// `reconstructed account commitment does not match the account proof` and no value.
     pub(crate) fn from_proof(
         block_num: BlockNumber,
         proof: AccountProof,
@@ -71,11 +73,16 @@ impl FetchedAccount {
         let account_id = proof.account_id();
         let commitment = proof.account_commitment();
         let account = match proof.into_details() {
-            Some(details) => Some(
-                NativeAccount::try_from(&details)
-                    .map_err(|err| from_str_err(&err.to_string()))?
-                    .into(),
-            ),
+            Some(details) => {
+                let native = NativeAccount::try_from(&details)
+                    .map_err(|err| from_str_err(&err.to_string()))?;
+                if native.to_commitment() != commitment {
+                    return Err(from_str_err(
+                        "reconstructed account commitment does not match the account proof",
+                    ));
+                }
+                Some(native.into())
+            },
             None => None,
         };
 

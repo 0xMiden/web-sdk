@@ -46,9 +46,11 @@ export interface UseChainAnchorResult {
  * executes later (single-signature co-signing) captures an anchor next to the
  * summary and ships both, so the summary reproduces on a client at a different
  * sync height, provided both parties agree on the account state. A multisig
- * proposal needs no anchor: build it with `feeAwareTransactionRequestBuilder`
- * and preview and execute it at each party's tip, once that party has synced
- * to its bound block.
+ * proposal needs no anchor. `feeAwareTransactionRequestBuilder` declares its
+ * bound block, so each party previews and executes at its own tip once its
+ * client has synced to it. A `withFeeAwareAuth` copy declares no bound block:
+ * sync before previewing or executing it. An anchor captured for that copy
+ * does not track the bound block.
  *
  * The anchor tracks the blocks the request declares through `withBlockNumbers`
  * and the creation blocks of its authenticated input notes, so it stays valid
