@@ -753,9 +753,8 @@ describe("useNoteStream", () => {
 
       useMidenStore.getState().setNotes(notes as any, "committed");
 
-      const { result } = renderHook(() =>
-        useNoteStream({ amountFilter: (a) => a >= 100n })
-      );
+      const amountFilter = (a: bigint) => a >= 100n;
+      const { result } = renderHook(() => useNoteStream({ amountFilter }));
 
       await waitFor(() => {
         expect(result.current.notes.length).toBe(2);

@@ -72,15 +72,10 @@ export function useNoteStream(
   const handledIdsRef = useRef<Set<string>>(new Set());
   const [handledVersion, setHandledVersion] = useState(0);
 
-  // Store amountFilter in a ref so unstable inline lambdas do not defeat
-  // memoization of note decoding. Bump filterEpoch when the predicate (or
-  // its absence) changes so the derived list recomputes without refetching.
-  const amountFilterRef = useRef(options.amountFilter);
-  const [filterEpoch, setFilterEpoch] = useState(0);
-  if (amountFilterRef.current !== options.amountFilter) {
-    amountFilterRef.current = options.amountFilter;
-    setFilterEpoch((epoch) => epoch + 1);
-  }
+  // Keep amountFilter in the streamedNotes memo deps. A render-time
+  // identity bump + setState loops when callers pass an inline lambda
+  // (new function every render). Stable useCallback filters still memoize.
+  const amountFilter = options.amountFilter;
 
   // Serialize excludeIds to a stable key so array literals don't defeat memoization.
   // Uses \0 separator (note IDs are hex strings that never contain null bytes).
@@ -131,9 +126,8 @@ export function useNoteStream(
 
   // Build StreamedNote array with all filters applied
   const streamedNotes = useMemo((): StreamedNote[] => {
-    // Force recalculation when handled IDs or the amount predicate change
+    // Force recalculation when handled IDs change
     void handledVersion;
-    void filterEpoch;
 
     const result: StreamedNote[] = [];
 
@@ -163,9 +157,8 @@ export function useNoteStream(
       // Filter: since timestamp
       if (since !== undefined && note.firstSeenAt < since) continue;
 
-      // Filter: amount (read from ref to avoid unstable function dep)
-      if (amountFilterRef.current && !amountFilterRef.current(note.amount))
-        continue;
+      // Filter: amount
+      if (amountFilter && !amountFilter(note.amount)) continue;
 
       result.push(note);
     }
@@ -181,7 +174,7 @@ export function useNoteStream(
     sender,
     since,
     handledVersion,
-    filterEpoch,
+    amountFilter,
   ]);
 
   const latest = useMemo(
