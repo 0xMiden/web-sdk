@@ -777,7 +777,7 @@ describe("useNoteStream", () => {
         sync: vi.fn(),
       });
 
-      useMidenStore.getState().setNotes(notes as any);
+      useMidenStore.getState().setNotes(notes as any, "committed");
 
       const { result, rerender } = renderHook(
         ({ amountFilter }) => useNoteStream({ amountFilter }),
@@ -813,7 +813,7 @@ describe("useNoteStream", () => {
         sync: vi.fn(),
       });
 
-      useMidenStore.getState().setNotes(notes as any);
+      useMidenStore.getState().setNotes(notes as any, "committed");
 
       const { result, rerender } = renderHook(
         ({ amountFilter }: { amountFilter?: (amount: bigint) => boolean }) =>
