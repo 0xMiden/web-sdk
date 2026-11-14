@@ -192,7 +192,7 @@ const client = await MidenClient.createTestnet({
 
 ```typescript
 const client = await MidenClient.create({
-  rpcUrl: "https://rpc.testnet.miden.io", // string URL or "testnet"/"devnet"/"localhost"/"local"
+  rpcUrl: "https://rpc.testnet.miden.io", // string URL or "mainnet"/"testnet"/"devnet"/"localhost"/"local"
   feeFaucetId: FEE_FAUCET, // optional - what feeFaucetId() reports before the first sync
   noteTransportUrl: "https://transport.miden.io",
   noteTransportMaxRetries: 3, // optional - in-call retries of a private note send; see below
@@ -359,7 +359,7 @@ Common patterns:
   side-effect that must not race with a kernel callback (e.g. clearing an
   in-memory unlock token after a wallet "lock")
 
-`autoSync: true` (default for `createTestnet`/`createDevnet`) only triggers a
+`autoSync: true` (default for `createTestnet`/`createDevnet`/`createMainnet`) only triggers a
 single sync at construction time - it is not a polling loop. Use the React
 SDK's `useSyncState` or `MidenProvider` `autoSyncInterval` for periodic sync.
 

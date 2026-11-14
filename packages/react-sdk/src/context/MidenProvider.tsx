@@ -131,6 +131,7 @@ export function MidenProvider({
     isReady,
     resolvedConfig.prover,
     resolvedConfig.proverTimeoutMs,
+    resolvedConfig.proverUrls?.mainnet,
     resolvedConfig.proverUrls?.devnet,
     resolvedConfig.proverUrls?.testnet,
   ]);

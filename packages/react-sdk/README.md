@@ -152,7 +152,7 @@ function App() {
   return (
     <MidenProvider
       config={{
-        // RPC endpoint (defaults to testnet). You can also use 'devnet' or 'testnet'.
+        // RPC endpoint (defaults to testnet). You can also use 'mainnet', 'devnet' or 'testnet'.
         rpcUrl: 'devnet',
 
         // Optional: the faucet the chain mints its fee asset from, bech32 or hex.
@@ -176,7 +176,7 @@ function App() {
         // noteTransportMaxRetries: 3,
         // noteTransportRetryIntervalMs: 250,
 
-        // Optional: prover selection ('local' | 'devnet' | 'testnet' | URL)
+        // Optional: prover selection ('local' | 'mainnet' | 'devnet' | 'testnet' | URL)
         // prover: 'local',
       }}
       // Optional: Custom loading component

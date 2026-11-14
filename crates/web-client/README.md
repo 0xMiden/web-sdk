@@ -446,7 +446,7 @@ The following are just a few simple examples to get started. For more details, s
 ```typescript
 import { MidenClient, FaucetType } from "@miden-sdk/miden-sdk";
 
-// 1. Create client (defaults to testnet, or use createTestnet()/createDevnet())
+// 1. Create client (defaults to testnet, or use createTestnet()/createDevnet()/createMainnet())
 const client = await MidenClient.createDevnet();
 
 // 2. Create a wallet and a token (faucet account)
@@ -1147,7 +1147,7 @@ const client = await MidenClient.create({
 });
 ```
 
-`observer` is a field on `ClientOptions`, so it works on `create`, `createTestnet`, and `createDevnet` alike.
+`observer` is a field on `ClientOptions`, so it works on `create`, `createTestnet`, `createDevnet`, and `createMainnet` alike.
 
 **The SDK never transports an observation.** It hands the object to your callback and forgets about it. There is no telemetry dependency in `@miden-sdk/miden-sdk` — not a direct one, not a peer, not an optional one — and the module that delivers observations has no egress primitive in it and imports nothing at all. Both halves are enforced on every CI run by `js/__tests__/no-telemetry-dependency.test.js`, which parses the module rather than grepping it: it asserts the module reaches for no global object, builds no code at runtime, constructs nothing, and calls nothing but your observer. Where the observations go is entirely your decision, made in your code.
 

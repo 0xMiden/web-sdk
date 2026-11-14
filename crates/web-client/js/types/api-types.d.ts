@@ -210,28 +210,37 @@ export interface MidenObservation {
 export interface ClientOptions {
   /**
    * RPC endpoint. Accepts shorthands or a raw URL:
+   * - `"mainnet"` — Miden mainnet RPC (`https://rpc.mainnet.miden.io`)
    * - `"testnet"` — Miden testnet RPC (`https://rpc.testnet.miden.io`)
    * - `"devnet"` — Miden devnet RPC (`https://rpc.devnet.miden.io`)
    * - `"localhost"` / `"local"` — local node (`http://localhost:57291`)
    * - any other string — treated as a raw RPC endpoint URL
    * Defaults to the SDK testnet RPC if omitted.
    */
-  rpcUrl?: "testnet" | "devnet" | "localhost" | "local" | (string & {});
+  rpcUrl?:
+    | "mainnet"
+    | "testnet"
+    | "devnet"
+    | "localhost"
+    | "local"
+    | (string & {});
   /**
    * Note transport endpoint. Accepts shorthands or a raw URL:
+   * - `"mainnet"` — Miden mainnet transport (`https://transport.mainnet.miden.io`)
    * - `"testnet"` — Miden testnet transport (`https://transport.miden.io`)
    * - `"devnet"` — Miden devnet transport (`https://transport.devnet.miden.io`)
    * - any other string — treated as a raw note transport endpoint URL
    */
-  noteTransportUrl?: "testnet" | "devnet" | (string & {});
+  noteTransportUrl?: "mainnet" | "testnet" | "devnet" | (string & {});
   /**
    * Prover to use for transactions. Accepts shorthands or a raw URL:
    * - `"local"` — local (in-browser) prover
+   * - `"mainnet"` — Miden mainnet remote prover (`https://tx-prover.mainnet.miden.io`)
    * - `"devnet"` — Miden devnet remote prover
    * - `"testnet"` — Miden testnet remote prover
    * - any other string — treated as a raw remote prover URL
    */
-  proverUrl?: "local" | "devnet" | "testnet" | (string & {});
+  proverUrl?: "local" | "mainnet" | "devnet" | "testnet" | (string & {});
   /** Hashed to 32 bytes via SHA-256. */
   seed?: string | Uint8Array;
   /** Store isolation key. */
@@ -2014,6 +2023,10 @@ export declare class MidenClient {
    * cover the endpoints, not the chain's fee asset.
    */
   static createDevnet(options?: ClientOptions): Promise<MidenClient>;
+  /**
+   * Creates a client preconfigured for mainnet (rpc, prover, note transport, autoSync).
+   */
+  static createMainnet(options?: ClientOptions): Promise<MidenClient>;
   /** Creates a mock client for testing. */
   static createMock(options?: MockOptions): Promise<MidenClient>;
   /**

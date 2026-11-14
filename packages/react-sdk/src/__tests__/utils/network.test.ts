@@ -11,6 +11,11 @@ describe("resolveRpcUrl", () => {
     expect(resolveRpcUrl("" as never)).toBeUndefined();
   });
 
+  it('maps "mainnet" to the canonical mainnet URL', () => {
+    expect(resolveRpcUrl("mainnet")).toBe("https://rpc.mainnet.miden.io");
+    expect(resolveRpcUrl("  MainNet  ")).toBe("https://rpc.mainnet.miden.io");
+  });
+
   it('maps "testnet" to the canonical testnet URL', () => {
     expect(resolveRpcUrl("testnet")).toBe("https://rpc.testnet.miden.io");
   });

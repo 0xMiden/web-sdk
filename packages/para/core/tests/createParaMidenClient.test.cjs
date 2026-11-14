@@ -134,3 +134,58 @@ test("createParaMidenClient leaves the client it returns alive", async () => {
     restore();
   }
 });
+
+/**
+ * Builds the client with `opts` and returns the options `MidenClient.create`
+ * received.
+ */
+const createOptionsFor = async (opts) => {
+  const client = makeClient(async () => {});
+  const mocks = buildMocks(client);
+  let received;
+  mocks["@miden-sdk/miden-sdk"].MidenClient = {
+    create: async (options) => {
+      received = options;
+      return client;
+    },
+  };
+  const { createParaMidenClient, restore } = loadMidenClient(mocks);
+  try {
+    await createParaMidenClient(
+      { id: "para" },
+      [{ id: "evm-1", type: "EVM" }],
+      { storageMode: "public", ...opts },
+      false
+    );
+  } finally {
+    restore();
+  }
+  return received;
+};
+
+for (const [endpoint, transport] of [
+  ["https://rpc.mainnet.miden.io", "https://transport.mainnet.miden.io"],
+  ["mainnet", "https://transport.mainnet.miden.io"],
+  [" MainNet ", "https://transport.mainnet.miden.io"],
+  ["https://rpc.devnet.miden.io", "https://transport.devnet.miden.io"],
+  ["devnet", "https://transport.devnet.miden.io"],
+  ["https://rpc.testnet.miden.io", "https://transport.miden.io"],
+  ["testnet", "https://transport.miden.io"],
+  [undefined, "https://transport.miden.io"],
+  ["https://rpc.example.com", "https://transport.miden.io"],
+  ["not a url", "https://transport.miden.io"],
+]) {
+  test(`createParaMidenClient defaults the note transport for endpoint ${JSON.stringify(endpoint)} to ${transport}`, async () => {
+    const options = await createOptionsFor({ endpoint });
+    assert.strictEqual(options.noteTransportUrl, transport);
+    assert.strictEqual(options.rpcUrl, endpoint);
+  });
+}
+
+test("createParaMidenClient keeps an explicit noteTransportUrl on mainnet", async () => {
+  const options = await createOptionsFor({
+    endpoint: "https://rpc.mainnet.miden.io",
+    noteTransportUrl: "https://transport.example.com",
+  });
+  assert.strictEqual(options.noteTransportUrl, "https://transport.example.com");
+});

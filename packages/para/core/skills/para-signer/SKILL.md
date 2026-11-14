@@ -96,7 +96,10 @@ const { client, accountId } = await createParaMidenClient(
 ```
 
 `Opts` fields: `endpoint` (the RPC URL - the field is not called `rpcUrl`),
-`noteTransportUrl` (default `https://transport.miden.io`; `nodeTransportUrl` is
+`noteTransportUrl` (defaults to the transport of the network `endpoint` names:
+`https://transport.mainnet.miden.io` for mainnet,
+`https://transport.devnet.miden.io` for devnet and `https://transport.miden.io`
+otherwise; `nodeTransportUrl` is
 a deprecated alias), `seed` (client store seed), `accountSeed`, and the required
 `storageMode` (`"public"` or `"private"`).
 
