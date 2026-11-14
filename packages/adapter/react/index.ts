@@ -7,10 +7,7 @@ export * from "./useWallet.js";
 export {
   MidenFiSignerProvider,
   useMidenFiWallet,
-  WalletContext,
   type MidenFiSignerProviderProps,
   type SignerAccountType,
-  type Wallet,
-  type WalletContextState,
   type MidenFiWalletContextState,
 } from "./MidenFiSignerProvider.js";

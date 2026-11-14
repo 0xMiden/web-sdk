@@ -6,8 +6,8 @@
 
 # Function: useWallet()
 
-> **useWallet**(): `WalletContextState`
+> **useWallet**(): [`WalletContextState`](../interfaces/WalletContextState.md)
 
 ## Returns
 
-`WalletContextState`
+[`WalletContextState`](../interfaces/WalletContextState.md)
