@@ -24,7 +24,7 @@ import { useMint } from "../../hooks/useMint";
 import { useSwap } from "../../hooks/useSwap";
 import { useMultiSend } from "../../hooks/useMultiSend";
 import { accountIdsEqual } from "../../utils/accountId";
-import { AccountId } from "@miden-sdk/miden-sdk";
+import { AccountId, TransactionId } from "@miden-sdk/miden-sdk";
 import {
   createMockWebClient,
   createMockAccount,
@@ -54,7 +54,7 @@ const notReady = () => ({
 // ────────────────────────────────────────────────────────────────────────
 // accountId.ts: cover the catch branch when parseAccountId throws.
 // ────────────────────────────────────────────────────────────────────────
-describe("accountIdsEqual — catch path", () => {
+describe("accountIdsEqual - catch path", () => {
   it("falls back to literal string comparison when parseAccountId throws", () => {
     vi.mocked(AccountId.fromHex).mockImplementationOnce(() => {
       throw new Error("not a valid id");
@@ -64,7 +64,7 @@ describe("accountIdsEqual — catch path", () => {
   });
 
   it("returns true via the catch path when both inputs literally match", () => {
-    // Only the first fromHex call throws — the catch returns immediately
+    // Only the first fromHex call throws - the catch returns immediately
     // without touching the second arg, so a single Once-queue is enough.
     vi.mocked(AccountId.fromHex).mockImplementationOnce(() => {
       throw new Error("not a valid id");
@@ -73,7 +73,7 @@ describe("accountIdsEqual — catch path", () => {
   });
 
   it("frees only idA when idB throws after idA was assigned (finally branch)", () => {
-    // First fromHex succeeds (idA assigned), second throws — so the finally
+    // First fromHex succeeds (idA assigned), second throws - so the finally
     // block sees idA defined but idB undefined, exercising the falsy branch
     // of `idB?.free?.()`.
     const idAStub = { toString: () => "0xa", free: vi.fn() };
@@ -87,7 +87,7 @@ describe("accountIdsEqual — catch path", () => {
   });
 
   it("handles AccountId stubs whose `free` is undefined (optional-chain branch)", () => {
-    // Both ids are defined but neither carries a `free` method — the
+    // Both ids are defined but neither carries a `free` method - the
     // `?.free?.()` chain takes the falsy branch on `.free`, exercising
     // the second optional in the chain.
     const noFreeA = { toString: () => "0xnoFreeA" };
@@ -101,10 +101,10 @@ describe("accountIdsEqual — catch path", () => {
 
 // ────────────────────────────────────────────────────────────────────────
 // "client not ready" branches across hooks. Each hook has a guard for
-// !client || !isReady that returns early or throws — covering both the
+// !client || !isReady that returns early or throws - covering both the
 // error-throwing and early-return shapes.
 // ────────────────────────────────────────────────────────────────────────
-describe("hook guards — client not ready", () => {
+describe("hook guards - client not ready", () => {
   it("useExecuteProgram throws when client is not ready", async () => {
     mockUseMiden.mockReturnValue(notReady());
     const { result } = renderHook(() => useExecuteProgram());
@@ -112,7 +112,7 @@ describe("hook guards — client not ready", () => {
       result.current.execute({
         accountId: "0xacc",
         // The hook bails on the not-ready guard before touching `script`,
-        // so the script object's shape doesn't matter here — cast to satisfy
+        // so the script object's shape doesn't matter here - cast to satisfy
         // the parameter type.
         script: {} as never,
       })
@@ -250,7 +250,7 @@ describe("hook error-state propagation", () => {
 // is covered by the suites above; exercise the false branch by throwing
 // a plain string.
 // ────────────────────────────────────────────────────────────────────────
-describe("hook catch — non-Error rejection branch", () => {
+describe("hook catch - non-Error rejection branch", () => {
   it("useExportNote wraps a string rejection in a new Error", async () => {
     const mockClient = createMockWebClient({
       exportNoteFile: vi.fn().mockRejectedValue("string-failure"),
@@ -330,7 +330,7 @@ describe("hook catch — non-Error rejection branch", () => {
 // the timeout branch in waitAndConsume (line 253) when consumable notes
 // never arrive within maxWaitMs.
 // ────────────────────────────────────────────────────────────────────────
-describe("useSessionAccount — storage mode + timeout branches", () => {
+describe("useSessionAccount - storage mode + timeout branches", () => {
   it("uses AccountStorageMode.private when walletOptions.storageMode === 'private'", async () => {
     const mockWallet = createMockAccount({
       id: vi.fn(() => createMockAccountId("0xprivate_wallet")),
@@ -353,9 +353,13 @@ describe("useSessionAccount — storage mode + timeout branches", () => {
       isReady: true,
       sync: vi.fn().mockResolvedValue(undefined),
     });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
+    });
 
     // Use a unique storagePrefix so localStorage state from previous tests
     // doesn't restore a "ready" session before this test runs.
+    const storagePrefix = `priv-storage-${Math.random()}`;
     const { result } = renderHook(() =>
       useSessionAccount({
         fund: vi.fn().mockResolvedValue(undefined),
@@ -363,7 +367,7 @@ describe("useSessionAccount — storage mode + timeout branches", () => {
         pollIntervalMs: 1,
         maxWaitMs: 100,
         walletOptions: { storageMode: "private" },
-        storagePrefix: `priv-storage-${Math.random()}`,
+        storagePrefix,
       })
     );
 
@@ -386,12 +390,16 @@ describe("useSessionAccount — storage mode + timeout branches", () => {
       isReady: true,
       sync: vi.fn().mockResolvedValue(undefined),
     });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
+    });
 
+    const storagePrefix = `non-error-${Math.random()}`;
     const { result } = renderHook(() =>
       useSessionAccount({
         fund: vi.fn().mockResolvedValue(undefined),
         assetId: "0xfaucet",
-        storagePrefix: `non-error-${Math.random()}`,
+        storagePrefix,
       })
     );
 
@@ -423,14 +431,18 @@ describe("useSessionAccount — storage mode + timeout branches", () => {
       isReady: true,
       sync: vi.fn().mockResolvedValue(undefined),
     });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
+    });
 
+    const storagePrefix = `cancel-mid-fund-${Math.random()}`;
     const { result } = renderHook(() =>
       useSessionAccount({
         fund,
         assetId: "0xfaucet",
         pollIntervalMs: 1,
         maxWaitMs: 50,
-        storagePrefix: `cancel-mid-fund-${Math.random()}`,
+        storagePrefix,
       })
     );
 
@@ -480,7 +492,11 @@ describe("useSessionAccount — storage mode + timeout branches", () => {
       isReady: true,
       sync: vi.fn().mockResolvedValue(undefined),
     });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
+    });
 
+    const storagePrefix = `default-storage-${Math.random()}`;
     const { result } = renderHook(() =>
       useSessionAccount({
         fund: vi.fn().mockResolvedValue(undefined),
@@ -490,7 +506,7 @@ describe("useSessionAccount — storage mode + timeout branches", () => {
         // Cast through unknown to bypass the union type and exercise the
         // default case in getStorageMode.
         walletOptions: { storageMode: "unknown" as unknown as "public" },
-        storagePrefix: `default-storage-${Math.random()}`,
+        storagePrefix,
       })
     );
 
@@ -517,14 +533,18 @@ describe("useSessionAccount — storage mode + timeout branches", () => {
       isReady: true,
       sync: vi.fn().mockResolvedValue(undefined),
     });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
+    });
 
+    const storagePrefix = `timeout-${Math.random()}`;
     const { result } = renderHook(() =>
       useSessionAccount({
         fund: vi.fn().mockResolvedValue(undefined),
         assetId: "0xfaucet",
         pollIntervalMs: 1,
         maxWaitMs: 5,
-        storagePrefix: `timeout-${Math.random()}`,
+        storagePrefix,
       })
     );
 
@@ -543,7 +563,7 @@ describe("useSessionAccount — storage mode + timeout branches", () => {
 // useWaitForCommit: cover the timeout branch (no record found) and
 // normalizeHex no-`0x`-prefix branch.
 // ────────────────────────────────────────────────────────────────────────
-describe("useWaitForCommit — timeout + normalizeHex prefix branches", () => {
+describe("useWaitForCommit - timeout + normalizeHex prefix branches", () => {
   it("throws 'Timeout waiting for transaction commit' when deadline elapses", async () => {
     const mockClient = createMockWebClient({
       syncState: vi.fn().mockResolvedValue({}),
@@ -558,9 +578,8 @@ describe("useWaitForCommit — timeout + normalizeHex prefix branches", () => {
     ).rejects.toThrow(/Timeout waiting for transaction commit/);
   });
 
-  it("matches a record whose id() returns a non-`0x`-prefixed hex string", async () => {
-    // Caller supplies "deadbeef" (no prefix); the SDK record returns
-    // "deadbeef" too. Both must be normalized to "0xdeadbeef" to match.
+  it("prefixes a caller's hex without `0x` before building the filter", async () => {
+    // `TransactionId.fromHex` rejects a hex string without the prefix.
     const record = {
       id: vi.fn(() => ({ toHex: () => "deadbeef" })),
       transactionStatus: vi.fn(() => ({
@@ -580,7 +599,7 @@ describe("useWaitForCommit — timeout + normalizeHex prefix branches", () => {
       timeoutMs: 50,
       intervalMs: 1,
     });
-    // No throw → record was matched via the no-prefix normalize branch.
+    expect(TransactionId.fromHex).toHaveBeenCalledWith("0xdeadbeef");
     expect(record.transactionStatus).toHaveBeenCalled();
   });
 });
@@ -588,7 +607,7 @@ describe("useWaitForCommit — timeout + normalizeHex prefix branches", () => {
 // ────────────────────────────────────────────────────────────────────────
 // useWaitForNotes: cover the timeout branch.
 // ────────────────────────────────────────────────────────────────────────
-describe("useWaitForNotes — timeout branch", () => {
+describe("useWaitForNotes - timeout branch", () => {
   it("throws 'Timeout waiting for consumable notes' when count never reaches minCount", async () => {
     const mockClient = createMockWebClient({
       syncState: vi.fn().mockResolvedValue({}),
@@ -615,7 +634,7 @@ describe("useWaitForNotes — timeout branch", () => {
 // ────────────────────────────────────────────────────────────────────────
 // useConsume: cover the prover branch and the length-mismatch error.
 // ────────────────────────────────────────────────────────────────────────
-describe("useConsume — prover + length-mismatch branches", () => {
+describe("useConsume - prover + length-mismatch branches", () => {
   it("uses submitNewTransactionWithProver when prover is provided", async () => {
     const submitWithProver = vi
       .fn()
@@ -676,9 +695,9 @@ describe("useConsume — prover + length-mismatch branches", () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// useSend: cover the private-send prover branch and extractFullNote catch.
+// useSend: cover the private-send prover branch and unreadable output notes.
 // ────────────────────────────────────────────────────────────────────────
-describe("useSend — returnNote prover branch + extractFullNote catch", () => {
+describe("useSend - returnNote prover branch + unreadable output notes", () => {
   it("returnNote path uses submitNewTransactionWithProver when prover is provided", async () => {
     const submitWithProver = vi
       .fn()
@@ -797,7 +816,7 @@ describe("useSend — returnNote prover branch + extractFullNote catch", () => {
       await result.current.send({
         from: "0xsender",
         to: "0xrecipient",
-        // assetId omitted, faucetId provided — exercises the ?? fallback.
+        // assetId omitted, faucetId provided - exercises the ?? fallback.
         faucetId: "0xfaucet_fallback",
         amount: 100n,
         noteType: "public",
@@ -807,10 +826,7 @@ describe("useSend — returnNote prover branch + extractFullNote catch", () => {
     expect(newSendReq).toHaveBeenCalled();
   });
 
-  it("extractFullNote returns null when executedTransaction throws (catch branch)", async () => {
-    // Build a tx result whose executedTransaction throws. extractFullNote
-    // should swallow the error and return null, so the Private-send
-    // post-check throws "Missing full note for private send".
+  it("reports the transaction when its output notes cannot be read", async () => {
     const txResult = {
       id: () => ({ toString: () => "0xtx", toHex: () => "0xtx" }),
       executedTransaction: () => {
@@ -842,7 +858,14 @@ describe("useSend — returnNote prover branch + extractFullNote catch", () => {
           amount: 100n,
           noteType: "private",
         })
-      ).rejects.toThrow(/Missing full note for private send/);
+      ).rejects.toMatchObject({
+        code: "PRIVATE_NOTE_DELIVERY_FAILED",
+        transactionId: "0xtx",
+        commitment: "unknown",
+        undelivered: [],
+        message: expect.stringContaining("WASM consumed"),
+      });
+      expect(mockClient.applyTransaction).toHaveBeenCalledTimes(1);
     });
   });
 });
@@ -851,9 +874,9 @@ describe("useSend — returnNote prover branch + extractFullNote catch", () => {
 // useNoteStream: cover the asset-loop catch and outer buildStreamedNote
 // catch (lines 226 and 245-246).
 // ────────────────────────────────────────────────────────────────────────
-describe("useNoteStream — buildStreamedNote catch paths", () => {
+describe("useNoteStream - buildStreamedNote catch paths", () => {
   it("returns notes with empty assets when details() throws (asset-loop catch)", async () => {
-    // metadata is intact (sender resolves), but details() throws — the inner
+    // metadata is intact (sender resolves), but details() throws - the inner
     // try/catch in buildStreamedNote should keep assets empty rather than
     // bailing on the whole note.
     const noteWithBrokenDetails = {
@@ -876,9 +899,14 @@ describe("useNoteStream — buildStreamedNote catch paths", () => {
       isReady: true,
       sync: vi.fn(),
     });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
+    });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    useMidenStore.getState().setNotes([noteWithBrokenDetails as any]);
+    useMidenStore
+      .getState()
+      .setNotes([noteWithBrokenDetails as any], "committed");
 
     const { result } = renderHook(() => useNoteStream());
     await waitFor(() => {
@@ -893,7 +921,7 @@ describe("useNoteStream — buildStreamedNote catch paths", () => {
   });
 
   it("filters out the note when record.id() throws (outer buildStreamedNote catch)", async () => {
-    // The very first call inside buildStreamedNote — record.id().toString() —
+    // The very first call inside buildStreamedNote - record.id().toString() -
     // throws. The outer catch returns null and the note is filtered out.
     const noteWithBrokenId = {
       id: vi.fn(() => {
@@ -912,9 +940,12 @@ describe("useNoteStream — buildStreamedNote catch paths", () => {
       isReady: true,
       sync: vi.fn(),
     });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
+    });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    useMidenStore.getState().setNotes([noteWithBrokenId as any]);
+    useMidenStore.getState().setNotes([noteWithBrokenId as any], "committed");
 
     const { result } = renderHook(() => useNoteStream());
     await waitFor(() => {
@@ -938,8 +969,11 @@ describe("useNoteStream — buildStreamedNote catch paths", () => {
       isReady: true,
       sync: vi.fn(),
     });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
+    });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    useMidenStore.getState().setNotes([recordNoMetadata as any]);
+    useMidenStore.getState().setNotes([recordNoMetadata as any], "committed");
 
     const { result } = renderHook(() => useNoteStream());
     await waitFor(() => {
@@ -966,8 +1000,11 @@ describe("useNoteStream — buildStreamedNote catch paths", () => {
       isReady: true,
       sync: vi.fn(),
     });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
+    });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    useMidenStore.getState().setNotes([recordNullSender as any]);
+    useMidenStore.getState().setNotes([recordNullSender as any], "committed");
 
     const { result } = renderHook(() => useNoteStream());
     await waitFor(() => {
@@ -993,9 +1030,12 @@ describe("useNoteStream — buildStreamedNote catch paths", () => {
       isReady: true,
       sync: vi.fn(),
     });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
+    });
     // Pre-populate noteFirstSeen.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    useMidenStore.getState().setNotes([record1 as any]);
+    useMidenStore.getState().setNotes([record1 as any], "committed");
     const recordedAt = useMidenStore
       .getState()
       .noteFirstSeen.get("0xseen_before");
@@ -1023,8 +1063,11 @@ describe("useNoteStream — buildStreamedNote catch paths", () => {
       isReady: true,
       sync: vi.fn(),
     });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
+    });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    useMidenStore.getState().setNotes([oldNote as any]);
+    useMidenStore.getState().setNotes([oldNote as any], "committed");
 
     // Future since timestamp ensures the existing first-seen is excluded.
     const futureSince = Date.now() + 60_000;
@@ -1046,6 +1089,9 @@ describe("useNoteStream — buildStreamedNote catch paths", () => {
       isReady: true,
       sync: vi.fn(),
     });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
+    });
 
     useMidenStore.getState().setClient(mockClient as any);
     const { result } = renderHook(() => useNoteStream());
@@ -1056,12 +1102,12 @@ describe("useNoteStream — buildStreamedNote catch paths", () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// useExecuteProgram: cover the foreign-account branches —
+// useExecuteProgram: cover the foreign-account branches -
 // (a) wrapper rejected when its `id` is a function (line 54-55), and
 // (b) wrapper supplied without `.storage` falls back to a default
 //     AccountStorageRequirements (line 102).
 // ────────────────────────────────────────────────────────────────────────
-describe("useExecuteProgram — foreign-account branches", () => {
+describe("useExecuteProgram - foreign-account branches", () => {
   it("treats a wrapper-shaped object as raw id when its `id` is a function", async () => {
     // `isForeignAccountWrapper` rejects when typeof obj.id === 'function'.
     // The hook then falls back to `parseAccountId(fa as string)`. With our
@@ -1156,7 +1202,7 @@ describe("useExecuteProgram — foreign-account branches", () => {
 
     const { result } = renderHook(() => useExecuteProgram());
 
-    // Wrapper has `id` (string, NOT a function) but NO `.storage` —
+    // Wrapper has `id` (string, NOT a function) but NO `.storage` -
     // the hook should construct a default AccountStorageRequirements.
     const wrapperWithoutStorage = { id: "0xforeign_no_storage" };
 
@@ -1206,7 +1252,7 @@ describe("useExecuteProgram — foreign-account branches", () => {
 // non-Error rejection branch in their catch blocks (`err instanceof Error
 // ? err : new Error(String(err))`).
 // ────────────────────────────────────────────────────────────────────────
-describe("transaction hooks — non-Error rejection branches", () => {
+describe("transaction hooks - non-Error rejection branches", () => {
   it("useMint wraps a string rejection in a new Error", async () => {
     const mockClient = createMockWebClient({
       newMintTransactionRequest: vi.fn().mockResolvedValue({}),
@@ -1327,7 +1373,7 @@ describe("transaction hooks — non-Error rejection branches", () => {
 // is supplied, (b) the no-prefix normalizeHex branch, and (c) the catch
 // path when getTransactions throws.
 // ────────────────────────────────────────────────────────────────────────
-describe("useTransactionHistory — filter + catch + normalizeHex", () => {
+describe("useTransactionHistory - filter + catch + normalizeHex", () => {
   it("uses a caller-supplied TransactionFilter without falling back to all/ids", async () => {
     const customFilter = { __custom: true };
     const getTx = vi.fn().mockResolvedValue([]);
@@ -1363,7 +1409,7 @@ describe("useTransactionHistory — filter + catch + normalizeHex", () => {
     });
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
 
-    // Caller passes "abc123" without a 0x prefix — normalizeHex should
+    // Caller passes "abc123" without a 0x prefix - normalizeHex should
     // canonicalize to "0xabc123" on both sides so the record matches.
     useMidenStore.getState().setClient(mockClient as any);
     const { result } = renderHook(() =>
@@ -1437,7 +1483,7 @@ describe("useTransactionHistory — filter + catch + normalizeHex", () => {
       expect(getTx).toHaveBeenCalledTimes(1);
     });
 
-    // Bump lastSyncTime — the second useEffect should fire and refetch.
+    // Bump lastSyncTime - the second useEffect should fire and refetch.
     act(() => {
       useMidenStore.getState().setSyncState({ lastSyncTime: Date.now() });
     });
@@ -1478,7 +1524,7 @@ describe("useTransactionHistory — filter + catch + normalizeHex", () => {
 // useSessionAccount: cover (a) busy-guard rejection (lines 97-101), and
 // (b) localStorage restore catch (lines 84-88) when stored ID is invalid.
 // ────────────────────────────────────────────────────────────────────────
-describe("useSessionAccount — busy guard + localStorage catch", () => {
+describe("useSessionAccount - busy guard + localStorage catch", () => {
   it("rejects a concurrent initialize() with OPERATION_BUSY", async () => {
     let releaseFund: () => void;
     const fund = vi.fn(
@@ -1500,18 +1546,22 @@ describe("useSessionAccount — busy guard + localStorage catch", () => {
       isReady: true,
       sync: vi.fn().mockResolvedValue(undefined),
     });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
+    });
 
+    const storagePrefix = `busy-${Math.random()}`;
     const { result } = renderHook(() =>
       useSessionAccount({
         fund,
         assetId: "0xfaucet",
         pollIntervalMs: 1,
         maxWaitMs: 50,
-        storagePrefix: `busy-${Math.random()}`,
+        storagePrefix,
       })
     );
 
-    // Start the first initialize — it'll hang on fund().
+    // Start the first initialize - it'll hang on fund().
     let firstPromise: Promise<unknown>;
     act(() => {
       firstPromise = result.current.initialize().catch(() => {});
@@ -1538,6 +1588,9 @@ describe("useSessionAccount — busy guard + localStorage catch", () => {
       isReady: true,
       sync: vi.fn().mockResolvedValue(undefined),
       runExclusive: <T,>(fn: () => Promise<T>) => fn(),
+    });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
     });
 
     const { result } = renderHook(() => useSend());
@@ -1567,6 +1620,9 @@ describe("useSessionAccount — busy guard + localStorage catch", () => {
       sync: vi.fn().mockResolvedValue(undefined),
       runExclusive: <T,>(fn: () => Promise<T>) => fn(),
     });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
+    });
 
     const { result } = renderHook(() => useSend());
     await act(async () => {
@@ -1590,6 +1646,9 @@ describe("useSessionAccount — busy guard + localStorage catch", () => {
       isReady: true,
       sync: vi.fn().mockResolvedValue(undefined),
       runExclusive: <T,>(fn: () => Promise<T>) => fn(),
+    });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
     });
 
     const { result } = renderHook(() => useSend());
@@ -1619,6 +1678,9 @@ describe("useSessionAccount — busy guard + localStorage catch", () => {
       isReady: true,
       sync: vi.fn().mockResolvedValue(undefined),
       runExclusive: <T,>(fn: () => Promise<T>) => fn(),
+    });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
     });
 
     const { result } = renderHook(() => useSend());
@@ -1658,6 +1720,9 @@ describe("useSessionAccount — busy guard + localStorage catch", () => {
       isReady: true,
       sync: vi.fn().mockResolvedValue(undefined),
     });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
+    });
 
     const { result } = renderHook(() => useMultiSend());
     await act(async () => {
@@ -1687,6 +1752,9 @@ describe("useSessionAccount — busy guard + localStorage catch", () => {
       client: mockClient,
       isReady: true,
       sync: vi.fn().mockResolvedValue(undefined),
+    });
+    act(() => {
+      useMidenStore.getState().setClient(mockClient as never);
     });
 
     const { result } = renderHook(() => useMultiSend());

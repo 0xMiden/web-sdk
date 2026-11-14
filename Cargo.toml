@@ -52,6 +52,7 @@ js-export-macro = { path = "crates/js-export-macro", version = "0.18.0" }
 miden-client              = { default-features = false, version = "=0.18.0" }
 miden-client-proto        = { default-features = false, version = "=0.18.0" }
 miden-client-sqlite-store = { default-features = false, version = "=0.18.0" }
+miden-objects             = { default-features = false, version = "=0.18.0" }
 miden-protocol            = { default-features = false, version = "=0.18.0" }
 
 

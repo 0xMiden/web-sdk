@@ -114,6 +114,26 @@ export interface MidenConfig {
    * `client.feeFaucetId()` reports before the first sync.
    */
   feeFaucetId?: string;
+  /**
+   * Retries of a private note send after a transient note transport failure,
+   * an integer from 0 to 10. Default: 3. With `noteTransportRetryIntervalMs`
+   * the total computed backoff, `interval * (2^retries - 1)` with an omitted
+   * value at its default, may not exceed 120000 ms. The retries run inside the
+   * client's serialized call and under the provider lock, so a slow or
+   * rate-limiting transport blocks other client calls until the send finishes.
+   * `0` makes a send a single attempt, which suits a latency-sensitive UI. See
+   * `ClientOptions.noteTransportMaxRetries` in `@miden-sdk/miden-sdk` for which
+   * failures are retried.
+   */
+  noteTransportMaxRetries?: number;
+  /**
+   * Delay before the first such retry in milliseconds, doubling for each later
+   * one, an integer from 0 to 60000. Default: 250. Bounded with
+   * `noteTransportMaxRetries` to 120000 ms of total backoff. A non-zero
+   * `retry-after` from the transport service replaces it with no upper bound;
+   * a zero one falls back to it.
+   */
+  noteTransportRetryIntervalMs?: number;
   /** Auto-sync interval in milliseconds. Set to 0 to disable. Default: 15000ms */
   autoSyncInterval?: number;
   /** Initial seed for deterministic RNG (must be 32 bytes if provided) */
@@ -312,8 +332,8 @@ export interface NoteSummary {
 export interface CreateWalletOptions {
   /** Storage mode. Default: private */
   storageMode?: StorageMode;
-  /** Auth scheme. Default: AuthScheme.AuthRpoFalcon512 */
-  authScheme?: AuthScheme;
+  /** Auth scheme, or a numeric wasm enum value. Default: AuthScheme.Falcon */
+  authScheme?: AuthScheme | number;
   /** Initial seed for deterministic account ID */
   initSeed?: Uint8Array;
 }
@@ -330,8 +350,8 @@ export interface CreateFaucetOptions {
   maxSupply: bigint | number;
   /** Storage mode. Default: private */
   storageMode?: StorageMode;
-  /** Auth scheme. Default: AuthScheme.AuthRpoFalcon512 */
-  authScheme?: AuthScheme;
+  /** Auth scheme, or a numeric wasm enum value. Default: AuthScheme.Falcon */
+  authScheme?: AuthScheme | number;
 }
 
 // Account import options
@@ -347,7 +367,7 @@ export type ImportAccountOptions =
   | {
       type: "seed";
       seed: Uint8Array;
-      authScheme?: AuthScheme;
+      authScheme?: AuthScheme | number;
     };
 
 // Send options
@@ -372,7 +392,7 @@ export interface SendOptions {
   skipSync?: boolean;
   /** Send the full balance of this asset. When true, amount is ignored. */
   sendAll?: boolean;
-  /** true = build note in JS and return the Note object (e.g. for out-of-band delivery). Default: false */
+  /** true = build note in JS and return the Note object (e.g. for out-of-band delivery). Cannot be combined with recallHeight or timelockHeight. Default: false */
   returnNote?: boolean;
 }
 
@@ -630,9 +650,12 @@ export interface ExecuteTransactionOptions {
   /**
    * Execute against a pinned reference block instead of the current sync
    * height, so a summary signed at that block reproduces exactly. Capture one
-   * with {@link useChainAnchor}. Leave it out for a multisig request built by
-   * `feeAwareTransactionRequestBuilder`, which executes at the tip once the
-   * client has synced to its bound block.
+   * with {@link useChainAnchor}. Leave it out for a multisig request from
+   * `feeAwareTransactionRequestBuilder`, which declares its bound block and
+   * executes at the tip once the client has synced to it. A `withFeeAwareAuth`
+   * copy takes no anchor either, but declares no bound block: sync before
+   * executing it. An anchor captured for that copy does not track the bound
+   * block.
    */
   anchor?: ChainAnchor;
 }
@@ -655,8 +678,11 @@ export interface PreviewTransactionOptions {
    * Derive the summary at a pinned reference block. Required when verifying a
    * summary that binds the reference block commitment, since deriving it at the
    * local sync height produces a different summary. Leave it out for a multisig
-   * request built by `feeAwareTransactionRequestBuilder`, which previews at the
-   * tip once the client has synced to its bound block.
+   * request from `feeAwareTransactionRequestBuilder`, which declares its bound
+   * block and previews at the tip once the client has synced to it. A
+   * `withFeeAwareAuth` copy takes no anchor either, but declares no bound block:
+   * sync before previewing it. An anchor captured for that copy does not track
+   * the bound block.
    */
   anchor?: ChainAnchor;
 }
@@ -707,6 +733,12 @@ export interface StreamedNote {
   firstSeenAt: number;
   /** Pre-decoded attachment values, or null if no attachment */
   attachment: bigint[] | null;
+  /**
+   * True only for a P2ID or P2IDE payment (`isStandardPayment(record)`).
+   * `useNoteStream` always sets it; optional so code that builds a
+   * `StreamedNote` keeps compiling.
+   */
+  standardPayment?: boolean;
 }
 
 export interface UseNoteStreamOptions {
@@ -747,7 +779,7 @@ export interface UseSessionAccountOptions {
   /** Wallet creation options */
   walletOptions?: {
     storageMode?: "private" | "public";
-    authScheme?: AuthScheme;
+    authScheme?: AuthScheme | number;
   };
   /** Polling interval for funding note detection (ms). Default: 3000 */
   pollIntervalMs?: number;
@@ -784,7 +816,7 @@ export const DEFAULTS = {
   RPC_URL: undefined, // Will use SDK's testnet default
   AUTO_SYNC_INTERVAL: 15000,
   STORAGE_MODE: "private" as const,
-  AUTH_SCHEME: AuthScheme.AuthRpoFalcon512,
+  AUTH_SCHEME: AuthScheme.Falcon,
   NOTE_TYPE: "private" as const,
   FAUCET_DECIMALS: 8,
 } as const;

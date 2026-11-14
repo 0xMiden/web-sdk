@@ -82,6 +82,8 @@ describe("the production WebClient worker bridge", () => {
       true,
       undefined,
       "0xfee",
+      undefined,
+      undefined,
       callbackTimeoutMs
     );
     return { client, worker: RecordingWorker.instances.at(-1) };
@@ -155,13 +157,13 @@ describe("the production WebClient worker bridge", () => {
       const init = worker.messages.find(
         ({ action }) => action === WorkerAction.INIT
       );
-      expect(init.args).toHaveLength(11);
+      expect(init.args).toHaveLength(13);
       expect(init.args[0]).toBe("https://rpc.example");
       expect(init.args[4]).toBe(false);
       expect(init.args[5]).toBe(false);
       expect(init.args[6]).toBe(true);
       expect(init.args[9]).toBe("0xfee");
-      expect(init.args[10]).toBe(callbackTimeoutMs);
+      expect(init.args[12]).toBe(callbackTimeoutMs);
     }
   );
 
@@ -670,6 +672,8 @@ describe("WebClient.createClient callback timeout", () => {
         undefined,
         undefined,
         false,
+        undefined,
+        undefined,
         undefined,
         undefined,
         2147483648

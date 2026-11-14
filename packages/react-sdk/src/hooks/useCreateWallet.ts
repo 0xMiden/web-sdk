@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import { useMidenStore } from "../store/MidenStore";
 import { captureClientReadGuard } from "../store/clientReadGuard";
@@ -57,6 +57,7 @@ export function useCreateWallet(): UseCreateWalletResult {
   const [wallet, setWallet] = useState<Account | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const latestCallRef = useRef(0);
 
   const createWallet = useCallback(
     async (options: CreateWalletOptions = {}): Promise<Account> => {
@@ -64,6 +65,12 @@ export function useCreateWallet(): UseCreateWalletResult {
         throw new Error("Miden client is not ready");
       }
 
+      const isCurrent = captureClientReadGuard(client);
+      if (!isCurrent()) {
+        throw new Error("Miden client is not ready");
+      }
+
+      const call = ++latestCallRef.current;
       setIsCreating(true);
       setError(null);
 
@@ -74,13 +81,16 @@ export function useCreateWallet(): UseCreateWalletResult {
         const authScheme = options.authScheme ?? DEFAULTS.AUTH_SCHEME;
 
         const newWallet = await runExclusiveSafe(async () => {
+          if (!isCurrent()) {
+            throw new Error("Miden client is not ready");
+          }
           const createdWallet = await client.newWallet(
             storageMode,
             authScheme,
             options.initSeed
           );
+          if (!isCurrent()) return createdWallet;
           ensureAccountBech32(createdWallet);
-          const isCurrent = captureClientReadGuard(client);
           const accounts = await client.getAccounts();
           if (isCurrent()) {
             setAccounts(accounts);
@@ -88,15 +98,15 @@ export function useCreateWallet(): UseCreateWalletResult {
           return createdWallet;
         });
 
-        setWallet(newWallet);
+        if (isCurrent()) setWallet(newWallet);
 
         return newWallet;
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
-        setError(error);
+        if (isCurrent()) setError(error);
         throw error;
       } finally {
-        setIsCreating(false);
+        if (latestCallRef.current === call) setIsCreating(false);
       }
     },
     [client, isReady, runExclusive, setAccounts]

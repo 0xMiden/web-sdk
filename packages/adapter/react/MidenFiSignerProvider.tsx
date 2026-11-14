@@ -284,14 +284,23 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
     }
   }, [name, wallets]);
 
-  // If the window is closing or reloading, ignore disconnect and error events
+  // While the page unloads or sits in the back-forward cache, ignore disconnect
+  // and error events. Not from beforeunload: it also fires for a navigation that
+  // a prompt cancels or an app takes, and nothing follows it when the page stays.
   useEffect(() => {
-    function listener() {
+    function hide() {
       isUnloading.current = true;
     }
+    function show() {
+      isUnloading.current = false;
+    }
 
-    window.addEventListener("beforeunload", listener);
-    return () => window.removeEventListener("beforeunload", listener);
+    window.addEventListener("pagehide", hide);
+    window.addEventListener("pageshow", show);
+    return () => {
+      window.removeEventListener("pagehide", hide);
+      window.removeEventListener("pageshow", show);
+    };
   }, [isUnloading]);
 
   // Handle the adapter's connect event.
@@ -356,17 +365,16 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
     }
   }, [name, wallets, setName]);
 
-  // If autoConnect is enabled, try to connect when the adapter changes and is ready
+  // If autoConnect is enabled, try to connect when the adapter changes and is
+  // installed. Connecting a Loadable wallet hands off to its app, which only a
+  // tap may start.
   useEffect(() => {
     if (
       isConnecting.current ||
       connected ||
       !autoConnect ||
       !adapter ||
-      !(
-        readyState === WalletReadyState.Installed ||
-        readyState === WalletReadyState.Loadable
-      )
+      readyState !== WalletReadyState.Installed
     )
       return;
 

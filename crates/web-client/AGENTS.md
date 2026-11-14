@@ -18,7 +18,7 @@ are doing rather than guessing from the type signatures alone.
 
 | Skill | Load it when |
 |---|---|
-| `skills/web-client-usage/SKILL.md` | Any code that calls `MidenClient` - initialization, the resource API, sync ordering, type conversions, transaction flows, custom contracts, private note transport. |
+| `skills/web-client-usage/SKILL.md` | Any code that calls `MidenClient` or `RpcClient` - initialization, the resource API, stateless queries and submission, sync ordering, type conversions, transaction flows, custom contracts, private note transport. |
 | `skills/frontend-pitfalls/SKILL.md` | Before shipping. WASM initialization, concurrent access, cross-origin isolation, `BigInt` at the WASM boundary. These are the failures that survive code review and break in production. |
 | `skills/signer-integration/SKILL.md` | Wiring an external signer (Para, Turnkey, a wallet adapter) or implementing a custom one. |
 | `skills/chain-anchored-execution/SKILL.md` | Multisig proposals, offline co-signing - anything where one party signs a transaction summary and another executes it. Read before using `captureAnchor`, before re-executing a multisig proposal (0.17: at the tip, never at an anchor), or when co-signers' summary commitments never match. |
@@ -33,13 +33,13 @@ Configuring the bundler? See `node_modules/@miden-sdk/vite-plugin/AGENTS.md`.
 
 ## The shape of the API
 
-`MidenClient` is the single entry point. Construct it with a static factory -
+`MidenClient` is the main entry point. Construct it with a static factory -
 never with `new` - and route work through its typed resources:
 
 ```ts
 import { MidenClient } from "@miden-sdk/miden-sdk";
 
-const client = await MidenClient.createTestnet({ feeFaucetId: FEE_FAUCET });
+const client = await MidenClient.createTestnet();
 await client.sync();
 ```
 
@@ -47,9 +47,12 @@ await client.sync();
 `createDevnet()` are preconfigured; `createMock()` backs tests with an in-memory
 chain and no network.
 
-Every non-mock client names the chain's fee faucet. Since 0.17 the fee asset
-lives in a protocol configuration the node does not serve over RPC, and the SDK
-carries a per-network default for no network yet, so creation without it fails.
+`feeFaucetId` is optional. Since 0.17 the chain's fee asset lives in the
+protocol configuration, which the client receives from the node when it syncs,
+so execution never needs the option: it only sets what `client.feeFaucetId()`
+reports before the first sync. Before that sync, a client created without it
+rejects `feeFaucetId()` and asks you to sync first; a mock client reports its
+mock chain's own faucet.
 
 State is split across resources rather than living on the client:
 `accounts`, `transactions`, `notes`, `tags`, `settings`, `keystore`, `compile`
@@ -57,7 +60,59 @@ and `pswap`. Client-level methods cover the lifecycle around them - `sync`,
 `syncChain`, `syncNoteTransport`, `getSyncHeight`, `waitForIdle` and
 `terminate`.
 
+For an application that manages its own state, construct `RpcClient` directly:
+
+```ts
+import { Endpoint, RpcClient } from "@miden-sdk/miden-sdk";
+
+const rpc = new RpcClient(Endpoint.testnet());
+const updates = await rpc.syncNullifiers(new Uint16Array([0x1234]), 100, 200);
+```
+
+`syncNullifiers` copies prefixes before asynchronous work and scans duplicate
+prefixes once without changing the input array. On Node.js, use an
+`ArrayBuffer`-backed `Uint16Array`; shared backing memory is rejected during
+argument conversion.
+
+The block range is inclusive; results are prefix matches, exposed as
+`NullifierUpdate` objects with `nullifier()` and `blockNum()`. Filter by the full
+nullifier yourself and keep the upper bound at or below the node's chain tip.
+This client opens no local store.
+
+To find included transactions, call
+`rpc.syncTransactions(blockFrom, blockTo, accountIds)`. It returns every matching
+`RpcTransactionRecord` across all pages and account chunks, with `id()`,
+`accountId()` and `blockNum()` accessors. Both bounds are inclusive; a reversed
+range rejects and an empty account list returns `[]`. Duplicate account IDs are
+scanned once. Keep `blockTo` at or below the node's tip. In the browser, the call
+consumes the `AccountId` wrappers; recreate them from saved strings for each
+array entry, poll or retry.
+
+For confirmation, start at the admission tip returned by submission, match the
+exact transaction ID, and advance your own cursor to `blockTo + 1` only after a
+successful scan. Inclusion assumes trust in the RPC node. A polling timeout
+means unconfirmed, not failed; this method does not poll or track local state.
+
+To submit externally proved work, use `getTransactionEncryptionKey` with your
+trusted genesis commitment and trusted block header, then
+`submitProvenTx(proof, inputs, key)` or
+`submitProvenTxBatch(provenBatch, proposedBatch, transactionInputs, key)`.
+The SDK verifies the key attestation and seals the complete execution inputs.
+A transaction proof alone is insufficient, and a batch requires a batch proof
+with inputs in proposal order. The returned number is the node's chain tip at
+submission, not a commitment receipt. These calls do not execute, prove, apply
+local state or deliver private notes. In the browser, the batch call consumes
+its input wrappers; keep serialized copies to construct fresh wrappers for
+a retry. Read the usage skill's stateless RPC section for the trust and
+serialization requirements.
+
 ## Rules that are easy to get wrong
+
+**Invitation checks do not reserve codes.** Use
+`client.accounts.isInvitationCodeValid(code)` to check whether a non-empty
+code can register an account. It returns `false` for unknown or used codes,
+and `true` when the node does not enforce an allowlist. Registration can still
+fail after a successful check; only `accounts.register()` consumes the code.
 
 **Sync before you read.** Local state is a cache of chain state. Calling
 `client.sync()` first is the difference between correct balances and confusing

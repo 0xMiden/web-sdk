@@ -273,6 +273,19 @@ protocol configuration, which the client receives from the node when it syncs,
 so execution never needs the option: it only sets what `client.feeFaucetId()`
 reports before the first sync. Snippets below leave it out.
 
+`noteTransportMaxRetries` (0 to 10, default 3) and
+`noteTransportRetryIntervalMs` (0 to 60000, default 250), with a total computed
+backoff `interval * (2^retries - 1)` of at most 120000 ms, set how
+`notes.sendPrivate` / `notes.sendPrivateOutput` retry a transient note
+transport failure within the call. The retries run inside the client's
+serialized call, so a slow or rate-limiting transport blocks other client calls
+until the send finishes; a non-zero service `retry-after` replaces the computed
+delay with no upper bound, and a zero one falls back to it. Pass
+`noteTransportMaxRetries: 0` to bound a send to one attempt in a
+latency-sensitive UI. A send that still fails rejects, and the rejection is
+final: the client keeps no queue and no sync sends the note again, so send the
+same note again to retry (delivery is idempotent by note id).
+
 ### Lazy usage (`/lazy`)
 
 ```typescript
@@ -465,6 +478,100 @@ console.log(`Balance: ${balance}`); // 900n
 client.terminate();
 ```
 
+### Stateless RPC queries and submission
+
+Use `RpcClient` when your application keeps its own state or submits
+transactions proved elsewhere. It opens no local store:
+
+```typescript
+import { Endpoint, RpcClient } from "@miden-sdk/miden-sdk";
+
+const rpc = new RpcClient(Endpoint.testnet());
+const updates = await rpc.syncNullifiers(new Uint16Array([0x1234]), 100, 200);
+
+for (const update of updates) {
+  console.log(update.nullifier().toHex(), update.blockNum());
+}
+```
+
+`syncNullifiers(prefixes, blockFrom, blockTo)` includes both range bounds and
+handles chunking and pagination internally. It returns prefix matches, so
+filter by the full nullifier when tracking particular notes. Keep `blockTo`
+at or below the node's chain tip, available through
+`(await rpc.getBlockHeaderByNumber()).blockNum()`.
+
+Prefixes are copied before asynchronous work, and duplicates are scanned once
+without modifying your array. On Node.js, pass an `ArrayBuffer`-backed
+`Uint16Array`; `SharedArrayBuffer` backing is rejected during argument conversion.
+
+To find included transactions, use
+`rpc.syncTransactions(blockFrom, blockTo, accountIds)`. It returns
+`RpcTransactionRecord[]` with `id(): TransactionId`, `accountId(): AccountId`
+and `blockNum(): number`, collecting every page and account chunk in the
+inclusive range. Duplicate account IDs are scanned once. An empty account list
+returns `[]`; a reversed range rejects.
+Keep `blockTo` at or below the node's tip.
+
+```typescript
+import { AccountId } from "@miden-sdk/miden-sdk";
+
+const tip = (await rpc.getBlockHeaderByNumber()).blockNum();
+const records = await rpc.syncTransactions(
+  admissionTip, tip, [AccountId.fromHex(accountIdHex)],
+);
+const included = records.find((record) => record.id().toHex() === txIdHex);
+if (included) console.log("Included in block", included.blockNum());
+```
+
+Start a confirmation scan at the admission tip returned by submission and match
+the exact transaction ID. Keep your own cursor, advancing to `blockTo + 1` after
+a successful scan and waiting for the tip to reach that cursor before scanning
+again. In the browser, each call consumes its `AccountId` wrappers even on
+rejection; construct fresh wrappers from saved strings for each array entry,
+poll or retry.
+Confirmation assumes trust in the configured RPC node's report of inclusion.
+A polling timeout means unconfirmed, not failed. See the
+[stateless RPC guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/rpc-client.md#find-included-transactions)
+for a polling example.
+
+For submission, supply the proof and its complete execution inputs, plus a
+key verified against your trusted network and block header:
+
+```typescript
+import {
+  BlockHeader, ProvenTransaction, RpcClient, TransactionInputs, Word
+} from "@miden-sdk/miden-sdk";
+
+async function submitProvedTransaction(
+  rpc: RpcClient,
+  proof: ProvenTransaction,
+  inputs: TransactionInputs,
+  genesisCommitment: Word,
+  trustedBlockHeader: BlockHeader,
+): Promise<number> {
+  const key = await rpc.getTransactionEncryptionKey(
+    genesisCommitment, trustedBlockHeader
+  );
+  return rpc.submitProvenTx(proof, inputs, key);
+}
+```
+
+The SDK seals the inputs before sending them. A proof alone is insufficient.
+Use `TransactionInputs.fromTransactionResult(result)` for an SDK execution
+result, or `TransactionInputs.deserialize(bytes)` for the canonical
+`miden_objects` protobuf payload from an external executor. Independently
+validate a header obtained from an untrusted RPC before using it as a trust
+anchor.
+
+`rpc.submitProvenTxBatch(provenBatch, proposedBatch, transactionInputs, key)`
+submits a proved batch, with inputs in the proposal's transaction order.
+Both submission methods return the node's chain tip at submission, not a
+commitment receipt. They do not execute, prove, apply local state updates or
+send private notes. In the browser the batch call consumes its input wrappers;
+keep serialized inputs to construct fresh wrappers for a retry.
+See the [stateless RPC guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/rpc-client.md)
+for serialization formats, key rotation and complete examples.
+
 ### Account Visibility and Faucet Types
 
 `AccountType.Private` and `AccountType.Public` are the native visibility enum
@@ -520,6 +627,10 @@ A network that enforces an account allowlist creates an account on chain only on
 const wallet = await client.accounts.create();
 
 if (!(await client.accounts.isAllowed(wallet))) {
+  // Optional: check the code first. The check does not consume the code.
+  if (!(await client.accounts.isInvitationCodeValid(invitationCode))) {
+    throw new Error("The invitation code cannot be used.");
+  }
   await client.accounts.register({ account: wallet, invitationCode });
 }
 
@@ -529,7 +640,7 @@ await client.sync();
 await client.transactions.consumeAll({ account: wallet });
 ```
 
-`register` fails with code `ACCOUNT_ALREADY_ALLOWED` for an account the node already allows, keeping the code, and a submission that would create an unregistered account fails with `ACCOUNT_NOT_ALLOWLISTED`. `RpcClient.registerAccount` and `RpcClient.isAccountAllowed` expose the node endpoints directly for flows that hold no account state. See [the allowlist guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/allowlist.md) for the full flow.
+`register` fails with code `ACCOUNT_ALREADY_ALLOWED` for an account the node already allows, keeping the code, and a submission that would create an unregistered account fails with `ACCOUNT_NOT_ALLOWLISTED`. `accounts.isInvitationCodeValid` answers `false` for an unknown or registered code, and `true` when the node does not enforce an allowlist. `RpcClient.registerAccount`, `RpcClient.isAccountAllowed` and `RpcClient.isInvitationCodeValid` expose the node endpoints directly for flows that hold no account state. See [the allowlist guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/allowlist.md) for the full flow.
 
 ### Create a Faucet
 
@@ -746,11 +857,15 @@ To set the salt yourself — which co-signers must do when they need to agree on
 
 Do **not** reach for `builder.withFeeConversionSalt(salt)` on that builder. `withAuthArgs` and `withFeeConversionSalt` are mutually exclusive, and miden-client enforces that by having each setter clear the other, so calling it discards the three-word multisig auth args the builder already carries and the transaction aborts in the auth procedure. On a bare `new TransactionRequestBuilder()` the setter is still a declaration rather than a commitment — `request.feeConversionSalt()` reports it back, `request.authArg()` stays empty, and it survives serialization — which is what a single-sig or custom-auth caller wants. For a custom auth procedure that reads `AUTH_ARGS` as conversion info, attach the auth args yourself with `withAuthArgs`, which sets the commitment and adds its advice-map preimage — setting an auth argument opts the request out of the client's fee machinery, which commits only when the request carries none. Declaring a salt against such an account instead is rejected with `FeeConversionInfoUnsupported`.
 
+When another party built the request, such as a dApp that gives a finished request to a wallet, set the multisig auth args on it with `client.withFeeAwareAuth(request, multisig, options?)`. A request that declares a salt executes on a multisig as it is, because miden-client derives the auth args from the salt, but it binds them to the reference block of each execution and sets no approval expiration. `withFeeAwareAuth` returns a copy with the same auth argument and advice-map preimage that `feeAwareTransactionRequestBuilder` declares, keeps every other field, and returns the request unchanged, auth argument and all, for an account that is not a multisig. When `feeConversionSalt` is omitted, it uses the salt that the request declares, or draws one. miden-client tracks the bound block when it executes the request, so the request executes at the tip with no anchor; an anchor from `chainAnchorForRequest` does not track the bound block, and a co-signer cannot read it from `request.blockNumbers()`, so it syncs before previewing the copy. For a multisig it refuses a request that already has an auth argument (`AUTH_ALREADY_SET`).
+
+To set auth args that you build yourself on a finished request, use `request.withAuthArgs(preimage)`. It mirrors miden-client's `TransactionRequest::with_auth_args`: it returns a copy whose auth argument is the Poseidon2 hash of `preimage`, with `preimage` in the advice map under it, so the two always agree. It replaces an existing auth argument and a declared salt without a check, and keeps every other field. In the browser build the `Felt`s in `preimage` are consumed by the call, so read what you need from them first and pass fresh ones to another call. `withFeeAwareAuth` is built on it.
+
 One path the SDK cannot declare a salt on: `client.pswap.cancelByOrder` builds its request inside miden-client, so there is no builder. An ordinary creator has its conversion info committed and pays normally; a multisig creator fails with `FeeConversionInfoRequired`, so cancel by note with `client.transactions.pswapCancel` there. See the [transactions guide](https://docs.miden.xyz/builder/tools/clients/web-client/library/transactions) for the full narrative.
 
 ### Multisig Proposals: Execute at the Tip
 
-Since protocol 0.17 a multisig summary binds a **bound block** named in the multisig auth args, not the reference block the transaction executes at. `feeAwareTransactionRequestBuilder` binds the current sync height and adds that block to the request with `withBlockNumbers`, so the proposer, every co-signer and the executor can all run the proposal at their own current tip and derive the same summary. Each party's client must first have synced to at least the bound block (the largest of `request.blockNumbers()`, by default the proposer's sync height when it built the request); a client below it fails with `requested block N is after transaction reference block M` until it syncs. Do not re-execute a multisig proposal at an anchor: a node keeps account state for only 50 blocks and every fee-paying transaction loads the fee faucet as a foreign account, so anchored re-execution of an older proposal fails with `block N has been pruned`, and a transaction executed at an older reference block expires 20 blocks after it anyway.
+Since protocol 0.17 a multisig summary binds a **bound block** named in the multisig auth args, not the reference block the transaction executes at. `feeAwareTransactionRequestBuilder` binds the current sync height, and miden-client tracks that block when it executes the request, so the proposer, every co-signer and the executor can all run the proposal at their own current tip and derive the same summary. The builder also adds the bound block to the request with `withBlockNumbers`, which only `captureAnchor` and the height check below read. Each party's client must first have synced to at least the bound block (the largest of `request.blockNumbers()`, by default the proposer's sync height when it built the request); a client below it fails with `requested block N is after transaction reference block M` until it syncs. A request from `withFeeAwareAuth` does not declare the bound block, so sync before previewing it. Do not re-execute a multisig proposal at an anchor: a node keeps account state for only 50 blocks and every fee-paying transaction loads the fee faucet as a foreign account, so anchored re-execution of an older proposal fails with `block N has been pruned`, and a transaction executed at an older reference block expires 20 blocks after it anyway.
 
 ```typescript
 // Proposer
@@ -828,7 +943,7 @@ if (received.commitment().toHex() !== proposed.blockCommitment().toHex()) {
 }
 ```
 
-Before signing, inspect what the transaction actually does — `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()`, and `summary.expirationDelta()` for how long the authorization stays live (`0` means no expiration was set, not that it has already expired) — and confirm it matches what you agreed to. `ChainAnchor` enforces only that its header and partial blockchain are consistent with each other, which is computable over an invented chain; fetch the header for `anchor.blockNum()` with `RpcClient.getBlockHeaderByNumber` and compare commitments to confirm the block is real.
+Before signing, inspect what the transaction actually does — `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()`, and `summary.expirationDelta()` for how long the authorization stays live (`0` means no expiration was set, not that it has already expired) — and confirm it matches what you agreed to. For storage, `summary.accountDelta().storage()` names each changed slot: `valueSlots()` gives a value slot's `slotName`, `operation` and final `value`, and `mapSlots()` gives a map slot's `slotName`, `operation` and changed `entries()` (`key`, `value`), so a change to a multisig's signer set or threshold is visible before you sign. `ChainAnchor` enforces only that its header and partial blockchain are consistent with each other, which is computable over an invented chain; fetch the header for `anchor.blockNum()` with `RpcClient.getBlockHeaderByNumber` and compare commitments to confirm the block is real.
 
 An anchor pins the **reference block and chain data only**. Account state and authenticated input-note records still come from each participant's own local store, so every party must also agree on the account state. If the account moved in a way that changes the transaction's effects, the re-derived summary will not match even though the anchor is correct - the most common reason a co-signing flow fails.
 
@@ -963,6 +1078,38 @@ const rpc = new RpcClient(new Endpoint(client.endpoint()!));
 const header = await rpc.getBlockHeaderByNumber(100, false);
 ```
 
+### Verify a signBytes signature
+
+`domainSeparatedSignCommitment` computes the commitment a wallet signs for a
+dApp's `signBytes` request. Verify the returned signature with
+`publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)`.
+
+The wallet signs under the domain tag `miden-wallet/sign-bytes/v1`, the
+Poseidon2 hash of that string, one field element per UTF-8 byte. `"word"`:
+`data` is a serialized `Word`; the signed commitment is that of
+`SigningInputs.newArbitrary([...tag, ...word.toFelts()])`. `"signingInputs"`:
+`data` is serialized `SigningInputs`. A Blind payload signs
+`[...tag, ...word.toFelts()]` and an Arbitrary payload signs
+`[...tag, ...payload]` (the tag alone when the payload is empty), both as
+Arbitrary inputs. A TransactionSummary is signed unchanged, so its own
+commitment is returned.
+
+Any other kind or variant throws.
+Wallets released before this change signed the raw value instead.
+
+Needs the SDK's WASM to be loaded: with a lazy entry, await
+`MidenClient.ready()` first.
+
+```typescript
+import {
+  domainSeparatedSignCommitment,
+  MidenClient,
+} from "@miden-sdk/miden-sdk/lazy";
+
+await MidenClient.ready();
+publicKey.verify(domainSeparatedSignCommitment(data, kind), signature);
+```
+
 ### Keystore Callback Timeouts
 
 Under the Web Worker, `keystore` callbacks run on the main thread and the worker waits for each one. `ClientOptions.callbackTimeoutMs` sets that wait. A callback that outlasts it fails the call that needed it with `Callback <id> timed out after <n>ms`.
@@ -989,7 +1136,7 @@ A batch signs while it is built, so one failed or timed out `sign` fails the who
 
 ### Cleanup
 
-When you're finished using a MidenClient instance, call `terminate()` to release its Web Worker:
+When you're finished using a MidenClient instance, call `terminate()`. In the browser it stops the client's Web Worker if there is one, and releases its main-realm wasm client and, through it, its IndexedDB connection once the calls already queued or running have settled. On the Node.js binding it releases nothing.
 
 ```typescript
 client.terminate();
@@ -999,7 +1146,15 @@ client.terminate();
   using client = await MidenClient.create();
   // ... use client ...
 } // client.terminate() called automatically
+
+// To wait for the release, e.g. before deleting or reopening the store:
+{
+  await using client = await MidenClient.create();
+  // ... use client ...
+} // terminates, then resolves once the wasm client is freed and its store released
 ```
+
+A store that several clients share stays open until the last of them is terminated. A store handle you obtain yourself, such as an `AccountReader` from `accountReader`, keeps the connection open until you call its `free()`.
 
 ## Observability
 
@@ -1035,14 +1190,14 @@ Neither package depends on its vendor, not even as a peer — both are typed aga
 interface MidenObservation {
   op: string;                             // "syncState", "proveTransaction", …
   outcome: "ok" | "error";
-  durationMs: number;                     // wall time the caller waited
+  durationMs: number;                     // from the call's turn on its queue
   sensitive?: MidenObservationSensitive;  // absent by default — see below
 }
 ```
 
 `op` is the name of the underlying client method, not the name of the high-level call you made. One call into a resource API usually produces **several** observations: `client.transactions.send(...)` builds the request and then runs execute → prove → submit → apply, so it reports `newSendTransactionRequest`, `executeTransaction`, `proveTransaction`, `submitProvenTransaction`, and `applyTransaction` as five separate observations. Aggregate by `op` rather than assuming a one-to-one mapping with your own call sites.
 
-`durationMs` is measured with `performance.now()` around the awaited call, so it is a fractional millisecond value, not an integer. Round it yourself if your backend wants integers.
+`durationMs` is measured with `performance.now()` from when the call's turn on its client's queue starts until the call settles, so time spent queued behind the same client's earlier calls is not in it. It is a fractional millisecond value, not an integer. Round it yourself if your backend wants integers.
 
 Two properties are worth relying on:
 

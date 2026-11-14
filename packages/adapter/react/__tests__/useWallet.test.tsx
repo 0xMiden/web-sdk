@@ -5,6 +5,7 @@ import {
   EventEmitter,
   WalletReadyState,
   type Adapter,
+  WalletError,
   type WalletAdapterEvents,
   type WalletName,
 } from "@miden-sdk/miden-wallet-adapter-base";
@@ -125,5 +126,93 @@ describe("connect re-drive when already connected (useWallet, 0xMiden/wallet#470
       await result.current.connect();
     });
     expect(stubAdapter.connect).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("autoConnect (useWallet)", () => {
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+  });
+
+  async function mountWithStoredWallet(adapter: StubAdapter) {
+    localStorage.setItem("walletName", JSON.stringify(adapter.name));
+    renderHook(() => useWallet(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <WalletProvider wallets={[adapter]} autoConnect>
+          {children}
+        </WalletProvider>
+      ),
+    });
+    await act(async () => {});
+  }
+
+  it("connects a stored Installed wallet on mount", async () => {
+    const stubAdapter = new StubAdapter();
+    await mountWithStoredWallet(stubAdapter);
+
+    expect(stubAdapter.connect).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not connect a stored Loadable wallet on mount", async () => {
+    const stubAdapter = new StubAdapter();
+    stubAdapter.readyState = WalletReadyState.Loadable;
+    await mountWithStoredWallet(stubAdapter);
+
+    expect(stubAdapter.connect).not.toHaveBeenCalled();
+  });
+});
+
+describe("page lifecycle (useWallet)", () => {
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+  });
+
+  async function selectWithOnError(onError: (error: WalletError) => void) {
+    const stubAdapter = new StubAdapter();
+    const { result } = renderHook(() => useWallet(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <WalletProvider wallets={[stubAdapter]} onError={onError}>
+          {children}
+        </WalletProvider>
+      ),
+    });
+    await act(() => result.current.select(stubAdapter.name));
+    expect(result.current.wallet?.adapter).toBe(stubAdapter);
+    return { stubAdapter, result };
+  }
+
+  it("still handles adapter events after a canceled navigation", async () => {
+    const onError = vi.fn();
+    const { stubAdapter, result } = await selectWithOnError(onError);
+    const error = new WalletError("lost the wallet");
+
+    act(() => {
+      window.dispatchEvent(new Event("beforeunload"));
+      stubAdapter.emit("error", error);
+      stubAdapter.emit("disconnect");
+    });
+
+    expect(onError).toHaveBeenCalledWith(error);
+    expect(result.current.wallet).toBeNull();
+  });
+
+  it("ignores adapter events only while the page is hidden", async () => {
+    const onError = vi.fn();
+    const { stubAdapter } = await selectWithOnError(onError);
+    const error = new WalletError("lost the wallet");
+
+    act(() => {
+      window.dispatchEvent(new Event("pagehide"));
+      stubAdapter.emit("error", error);
+    });
+    expect(onError).not.toHaveBeenCalled();
+
+    act(() => {
+      window.dispatchEvent(new Event("pageshow"));
+      stubAdapter.emit("error", error);
+    });
+    expect(onError).toHaveBeenCalledWith(error);
   });
 });

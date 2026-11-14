@@ -28,6 +28,7 @@ import {
   buildSwapTag,
   buildNetworkNote,
   isStandardPayment,
+  domainSeparatedSignCommitment,
   _setWasm as _setStandaloneWasm,
   _setWebClient as _setStandaloneWebClient,
 } from "./standalone.js";
@@ -84,6 +85,7 @@ export {
   buildSwapTag,
   buildNetworkNote,
   isStandardPayment,
+  domainSeparatedSignCommitment,
 };
 // Standalone helpers must be re-exported here too: this entry is what the
 // package's "node" condition resolves to, while both entries share one .d.ts.
@@ -284,6 +286,7 @@ export const NoteSyncBlock = /* @__PURE__ */ _reexport("NoteSyncBlock");
 export const NoteSyncInfo = /* @__PURE__ */ _reexport("NoteSyncInfo");
 export const NoteTag = /* @__PURE__ */ _reexport("NoteTag");
 export const NoteType = /* @__PURE__ */ _reexport("NoteType");
+export const NullifierUpdate = /* @__PURE__ */ _reexport("NullifierUpdate");
 export const OutputNote = /* @__PURE__ */ _reexport("OutputNote");
 export const OutputNoteArray = /* @__PURE__ */ _reexport("OutputNoteArray");
 export const OutputNoteRecord = /* @__PURE__ */ _reexport("OutputNoteRecord");
@@ -295,12 +298,17 @@ export const Poseidon2 = /* @__PURE__ */ _reexport("Poseidon2");
 export const ProcedureThreshold =
   /* @__PURE__ */ _reexport("ProcedureThreshold");
 export const Program = /* @__PURE__ */ _reexport("Program");
+export const ProposedBatch = /* @__PURE__ */ _reexport("ProposedBatch");
+export const ProvenBatch = /* @__PURE__ */ _reexport("ProvenBatch");
 export const ProvenTransaction = /* @__PURE__ */ _reexport("ProvenTransaction");
 export const PswapLineageRecord =
   /* @__PURE__ */ _reexport("PswapLineageRecord");
 export const PswapLineageState = /* @__PURE__ */ _reexport("PswapLineageState");
 export const PublicKey = /* @__PURE__ */ _reexport("PublicKey");
 export const RpcClient = /* @__PURE__ */ _reexport("RpcClient");
+export const RpcTransactionRecord = /* @__PURE__ */ _reexport(
+  "RpcTransactionRecord"
+);
 export const Rpo256 = /* @__PURE__ */ _reexport("Rpo256");
 export const Signature = /* @__PURE__ */ _reexport("Signature");
 export const SigningInputs = /* @__PURE__ */ _reexport("SigningInputs");
@@ -310,14 +318,30 @@ export const SparseMerklePath = /* @__PURE__ */ _reexport("SparseMerklePath");
 export const StorageMap = /* @__PURE__ */ _reexport("StorageMap");
 export const StorageMapEntryJs = /* @__PURE__ */ _reexport("StorageMapEntryJs");
 export const StorageMapInfo = /* @__PURE__ */ _reexport("StorageMapInfo");
+export const StorageMapPatchEntry = /* @__PURE__ */ _reexport(
+  "StorageMapPatchEntry"
+);
+export const StorageMapSlotPatch = /* @__PURE__ */ _reexport(
+  "StorageMapSlotPatch"
+);
 export const StorageMapUpdate = /* @__PURE__ */ _reexport("StorageMapUpdate");
+export const StoragePatchOperation = /* @__PURE__ */ _reexport(
+  "StoragePatchOperation"
+);
 export const StorageSlot = /* @__PURE__ */ _reexport("StorageSlot");
 export const StorageSlotArray = /* @__PURE__ */ _reexport("StorageSlotArray");
+export const StorageValueSlotPatch = /* @__PURE__ */ _reexport(
+  "StorageValueSlotPatch"
+);
 export const SyncSummary = /* @__PURE__ */ _reexport("SyncSummary");
 export const TokenSymbol = /* @__PURE__ */ _reexport("TokenSymbol");
 export const TransactionArgs = /* @__PURE__ */ _reexport("TransactionArgs");
+export const TransactionEncryptionKey = /* @__PURE__ */ _reexport(
+  "TransactionEncryptionKey"
+);
 export const TransactionFilter = /* @__PURE__ */ _reexport("TransactionFilter");
 export const TransactionId = /* @__PURE__ */ _reexport("TransactionId");
+export const TransactionInputs = /* @__PURE__ */ _reexport("TransactionInputs");
 export const TransactionProver = /* @__PURE__ */ _reexport("TransactionProver");
 export const TransactionRecord = /* @__PURE__ */ _reexport("TransactionRecord");
 export const TransactionRequest =

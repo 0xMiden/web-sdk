@@ -8,6 +8,9 @@
   "cpu": [
     "x64"
   ],
+  "libc": [
+    "glibc"
+  ],
   "main": "miden_client_web.node",
   "files": [
     "miden_client_web.node",

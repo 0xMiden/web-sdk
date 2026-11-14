@@ -7,7 +7,7 @@ import {
   useNoteFirstSeenStore,
 } from "../store/MidenStore";
 import { captureClientReadGuard } from "../store/clientReadGuard";
-import { NoteFilter } from "@miden-sdk/miden-sdk";
+import { isStandardPayment, NoteFilter } from "@miden-sdk/miden-sdk";
 import type { InputNoteRecord } from "@miden-sdk/miden-sdk";
 import type {
   StreamedNote,
@@ -27,6 +27,11 @@ import { getNoteFilterType } from "../utils/noteFilters";
  * and dual-track note decoding. Returns `StreamedNote` objects that merge
  * summary data with the underlying record and pre-decode attachments.
  *
+ * A streamed note is any input note in the requested status, not necessarily
+ * a payment. Check `standardPayment` before treating a note as incoming funds
+ * or consuming it: consuming runs the note's script, which can also spend
+ * from the account.
+ *
  * @example
  * ```tsx
  * function IncomingNotes({ opponentId }: { opponentId: string }) {
@@ -42,7 +47,8 @@ import { getNoteFilterType } from "../utils/noteFilters";
  *     }
  *   }, [latest, markHandled]);
  *
- *   return <div>{notes.length} unhandled notes</div>;
+ *   const payments = notes.filter((note) => note.standardPayment);
+ *   return <div>{payments.length} unhandled payments</div>;
  * }
  * ```
  */
@@ -51,7 +57,11 @@ export function useNoteStream(
 ): UseNoteStreamReturn {
   const { client, isReady } = useMiden();
 
-  const allNotes = useNotesStore();
+  const status = options.status ?? "committed";
+  const sender = options.sender ?? null;
+  const since = options.since;
+
+  const allNotes = useNotesStore(status);
   const noteFirstSeen = useNoteFirstSeenStore();
   const { lastSyncTime } = useSyncStateStore();
   const setNotesIfChanged = useMidenStore((state) => state.setNotesIfChanged);
@@ -61,11 +71,6 @@ export function useNoteStream(
   const latestRequestRef = useRef(0);
   const handledIdsRef = useRef<Set<string>>(new Set());
   const [handledVersion, setHandledVersion] = useState(0);
-
-  // Resolve options
-  const status = options.status ?? "committed";
-  const sender = options.sender ?? null;
-  const since = options.since;
 
   // Store amountFilter in a ref so the streamedNotes useMemo doesn't depend
   // on the function reference (callers typically pass inline lambdas).
@@ -102,11 +107,12 @@ export function useNoteStream(
       const filter = new NoteFilter(filterType);
       const fetched = await client.getInputNotes(filter);
       if (!isCurrent()) return;
-      setNotesIfChanged(fetched);
+      setNotesIfChanged(fetched, status);
     } catch (err) {
       if (!isCurrent() || latestRequestRef.current !== request) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
+      // Only a newer fetch can take ownership of this instance's loading flag.
       if (latestRequestRef.current === request) setIsLoading(false);
     }
   }, [client, isReady, status, setNotesIfChanged]);
@@ -252,6 +258,7 @@ function buildStreamedNote(
       record,
       firstSeenAt,
       attachment,
+      standardPayment: isStandardPayment(record),
     };
   } catch {
     return null;

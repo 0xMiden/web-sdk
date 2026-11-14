@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import { useMidenStore } from "../store/MidenStore";
 import { captureClientReadGuard } from "../store/clientReadGuard";
@@ -35,6 +35,9 @@ type AccountFileWithAccount = AccountFileType & {
 
 /**
  * Hook to import existing accounts into the client.
+ * If its client is replaced, the import stops making SDK calls and publishes no
+ * result or error. It returns an Account already obtained, or rejects with
+ * "Miden client is not ready" if no Account has been obtained.
  *
  * @example
  * ```tsx
@@ -64,6 +67,7 @@ export function useImportAccount(): UseImportAccountResult {
   const [account, setAccount] = useState<Account | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const latestCallRef = useRef(0);
 
   const importAccount = useCallback(
     async (options: ImportAccountOptions): Promise<Account> => {
@@ -71,33 +75,42 @@ export function useImportAccount(): UseImportAccountResult {
         throw new Error("Miden client is not ready");
       }
 
+      const isCurrent = captureClientReadGuard(client);
+      const assertCurrent = () => {
+        if (!isCurrent()) throw new Error("Miden client is not ready");
+      };
+      assertCurrent();
+
       assertSignerConnected(signerConnected);
 
+      const call = ++latestCallRef.current;
       setIsImporting(true);
       setError(null);
+      let obtainedAccount: Account | null = null;
 
       try {
         type AccountHeaders = Awaited<ReturnType<WebClient["getAccounts"]>>;
         let accountsAfter: AccountHeaders | null = null;
-        let isAccountsAfterCurrent: (() => boolean) | null = null;
 
         const imported = await (async (): Promise<Account> => {
           switch (options.type) {
             case "file": {
               const accountsBefore = await client.getAccounts();
+              assertCurrent();
               const accountFile = await resolveAccountFile(options.file);
+              assertCurrent();
               const accountFileWithAccount =
                 accountFile as AccountFileWithAccount;
               const fileBytes = getAccountFileBytes(
                 accountFileWithAccount,
                 options.file
               );
-              const accountFromFile =
+              obtainedAccount =
                 typeof accountFileWithAccount.account === "function"
                   ? accountFileWithAccount.account()
                   : null;
               const accountIdFromFile =
-                accountFromFile === null &&
+                obtainedAccount === null &&
                 typeof accountFileWithAccount.accountId === "function"
                   ? accountFileWithAccount.accountId()
                   : null;
@@ -111,12 +124,13 @@ export function useImportAccount(): UseImportAccountResult {
                   throw err;
                 }
               }
+              assertCurrent();
 
-              isAccountsAfterCurrent = captureClientReadGuard(client);
               accountsAfter = await client.getAccounts();
+              assertCurrent();
 
-              if (accountFromFile) {
-                return accountFromFile;
+              if (obtainedAccount) {
+                return obtainedAccount;
               }
 
               const beforeIds = new Set(
@@ -127,20 +141,24 @@ export function useImportAccount(): UseImportAccountResult {
               );
               const accountId = accountIdFromFile ?? newAccountHeader?.id();
               if (accountId) {
-                const fetchedAccount = await client.getAccount(accountId);
-                if (fetchedAccount) {
-                  return fetchedAccount;
+                obtainedAccount = (await client.getAccount(accountId)) ?? null;
+                assertCurrent();
+                if (obtainedAccount) {
+                  return obtainedAccount;
                 }
               }
 
               if (fileBytes) {
                 for (const header of accountsAfter) {
                   const exported = await client.exportAccountFile(header.id());
+                  assertCurrent();
                   const exportedBytes = getAccountFileBytes(exported, exported);
                   if (exportedBytes && bytesEqual(exportedBytes, fileBytes)) {
-                    const fetchedAccount = await client.getAccount(header.id());
-                    if (fetchedAccount) {
-                      return fetchedAccount;
+                    obtainedAccount =
+                      (await client.getAccount(header.id())) ?? null;
+                    assertCurrent();
+                    if (obtainedAccount) {
+                      return obtainedAccount;
                     }
                   }
                 }
@@ -151,38 +169,44 @@ export function useImportAccount(): UseImportAccountResult {
             case "id": {
               const accountId = parseAccountId(options.accountId);
               await client.importAccountById(accountId);
-              const fetchedAccount = await client.getAccount(accountId);
-              if (!fetchedAccount) {
+              assertCurrent();
+              obtainedAccount = (await client.getAccount(accountId)) ?? null;
+              assertCurrent();
+              if (!obtainedAccount) {
                 throw new Error("Account not found after import");
               }
-              return fetchedAccount;
+              return obtainedAccount;
             }
             case "seed": {
               const authScheme = options.authScheme ?? DEFAULTS.AUTH_SCHEME;
-              return await client.importPublicAccountFromSeed(
+              obtainedAccount = await client.importPublicAccountFromSeed(
                 options.seed,
                 authScheme
               );
+              return obtainedAccount;
             }
           }
         })();
 
+        if (!isCurrent()) return imported;
         ensureAccountBech32(imported);
-        const isCurrent =
-          isAccountsAfterCurrent ?? captureClientReadGuard(client);
         const accounts = accountsAfter ?? (await client.getAccounts());
         if (isCurrent()) {
           setAccounts(accounts);
+          setAccount(imported);
         }
-        setAccount(imported);
 
         return imported;
       } catch (err) {
+        if (!isCurrent()) {
+          if (obtainedAccount) return obtainedAccount;
+          throw new Error("Miden client is not ready");
+        }
         const error = err instanceof Error ? err : new Error(String(err));
         setError(error);
         throw error;
       } finally {
-        setIsImporting(false);
+        if (latestCallRef.current === call) setIsImporting(false);
       }
     },
     [client, isReady, setAccounts, signerConnected]
