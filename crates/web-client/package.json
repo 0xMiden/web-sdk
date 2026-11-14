@@ -57,6 +57,7 @@
     "js/node-index.js",
     "js/node",
     "js/client.js",
+    "js/callbackBridge.js",
     "js/standalone.js",
     "js/storageView.js",
     "js/utils.js",

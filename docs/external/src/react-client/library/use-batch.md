@@ -68,6 +68,14 @@ in. Sync to learn where it landed.
   the page stays responsive while it proves. With `useWorker: false`, or without
   `Worker` support, it proves on the calling thread and blocks the page until it
   settles, so keep batches small there.
+- **Signing.** A batch signs while it is built. Through the Web Worker, `sign`
+  waits without a limit unless `callbackTimeoutMs` sets one, so a stalled signer
+  holds the batch and leaves later worker calls in the queue: `isLoading` stays
+  `true` and another `batch()` throws `BATCH_BUSY`. To fail a stalled signer
+  instead, set a finite timeout, such as
+  `<MidenProvider config={{ rpcUrl: "testnet", callbackTimeoutMs: 120000 }}>`.
+  One failed or timed out `sign` fails the whole batch. See the
+  [complete callback timeout contract](https://github.com/0xMiden/web-sdk/blob/main/packages/react-sdk/README.md#keystore-callback-timeouts).
 - **Stages.** `stage` goes `"executing"` → `"submitting"` → `"complete"`. There
   is no `"proving"` stage, because proving happens inside the batch primitive. A
   failure after the batch starts returns `stage` to `"idle"` and sets `error`;

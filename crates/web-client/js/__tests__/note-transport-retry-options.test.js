@@ -249,7 +249,7 @@ describe("the worker receives the retry options", () => {
     await Promise.resolve();
 
     const init = posted.find((m) => m.action === WorkerAction.INIT);
-    expect(init.args).toHaveLength(12);
+    expect(init.args).toHaveLength(13);
     expect(init.args[9]).toBe("0xfee");
     expect(init.args[10]).toBe(7);
     expect(init.args[11]).toBe(500);
@@ -308,7 +308,7 @@ describe("MidenClient.create forwards the retry options", () => {
       noteTransportRetryIntervalMs: 60_000,
     });
     const [args] = calls.createClientWithExternalKeystore;
-    expect(args).toHaveLength(13);
+    expect(args).toHaveLength(14);
     expect(args[10]).toBe("0xfee");
     expect(args[11]).toBe(0);
     expect(args[12]).toBe(60_000);

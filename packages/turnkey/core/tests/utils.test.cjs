@@ -37,6 +37,33 @@ const loadUtils = (mocks = {}) => {
   }
 };
 
+const loadTranspiledTypeScript = (filePath, mocks = {}) => {
+  const originalLoad = Module._load;
+  Module._load = function patchedLoad(request, parent, isMain) {
+    if (Object.hasOwn(mocks, request)) return mocks[request];
+    return originalLoad.apply(this, [request, parent, isMain]);
+  };
+
+  try {
+    const source = fs.readFileSync(filePath, "utf8");
+    const { outputText } = ts.transpileModule(source, {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2020,
+      },
+      fileName: filePath,
+    });
+
+    const compiledModule = new Module(filePath, module);
+    compiledModule.filename = filePath;
+    compiledModule.paths = Module._nodeModulePaths(path.dirname(filePath));
+    compiledModule._compile(outputText, filePath);
+    return compiledModule.exports;
+  } finally {
+    Module._load = originalLoad;
+  }
+};
+
 // ---------------------------------------------------------------------------
 // ECDSA public-key commitment — golden vectors (0.16 line).
 //
@@ -186,5 +213,102 @@ test("evmPkToCommitment hashes with Poseidon2 and never Rpo256", async () => {
       0,
       "commitments must not be hashed with Rpo256 — the protocol commits with Poseidon2"
     );
+  }
+});
+
+for (const callbackTimeoutMs of [0, 120000]) {
+  test(`createMidenTurnkeyClient forwards callbackTimeoutMs ${callbackTimeoutMs}`, async () => {
+    const createdOptions = [];
+    const sdk = {
+      MidenClient: {
+        create: async (options) => {
+          createdOptions.push(options);
+          throw new Error("stop after create");
+        },
+      },
+    };
+    const filePath = path.resolve(__dirname, "../src/midenClient.ts");
+    const { createMidenTurnkeyClient } = loadTranspiledTypeScript(filePath, {
+      "@turnkey/http": {
+        isHttpClient: () => false,
+        TurnkeyActivityError: class extends Error {},
+      },
+      "./utils.js": {},
+    });
+
+    await assert.rejects(
+      withMockedSdk(sdk, () =>
+        createMidenTurnkeyClient(
+          { client: {}, organizationId: "org-1", account: {} },
+          { endpoint: "testnet", storageMode: {}, callbackTimeoutMs }
+        )
+      ),
+      /stop after create/
+    );
+    assert.strictEqual(createdOptions[0].callbackTimeoutMs, callbackTimeoutMs);
+  });
+}
+
+test("useTurnkeyMiden forwards callbackTimeoutMs and rebuilds on change", async () => {
+  const factoryCalls = [];
+  const turnkey = {
+    wallets: [{ source: "embedded", accounts: [{}] }],
+    httpClient: {},
+    session: { organizationId: "org-1" },
+  };
+  const filePath = path.resolve(
+    __dirname,
+    "../../react/src/useTurnkeyMiden.ts"
+  );
+  const { useTurnkeyMiden } = loadTranspiledTypeScript(filePath, {
+    "@turnkey/react-wallet-kit": { useTurnkey: () => turnkey },
+    "@miden-sdk/turnkey": {
+      createMidenTurnkeyClient: async (...args) => {
+        factoryCalls.push(args);
+        return { client: { terminate() {} }, accountId: "account-1" };
+      },
+    },
+  });
+  const React = require("react");
+  const { act, create } = require("react-test-renderer");
+  const sdk = {
+    AccountStorageMode: {
+      public: () => ({ mode: "public" }),
+      private: () => ({ mode: "private" }),
+    },
+  };
+  const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
+  try {
+    await withMockedSdk(sdk, async () => {
+      const Probe = ({ callbackTimeoutMs }) => {
+        useTurnkeyMiden("testnet", "public", { callbackTimeoutMs });
+        return null;
+      };
+      let renderer;
+
+      await act(async () => {
+        renderer = create(React.createElement(Probe, { callbackTimeoutMs: 0 }));
+      });
+      assert.strictEqual(factoryCalls.length, 1);
+      assert.strictEqual(factoryCalls[0][1].callbackTimeoutMs, 0);
+
+      await act(async () => {
+        renderer.update(
+          React.createElement(Probe, { callbackTimeoutMs: 120000 })
+        );
+      });
+      assert.strictEqual(factoryCalls.length, 2);
+      assert.strictEqual(factoryCalls[1][1].callbackTimeoutMs, 120000);
+
+      await act(async () => renderer.unmount());
+    });
+  } finally {
+    if (previousActEnvironment === undefined) {
+      delete globalThis.IS_REACT_ACT_ENVIRONMENT;
+    } else {
+      globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    }
   }
 });

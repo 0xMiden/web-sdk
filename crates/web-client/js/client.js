@@ -11,6 +11,7 @@ import {
   resolveAccountRef,
   validateNoteTransportRetryOptions,
 } from "./utils.js";
+import { validateCallbackTimeoutMs } from "./callbackBridge.js";
 
 /**
  * MidenClient wraps the existing proxy-wrapped WebClient with a resource-based API.
@@ -159,6 +160,8 @@ export class MidenClient {
       );
     }
 
+    validateCallbackTimeoutMs(options?.callbackTimeoutMs);
+
     const seed = options?.seed ? await hashSeed(options.seed) : undefined;
 
     const rpcUrl = resolveRpcUrl(options?.rpcUrl);
@@ -188,7 +191,8 @@ export class MidenClient {
         options,
         options?.feeFaucetId,
         options?.noteTransportMaxRetries,
-        options?.noteTransportRetryIntervalMs
+        options?.noteTransportRetryIntervalMs,
+        options?.callbackTimeoutMs
       );
     } else {
       inner = await WebClientClass.createClient(
