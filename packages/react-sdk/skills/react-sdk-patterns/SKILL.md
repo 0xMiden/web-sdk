@@ -182,6 +182,10 @@ const meta = assetMetadata.get(faucetId);
 
 Pass an array even for a single asset - the hook calls `.filter` on its argument, so a bare string throws a runtime `TypeError`. Metadata is read from the node the provider's client was created against (`client.endpoint()`), so nothing is fetched until the provider is ready.
 
+Metadata reads started before a client replacement or cache reset are discarded.
+A pending read from the old client does not block the current client's request
+for the same asset.
+
 ### useTransactionHistory(options?)
 ```tsx
 const { records, record, status, isLoading, error, refetch } = useTransactionHistory({ id: txId });
