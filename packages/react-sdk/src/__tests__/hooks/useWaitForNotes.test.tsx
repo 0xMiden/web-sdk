@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { useWaitForNotes } from "../../hooks/useWaitForNotes";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
@@ -174,14 +174,23 @@ describe("useWaitForNotes", () => {
 
     const { result } = renderHook(() => useWaitForNotes());
 
-    const notes = await result.current.waitForConsumableNotes({
-      accountId: "0xaccount",
-      timeoutMs: 20,
-      intervalMs: 1,
-    });
+    vi.useFakeTimers();
+    try {
+      const pending = result.current.waitForConsumableNotes({
+        accountId: "0xaccount",
+        timeoutMs: 20,
+        intervalMs: 1,
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      const notes = await pending;
 
-    expect(mockClient.getConsumableNotes).toHaveBeenCalledTimes(2);
-    expect(notes).toEqual([payment]);
+      expect(mockClient.getConsumableNotes).toHaveBeenCalledTimes(2);
+      expect(notes).toEqual([payment]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("should resolve when consumable notes are available", async () => {

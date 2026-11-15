@@ -38,7 +38,7 @@ range is dropped and will not satisfy the peer.
 import { ParaSignerProvider, useParaSigner } from "@miden-sdk/para-react";
 
 <ParaSignerProvider apiKey="your-api-key" environment="PRODUCTION">
-  <MidenProvider config={{ rpcUrl: "testnet" }}>
+  <MidenProvider config={{ rpcUrl: "testnet", callbackTimeoutMs: 120000 }}>
     <App />
   </MidenProvider>
 </ParaSignerProvider>
@@ -70,6 +70,8 @@ import { TurnkeySignerProvider } from "@miden-sdk/turnkey-react";
   ...
 </TurnkeySignerProvider>
 ```
+
+`MidenProvider` accepts `callbackTimeoutMs` in its config to control how long the Web Worker waits for each external keystore callback (`sign`, `getKey` and `insertKey`). Left unset, `sign` waits without a limit so a wallet approval can take as long as needed; `getKey` and `insertKey` keep their 30-second limit. A positive value, such as `120000` for two minutes, applies the same limit to all three callbacks, rounded up to a whole millisecond. `0` removes the limit for all three. A negative, non-finite or non-number value, or one above `2147483647`, throws `TypeError` when the client is created. Callbacks use this timeout only through the Web Worker. Without a timeout, a stalled signer holds its batch or transaction and leaves later worker calls in the queue while its sign request waits indefinitely, so set a finite value if a signer can stall. See the [complete contract](https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts).
 
 `TurnkeySignerProvider` also accepts optional `customComponents` and `importAccountId` props, which it forwards into `accountConfig` (see "Custom Account Components").
 
