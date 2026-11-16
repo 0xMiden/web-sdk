@@ -625,8 +625,7 @@ export class TransactionsResource {
    * https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
    *
    * @param {BatchOptions} opts - Batch options: the operations array, and
-   *   `timeout` / `waitForConfirmation` (the latter does not currently work,
-   *   see `submitBatch`).
+   *   `waitForConfirmation` / `timeout` (see `submitBatch`).
    * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
    *   submission, not the block the batch commits in.
    */
@@ -702,8 +701,10 @@ export class TransactionsResource {
    * `client.withFeeAwareAuth` before batching it.
    *
    * @param {Array<{ account: AccountRef, request: TransactionRequest }>} items - Per-tx (account, request) pairs.
-   * @param {object} [options] - Optional settings (timeout, and
-   *   `waitForConfirmation`, which does not currently work, see #314).
+   * @param {object} [options] - Optional settings. `waitForConfirmation`
+   *   resolves the call only once every transaction of the batch is committed,
+   *   and rejects if the node discards one or `timeout` (default 60000 ms, 0
+   *   for none) runs out first.
    *   Every transaction is proven inside the batch primitive by the client's
    *   built-in local prover, so `proverUrl` does not apply; the V1 batch API has
    *   no per-call prover override.
@@ -743,48 +744,94 @@ export class TransactionsResource {
       );
     });
 
+    // The batch primitive returns no transaction ids, so the transactions it
+    // records are told apart from the ones that were already pending.
+    const pendingBefore = options?.waitForConfirmation
+      ? await this.#pendingTransactionIds(wasm)
+      : null;
+
     const blockNumber = await this.#inner.submitNewTransactionBatch(wasmItems);
 
-    if (options?.waitForConfirmation) {
-      await this.#waitForBlock(blockNumber, options);
+    if (pendingBefore) {
+      const pendingAfter = await this.#pendingTransactionIds(wasm);
+      const batchTxIds = [...pendingAfter].filter(
+        (id) => !pendingBefore.has(id)
+      );
+      await this.#waitForBatch(batchTxIds, options);
     }
 
     return { blockNumber };
   }
 
   /**
-   * Polls until the local sync height reaches `blockNumber` or the timeout
-   * expires. The Rust V1 batch API returns only a block number — there are no
-   * per-tx ids to poll on, so we wait on the chain height instead.
+   * The ids, as hex, of the transactions the local store holds as pending.
    *
-   * This does not currently work: `syncStateWithTimeout` below does not exist,
-   * so the call throws, the bare catch swallows it, and nothing here advances
-   * the height — the loop times out unless the client is already at or past
-   * `blockNumber`. Even once that is fixed the guarantee is weaker than it
-   * looks, since `blockNumber` is the tip as of submission rather than the
-   * batch's commit block. See https://github.com/0xMiden/web-sdk/issues/314.
+   * @param {object} wasm - The WASM module.
+   * @returns {Promise<Set<string>>}
+   */
+  async #pendingTransactionIds(wasm) {
+    const txs = await this.#inner.getTransactions(
+      wasm.TransactionFilter.uncommitted()
+    );
+    return new Set((txs ?? []).map((tx) => tx.id().toHex()));
+  }
+
+  /**
+   * Polls until every transaction in `txIds` is committed, a transaction is
+   * discarded, or the timeout expires. The batch counterpart of `waitFor`.
    *
-   * @param {number} blockNumber - The block height to wait for.
+   * `txIds` are the transactions that became pending during the submission.
+   * A batch is recorded as pending in one store write, so these are the
+   * batch's own transactions, plus those of any other submission this client
+   * made while the batch was being proven; waiting for those as well only
+   * makes the wait longer. A transaction that a concurrent sync already
+   * settled is no longer pending and is not waited for.
+   *
+   * The block number the submission returned is not used: it is the node's
+   * chain tip as of submission, which the client has usually reached already.
+   *
+   * @param {string[]} txIds - Transaction ids to wait for, as hex.
    * @param {object} [opts] - Polling options (timeout, interval).
    */
-  async #waitForBlock(blockNumber, opts) {
+  async #waitForBatch(txIds, opts) {
+    if (txIds.length === 0) return;
+
     const timeout = opts?.timeout ?? 60_000;
     const interval = opts?.interval ?? 5_000;
     const start = Date.now();
+    const wasm = await this.#getWasm();
 
     while (true) {
       if (timeout > 0 && Date.now() - start >= timeout) {
         throw new Error(
-          `Batch confirmation timed out after ${timeout}ms (waiting for block ${blockNumber})`
+          `Batch confirmation timed out after ${timeout}ms ` +
+            `(waiting for ${txIds.length} transaction(s))`
         );
       }
       try {
-        await this.#inner.syncStateWithTimeout(0);
+        // Chain-only sync, as in waitFor: confirmation needs only on-chain
+        // state, and polling survives an unavailable note transport endpoint.
+        await this.#inner.syncChain();
       } catch {
-        // sync may fail transiently; continue polling
+        // Sync may fail transiently; continue polling
       }
-      const height = await this.#inner.getSyncHeight();
-      if (height >= blockNumber) return;
+
+      // Recreate filter each iteration: WASM consumes it by value
+      const filter = wasm.TransactionFilter.ids(
+        txIds.map((hex) => wasm.TransactionId.fromHex(hex))
+      );
+      const txs = (await this.#inner.getTransactions(filter)) ?? [];
+
+      let committed = 0;
+      for (const tx of txs) {
+        const status = tx.transactionStatus?.();
+        if (status?.isDiscarded()) {
+          throw new Error(`Batch transaction rejected: ${tx.id().toHex()}`);
+        }
+        if (status?.isCommitted()) committed += 1;
+      }
+      if (committed === txIds.length) return;
+
       await waitBeforeNextPoll(start, timeout, interval);
     }
   }

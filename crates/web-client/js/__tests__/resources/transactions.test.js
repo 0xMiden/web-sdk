@@ -2541,89 +2541,287 @@ describe("TransactionsResource", () => {
       ).rejects.toThrow(/missing.*request/);
     });
 
-    // These three mocks supply `syncStateWithTimeout`, which does not exist on
-    // the real client — so they exercise the poll loop's shape, not a working
-    // feature. `waitForConfirmation` on a batch is broken in production; see
-    // https://github.com/0xMiden/web-sdk/issues/314.
-    it("submitBatch with waitForConfirmation exits once getSyncHeight reaches the block", async () => {
-      const heights = [99, 99, 100];
-      const { resource, inner } = makeResource({
-        submitNewTransactionBatch: vi.fn().mockResolvedValue(100),
-        getSyncHeight: vi
-          .fn()
-          .mockImplementation(() => Promise.resolve(heights.shift())),
-        syncStateWithTimeout: vi.fn().mockResolvedValue(undefined),
+    // A store double for the confirmation wait. `records` maps a transaction id
+    // to its status; `getTransactions` answers the pending filter and the ids
+    // filter from it, the two queries the wait makes. `submit` adds the batch's
+    // transactions as pending, as the real submission does in one store write.
+    function makeBatchStore({ pending = [], batch = ["0xb1", "0xb2"] } = {}) {
+      const records = new Map(pending.map((id) => [id, "pending"]));
+      const record = (id) => ({
+        id: () => ({ toHex: () => id }),
+        transactionStatus: () => ({
+          isCommitted: () => records.get(id) === "committed",
+          isDiscarded: () => records.get(id) === "discarded",
+        }),
       });
-
-      const r1 = fakeRequest("a");
-      const r2 = fakeRequest("b");
-      const result = await resource.submitBatch(
-        [
-          { account: "0xsender", request: r1 },
-          { account: "0xsender", request: r2 },
-        ],
-        {
-          waitForConfirmation: true,
-          timeout: 60_000,
-          interval: 0, // poll immediately, no wall-clock wait in tests
+      const getTransactions = vi.fn(async (filter) => {
+        if (filter === "filterUncommitted") {
+          return [...records]
+            .filter(([, status]) => status === "pending")
+            .map(([id]) => record(id));
         }
+        return filter.ids.filter((id) => records.has(id)).map(record);
+      });
+      const submitNewTransactionBatch = vi.fn(async () => {
+        for (const id of batch) records.set(id, "pending");
+        return 100;
+      });
+      const wasmOverrides = {
+        TransactionFilter: {
+          all: vi.fn().mockReturnValue("filterAll"),
+          uncommitted: vi.fn().mockReturnValue("filterUncommitted"),
+          ids: vi.fn((txIds) => ({ ids: txIds.map((id) => id.toHex()) })),
+        },
+      };
+      return {
+        records,
+        getTransactions,
+        submitNewTransactionBatch,
+        wasmOverrides,
+      };
+    }
+
+    const batchItems = () => [
+      { account: "0xsender", request: fakeRequest("a") },
+      { account: "0xsender", request: fakeRequest("b") },
+    ];
+
+    it("submitBatch without waitForConfirmation does not query or sync", async () => {
+      const store = makeBatchStore();
+      const { resource, inner } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          getTransactions: store.getTransactions,
+        },
+        {},
+        store.wasmOverrides
       );
 
+      const result = await resource.submitBatch(batchItems());
+
       expect(result).toEqual({ blockNumber: 100 });
-      expect(inner.getSyncHeight).toHaveBeenCalled();
+      expect(inner.getTransactions).not.toHaveBeenCalled();
+      expect(inner.syncChain).not.toHaveBeenCalled();
     });
 
-    it("submitBatch waitForConfirmation swallows a rejected sync attempt", async () => {
-      // First syncState rejects, next call resolves; getSyncHeight returns the
-      // target on the first read so the poll loop exits cleanly.
-      const sync = vi.fn();
-      sync.mockRejectedValueOnce(new Error("transient"));
-      sync.mockResolvedValue(undefined);
-      const { resource, inner } = makeResource({
-        submitNewTransactionBatch: vi.fn().mockResolvedValue(50),
-        getSyncHeight: vi.fn().mockResolvedValue(50),
-        syncStateWithTimeout: sync,
+    it("submitBatch waitForConfirmation resolves only once the batch's transactions are committed", async () => {
+      const store = makeBatchStore();
+      // The batch lands on the third sync. The local height is not consulted:
+      // the client is already at the returned block number from the start.
+      let syncs = 0;
+      const syncChain = vi.fn(async () => {
+        syncs += 1;
+        if (syncs === 3) {
+          store.records.set("0xb1", "committed");
+          store.records.set("0xb2", "committed");
+        }
       });
-      const r = fakeRequest();
-      await resource.submitBatch([{ account: "0xsender", request: r }], {
+      const getSyncHeight = vi.fn().mockResolvedValue(100);
+      const { resource, inner } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          getTransactions: store.getTransactions,
+          syncChain,
+          getSyncHeight,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      const result = await resource.submitBatch(batchItems(), {
+        waitForConfirmation: true,
+        timeout: 60_000,
+        interval: 0, // poll immediately, no wall-clock wait in tests
+      });
+
+      expect(result).toEqual({ blockNumber: 100 });
+      expect(syncChain).toHaveBeenCalledTimes(3);
+      expect(getSyncHeight).not.toHaveBeenCalled();
+      expect(inner.syncState).not.toHaveBeenCalled();
+    });
+
+    it("submitBatch waitForConfirmation waits for the batch, not for transactions already pending", async () => {
+      // 0xold was pending before the batch and never commits.
+      const store = makeBatchStore({ pending: ["0xold"] });
+      const syncChain = vi.fn(async () => {
+        store.records.set("0xb1", "committed");
+        store.records.set("0xb2", "committed");
+      });
+      const { resource, wasm } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      await resource.submitBatch(batchItems(), {
         waitForConfirmation: true,
         interval: 0,
       });
-      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+
+      expect(store.records.get("0xold")).toBe("pending");
+      const polled = wasm.TransactionFilter.ids.mock.results.map(
+        (r) => r.value.ids
+      );
+      expect(polled).toEqual([["0xb1", "0xb2"]]);
+    });
+
+    it("submitBatch waitForConfirmation keeps waiting while only part of the batch is committed", async () => {
+      const store = makeBatchStore();
+      let syncs = 0;
+      const syncChain = vi.fn(async () => {
+        syncs += 1;
+        if (syncs === 1) store.records.set("0xb1", "committed");
+        if (syncs === 2) store.records.set("0xb2", "committed");
+      });
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      await resource.submitBatch(batchItems(), {
+        waitForConfirmation: true,
+        interval: 0,
+      });
+
+      expect(syncChain).toHaveBeenCalledTimes(2);
+    });
+
+    it("submitBatch waitForConfirmation rejects when the node discards a transaction", async () => {
+      const store = makeBatchStore();
+      const syncChain = vi.fn(async () => {
+        store.records.set("0xb2", "discarded");
+      });
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      await expect(
+        resource.submitBatch(batchItems(), {
+          waitForConfirmation: true,
+          interval: 0,
+        })
+      ).rejects.toThrow("Batch transaction rejected: 0xb2");
+    });
+
+    it("submitBatch waitForConfirmation swallows a rejected sync attempt", async () => {
+      const store = makeBatchStore();
+      const syncChain = vi.fn();
+      syncChain.mockRejectedValueOnce(new Error("transient"));
+      syncChain.mockImplementation(async () => {
+        store.records.set("0xb1", "committed");
+        store.records.set("0xb2", "committed");
+      });
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      await resource.submitBatch(batchItems(), {
+        waitForConfirmation: true,
+        interval: 0,
+      });
+
+      expect(syncChain).toHaveBeenCalledTimes(2);
     });
 
     it("submitBatch waitForConfirmation throws on timeout", async () => {
-      const { resource } = makeResource({
-        submitNewTransactionBatch: vi.fn().mockResolvedValue(1000),
-        getSyncHeight: vi.fn().mockResolvedValue(0),
-        syncStateWithTimeout: vi.fn().mockResolvedValue(undefined),
-      });
-      const r = fakeRequest();
+      const store = makeBatchStore();
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          getTransactions: store.getTransactions,
+        },
+        {},
+        store.wasmOverrides
+      );
+
       await expect(
-        resource.submitBatch([{ account: "0xsender", request: r }], {
+        resource.submitBatch(batchItems(), {
           waitForConfirmation: true,
-          timeout: 1, // 1ms — first poll already past
+          timeout: 1, // 1ms, the batch never commits
           interval: 0,
         })
       ).rejects.toThrow(/timed out/);
     });
 
     it("submitBatch waitForConfirmation gives up at the timeout, not an interval later", async () => {
-      const { resource } = makeResource({
-        submitNewTransactionBatch: vi.fn().mockResolvedValue(1000),
-        getSyncHeight: vi.fn().mockResolvedValue(0),
-        syncStateWithTimeout: vi.fn().mockResolvedValue(undefined),
-      });
-      const r = fakeRequest();
+      const store = makeBatchStore();
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          getTransactions: store.getTransactions,
+        },
+        {},
+        store.wasmOverrides
+      );
+
       const start = Date.now();
       await expect(
-        resource.submitBatch([{ account: "0xsender", request: r }], {
+        resource.submitBatch(batchItems(), {
           waitForConfirmation: true,
           timeout: 50,
           interval: 5000,
         })
-      ).rejects.toThrow("Batch confirmation timed out after 50ms");
+      ).rejects.toThrow(
+        "Batch confirmation timed out after 50ms (waiting for 2 transaction(s))"
+      );
       expect(Date.now() - start).toBeLessThan(1000);
     }, 10000);
+
+    it("batch forwards waitForConfirmation to submitBatch", async () => {
+      const store = makeBatchStore({ batch: ["0xb1"] });
+      const syncChain = vi.fn(async () => {
+        store.records.set("0xb1", "committed");
+      });
+      const { resource } = makeResource(
+        {
+          newSendTransactionRequest: vi
+            .fn()
+            .mockResolvedValue(fakeRequest("send")),
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      const result = await resource.batch({
+        operations: [
+          {
+            kind: "send",
+            account: "0xsender",
+            to: "0xreceiver",
+            token: "0xtoken",
+            amount: 1,
+          },
+        ],
+        waitForConfirmation: true,
+        interval: 0,
+      });
+
+      expect(result).toEqual({ blockNumber: 100 });
+      expect(syncChain).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -730,19 +730,20 @@ export interface BatchOptions {
   /** Operations to execute atomically as a batch. Must be non-empty. */
   operations: BatchOperation[];
   /**
-   * Poll until the local sync height reaches the block number returned by the
-   * submission.
+   * Resolve only once every transaction of the batch is committed. The call
+   * syncs the chain and polls the transactions the submission recorded, and
+   * rejects with `Batch transaction rejected: <id>` if the node discards one,
+   * or with `Batch confirmation timed out` when `timeout` runs out first.
    *
-   * Does not currently work on a batch: the poll's sync step calls a method
-   * that does not exist, so it cannot advance the height and the call throws
-   * `Batch confirmation timed out` unless the client is already at or past
-   * that height. Even once fixed it would be a weak signal, since the number
-   * is the tip as of submission rather than the batch's commit block. See
-   * https://github.com/0xMiden/web-sdk/issues/314. Sync and check
-   * `transactions.list()` or the account nonce instead.
+   * The returned `blockNumber` is still the node's chain tip as of submission,
+   * not the block the batch committed in.
    */
   waitForConfirmation?: boolean;
-  /** Wall-clock polling timeout for `waitForConfirmation` (default 60_000ms). */
+  /**
+   * Wall-clock polling timeout for `waitForConfirmation` in milliseconds
+   * (default 60_000). Set to 0 to poll until the batch is committed or
+   * discarded.
+   */
   timeout?: number;
 }
 
@@ -1567,8 +1568,8 @@ export interface TransactionsResource {
    * one through {@link MidenClient.withFeeAwareAuth} before batching it.
    *
    * @param items - Per-tx (account, request) pairs (must be non-empty).
-   * @param options - Optional batch settings (timeout, and `waitForConfirmation`,
-   *   which does not currently work, see its own documentation and #314).
+   * @param options - Optional batch settings (`waitForConfirmation` and its
+   *   `timeout`, see {@link BatchOptions}).
    *   There is no prover option: every transaction is proven inside the batch
    *   primitive by the client's built-in local prover, and `proverUrl` does not
    *   apply.

@@ -804,7 +804,13 @@ const { blockNumber } = await client.transactions.submitBatch([
 ]);
 ```
 
-The batch primitive returns only a block number. There are no per-tx ids in the result, and the number is the node's chain tip as of submission, not the block the batch commits in. Even were it the commit block, `waitForConfirmation` would confirm only that the client had caught up to it, not that the batch committed. `waitForConfirmation` on a batch does not currently work: its poll calls a sync method that does not exist, so the poll cannot advance the height itself and the call throws `Batch confirmation timed out` unless the client is already at or past that height. Tracked in [#314](https://github.com/0xMiden/web-sdk/issues/314); prefer syncing and checking `client.transactions.list()` yourself. The batch's own effects are already in the local store when the call returns, so what you are waiting for is chain inclusion:
+The batch primitive returns only a block number. There are no per-tx ids in the result, and the number is the node's chain tip as of submission, not the block the batch commits in. The batch's own effects are already in the local store when the call returns, so what is left to wait for is chain inclusion. Pass `waitForConfirmation: true` to have the call resolve only once every transaction of the batch is committed; it rejects if the node discards one, or when `timeout` (default 60 seconds) runs out first:
+
+```typescript
+await client.transactions.submitBatch(items, { waitForConfirmation: true });
+```
+
+To check later instead, sync and read the transactions:
 
 ```typescript
 await client.sync();
