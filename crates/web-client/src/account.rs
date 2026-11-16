@@ -100,11 +100,18 @@ impl WebClient {
     /// # Arguments
     /// * `account_id` - The ID of the account to read.
     ///
+    /// The reader holds the client's store until it is freed, so `terminate()` and `await using`
+    /// cannot release the store while one is alive.
+    ///
     /// # Example
     /// ```javascript
-    /// const reader = client.accountReader(accountId);
-    /// const nonce = await reader.nonce();
-    /// const balance = await reader.getBalance(faucetId);
+    /// const reader = await client.accountReader(accountId);
+    /// try {
+    ///   const nonce = await reader.nonce();
+    ///   const balance = await reader.getBalance(faucetId);
+    /// } finally {
+    ///   reader.free?.(); // the Node.js reader has no free()
+    /// }
     /// ```
     #[js_export(js_name = "accountReader")]
     pub async fn account_reader(&self, account_id: &AccountId) -> Result<AccountReader, JsErr> {
@@ -176,18 +183,27 @@ impl WebClient {
         Ok(())
     }
 
-    /// Removes `address` from the account it belongs to. `account_id` is kept for compatibility
-    /// and is not used: the address identifies its account.
+    /// Removes `address` from the account `account_id`. Does nothing if the account does not have
+    /// the address.
     #[js_export(js_name = "removeAccountAddress")]
     pub async fn remove_account_address(
         &self,
-        _account_id: &AccountId,
+        account_id: &AccountId,
         address: &Address,
     ) -> Result<(), JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let native_address = address.into();
+        let addresses =
+            client.account_reader(account_id.into()).addresses().await.map_err(|err| {
+                js_error_with_context(err, "failed to remove address from account")
+            })?;
+        // The store deletes by address, so retain the resource API's account scope.
+        if !addresses.contains(&native_address) {
+            return Ok(());
+        }
         client
-            .remove_address(address.into())
+            .remove_address(native_address)
             .await
             .map_err(|err| js_error_with_context(err, "failed to remove address from account"))?;
         Ok(())
@@ -285,6 +301,21 @@ impl WebClient {
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
         client.is_account_allowed(account_id.into()).await.map_err(|err| {
             js_error_with_context(err, "failed to check whether the account is allowed")
+        })
+    }
+
+    /// Returns whether the invitation code can be used to register an account.
+    ///
+    /// The node answers `true` when it does not enforce an account allowlist, or when the code
+    /// exists and is not registered to an account. Unknown and registered codes answer `false`.
+    /// An empty code is an error when the node enforces the allowlist. The query does not consume
+    /// the code and does not identify the account that holds it.
+    #[js_export(js_name = "isInvitationCodeValid")]
+    pub async fn is_invitation_code_valid(&self, invitation_code: String) -> Result<bool, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        client.is_invitation_code_valid(&invitation_code).await.map_err(|err| {
+            js_error_with_context(err, "failed to check whether the invitation code is valid")
         })
     }
 }

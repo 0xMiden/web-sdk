@@ -480,13 +480,13 @@ the `node/` napi compat layer). The two layers are:
    Rust struct and adds JS-side concerns:
    - `_serializeWasmCall` queue that linearizes WASM calls (the inner client is
      behind a lock, so the JS side must not interleave async calls).
-   - The sync family - `syncState()`, `syncChain()` and `syncNoteTransport()`,
-     on both `WebClient` and `MockWebClient`, so six call sites - is wrapped in
-     the exported `withSyncLock(dbId, methodId, fn)` helper (`js/syncLock.js`,
-     Web Locks via `navigator.locks`, feature-detected with `hasWebLocks`) to
-     coalesce concurrent syncs and serialize them across tabs:
-     `return await withSyncLock(dbId, methodId, async () =>
-     this._serializeWasmCall(...))`.
+   - Every call that writes the chain MMR or its tracked block headers goes
+     through `_withStoreLock(fn, opName, syncMethod)`, which takes the
+     per-store Web Lock of `js/syncLock.js` (`navigator.locks`, feature-detected
+     with `hasWebLocks`); the syncs pass `syncMethod` to coalesce. Its JSDoc
+     lists those calls and the lock order. Add a new MMR-writing call through
+     `_withStoreLock`, never through `withSyncLock` or `runUnderLock` plus
+     `_serializeWasmCall` directly.
    - method-classification sets (`SYNC_METHODS`, `READ_METHODS`,
      `WRITE_METHODS`) consumed by the proxy and enforced by
      `scripts/check-method-classification.js`. (`SYNC_METHODS` is a historical

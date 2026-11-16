@@ -79,7 +79,7 @@ scheduled afterwards:
 | `level` | `"error"` on failure, `"info"` on success |
 | `tags.op` | the operation name |
 | `tags.outcome` | `"ok"` or `"error"` |
-| `extra.durationMs` | wall time the caller waited |
+| `extra.durationMs` | the observation's `durationMs`: from the call's turn on its client's queue until it settled |
 
 ## Sensitive detail
 

@@ -15,7 +15,7 @@ edition      = "2024"
 license      = "MIT"
 repository   = "https://github.com/0xMiden/web-sdk"
 rust-version = "1.98.1"
-version      = "0.18.0-rc.0"
+version      = "0.18.0"
 
 [profile.dev]
 codegen-units = 16
@@ -41,28 +41,28 @@ codegen-units = 16
 [workspace.dependencies]
 # Workspace crates. The versions are required when publishing path dependencies and must track
 # `workspace.package.version`.
-idxdb-store     = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.18.0-rc.0" }
-js-export-macro = { path = "crates/js-export-macro", version = "0.18.0-rc.0" }
+idxdb-store     = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.18.0" }
+js-export-macro = { path = "crates/js-export-macro", version = "0.18.0" }
 
 # Client crates
 # `miden-protocol` is the protocol crate `miden-client` itself resolves, needed directly only for
 # the items `miden-client` does not re-export. `miden-objects` holds the protobuf messages of the
 # protocol types, which `miden-client-proto` resolves. A requirement that drifts from
-# `miden-client`'s would resolve a second copy of the protocol types, so bump the four together.
-miden-client              = { branch = "jmunoz-remove-client-serializable", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
-miden-client-core         = { branch = "jmunoz-remove-client-serializable", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
-miden-client-proto        = { branch = "jmunoz-remove-client-serializable", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
-miden-client-sqlite-store = { branch = "jmunoz-remove-client-serializable", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
-miden-objects             = { default-features = false, version = "=0.17.1" }
-miden-protocol            = { default-features = false, version = "=0.17.1" }
+# `miden-client`'s would resolve a second copy of the protocol types, so bump them together.
+miden-client              = { branch = "next", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
+miden-client-core         = { branch = "next", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
+miden-client-proto        = { branch = "next", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
+miden-client-sqlite-store = { branch = "next", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
+miden-objects             = { default-features = false, version = "=0.18.0" }
+miden-protocol            = { default-features = false, version = "=0.18.0" }
 
 
 # VM crates
 # Declared here only so crates/web-client can depend on it and turn `std` on.
 # No code imports it, and this stanza does not enable the feature itself; the
 # rationale and blast radius are in crates/web-client/Cargo.toml.
-# 0.35.0 is the version already locked via the miden-client =0.17.1 (VM 0.35) graph.
-miden-precompiles-air = { default-features = false, version = "0.35.0" }
+# 0.36.3 is the version already locked via the miden-client =0.18.0 (VM 0.36) graph.
+miden-precompiles-air = { default-features = false, version = "0.36.3" }
 
 # External dependencies
 async-trait = { version = "0.1" }

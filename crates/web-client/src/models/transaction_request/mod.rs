@@ -3,8 +3,11 @@ use miden_client::block::BlockNumber;
 use miden_client::note::Note as NativeNote;
 use miden_client::transaction::TransactionRequest as NativeTransactionRequest;
 use miden_client::vm::AdviceMap as NativeAdviceMap;
+use miden_client::{Felt as NativeFelt, Word as NativeWord};
+use miden_protocol::crypto::SequentialCommit;
 
 use crate::models::advice_map::AdviceMap;
+use crate::models::felt::Felt;
 use crate::models::note::Note;
 use crate::models::word::Word;
 use crate::platform::{JsBytes, JsErr};
@@ -66,12 +69,12 @@ impl TransactionRequest {
 
     /// Returns the authentication argument if present.
     ///
-    /// A request built by a builder that called neither `withAuthArg` nor `withFeeConversionSalt`
+    /// A request built by a builder that called neither `withAuthArgs` nor `withFeeConversionSalt`
     /// has none: the client commits fee conversion info into the auth args while preparing the
     /// transaction, which is after this can observe it.
     ///
     /// There is deliberately no setter here. An auth argument can only be set through
-    /// `TransactionRequestBuilder.withAuthArg`, because miden-client keeps it mutually exclusive
+    /// `TransactionRequestBuilder.withAuthArgs`, because miden-client keeps it mutually exclusive
     /// with the fee conversion salt and enforces that on the builder — a setter on a finished
     /// request would sit outside that exclusion.
     #[js_export(js_name = "authArg")]
@@ -112,6 +115,40 @@ impl TransactionRequest {
             .advice_map_mut()
             .extend(native_advice_map.iter().map(|(key, value)| (*key, value.clone())));
         native_request.into()
+    }
+
+    /// Returns a copy of this request with the auth arg set to the commitment of `preimage`, and
+    /// with `preimage` added to the advice map under that commitment.
+    ///
+    /// This mirrors `TransactionRequest::with_auth_args` of miden-client. Use it for auth
+    /// components that load their auth args from the advice map, for example a multisig. The
+    /// commitment is the Poseidon2 hash of `preimage`, the same commitment that `SequentialCommit`
+    /// computes, so the auth arg and its advice-map entry always agree.
+    ///
+    /// The new auth args replace the previous auth arg and the declared fee conversion salt. An
+    /// existing advice-map entry under the same key is overwritten. Every other field of the
+    /// request stays the same. miden-client tracks the bound block of multisig auth args when it
+    /// executes the request. The request does not declare that block as a block number, so an
+    /// anchor from `chainAnchorForRequest` does not track it.
+    ///
+    /// The `Felt`s are consumed by the call in the browser build: they are moved across the WASM
+    /// boundary, so read what you need from them before the call and pass fresh ones to another
+    /// call. A spent `Felt` fails with "null pointer passed to rust".
+    #[js_export(js_name = "withAuthArgs")]
+    pub fn with_auth_args(&self, preimage: Vec<Felt>) -> TransactionRequest {
+        let preimage = AuthArgsPreimage(preimage.into_iter().map(NativeFelt::from).collect());
+        self.0.clone().with_auth_args(&preimage).into()
+    }
+}
+
+/// Auth args given as their preimage. The commitment is the default `SequentialCommit` hash.
+struct AuthArgsPreimage(Vec<NativeFelt>);
+
+impl SequentialCommit for AuthArgsPreimage {
+    type Commitment = NativeWord;
+
+    fn to_elements(&self) -> Vec<NativeFelt> {
+        self.0.clone()
     }
 }
 

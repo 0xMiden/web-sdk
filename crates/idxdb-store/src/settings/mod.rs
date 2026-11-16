@@ -1,10 +1,8 @@
-use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use miden_client::Word;
-use miden_client::note::NoteTag;
-use miden_client::note_transport::NoteTransportCursor;
+use miden_client::note_transport::NoteTransportSyncState;
 use miden_client::protocol_config::ProtocolConfig;
 use miden_client::rpc::RpcLimits;
 use miden_client::rpc::encryption::TransactionEncryptionKey;
@@ -33,7 +31,7 @@ use crate::settings::models::SettingValueIdxdbObject;
 
 const RPC_LIMITS_KEY: &str = "rpc_limits";
 const TRANSACTION_ENCRYPTION_KEY_KEY: &str = "transaction_encryption_key";
-const NOTE_TRANSPORT_CURSORS_KEY: &str = "note_transport_cursors";
+const NOTE_TRANSPORT_SYNC_STATE_KEY: &str = "note_transport_sync_state";
 
 /// Returns the `clientConfig` key of the protocol configuration for `commitment`.
 fn protocol_config_key(commitment: Word) -> String {
@@ -100,23 +98,17 @@ impl IdxdbStore {
         await_js(promise, "failed to delete client config value").await
     }
 
-    pub(crate) async fn get_note_transport_cursors(
+    pub(crate) async fn get_note_transport_sync_state(
         &self,
-    ) -> Result<BTreeMap<NoteTag, NoteTransportCursor>, StoreError> {
-        self.get_client_setting(NOTE_TRANSPORT_CURSORS_KEY.into())
-            .await
-            .map(Option::unwrap_or_default)
+    ) -> Result<Option<NoteTransportSyncState>, StoreError> {
+        self.get_client_setting(NOTE_TRANSPORT_SYNC_STATE_KEY.into()).await
     }
 
-    pub(crate) async fn set_note_transport_cursors(
+    pub(crate) async fn set_note_transport_sync_state(
         &self,
-        cursors: &BTreeMap<NoteTag, NoteTransportCursor>,
+        state: &NoteTransportSyncState,
     ) -> Result<(), StoreError> {
-        if cursors.is_empty() {
-            self.remove_client_setting(NOTE_TRANSPORT_CURSORS_KEY.into()).await?;
-            return Ok(());
-        }
-        self.set_client_setting(NOTE_TRANSPORT_CURSORS_KEY.into(), cursors).await
+        self.set_client_setting(NOTE_TRANSPORT_SYNC_STATE_KEY.into(), state).await
     }
 
     pub(crate) async fn get_protocol_config(

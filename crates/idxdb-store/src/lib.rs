@@ -32,8 +32,8 @@ use miden_client::account::{
 use miden_client::asset::{Asset, AssetId, AssetVault, AssetWitness, StorageMapWitness};
 use miden_client::block::{AccountWitness, BlockHeader};
 use miden_client::crypto::{InOrderIndex, MmrPeaks};
-use miden_client::note::{BlockNumber, NoteId, NoteScript, NoteTag, Nullifier};
-use miden_client::note_transport::NoteTransportCursor;
+use miden_client::note::{BlockNumber, NoteId, NoteScript, Nullifier};
+use miden_client::note_transport::NoteTransportSyncState;
 use miden_client::protocol_config::ProtocolConfig;
 use miden_client::pswap::{PswapLineageFilter, PswapLineageRecord};
 use miden_client::rpc::RpcLimits;
@@ -91,10 +91,15 @@ extern "C" {
 // Initialize IndexedDB
 #[wasm_bindgen(module = "/src/js/schema.js")]
 extern "C" {
-    /// Opens the database and registers it in the JS registry.
-    /// Returns the database ID (network name) which can be used to look up the database.
+    /// Opens the database, or joins the connection already open under `network`, and counts the
+    /// caller as one holder of it. Returns the database ID (network name) which can be used to
+    /// look up the database.
     #[wasm_bindgen(js_name = openDatabase)]
     fn open_database(network: &str, client_version: &str) -> js_sys::Promise;
+
+    /// Releases one holder of the database opened under `network`; the last one closes it.
+    #[wasm_bindgen(js_name = closeDatabase)]
+    fn close_database(network: &str);
 }
 
 /// `IdxdbStore` provides an `IndexedDB`-backed implementation of the Store trait.
@@ -109,11 +114,13 @@ pub struct IdxdbStore {
 
 impl IdxdbStore {
     pub async fn new(database_name: String) -> Result<IdxdbStore, JsValue> {
-        let promise = open_database(database_name.as_str(), CLIENT_VERSION);
-        let _db_id = JsFuture::from(promise).await?;
-
+        // Built before the open: once the open counts this store as a holder, only `Drop`
+        // releases it, so nothing after the open may fail.
         let smt_forest = AccountForest::new()
             .map_err(|e| JsValue::from_str(&format!("Failed to create SMT forest: {e:?}")))?;
+
+        let promise = open_database(database_name.as_str(), CLIENT_VERSION);
+        let _db_id = JsFuture::from(promise).await?;
 
         Ok(IdxdbStore {
             database_id: database_name,
@@ -124,6 +131,15 @@ impl IdxdbStore {
     /// Returns the database ID as a string slice for passing to JS functions.
     pub(crate) fn db_id(&self) -> &str {
         self.database_id.as_str()
+    }
+}
+
+/// Releases this store's hold on the `IndexedDB` connection it opened, so the connection closes
+/// once no store on the same name is left, whether the owning client is released by `free()` or
+/// by the `FinalizationRegistry`.
+impl Drop for IdxdbStore {
+    fn drop(&mut self) {
+        close_database(&self.database_id);
     }
 }
 
@@ -496,17 +512,17 @@ impl Store for IdxdbStore {
     // TRANSPORT
     // --------------------------------------------------------------------------------------------
 
-    async fn get_note_transport_cursors(
+    async fn get_note_transport_sync_state(
         &self,
-    ) -> Result<BTreeMap<NoteTag, NoteTransportCursor>, StoreError> {
-        self.get_note_transport_cursors().await
+    ) -> Result<Option<NoteTransportSyncState>, StoreError> {
+        self.get_note_transport_sync_state().await
     }
 
-    async fn set_note_transport_cursors(
+    async fn set_note_transport_sync_state(
         &self,
-        cursors: &BTreeMap<NoteTag, NoteTransportCursor>,
+        state: &NoteTransportSyncState,
     ) -> Result<(), StoreError> {
-        self.set_note_transport_cursors(cursors).await
+        self.set_note_transport_sync_state(state).await
     }
 
     // PROTOCOL CONFIG
