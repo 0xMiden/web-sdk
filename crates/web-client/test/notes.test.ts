@@ -1454,6 +1454,112 @@ test.describe("createP2IDNote and createP2IDENote", () => {
 });
 
 // TODO:
+test.describe("note filters", () => {
+  test("an incomplete filter rejects with a catchable error", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk }) => {
+      const noteIdHex = "0x" + "11".repeat(32);
+      // Each call gets its own filter and ids: the browser build consumes
+      // a handle passed by value.
+      const filters = {
+        list: () => new sdk.NoteFilter(sdk.NoteFilterTypes.List),
+        unique: () => new sdk.NoteFilter(sdk.NoteFilterTypes.Unique),
+        uniqueTwo: () =>
+          new sdk.NoteFilter(sdk.NoteFilterTypes.Unique, [
+            sdk.NoteId.fromHex(noteIdHex),
+            sdk.NoteId.fromHex(noteIdHex),
+          ]),
+        scriptRoots: () => new sdk.NoteFilter(sdk.NoteFilterTypes.ScriptRoots),
+      };
+
+      // The browser build rejects with a bare string, the Node.js build with
+      // an Error.
+      const rejectionOf = async (call) => {
+        try {
+          await call();
+          return "";
+        } catch (err) {
+          return String(err?.message ?? err);
+        }
+      };
+
+      const errors = {};
+      for (const method of ["getInputNotes", "getOutputNotes"]) {
+        errors[method] = {};
+        for (const [name, filter] of Object.entries(filters)) {
+          errors[method][name] = await rejectionOf(() =>
+            client[method](filter())
+          );
+        }
+      }
+
+      const completeFilters = {
+        list: () =>
+          new sdk.NoteFilter(sdk.NoteFilterTypes.List, [
+            sdk.NoteId.fromHex(noteIdHex),
+          ]),
+        unique: () =>
+          new sdk.NoteFilter(sdk.NoteFilterTypes.Unique, [
+            sdk.NoteId.fromHex(noteIdHex),
+          ]),
+        scriptRoots: () =>
+          new sdk.NoteFilter(sdk.NoteFilterTypes.ScriptRoots, undefined, [
+            sdk.Word.fromHex(noteIdHex),
+          ]),
+      };
+      const resolvesToArray = async (call) => {
+        try {
+          return Array.isArray(await call());
+        } catch {
+          return false;
+        }
+      };
+
+      const complete = {};
+      for (const method of ["getInputNotes", "getOutputNotes"]) {
+        complete[method] = {};
+        for (const [name, filter] of Object.entries(completeFilters)) {
+          complete[method][name] = await resolvesToArray(() =>
+            client[method](filter())
+          );
+        }
+      }
+
+      const inputNotes = await client.getInputNotes(
+        new sdk.NoteFilter(sdk.NoteFilterTypes.All)
+      );
+      const outputNotes = await client.getOutputNotes(
+        new sdk.NoteFilter(sdk.NoteFilterTypes.All)
+      );
+
+      return {
+        errors,
+        complete,
+        inputNotesIsArray: Array.isArray(inputNotes),
+        outputNotesIsArray: Array.isArray(outputNotes),
+      };
+    });
+
+    for (const method of ["getInputNotes", "getOutputNotes"]) {
+      const errors = result.errors[method];
+      expect(errors.list).toContain("Note IDs required for List filter");
+      expect(errors.unique).toContain("Note ID required for Unique filter");
+      expect(errors.uniqueTwo).toContain("Only one Note ID can be provided");
+      expect(errors.scriptRoots).toContain(
+        "Script roots required for ScriptRoots filter"
+      );
+      expect(result.complete[method]).toEqual({
+        list: true,
+        unique: true,
+        scriptRoots: true,
+      });
+    }
+    expect(result.inputNotesIsArray).toBe(true);
+    expect(result.outputNotesIsArray).toBe(true);
+  });
+});
+
 test.describe("get_output_note", () => {});
 
 test.describe("get_output_notes", () => {});

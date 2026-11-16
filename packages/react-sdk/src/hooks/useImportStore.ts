@@ -25,6 +25,9 @@ export interface UseImportStoreResult {
 /**
  * Hook to import a previously exported IndexedDB store for restore.
  *
+ * The import fails, leaving the store unchanged and setting `error`, for a dump with no client
+ * version stamp or one exported by a client older than 0.17.0 or newer than the running one.
+ *
  * @example
  * ```tsx
  * function RestoreButton({ snapshot }: { snapshot: string }) {

@@ -9,7 +9,10 @@ import {
   WalletReadyState,
 } from "@miden-sdk/miden-wallet-adapter-base";
 import { useWallet, Wallet } from "@miden-sdk/miden-wallet-adapter-react";
-import { MidenWalletName } from "@miden-sdk/miden-wallet-adapter-miden";
+import {
+  MidenWalletName,
+  type MidenWalletAdapter,
+} from "@miden-sdk/miden-wallet-adapter-miden";
 import { useWalletModal } from "./useWalletModal";
 import { WalletListItem } from "./WalletListItem";
 import { DiscoverMidenMessage } from "./DiscoverMidenMessage";
@@ -20,6 +23,12 @@ export interface WalletModalProps {
   privateDataPermission?: PrivateDataPermission;
   network?: WalletAdapterNetwork;
   allowedPrivateData?: AllowedPrivateData;
+}
+
+function opensInBread({ adapter, readyState }: Wallet): boolean {
+  return (
+    adapter.name === MidenWalletName && readyState === WalletReadyState.Loadable
+  );
 }
 
 export const WalletModal: FC<WalletModalProps> = ({
@@ -92,6 +101,17 @@ export const WalletModal: FC<WalletModalProps> = ({
     [select, handleClose]
   );
 
+  const handleOpenInBreadClick = useCallback(
+    (event: MouseEvent, { adapter }: Wallet) => {
+      // The browser lets a page open an app only from inside the tap, so the
+      // handoff can't wait for the effect that select() drives.
+      select(adapter.name);
+      (adapter as MidenWalletAdapter).openInBread();
+      handleClose(event);
+    },
+    [select, handleClose]
+  );
+
   const handleTabKey = useCallback(
     (event: KeyboardEvent) => {
       const node = ref.current;
@@ -152,7 +172,8 @@ export const WalletModal: FC<WalletModalProps> = ({
   );
 
   useLayoutEffect(() => {
-    if (wallet) {
+    // A Loadable Bread is handed off by its Open in Bread button, from the tap.
+    if (wallet && !opensInBread(wallet)) {
       connect(
         privateDataPermission || PrivateDataPermission.UponRequest,
         network || WalletAdapterNetwork.Testnet,
@@ -226,7 +247,9 @@ export const WalletModal: FC<WalletModalProps> = ({
                         <WalletListItem
                           key={wallet.adapter.name}
                           handleClick={(event) =>
-                            handleWalletClick(event, wallet.adapter.name)
+                            opensInBread(wallet)
+                              ? handleOpenInBreadClick(event, wallet)
+                              : handleWalletClick(event, wallet.adapter.name)
                           }
                           wallet={wallet}
                         />
@@ -239,17 +262,29 @@ export const WalletModal: FC<WalletModalProps> = ({
               <>
                 <div className="wallet-adapter-modal-middle">
                   <DiscoverMidenMessage />
-                  <a
-                    href={getStartedWallet.adapter.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="wallet-adapter-modal-chrome-badge"
-                  >
-                    <img
-                      src="https://developer.chrome.com/static/docs/webstore/branding/image/HRs9MPufa1J1h5glNhut.png"
-                      alt="Available in the Chrome Web Store"
-                    />
-                  </a>
+                  {opensInBread(getStartedWallet) ? (
+                    <button
+                      type="button"
+                      className="wallet-adapter-modal-middle-button"
+                      onClick={(event) =>
+                        handleOpenInBreadClick(event, getStartedWallet)
+                      }
+                    >
+                      Open in Bread
+                    </button>
+                  ) : (
+                    <a
+                      href={getStartedWallet.adapter.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="wallet-adapter-modal-chrome-badge"
+                    >
+                      <img
+                        src="https://developer.chrome.com/static/docs/webstore/branding/image/HRs9MPufa1J1h5glNhut.png"
+                        alt="Available in the Chrome Web Store"
+                      />
+                    </a>
+                  )}
                 </div>
               </>
             )}

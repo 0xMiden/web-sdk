@@ -7,7 +7,11 @@ import {
   useSyncStateStore,
 } from "../store/MidenStore";
 import { captureClientReadGuard } from "../store/clientReadGuard";
-import { isConsumableNow, NoteFilter } from "@miden-sdk/miden-sdk";
+import {
+  isConsumableNow,
+  isStandardPayment,
+  NoteFilter,
+} from "@miden-sdk/miden-sdk";
 import type { NotesFilter, NotesResult, NoteSummary } from "../types";
 import { getNoteSummary } from "../utils/notes";
 import { useAssetMetadata } from "./useAssetMetadata";
@@ -31,6 +35,11 @@ const accountIdKey = (value: string): string => {
 
 /**
  * Hook to list notes.
+ *
+ * `consumableNotes` holds only payments (P2ID and P2IDE notes) consumable now,
+ * the set `notes.listAvailable` returns: another trader's public PSWAP order is
+ * consumable by any account holding the asset it requests, and consuming it
+ * would fill the order from this account's vault.
  *
  * @param options - Optional filter options
  *
@@ -65,10 +74,25 @@ const accountIdKey = (value: string): string => {
  */
 export function useNotes(options?: NotesFilter): NotesResult {
   const { client, isReady } = useMiden();
-  const notes = useNotesStore();
-  const consumableNotes = useConsumableNotesStore();
+  const filterKey = options?.status ?? "all";
+  const accountId = options?.accountId;
+  // A string key, stable across renders that pass a new object for the same account.
+  const accountKey = useMemo(() => {
+    if (!accountId) return "default";
+    if (typeof accountId === "string") return accountId;
+    return parseAccountId(accountId).toString();
+  }, [accountId]);
+
+  const notes = useNotesStore(filterKey);
+  const consumableNotes = useConsumableNotesStore(accountKey);
+  const fetched = useMidenStore(
+    (state) =>
+      state.notesByFilter.has(filterKey) &&
+      state.consumableNotesByAccount.has(accountKey)
+  );
   const isLoadingNotes = useMidenStore((state) => state.isLoadingNotes);
-  const setLoadingNotes = useMidenStore((state) => state.setLoadingNotes);
+  const beginLoadingNotes = useMidenStore((state) => state.beginLoadingNotes);
+  const endLoadingNotes = useMidenStore((state) => state.endLoadingNotes);
   const setNotesIfChanged = useMidenStore((state) => state.setNotesIfChanged);
   const setConsumableNotesIfChanged = useMidenStore(
     (state) => state.setConsumableNotesIfChanged
@@ -85,7 +109,7 @@ export function useNotes(options?: NotesFilter): NotesResult {
     if (!isCurrent()) return;
 
     const request = ++latestRequestRef.current;
-    setLoadingNotes(true);
+    const loadingToken = beginLoadingNotes();
     setError(null);
 
     try {
@@ -93,51 +117,60 @@ export function useNotes(options?: NotesFilter): NotesResult {
       const filter = new NoteFilter(filterType);
 
       const fetchedNotes = await client.getInputNotes(filter);
+      if (!isCurrent()) return;
 
-      // Block-locked notes come back from the screener but cannot be consumed
-      // yet, so they are not "consumable" here either - the same rule
-      // notes.listAvailable and transactions.consumeAll apply.
+      // Payments consumable now: the rule notes.listAvailable and
+      // transactions.consumeAll apply. The screener also returns block-locked
+      // notes, and any note a trial consume succeeds for, such as another
+      // trader's public PSWAP order, which consuming would fill from the
+      // account's vault.
       let fetchedConsumable;
-      if (options?.accountId) {
-        const accountIdObj = parseAccountId(options.accountId);
+      if (accountKey !== "default") {
+        const accountIdObj = parseAccountId(accountKey);
         const accountIdHex = accountIdObj.toString();
-        fetchedConsumable = (
-          await client.getConsumableNotes(accountIdObj)
-        ).filter((record) => isConsumableNow(record, accountIdHex));
+        const consumable = await client.getConsumableNotes(accountIdObj);
+        if (!isCurrent()) return;
+        fetchedConsumable = consumable.filter(
+          (record) =>
+            isConsumableNow(record, accountIdHex) && isStandardPayment(record)
+        );
       } else {
-        fetchedConsumable = (await client.getConsumableNotes()).filter(
-          (record) => isConsumableNow(record)
+        const consumable = await client.getConsumableNotes();
+        if (!isCurrent()) return;
+        fetchedConsumable = consumable.filter(
+          (record) => isConsumableNow(record) && isStandardPayment(record)
         );
       }
 
       if (!isCurrent()) return;
       // Smart refetch: only update store if note IDs changed (prevents unnecessary re-renders)
-      setNotesIfChanged(fetchedNotes);
-      setConsumableNotesIfChanged(fetchedConsumable);
+      setNotesIfChanged(fetchedNotes, filterKey);
+      setConsumableNotesIfChanged(fetchedConsumable, accountKey);
     } catch (err) {
       if (!isCurrent() || latestRequestRef.current !== request) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      if (isCurrent()) {
-        setLoadingNotes(false);
-      }
+      if (isCurrent()) endLoadingNotes(loadingToken);
     }
   }, [
     client,
     isReady,
     options?.status,
-    options?.accountId,
-    setLoadingNotes,
+    filterKey,
+    accountKey,
+    beginLoadingNotes,
+    endLoadingNotes,
     setNotesIfChanged,
     setConsumableNotesIfChanged,
   ]);
 
-  // Initial fetch
+  // Initial fetch: whenever this hook's buckets are missing, including after
+  // the provider resets the store on a signer identity change.
   useEffect(() => {
-    if (isReady && notes.length === 0) {
+    if (isReady && !fetched) {
       refetch();
     }
-  }, [isReady, notes.length, refetch]);
+  }, [isReady, fetched, refetch]);
 
   // Refresh after successful syncs to keep notes current
   useEffect(() => {

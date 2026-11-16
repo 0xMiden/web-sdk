@@ -7,12 +7,16 @@ export const formatAssetAmount = (
     return amt.toString();
   }
 
+  const isNegative = amt < 0n;
+  const absAmt = isNegative ? -amt : amt;
+  const sign = isNegative ? "-" : "";
+
   const factor = 10n ** BigInt(decimals);
-  const whole = amt / factor;
-  const fraction = amt % factor;
+  const whole = absAmt / factor;
+  const fraction = absAmt % factor;
 
   if (fraction === 0n) {
-    return whole.toString();
+    return `${sign}${whole.toString()}`;
   }
 
   const fractionText = fraction
@@ -20,18 +24,29 @@ export const formatAssetAmount = (
     .padStart(decimals, "0")
     .replace(/0+$/, "");
 
-  return `${whole.toString()}.${fractionText}`;
+  return `${sign}${whole.toString()}.${fractionText}`;
 };
 
+/**
+ * Parses a user-entered amount into base units. Accepts an unsigned decimal
+ * string: digits with at most one ".", and at most `decimals` digits after
+ * it. Throws for an empty, negative or otherwise malformed amount.
+ */
 export const parseAssetAmount = (input: string, decimals?: number): bigint => {
   const value = input.trim();
   if (!value) {
     throw new Error("Amount is required");
   }
+  if (value.startsWith("-")) {
+    throw new Error("Amount must not be negative");
+  }
 
   if (!decimals || decimals <= 0) {
     if (value.includes(".")) {
       throw new Error("Amount must be a whole number");
+    }
+    if (!/^\d+$/.test(value)) {
+      throw new Error("Amount is not a valid number");
     }
     return BigInt(value);
   }
@@ -44,6 +59,13 @@ export const parseAssetAmount = (input: string, decimals?: number): bigint => {
   const normalizedWhole = wholeText.length ? wholeText : "0";
   if (fractionText.length > decimals) {
     throw new Error("Amount has too many decimal places");
+  }
+  if (
+    !/^\d*$/.test(wholeText) ||
+    !/^\d*$/.test(fractionText) ||
+    (!wholeText && !fractionText)
+  ) {
+    throw new Error("Amount is not a valid number");
   }
 
   const paddedFraction = fractionText.padEnd(decimals, "0");

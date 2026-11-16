@@ -177,7 +177,8 @@ impl AccountProof {
     #[js_export(js_name = "vaultFungibleAssets")]
     pub fn vault_fungible_assets(&self) -> Option<Vec<FungibleAsset>> {
         self.inner.vault_details().map(|d| {
-            d.assets
+            d.assets()
+                .unwrap_or_default()
                 .iter()
                 .filter(|asset| asset.is_fungible())
                 .map(|asset| asset.unwrap_fungible().into())

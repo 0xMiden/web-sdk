@@ -1,5 +1,6 @@
 import {
   isConsumableNow,
+  isStandardPaymentNote,
   resolveAccountRef,
   resolveNoteType,
   resolveTransactionIdHex,
@@ -348,12 +349,15 @@ export class TransactionsResource {
     // Save hex so we can reconstruct for submitNewTransaction.
     const accountId = resolveAccountRef(opts.account, wasm);
     const accountIdHex = accountId.toString();
-    // Block-locked notes cannot be consumed yet and would fail the whole
-    // transaction, so they are not "available" here either (notes.listAvailable
-    // applies the same rule).
+    // The set notes.listAvailable returns. A block-locked note would fail the
+    // whole transaction. Any script but P2ID or P2IDE can spend from the
+    // account: consuming another trader's public PSWAP order fills it from this
+    // vault, so such a note is consumed only when the caller names it.
     const consumable = (
       (await this.#inner.getConsumableNotes(accountId)) ?? []
-    ).filter((c) => isConsumableNow(c, accountIdHex));
+    ).filter(
+      (c) => isConsumableNow(c, accountIdHex) && isStandardPaymentNote(c, wasm)
+    );
 
     if (consumable.length === 0) {
       return { txId: null, consumed: 0, remaining: 0 };
@@ -499,11 +503,13 @@ export class TransactionsResource {
    * different summary and the comparison fails.
    *
    * The exception is a multisig request built by
-   * `client.feeAwareTransactionRequestBuilder`: its summary binds the block its
-   * auth args name, which the request declares, so previewing it without an
-   * anchor reproduces the proposal's summary at the current tip, once this
-   * client has synced to at least that block (the largest of
-   * `request.blockNumbers()`).
+   * `client.feeAwareTransactionRequestBuilder` or given its auth args by
+   * `client.withFeeAwareAuth`: its summary binds the block its auth args name,
+   * which miden-client tracks when it executes the request, so previewing it
+   * without an anchor reproduces the proposal's summary at the current tip,
+   * once this client has synced to at least that block. For a builder's
+   * request that is the largest of `request.blockNumbers()`; a
+   * `withFeeAwareAuth` copy does not declare it, so sync before previewing it.
    */
   async preview(opts) {
     this.#client.assertNotTerminated();
@@ -613,6 +619,10 @@ export class TransactionsResource {
    * page's main thread stays responsive; without a worker (`useWorker: false`,
    * or no `Worker` in the environment), and on a mock client, it proves on the
    * calling thread and blocks it until it settles.
+   * With an external keystore and a worker, `sign` waits without a limit unless
+   * `callbackTimeoutMs` sets one, so a stalled signer holds the batch and later
+   * worker calls. See
+   * https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
    *
    * @param {BatchOptions} opts - Batch options: the operations array, and
    *   `timeout` / `waitForConfirmation` (the latter does not currently work,
@@ -688,7 +698,8 @@ export class TransactionsResource {
    * the request itself, or the push fails with `FeeConversionInfoRequired`.
    * Because a batch proves each transaction as it is pushed, such a rejection
    * has already cost the proofs ahead of it — build multisig requests from
-   * `client.feeAwareTransactionRequestBuilder`.
+   * `client.feeAwareTransactionRequestBuilder`, or pass a finished one through
+   * `client.withFeeAwareAuth` before batching it.
    *
    * @param {Array<{ account: AccountRef, request: TransactionRequest }>} items - Per-tx (account, request) pairs.
    * @param {object} [options] - Optional settings (timeout, and
@@ -699,16 +710,14 @@ export class TransactionsResource {
    *   In the browser the batch runs in the client's Web Worker where it has
    *   one, so the page's main thread stays responsive; see `batch()` for when
    *   it runs in-thread instead.
-   *   With an external keystore and a worker, each of the batch's signature
-   *   callbacks has the worker's 30s ceiling, and since signing happens at
-   *   push time and this wrapper treats a failed push as fatal, one timeout
-   *   fails the whole batch. A rejection thrown as a non-nullish value with no
-   *   truthy `.message` (a bare string, `{ code }`)
-   *   loses its reason and surfaces as the generic
-   *   `sign callback must return a Uint8Array`. Both are shared with every
-   *   worker-forwarded method; tracked in #316. Relatedly, `lastAuthError()`
-   *   reads the main-thread instance, so it does not report a forwarded
-   *   batch's auth error.
+   *   With an external keystore and a worker, signing happens at push time
+   *   and this wrapper treats a failed push as fatal, so one failed or timed
+   *   out signature callback fails the whole batch. `sign` has no time limit
+   *   unless `callbackTimeoutMs` sets one, so a stalled signer holds the batch
+   *   and later worker calls. See
+   *   https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
+   *   Relatedly, `lastAuthError()` reads the main-thread instance, so it does
+   *   not report a forwarded batch's auth error.
    * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
    *   submission, not the block the batch commits in.
    */
