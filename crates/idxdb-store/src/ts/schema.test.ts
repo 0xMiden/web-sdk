@@ -961,14 +961,15 @@ describe("a store written by a newer client", () => {
 
   it("is not confused with a store Dexie patched at this client's own version", async () => {
     const name = uniqueDbName();
+    const { verno } = new MidenDatabase(uniqueDbName()).dexie;
     const patched = trackDb(new Dexie(name));
-    patched.version(9).stores({ ...V6_STORES, accountWitnesses: null });
+    patched.version(verno).stores({ ...V6_STORES, accountWitnesses: null });
     await patched.open();
     patched.close();
 
-    // The missing table makes Dexie patch the store to native version 91.
+    // The missing tables make Dexie patch the store, which adds one to the native version.
     expect(await reopen(name, "0.17.4")).toBeDefined();
-    expect(await nativeVersion(name)).toBe(91);
+    expect(await nativeVersion(name)).toBe(verno * 10 + 1);
   });
 
   it("refuses it when a newer client upgrades the store under an open connection", async () => {
