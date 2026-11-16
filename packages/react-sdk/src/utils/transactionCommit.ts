@@ -53,7 +53,9 @@ export async function waitForTransactionCommit(
         throw new TransactionDiscardedError();
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.max(0, Math.min(delayMs, deadline - Date.now())))
+    );
   }
 
   throw new Error("Timeout waiting for transaction commit");

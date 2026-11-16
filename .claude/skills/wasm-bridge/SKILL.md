@@ -605,12 +605,13 @@ WASM off the main thread. Two knobs govern it:
   need `useWorker: false`. It is also the right choice in single-WebView native
   shells (Capacitor, Tauri, Electron preload).
 
-`lastAuthError()` is likewise meaningful **only** with `useWorker: false`: the
-sign callback fires against the worker's WASM keystore while the accessor reads
+`lastAuthError()` is likewise meaningful **only** with `useWorker: false`. The
+sign callback still fires under the shim, because it is proxied back to the main
+thread, but signing runs in the worker's WASM keystore while the accessor reads
 the main-thread instance, which never signed, so under the shim it returns
-`null` (`js/client.js:376-381`). On the Node.js binding it always returns
-`null`. Consumers that need the signal already require `useWorker: false` for
-the callback to be reachable at all.
+`null` (`js/client.js:381-404`). Only the accessor misses the error: consumers
+that need the signal set `useWorker: false`. On the Node.js binding it always
+returns `null`.
 
 #### The worker-URL duplication is load-bearing
 

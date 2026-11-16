@@ -158,6 +158,7 @@ export async function createParaMidenClient(
       insertKey: async () => {},
       sign: signCallback,
     },
+    callbackTimeoutMs: opts.callbackTimeoutMs,
     autoSync: true,
   });
 

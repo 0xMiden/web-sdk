@@ -3,6 +3,7 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { useNotes } from "../../hooks/useNotes";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
+import { Address } from "@miden-sdk/miden-sdk";
 import {
   createMockWebClient,
   createMockInputNoteRecord,
@@ -15,6 +16,16 @@ import {
 // Mock useMiden
 vi.mock("../../context/MidenProvider", () => ({
   useMiden: vi.fn(),
+}));
+
+// Network-aware stand-in for the bech32 helper: no prefix until the store has a
+// client, as the real helper behaves, so a test can cross that boundary.
+vi.mock("../../utils/accountBech32", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../utils/accountBech32")>()),
+  toBech32AccountId: vi.fn((id: string) => {
+    const hex = id.startsWith("mdev1") ? `0x${id.slice(5)}` : id;
+    return useMidenStore.getState().client ? `mdev1${hex.slice(2)}` : hex;
+  }),
 }));
 
 const mockUseMiden = useMiden as ReturnType<typeof vi.fn>;
@@ -82,6 +93,227 @@ describe("useNotes shared loading ownership", () => {
 });
 
 describe("useNotes", () => {
+  describe.each(["reset", "replace", "reset and replace"] as const)(
+    "%s during a read",
+    (change) => {
+      it("discards stale notes without clearing the current read's loading flag", async () => {
+        const staleNotes = [createMockInputNoteRecord("0xstale")];
+        const staleConsumable = [createMockConsumableNoteRecord("0xstale")];
+        const retainedNotes = [createMockInputNoteRecord("0xretained")];
+        const retainedConsumable = [
+          createMockConsumableNoteRecord("0xretained"),
+        ];
+        const currentNotes = [createMockInputNoteRecord("0xcurrent")];
+        const currentConsumable = [createMockConsumableNoteRecord("0xcurrent")];
+        let resolvePrevious!: (notes: typeof staleNotes) => void;
+        let resolveCurrent!: (notes: typeof currentNotes) => void;
+        const previousRead = new Promise<typeof staleNotes>((resolve) => {
+          resolvePrevious = resolve;
+        });
+        const currentRead = new Promise<typeof currentNotes>((resolve) => {
+          resolveCurrent = resolve;
+        });
+        const previousClient = createMockWebClient({
+          getInputNotes: vi
+            .fn()
+            .mockReturnValueOnce(previousRead)
+            .mockReturnValue(currentRead),
+          getConsumableNotes: vi.fn().mockResolvedValue(staleConsumable),
+        });
+        const currentClient =
+          change === "reset"
+            ? previousClient
+            : createMockWebClient({
+                getInputNotes: vi.fn().mockReturnValue(currentRead),
+                getConsumableNotes: vi
+                  .fn()
+                  .mockResolvedValue(currentConsumable),
+              });
+        useMidenStore.getState().setClient(previousClient as any);
+        mockUseMiden.mockReturnValue({ client: previousClient, isReady: true });
+        const { result, rerender } = renderHook(() => useNotes());
+        expect(previousClient.getInputNotes).toHaveBeenCalledTimes(1);
+
+        act(() => {
+          if (change !== "replace") {
+            useMidenStore.getState().resetInMemoryState();
+          }
+          useMidenStore.getState().setClient(currentClient as any);
+          useMidenStore.getState().setNotes(retainedNotes as any, "all");
+          useMidenStore
+            .getState()
+            .setConsumableNotes(retainedConsumable as any, "default");
+          useMidenStore.getState().setSyncState({ lastSyncTime: 1 });
+          mockUseMiden.mockReturnValue({
+            client: currentClient,
+            isReady: true,
+          });
+          rerender();
+        });
+        expect(currentClient.getInputNotes).toHaveBeenCalledTimes(
+          change === "reset" ? 2 : 1
+        );
+        expect(result.current.isLoading).toBe(true);
+        const retainedState = useMidenStore.getState();
+
+        await act(async () => {
+          resolvePrevious(staleNotes);
+          await previousRead;
+        });
+
+        expect(useMidenStore.getState().notesByFilter.get("all")).toBe(
+          retainedNotes
+        );
+        expect(
+          useMidenStore.getState().consumableNotesByAccount.get("default")
+        ).toBe(retainedConsumable);
+        expect(useMidenStore.getState().isLoadingNotes).toBe(true);
+        expect(useMidenStore.getState()).toBe(retainedState);
+        expect(result.current.error).toBeNull();
+
+        currentClient.getConsumableNotes.mockResolvedValue(currentConsumable);
+        await act(async () => {
+          resolveCurrent(currentNotes);
+          await currentRead;
+        });
+
+        expect(useMidenStore.getState().notesByFilter.get("all")).toBe(
+          currentNotes
+        );
+        expect(
+          useMidenStore.getState().consumableNotesByAccount.get("default")
+        ).toEqual(currentConsumable);
+        expect(result.current.isLoading).toBe(false);
+        expect(result.current.error).toBeNull();
+      });
+
+      it("discards a stale error and still publishes a current read", async () => {
+        const retainedNotes = [createMockInputNoteRecord("0xretained")];
+        const currentNotes = [createMockInputNoteRecord("0xcurrent")];
+        let rejectPrevious!: (error: Error) => void;
+        let resolveCurrent!: (notes: typeof currentNotes) => void;
+        const previousRead = new Promise<typeof currentNotes>((_, reject) => {
+          rejectPrevious = reject;
+        });
+        const currentRead = new Promise<typeof currentNotes>((resolve) => {
+          resolveCurrent = resolve;
+        });
+        const previousClient = createMockWebClient({
+          getInputNotes: vi
+            .fn()
+            .mockReturnValueOnce(previousRead)
+            .mockReturnValue(currentRead),
+        });
+        const currentClient =
+          change === "reset"
+            ? previousClient
+            : createMockWebClient({
+                getInputNotes: vi.fn().mockReturnValue(currentRead),
+              });
+        useMidenStore.getState().setClient(previousClient as any);
+        mockUseMiden.mockReturnValue({ client: previousClient, isReady: true });
+        const { result, rerender } = renderHook(() => useNotes());
+        expect(previousClient.getInputNotes).toHaveBeenCalledTimes(1);
+
+        act(() => {
+          if (change !== "replace") {
+            useMidenStore.getState().resetInMemoryState();
+          }
+          useMidenStore.getState().setClient(currentClient as any);
+          useMidenStore.getState().setNotes(retainedNotes as any, "all");
+          useMidenStore.getState().setConsumableNotes([], "default");
+          useMidenStore.getState().setSyncState({ lastSyncTime: 1 });
+          mockUseMiden.mockReturnValue({
+            client: currentClient,
+            isReady: true,
+          });
+          rerender();
+        });
+        expect(currentClient.getInputNotes).toHaveBeenCalledTimes(
+          change === "reset" ? 2 : 1
+        );
+        expect(result.current.isLoading).toBe(true);
+        const retainedState = useMidenStore.getState();
+
+        await act(async () => {
+          rejectPrevious(new Error("Stale note read failed"));
+          await previousRead.catch(() => {});
+        });
+
+        expect(result.current.error).toBeNull();
+        expect(useMidenStore.getState().isLoadingNotes).toBe(true);
+        expect(useMidenStore.getState()).toBe(retainedState);
+
+        await act(async () => {
+          resolveCurrent(currentNotes);
+          await currentRead;
+        });
+
+        expect(useMidenStore.getState().notesByFilter.get("all")).toBe(
+          currentNotes
+        );
+        expect(result.current.isLoading).toBe(false);
+        expect(result.current.error).toBeNull();
+      });
+    }
+  );
+
+  describe("sender filter", () => {
+    const withSender = (id: string, senderHex: string) => {
+      const record = createMockInputNoteRecord(id);
+      record.metadata = vi.fn(() => ({
+        sender: () => ({ toString: () => senderHex }),
+      }));
+      return record;
+    };
+
+    it("keeps matching a sender given before the provider has a client", async () => {
+      const fromBech32 = vi.mocked(Address.fromBech32);
+      const original = fromBech32.getMockImplementation();
+      fromBech32.mockImplementation(
+        (bech32: string) =>
+          ({
+            accountId: () => ({
+              toString: () => `0x${bech32.slice(5)}`,
+              free: vi.fn(),
+            }),
+            toString: () => bech32,
+          }) as never
+      );
+      try {
+        mockUseMiden.mockReturnValue({ client: null, isReady: false });
+        const { result, rerender } = renderHook(() =>
+          useNotes({ sender: "0xaaa" })
+        );
+
+        const mockClient = createMockWebClient({
+          getInputNotes: vi
+            .fn()
+            .mockResolvedValue([
+              withSender("0xnote1", "0xaaa"),
+              withSender("0xnote2", "0xbbb"),
+            ]),
+          getConsumableNotes: vi.fn().mockResolvedValue([]),
+        });
+        act(() => {
+          useMidenStore.getState().setClient(mockClient as any);
+        });
+        mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+        rerender();
+
+        await waitFor(() => {
+          expect(result.current.notes.length).toBe(2);
+        });
+        expect(result.current.noteSummaries.map((s) => s.id)).toEqual([
+          "0xnote1",
+        ]);
+        expect(result.current.noteSummaries[0].sender).toBe("mdev1aaa");
+      } finally {
+        fromBech32.mockImplementation(original!);
+      }
+    });
+  });
+
   it("ignores a saved refetch without clearing the previous error or changing loading", async () => {
     const error = new Error("previous fetch failed");
     const clientA = createMockWebClient({
@@ -741,6 +973,71 @@ describe("useNotes", () => {
   });
 
   describe("refetch", () => {
+    it("ignores an older same-client rejection after the latest read succeeds", async () => {
+      const retainedNotes = [createMockInputNoteRecord("0xretained")];
+      const currentNotes = [createMockInputNoteRecord("0xcurrent")];
+      const currentConsumable = [createMockConsumableNoteRecord("0xcurrent")];
+      let rejectPrevious!: (error: Error) => void;
+      let resolveCurrent!: (notes: typeof currentNotes) => void;
+      const previousRead = new Promise<typeof currentNotes>((_, reject) => {
+        rejectPrevious = reject;
+      });
+      const currentRead = new Promise<typeof currentNotes>((resolve) => {
+        resolveCurrent = resolve;
+      });
+      const mockClient = createMockWebClient({
+        getInputNotes: vi
+          .fn()
+          .mockReturnValueOnce(previousRead)
+          .mockReturnValueOnce(currentRead),
+        getConsumableNotes: vi.fn().mockResolvedValue(currentConsumable),
+      });
+      useMidenStore.getState().setClient(mockClient as any);
+      useMidenStore.getState().setNotes(retainedNotes as any, "all");
+      useMidenStore.getState().setConsumableNotes([], "default");
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      const { result } = renderHook(() => useNotes());
+      expect(mockClient.getInputNotes).not.toHaveBeenCalled();
+
+      let previousRefetch!: Promise<void>;
+      let currentRefetch!: Promise<void>;
+      act(() => {
+        previousRefetch = result.current.refetch();
+        currentRefetch = result.current.refetch();
+      });
+      expect(mockClient.getInputNotes).toHaveBeenCalledTimes(2);
+      expect(result.current.isLoading).toBe(true);
+
+      await act(async () => {
+        resolveCurrent(currentNotes);
+        await currentRefetch;
+      });
+
+      expect(result.current.notes).toBe(currentNotes);
+      expect(result.current.error).toBeNull();
+      expect(result.current.isLoading).toBe(false);
+      expect(useMidenStore.getState().notesByFilter.get("all")).toBe(
+        currentNotes
+      );
+      expect(
+        useMidenStore.getState().consumableNotesByAccount.get("default")
+      ).toEqual(currentConsumable);
+
+      await act(async () => {
+        rejectPrevious(new Error("Older note read failed"));
+        await previousRefetch;
+      });
+
+      expect(result.current.error).toBeNull();
+      expect(result.current.notes).toBe(currentNotes);
+      expect(useMidenStore.getState().notesByFilter.get("all")).toBe(
+        currentNotes
+      );
+      expect(
+        useMidenStore.getState().consumableNotesByAccount.get("default")
+      ).toEqual(currentConsumable);
+    });
+
     it("should refetch notes when called", async () => {
       const initialNotes = [createMockInputNoteRecord("0xnote1")];
       const updatedNotes = [

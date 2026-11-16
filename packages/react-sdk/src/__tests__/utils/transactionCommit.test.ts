@@ -64,6 +64,15 @@ describe("waitForTransactionCommit", () => {
     ).rejects.toThrow("Timeout waiting for transaction commit");
   });
 
+  it("gives up at maxWaitMs, not a full delay later", async () => {
+    const client = makeClient(["pending"]);
+    const start = Date.now();
+    await expect(
+      waitForTransactionCommit(client, passthrough, "0xtx", 50, 5_000)
+    ).rejects.toThrow("Timeout waiting for transaction commit");
+    expect(Date.now() - start).toBeLessThan(1_000);
+  }, 10_000);
+
   it("counts the time spent in each poll against the deadline", async () => {
     const client = makeClient(["pending"]);
     client.syncState.mockImplementation(

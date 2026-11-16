@@ -436,6 +436,95 @@ describe("useSessionAccount", () => {
   });
 
   describe("initialize", () => {
+    it.each(["reset", "replace"])(
+      "drops a pending account list after %s and publishes a current session's list",
+      async (change) => {
+        const wallet = createMockAccount();
+        const walletId = wallet.id().toString();
+        const fundingNote = createMockConsumableNoteRecord(
+          "0xfunding",
+          walletId
+        );
+        const staleAccounts = [createMockAccountHeader("0x1000000000000001")];
+        const retainedAccounts = [
+          createMockAccountHeader("0x1000000000000002"),
+        ];
+        const currentAccounts = [createMockAccountHeader("0x1000000000000003")];
+        let resolveAccounts!: (accounts: typeof staleAccounts) => void;
+        const pendingAccounts = new Promise<typeof staleAccounts>((resolve) => {
+          resolveAccounts = resolve;
+        });
+        const previousClient = createMockWebClient({
+          newWallet: vi.fn().mockResolvedValue(wallet),
+          getAccounts: vi
+            .fn()
+            .mockReturnValueOnce(pendingAccounts)
+            .mockResolvedValue(currentAccounts),
+          getConsumableNotes: vi.fn().mockResolvedValue([fundingNote]),
+        });
+        const currentClient =
+          change === "reset"
+            ? previousClient
+            : createMockWebClient({
+                newWallet: vi.fn().mockResolvedValue(wallet),
+                getAccounts: vi.fn().mockResolvedValue(currentAccounts),
+                getConsumableNotes: vi.fn().mockResolvedValue([fundingNote]),
+              });
+        const sync = vi.fn().mockResolvedValue(undefined);
+        useMidenStore.getState().setClient(previousClient as any);
+        mockUseMiden.mockReturnValue({
+          client: previousClient,
+          isReady: true,
+          sync,
+        });
+        const { result, rerender } = renderHook(() =>
+          useSessionAccount({
+            fund: vi.fn().mockResolvedValue(undefined),
+            assetId: "0xfaucet",
+          })
+        );
+
+        let initializing!: Promise<void>;
+        act(() => {
+          initializing = result.current.initialize();
+        });
+        await waitFor(() => {
+          expect(previousClient.getAccounts).toHaveBeenCalledTimes(1);
+        });
+
+        act(() => {
+          if (change === "reset") {
+            useMidenStore.getState().resetInMemoryState();
+          } else {
+            useMidenStore.getState().setClient(currentClient as any);
+          }
+          useMidenStore.getState().setAccounts(retainedAccounts as any);
+          mockUseMiden.mockReturnValue({
+            client: currentClient,
+            isReady: true,
+            sync,
+          });
+          rerender();
+        });
+        await act(async () => {
+          resolveAccounts(staleAccounts);
+          expect(await initializing).toBeUndefined();
+        });
+
+        expect(useMidenStore.getState().accounts).toBe(retainedAccounts);
+        expect(result.current.sessionAccountId).toBeNull();
+        expect(result.current.isReady).toBe(false);
+        expect(result.current.error).toBeNull();
+
+        act(() => result.current.reset());
+        await act(async () => {
+          expect(await result.current.initialize()).toBeUndefined();
+        });
+        expect(useMidenStore.getState().accounts).toBe(currentAccounts);
+        expect(result.current.isReady).toBe(true);
+      }
+    );
+
     it("should throw when client is not ready", async () => {
       mockUseMiden.mockReturnValue({
         client: null,
@@ -528,6 +617,51 @@ describe("useSessionAccount", () => {
 
       expect(mockClient.newConsumeTransactionRequest).not.toHaveBeenCalled();
     });
+
+    it("gives up waiting for funding at maxWaitMs, not a full poll interval later", async () => {
+      const mockWallet = createMockAccount({
+        id: vi.fn(() => ({
+          toString: vi.fn(() => "0xunfunded_wallet"),
+          toHex: vi.fn(() => "0xunfunded_wallet"),
+          isFaucet: vi.fn(() => false),
+          isRegularAccount: vi.fn(() => true),
+          free: vi.fn(),
+        })),
+      });
+      const mockClient = createMockWebClient({
+        newWallet: vi.fn().mockResolvedValue(mockWallet),
+        getConsumableNotes: vi.fn().mockResolvedValue([]),
+      });
+
+      useMidenStore.getState().setClient(mockClient as never);
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() =>
+        useSessionAccount({
+          fund: vi.fn().mockResolvedValue(undefined),
+          assetId: "0xfaucet",
+          pollIntervalMs: 5000,
+          maxWaitMs: 50,
+        })
+      );
+
+      const start = Date.now();
+      let error: unknown;
+      await act(async () => {
+        await result.current.initialize().catch((err: unknown) => {
+          error = err;
+        });
+      });
+
+      expect((error as Error | undefined)?.message).toBe(
+        "Timeout waiting for session wallet funding"
+      );
+      expect(Date.now() - start).toBeLessThan(1000);
+    }, 10000);
 
     it("funds from the payment only, never another trader's PSWAP order", async () => {
       // A public PSWAP order is listed for any account holding the asset it

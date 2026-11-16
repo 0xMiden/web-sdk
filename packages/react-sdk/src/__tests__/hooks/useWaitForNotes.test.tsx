@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { useWaitForNotes } from "../../hooks/useWaitForNotes";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
@@ -62,7 +62,7 @@ describe("useWaitForNotes", () => {
     await expect(
       result.current.waitForConsumableNotes({
         accountId: "0xaccount",
-        timeoutMs: 5,
+        timeoutMs: 100,
         intervalMs: 1,
       })
     ).rejects.toThrow("Timeout waiting for consumable notes");
@@ -72,6 +72,82 @@ describe("useWaitForNotes", () => {
     expect(calls.length).toBeGreaterThan(1);
     expect(calls[0]?.[0]).not.toBe(calls[1]?.[0]);
   });
+
+  it("gives up at the timeout, not a full interval later", async () => {
+    const mockClient = createMockWebClient({
+      syncState: vi.fn().mockResolvedValue({}),
+      getConsumableNotes: vi.fn().mockResolvedValue([]),
+    });
+
+    mockUseMiden.mockReturnValue({
+      client: mockClient,
+      isReady: true,
+    });
+
+    const { result } = renderHook(() => useWaitForNotes());
+
+    const start = Date.now();
+    await expect(
+      result.current.waitForConsumableNotes({
+        accountId: "0xaccount",
+        timeoutMs: 50,
+        intervalMs: 5000,
+      })
+    ).rejects.toThrow("Timeout waiting for consumable notes");
+    expect(Date.now() - start).toBeLessThan(1000);
+  }, 10000);
+
+  it("treats a NaN intervalMs as the default instead of polling back to back", async () => {
+    const syncState = vi.fn().mockResolvedValue({});
+    const mockClient = createMockWebClient({
+      syncState,
+      getConsumableNotes: vi.fn().mockResolvedValue([]),
+    });
+
+    mockUseMiden.mockReturnValue({
+      client: mockClient,
+      isReady: true,
+    });
+
+    const { result } = renderHook(() => useWaitForNotes());
+
+    await expect(
+      result.current.waitForConsumableNotes({
+        accountId: "0xaccount",
+        timeoutMs: 50,
+        intervalMs: Number.NaN,
+      })
+    ).rejects.toThrow("Timeout waiting for consumable notes");
+    expect(syncState.mock.calls.length).toBeLessThanOrEqual(2);
+  }, 10000);
+
+  it("counts time spent syncing toward timeoutMs", async () => {
+    const mockClient = createMockWebClient({
+      syncState: vi
+        .fn()
+        .mockImplementation(
+          () => new Promise((resolve) => setTimeout(resolve, 40))
+        ),
+      getConsumableNotes: vi.fn().mockResolvedValue([]),
+    });
+
+    mockUseMiden.mockReturnValue({
+      client: mockClient,
+      isReady: true,
+    });
+
+    const { result } = renderHook(() => useWaitForNotes());
+
+    const start = Date.now();
+    await expect(
+      result.current.waitForConsumableNotes({
+        accountId: "0xaccount",
+        timeoutMs: 50,
+        intervalMs: 5,
+      })
+    ).rejects.toThrow("Timeout waiting for consumable notes");
+    expect(Date.now() - start).toBeLessThan(300);
+  }, 10000);
 
   it("does not count another trader's PSWAP order as a note to consume", async () => {
     // A public PSWAP order is listed for any account holding the asset it
@@ -98,14 +174,23 @@ describe("useWaitForNotes", () => {
 
     const { result } = renderHook(() => useWaitForNotes());
 
-    const notes = await result.current.waitForConsumableNotes({
-      accountId: "0xaccount",
-      timeoutMs: 20,
-      intervalMs: 1,
-    });
+    vi.useFakeTimers();
+    try {
+      const pending = result.current.waitForConsumableNotes({
+        accountId: "0xaccount",
+        timeoutMs: 20,
+        intervalMs: 1,
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      const notes = await pending;
 
-    expect(mockClient.getConsumableNotes).toHaveBeenCalledTimes(2);
-    expect(notes).toEqual([payment]);
+      expect(mockClient.getConsumableNotes).toHaveBeenCalledTimes(2);
+      expect(notes).toEqual([payment]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("should resolve when consumable notes are available", async () => {
@@ -127,7 +212,7 @@ describe("useWaitForNotes", () => {
 
     const notes = await result.current.waitForConsumableNotes({
       accountId: "0xaccount",
-      timeoutMs: 20,
+      timeoutMs: 200,
       intervalMs: 1,
     });
 

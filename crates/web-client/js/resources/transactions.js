@@ -77,6 +77,24 @@ async function proveResult(inner, defaultProver, result, opts) {
     : await inner.proveTransaction(result);
 }
 
+/**
+ * Sleeps one polling interval, cut short at a finite `timeout` measured from
+ * `start`, so a polling loop gives up at its deadline rather than up to one
+ * interval after it. `timeout: 0` (poll indefinitely) sleeps the full interval.
+ *
+ * @param {number} start - `Date.now()` when polling began.
+ * @param {number} timeout - The polling timeout in ms, or 0 for none.
+ * @param {number} interval - The polling interval in ms.
+ * @returns {Promise<void>}
+ */
+function waitBeforeNextPoll(start, timeout, interval) {
+  const sleepMs =
+    timeout > 0
+      ? Math.max(0, Math.min(interval, timeout - (Date.now() - start)))
+      : interval;
+  return new Promise((resolve) => setTimeout(resolve, sleepMs));
+}
+
 export class TransactionsResource {
   #inner;
   #getWasm;
@@ -590,64 +608,65 @@ export class TransactionsResource {
   }
 
   /**
-   * Submit a heterogeneous batch of operations against a single account. All
-   * operations are executed, proven individually and as a batch, and submitted
-   * atomically — either every tx in the batch lands or none does.
+   * Submit a heterogeneous batch of operations across one or more local
+   * accounts. Each operation specifies which account it targets via `account`.
+   * Each operation is executed and proven individually, then a single batch
+   * proof is produced over all of them and submitted as one batch; the node
+   * commits them together or not at all.
+   * Every proof runs inside the batch primitive on the client's built-in local
+   * prover, so `proverUrl` does not apply to batches.
+   * In the browser the batch is forwarded to the client's Web Worker, so the
+   * page's main thread stays responsive; without a worker (`useWorker: false`,
+   * or no `Worker` in the environment), and on a mock client, it proves on the
+   * calling thread and blocks it until it settles.
+   * With an external keystore and a worker, `sign` waits without a limit unless
+   * `callbackTimeoutMs` sets one, so a stalled signer holds the batch and later
+   * worker calls. See
+   * https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
    *
-   * @param {BatchOptions} opts - Batch options including the account, operations array, and confirmation settings.
-   * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
+   * @param {BatchOptions} opts - Batch options: the operations array, and
+   *   `timeout` / `waitForConfirmation` (the latter does not currently work,
+   *   see `submitBatch`).
+   * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
+   *   submission, not the block the batch commits in.
    */
   async batch(opts) {
     rejectUnexpectedAnchor(opts, "batch", "submit() per transaction");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
-    if (!opts || !opts.account) {
-      throw new Error("batch: `account` is required");
-    }
-    if (!Array.isArray(opts.operations) || opts.operations.length === 0) {
+    if (
+      !opts ||
+      !Array.isArray(opts.operations) ||
+      opts.operations.length === 0
+    ) {
       throw new Error("batch: `operations` must be a non-empty array");
     }
 
-    // Build each TransactionRequest. Per-op builders all use the batch-level
-    // `account` — V1 only supports same-account batches, mirroring the Rust
-    // constraint. We forward `opts.account` into each per-op options object so
-    // the existing builders' `resolveAccountRef` produces fresh AccountIds
-    // when needed.
-    const requests = [];
+    // Build each TransactionRequest. Every operation carries its own
+    // `account` — same-account batches just repeat the same value.
+    const items = [];
     for (let i = 0; i < opts.operations.length; i++) {
       const op = opts.operations[i];
+      if (!op?.account) {
+        throw new Error(`batch: operation[${i}] is missing \`account\``);
+      }
       let built;
       switch (op?.kind) {
         case "send":
-          built = await this.#buildSendRequest(
-            { ...op, account: opts.account },
-            wasm
-          );
+          built = await this.#buildSendRequest(op, wasm);
           break;
         case "mint":
-          built = await this.#buildMintRequest(
-            { ...op, account: opts.account },
-            wasm
-          );
+          built = await this.#buildMintRequest(op, wasm);
           break;
         case "consume":
-          built = await this.#buildConsumeRequest(
-            { ...op, account: opts.account },
-            wasm
-          );
+          built = await this.#buildConsumeRequest(op, wasm);
           break;
         case "swap":
-          built = await this.#buildSwapRequest(
-            { ...op, account: opts.account },
-            wasm
-          );
+          built = await this.#buildSwapRequest(op, wasm);
           break;
         case "execute":
-          built = await this.#buildExecuteRequest(
-            { ...op, account: opts.account },
-            wasm
-          );
+          built = await this.#buildExecuteRequest(op, wasm);
           break;
         case "custom":
           if (!op.request) {
@@ -662,16 +681,16 @@ export class TransactionsResource {
             `batch: operation[${i}] has unknown kind "${op?.kind}"`
           );
       }
-      requests.push(built.request);
+      items.push({ account: op.account, request: built.request });
     }
 
-    return this.submitBatch(opts.account, requests, opts);
+    return this.submitBatch(items, opts);
   }
 
   /**
    * Submit pre-built TransactionRequests as an atomic batch. Lower-level
-   * counterpart of `batch()` — for callers that already have built requests in
-   * hand. Equivalent to `submit()` but plural.
+   * counterpart of `batch()` — for callers that already have built requests
+   * paired with their target accounts.
    *
    * No fee conversion salt is declared here. miden-client commits the chain's
    * native conversion info while preparing each transaction, so requests against
@@ -682,27 +701,49 @@ export class TransactionsResource {
    * `client.feeAwareTransactionRequestBuilder`, or pass a finished one through
    * `client.withFeeAwareAuth` before batching it.
    *
-   * @param {AccountRef} account - The account executing the batch.
-   * @param {TransactionRequest[]} requests - Pre-built transaction requests.
-   * @param {object} [options] - Optional settings (waitForConfirmation, timeout).
-   *   The batch is proved with the client's configured prover; the V1 batch API
-   *   has no per-call prover override.
-   * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
+   * @param {Array<{ account: AccountRef, request: TransactionRequest }>} items - Per-tx (account, request) pairs.
+   * @param {object} [options] - Optional settings (timeout, and
+   *   `waitForConfirmation`, which does not currently work, see #314).
+   *   Every transaction is proven inside the batch primitive by the client's
+   *   built-in local prover, so `proverUrl` does not apply; the V1 batch API has
+   *   no per-call prover override.
+   *   In the browser the batch runs in the client's Web Worker where it has
+   *   one, so the page's main thread stays responsive; see `batch()` for when
+   *   it runs in-thread instead.
+   *   With an external keystore and a worker, signing happens at push time
+   *   and this wrapper treats a failed push as fatal, so one failed or timed
+   *   out signature callback fails the whole batch. `sign` has no time limit
+   *   unless `callbackTimeoutMs` sets one, so a stalled signer holds the batch
+   *   and later worker calls. See
+   *   https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
+   *   Relatedly, `lastAuthError()` reads the main-thread instance, so it does
+   *   not report a forwarded batch's auth error.
+   * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
+   *   submission, not the block the batch commits in.
    */
-  async submitBatch(account, requests, options) {
+  async submitBatch(items, options) {
     rejectUnexpectedAnchor(options, "submitBatch", "submit() per transaction");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
-    if (!Array.isArray(requests) || requests.length === 0) {
-      throw new Error("submitBatch: `requests` must be a non-empty array");
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error("submitBatch: `items` must be a non-empty array");
     }
 
-    const accountId = resolveAccountRef(account, wasm);
-    const blockNumber = await this.#inner.submitNewTransactionBatch(
-      accountId,
-      requests.map((r) => r.serialize())
-    );
+    const wasmItems = items.map((item, i) => {
+      if (!item?.account) {
+        throw new Error(`submitBatch: items[${i}] is missing \`account\``);
+      }
+      if (!item?.request) {
+        throw new Error(`submitBatch: items[${i}] is missing \`request\``);
+      }
+      return new wasm.BatchItem(
+        resolveAccountRef(item.account, wasm),
+        item.request
+      );
+    });
+
+    const blockNumber = await this.#inner.submitNewTransactionBatch(wasmItems);
 
     if (options?.waitForConfirmation) {
       await this.#waitForBlock(blockNumber, options);
@@ -715,6 +756,13 @@ export class TransactionsResource {
    * Polls until the local sync height reaches `blockNumber` or the timeout
    * expires. The Rust V1 batch API returns only a block number — there are no
    * per-tx ids to poll on, so we wait on the chain height instead.
+   *
+   * This does not currently work: `syncStateWithTimeout` below does not exist,
+   * so the call throws, the bare catch swallows it, and nothing here advances
+   * the height — the loop times out unless the client is already at or past
+   * `blockNumber`. Even once that is fixed the guarantee is weaker than it
+   * looks, since `blockNumber` is the tip as of submission rather than the
+   * batch's commit block. See https://github.com/0xMiden/web-sdk/issues/314.
    *
    * @param {number} blockNumber - The block height to wait for.
    * @param {object} [opts] - Polling options (timeout, interval).
@@ -737,7 +785,7 @@ export class TransactionsResource {
       }
       const height = await this.#inner.getSyncHeight();
       if (height >= blockNumber) return;
-      await new Promise((resolve) => setTimeout(resolve, interval));
+      await waitBeforeNextPoll(start, timeout, interval);
     }
   }
 
@@ -964,7 +1012,10 @@ export class TransactionsResource {
    *   milliseconds. This is NOT a block height — it controls how long the
    *   client waits before giving up. Set to 0 to disable the timeout and poll
    *   indefinitely until the transaction is committed or discarded.
-   * @param {number} [opts.interval=5000] - Polling interval in ms.
+   * @param {number} [opts.interval=5000] - Polling interval in ms. When
+   *   `timeout` is set, the wait between polls ends at the timeout, so
+   *   `waitFor` gives up at the deadline rather than up to one interval later.
+   *   A sync or query already in flight still finishes first.
    * @param {function} [opts.onProgress] - Called with the current status on
    *   each poll iteration ("pending", "submitted", or "committed").
    */
@@ -1019,7 +1070,7 @@ export class TransactionsResource {
         opts?.onProgress?.("pending");
       }
 
-      await new Promise((resolve) => setTimeout(resolve, interval));
+      await waitBeforeNextPoll(start, timeout, interval);
     }
   }
 
