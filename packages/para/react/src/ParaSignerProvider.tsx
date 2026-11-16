@@ -3,6 +3,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useMemo,
   useRef,
   createContext,
   useContext,
@@ -137,14 +138,20 @@ export function ParaSignerProvider({
   customComponents,
   importAccountId,
 }: ParaSignerProviderProps) {
+  // ParaProvider creates a new Para client, and reloads its preload iframe,
+  // whenever the paraClientConfig object changes identity, so both objects
+  // keep their identity until their inputs change.
+  const paraClientConfig = useMemo(
+    () => ({ env: getEnvironmentValue(environment), apiKey }),
+    [environment, apiKey]
+  );
+  const config = useMemo(() => ({ appName }), [appName]);
+
   return (
     <QueryClientProvider client={queryClient ?? defaultQueryClient}>
       <ParaProvider
-        paraClientConfig={{
-          env: getEnvironmentValue(environment),
-          apiKey,
-        }}
-        config={{ appName }}
+        paraClientConfig={paraClientConfig}
+        config={config}
         {...paraProviderConfig}
       >
         <ParaSignerProviderInner
