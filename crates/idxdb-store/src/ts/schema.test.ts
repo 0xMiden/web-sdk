@@ -737,10 +737,7 @@ async function expectKept(mdb: MidenDatabase, version: string) {
 // Every table is empty but for what a fresh store holds and the running version's stamp.
 async function expectCleared(mdb: MidenDatabase, version: string) {
   for (const table of mdb.dexie.tables) {
-    if (
-      table.name !== "chainAnchors" &&
-      table.name !== "clientConfig"
-    ) {
+    if (table.name !== "chainAnchors" && table.name !== "clientConfig") {
       expect(await table.count(), table.name).toBe(0);
     }
   }
