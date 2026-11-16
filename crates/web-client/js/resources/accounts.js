@@ -117,12 +117,21 @@ export class AccountsResource {
     const authComponent =
       wasm.AccountComponent.createAuthComponentFromSecretKey(opts.auth);
 
-    // Schema commitment from `build()` is not a substitute for contract code; require explicit
-    // `components` so auth-only contracts are rejected at this layer.
+    // Schema commitment from `build()` is not a substitute for contract code: a contract needs at
+    // least one component exporting a non-auth procedure, or the account is created but nothing
+    // can call into it. Auth-only and storage-only contracts are rejected at this layer.
     const components = opts.components ?? [];
     if (components.length === 0) {
       throw new Error(
         "Contract accounts require at least one non-auth procedure: pass at least one entry in `components`."
+      );
+    }
+    const hasNonAuthProcedure = components.some((component) =>
+      component.getProcedures().some((procedure) => !procedure.isAuth)
+    );
+    if (!hasNonAuthProcedure) {
+      throw new Error(
+        "Contract accounts require at least one non-auth procedure: none of the entries in `components` exports one (only exports marked `@account_procedure` become non-auth procedures)."
       );
     }
 
@@ -197,7 +206,13 @@ export class AccountsResource {
     const accountId = resolveAccountRef(accountRef, wasm);
     const faucetId = resolveAccountRef(tokenRef, wasm);
     const reader = await this.#inner.accountReader(accountId);
-    return await reader.getBalance(faucetId);
+    try {
+      return await reader.getBalance(faucetId);
+    } finally {
+      // The reader holds the client's store, which terminate() cannot release
+      // while it lives. The Node binding's reader has no free().
+      reader.free?.();
+    }
   }
 
   async import(input) {
@@ -308,5 +323,27 @@ export class AccountsResource {
     const wasm = await this.#getWasm();
     const id = resolveAccountRef(ref, wasm);
     return await this.#inner.isAccountAllowed(id);
+  }
+
+  /**
+   * Returns whether the invitation code can be used to register an account:
+   * `true` when the node does not enforce an account allowlist, or when the
+   * code exists and is not registered to an account. Unknown and registered
+   * codes answer `false`.
+   *
+   * The query does not consume the code and does not identify the account
+   * that holds it.
+   *
+   * @param {string} invitationCode
+   * @returns {Promise<boolean>}
+   */
+  async isInvitationCodeValid(invitationCode) {
+    this.#client.assertNotTerminated();
+    if (typeof invitationCode !== "string" || invitationCode.length === 0) {
+      throw new Error(
+        "accounts.isInvitationCodeValid requires a non-empty 'invitationCode' string"
+      );
+    }
+    return await this.#inner.isInvitationCodeValid(invitationCode);
   }
 }

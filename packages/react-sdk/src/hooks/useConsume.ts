@@ -26,7 +26,11 @@ export interface UseConsumeResult {
 }
 
 /**
- * Hook to consume notes and claim their assets.
+ * Hook to consume notes with an account.
+ *
+ * Consuming runs each note's script. A P2ID or P2IDE payment moves its assets
+ * into the account; a note running another script can also move assets out.
+ * Check `isStandardPayment(record)` first when the note's origin is unknown.
  *
  * @example
  * ```tsx

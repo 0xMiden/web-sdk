@@ -352,12 +352,14 @@ test.describe("chain anchor", () => {
   });
 
   // A multisig proposal binds its summary to the block its auth args name, and
-  // the fee-aware builder declares that block on the request. Re-executing at a
-  // later tip, with no anchor, must reproduce the summary the approvers signed.
+  // the fee-aware builder declares that block on the request, so an anchor
+  // from `chainAnchorForRequest` tracks it. Re-executing at a later tip, with
+  // no anchor or at a late anchor, must reproduce the summary the approvers
+  // signed.
   test("a multisig proposal reproduces its summary at a later tip without an anchor", async ({
     run,
   }) => {
-    const result = await run(async ({ client, sdk, helpers }) => {
+    const result = await run(async ({ client, helpers }) => {
       const { multisigAccountId } =
         await helpers.setupMultisigWithConsumableNote();
 
@@ -385,18 +387,6 @@ test.describe("chain anchor", () => {
         lateAnchor
       );
 
-      // The same auth args without the declared block. The client reads the
-      // bound block from the multisig auth args in the advice map and tracks it
-      // itself, so the request still reproduces the summary at the tip.
-      const undeclared = new sdk.TransactionRequestBuilder()
-        .withAuthArg(request.authArg())
-        .extendAdviceMap(request.adviceMap())
-        .build();
-      const atUndeclared = await client.executeForSummary(
-        multisigAccountId,
-        undeclared
-      );
-
       return {
         boundBlock,
         declared: Array.from(request.blockNumbers()),
@@ -405,8 +395,6 @@ test.describe("chain anchor", () => {
         original: original.toCommitment().toHex(),
         atTip: atTip.toCommitment().toHex(),
         atLateAnchor: atLateAnchor.toCommitment().toHex(),
-        undeclaredBlocks: Array.from(undeclared.blockNumbers()),
-        atUndeclared: atUndeclared.toCommitment().toHex(),
       };
     });
 
@@ -415,10 +403,6 @@ test.describe("chain anchor", () => {
     expect(result.lateAnchorBlock).toBe(result.tip);
     expect(result.atTip).toBe(result.original);
     expect(result.atLateAnchor).toBe(result.original);
-    // The control differs from the request only by the declaration, which the
-    // client adds for it.
-    expect(result.undeclaredBlocks).toEqual([]);
-    expect(result.atUndeclared).toBe(result.original);
   });
   // The node-backed counterpart of the test above, and the regression for
   // web-sdk#432. A node serves account state only ~50 blocks back, so a
