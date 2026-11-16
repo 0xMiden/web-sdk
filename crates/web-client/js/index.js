@@ -1,6 +1,10 @@
 import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
 import { coalesceRun, runUnderLock, withSyncLock } from "./syncLock.js";
+import {
+  serializeCallbackError,
+  validateCallbackTimeoutMs,
+} from "./callbackBridge.js";
 import { emitObservation, hasObserver, setObserver } from "./observability.js";
 import { assertBatchItems } from "./utils.js";
 import { MidenClient } from "./client.js";
@@ -480,6 +484,9 @@ class WebClient {
    *   60000. Defaults to 250. With the retries, the total computed backoff
    *   `interval * (2^retries - 1)`, an omitted value taken at its default, may
    *   not exceed 120000 ms.
+   * @param {number | undefined} [callbackTimeoutMs] - The `callbackTimeoutMs`
+   *   field of `ClientOptions`: how long the Web Worker waits for each external
+   *   keystore callback. See `callbackTimeoutFor` in `callbackBridge.js`.
    * @throws {TypeError} If either retry option is out of range or their total
    *   backoff exceeds 120000 ms. Checked here, before any worker or WASM call,
    *   so every way of building a client rejects the same values.
@@ -497,7 +504,8 @@ class WebClient {
     observability,
     feeFaucetId,
     noteTransportMaxRetries,
-    noteTransportRetryIntervalMs
+    noteTransportRetryIntervalMs,
+    callbackTimeoutMs
   ) {
     validateNoteTransportRetryOptions(
       noteTransportMaxRetries,
@@ -518,6 +526,7 @@ class WebClient {
     this._feeFaucetId = feeFaucetId;
     this._noteTransportMaxRetries = noteTransportMaxRetries;
     this._noteTransportRetryIntervalMs = noteTransportRetryIntervalMs;
+    this._callbackTimeoutMs = validateCallbackTimeoutMs(callbackTimeoutMs);
     this.useWorker = useWorker !== false;
 
     // Check if Web Workers are available AND the caller didn't opt out via
@@ -612,12 +621,18 @@ class WebClient {
             }
 
             this.worker.postMessage({
+              callbackOk: true,
               callbackResult: result,
               callbackRequestId: requestId,
             });
           } catch (error) {
+            // A callback may throw any value, including one with no `.message`
+            // (a string, `{ code: 4001 }`, `null`), so send an explicit failure
+            // flag and the cloneable fields the worker needs to rebuild the
+            // error, including when causes cycle or properties are unreadable.
             this.worker.postMessage({
-              callbackError: error.message,
+              callbackOk: false,
+              callbackError: serializeCallbackError(error, callbackType),
               callbackRequestId: requestId,
             });
           }
@@ -958,6 +973,7 @@ class WebClient {
         this._feeFaucetId,
         this._noteTransportMaxRetries,
         this._noteTransportRetryIntervalMs,
+        this._callbackTimeoutMs,
       ],
     });
   }
@@ -1003,6 +1019,8 @@ class WebClient {
    *   after a transient transport failure; see the constructor.
    * @param {number | undefined} [noteTransportRetryIntervalMs] - Delay before the first such
    *   retry; see the constructor.
+   * @param {number | undefined} [callbackTimeoutMs] - How long to wait for external keystore
+   *   callbacks. Invalid values reject before WASM initialization.
    */
   static async createClient(
     rpcUrl,
@@ -1014,7 +1032,8 @@ class WebClient {
     observability,
     feeFaucetId,
     noteTransportMaxRetries,
-    noteTransportRetryIntervalMs
+    noteTransportRetryIntervalMs,
+    callbackTimeoutMs
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -1030,7 +1049,8 @@ class WebClient {
       observability,
       feeFaucetId,
       noteTransportMaxRetries,
-      noteTransportRetryIntervalMs
+      noteTransportRetryIntervalMs,
+      callbackTimeoutMs
     );
 
     try {
@@ -1091,6 +1111,7 @@ class WebClient {
    *   after a transient transport failure; see the constructor.
    * @param {number | undefined} [noteTransportRetryIntervalMs] - Delay before the first such
    *   retry; see the constructor.
+   * @param {number | undefined} [callbackTimeoutMs] - See the constructor.
    */
   static async createClientWithExternalKeystore(
     rpcUrl,
@@ -1105,7 +1126,8 @@ class WebClient {
     observability,
     feeFaucetId,
     noteTransportMaxRetries,
-    noteTransportRetryIntervalMs
+    noteTransportRetryIntervalMs,
+    callbackTimeoutMs
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -1121,7 +1143,8 @@ class WebClient {
       observability,
       feeFaucetId,
       noteTransportMaxRetries,
-      noteTransportRetryIntervalMs
+      noteTransportRetryIntervalMs,
+      callbackTimeoutMs
     );
 
     try {

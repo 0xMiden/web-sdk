@@ -29,7 +29,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("MidenProvider — fee faucet", () => {
+describe("MidenProvider - fee faucet", () => {
   it("passes config.feeFaucetId to createClient at index 7", async () => {
     // A 0.17 client cannot execute or screen notes without a protocol
     // configuration, and this is the only thing the provider is given to build
@@ -49,19 +49,16 @@ describe("MidenProvider — fee faucet", () => {
     await waitFor(() => {
       expect(vi.mocked(WebClient.createClient)).toHaveBeenCalled();
     });
-    // Length plus absolute index, not a position from the end: passing the
-    // value last makes `args[args.length - 1]` true by construction, so
-    // deleting an earlier placeholder would shift every later argument one slot
-    // left and still satisfy it.
+    // Length plus absolute index catches placeholder shifts in the factory call.
     const args = vi.mocked(WebClient.createClient).mock.calls[0];
-    expect(args).toHaveLength(10);
+    expect(args).toHaveLength(11);
     expect(args[7]).toBe("0x1234567890abcdef");
   });
 
-  // The branch every signer provider takes, and the harder of the two: eleven
+  // The branch every signer provider takes, and the harder of the two: twelve
   // positional arguments with `undefined` placeholders, which is exactly what
   // rots. The createClient case above cannot catch a regression here.
-  it("passes config.feeFaucetId to the external-keystore factory at index 10", async () => {
+  it("passes config.feeFaucetId at index 10 and an unset callback timeout to the external-keystore factory", async () => {
     const signer = createMockSignerContext({
       isConnected: true,
       storeName: "signer_fee_faucet",
@@ -87,8 +84,61 @@ describe("MidenProvider — fee faucet", () => {
     });
     const args = vi.mocked(WebClient.createClientWithExternalKeystore).mock
       .calls[0];
-    expect(args).toHaveLength(13);
+    expect(args).toHaveLength(14);
     expect(args[10]).toBe("0xfeedfacecafebeef");
+    expect(args[13]).toBeUndefined();
+  });
+
+  it("forwards config.callbackTimeoutMs to the external-keystore factory", async () => {
+    const signer = createMockSignerContext({
+      isConnected: true,
+      storeName: "signer_callback_timeout",
+    });
+
+    render(
+      <SignerContext.Provider value={signer}>
+        <MidenProvider
+          config={{
+            rpcUrl: "https://rpc.testnet.miden.io",
+            feeFaucetId: "0xfeedfacecafebeef",
+            callbackTimeoutMs: 120_000,
+          }}
+        >
+          <div data-testid="children">ready</div>
+        </MidenProvider>
+      </SignerContext.Provider>
+    );
+
+    await waitFor(() => {
+      expect(
+        vi.mocked(WebClient.createClientWithExternalKeystore)
+      ).toHaveBeenCalled();
+    });
+    const args = vi.mocked(WebClient.createClientWithExternalKeystore).mock
+      .calls[0];
+    expect(args).toHaveLength(14);
+    expect(args[10]).toBe("0xfeedfacecafebeef");
+    expect(args[13]).toBe(120_000);
+  });
+
+  it("forwards config.callbackTimeoutMs to the local-keystore factory", async () => {
+    render(
+      <MidenProvider
+        config={{
+          rpcUrl: "https://rpc.testnet.miden.io",
+          callbackTimeoutMs: 120_000,
+        }}
+      >
+        <div data-testid="children">ready</div>
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(vi.mocked(WebClient.createClient)).toHaveBeenCalled();
+    });
+    const args = vi.mocked(WebClient.createClient).mock.calls[0];
+    expect(args).toHaveLength(11);
+    expect(args[10]).toBe(120_000);
   });
 });
 
@@ -112,7 +162,7 @@ describe("MidenProvider - note transport retry options", () => {
       expect(vi.mocked(WebClient.createClient)).toHaveBeenCalled();
     });
     const args = vi.mocked(WebClient.createClient).mock.calls[0];
-    expect(args).toHaveLength(10);
+    expect(args).toHaveLength(11);
     expect(args[8]).toBe(5);
     expect(args[9]).toBe(1000);
   });
@@ -144,7 +194,7 @@ describe("MidenProvider - note transport retry options", () => {
     });
     const args = vi.mocked(WebClient.createClientWithExternalKeystore).mock
       .calls[0];
-    expect(args).toHaveLength(13);
+    expect(args).toHaveLength(14);
     expect(args[11]).toBe(0);
     expect(args[12]).toBe(60000);
   });
