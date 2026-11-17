@@ -5,9 +5,11 @@ use super::account_delta::AccountDelta;
 use super::felt::Felt;
 use super::input_notes::InputNotes;
 use super::output_notes::OutputNotes;
+use super::transaction_logs::TransactionLogs;
 use super::word::Word;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{deserialize_untrusted_bytes, serialize_to_bytes};
+use crate::serialization::encode_message;
+use crate::serialization::summary::{TransactionSummaryMessage, decode_transaction_summary};
 
 /// Represents a transaction summary.
 #[derive(Clone)]
@@ -16,9 +18,9 @@ pub struct TransactionSummary(NativeTransactionSummary);
 
 #[js_export]
 impl TransactionSummary {
-    /// Serializes the summary into bytes.
+    /// Serializes the summary as a protobuf message.
     pub fn serialize(&self) -> JsBytes {
-        serialize_to_bytes(&self.0)
+        encode_message(&TransactionSummaryMessage::from(&self.0))
     }
 
     /// Deserializes a summary from bytes.
@@ -28,7 +30,7 @@ impl TransactionSummary {
     ///
     /// [`ChainAnchor::deserialize`]: crate::models::chain_anchor::ChainAnchor::deserialize
     pub fn deserialize(bytes: JsBytes) -> Result<TransactionSummary, JsErr> {
-        deserialize_untrusted_bytes::<NativeTransactionSummary>(&bytes).map(TransactionSummary)
+        decode_transaction_summary(&bytes).map(TransactionSummary)
     }
 
     /// Returns the account delta described by the summary.
@@ -55,13 +57,24 @@ impl TransactionSummary {
         Ok(self.0.output_notes().into())
     }
 
-    /// Returns the seven user-defined elements bound by the summary commitment.
+    /// Returns the six user-defined elements bound by the summary commitment.
     ///
     /// The protocol assigns no meaning to these elements. A caller that uses some of them as a
     /// salt for replay protection reads back what it wrote.
     #[js_export(js_name = "userParams")]
     pub fn user_params(&self) -> Vec<Felt> {
         self.0.user_params().as_elements().iter().map(Into::into).collect()
+    }
+
+    /// Returns the number of the reference block this summary was built against.
+    #[js_export(js_name = "blockNum")]
+    pub fn block_num(&self) -> u32 {
+        self.0.block_number().as_u32()
+    }
+
+    /// Returns the transaction logs bound by the summary commitment.
+    pub fn logs(&self) -> TransactionLogs {
+        self.0.logs().clone().into()
     }
 
     /// Returns the commitment of the reference block this summary was built against.

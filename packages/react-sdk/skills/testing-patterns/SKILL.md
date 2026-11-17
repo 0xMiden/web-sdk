@@ -332,7 +332,7 @@ each one before carrying a pre-0.16 fixture forward.
   is gone. **The mirror image still holds**: `TransactionSummary.accountDelta()` is
   unchanged and still returns a *relative* `AccountDelta` - do not "fix" that one for
   consistency, it is deliberate.
-- **`TransactionSummary` carries `userParams()`, not `salt()`**, and the value is **seven**
+- **`TransactionSummary` carries `userParams()`, not `salt()`**, and the value is **six**
   field elements the summary commitment binds. A fixture stubbing a single `salt()` word
   is wrong on both the name and the width.
 - **`outputNotes()` includes the fee note** on a fee-charging chain, on `TransactionSummary`

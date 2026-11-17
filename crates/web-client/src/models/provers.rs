@@ -10,9 +10,11 @@ use miden_client::transaction::{
     TransactionProver as TransactionProverTrait,
 };
 #[cfg(feature = "browser")]
-use miden_client::transaction::{ProvenTransaction, TransactionInputs, TransactionProverError};
+use miden_client::transaction::{ProvenTransaction, TransactionProverError, TransactionWitness};
 #[cfg(feature = "browser")]
-use miden_protocol::utils::serde::{Deserializable, Serializable};
+use miden_objects::prost::Message;
+#[cfg(feature = "browser")]
+use miden_objects::{DecodeMessageExt, proto};
 #[cfg(feature = "browser")]
 use wasm_bindgen::prelude::*;
 #[cfg(feature = "browser")]
@@ -195,11 +197,10 @@ impl_napi_from_value!(TransactionProver);
 impl TransactionProver {
     /// Creates a prover that delegates `prove()` to a JavaScript callback.
     ///
-    /// The callback receives the serialized [`TransactionInputs`] as a
-    /// `Uint8Array` and must return a `Promise<Uint8Array>` resolving to a
-    /// serialized [`ProvenTransaction`] (same encoding the gRPC remote
-    /// prover uses: `tx_inputs.to_bytes()` in, `ProvenTransaction::read_from_bytes`
-    /// out).
+    /// The callback receives the [`TransactionWitness`] as a `Uint8Array` and
+    /// must return a `Promise<Uint8Array>` resolving to a [`ProvenTransaction`].
+    /// Both are the `miden-objects` protobuf messages of the values, the same
+    /// messages the gRPC remote prover exchanges.
     ///
     /// Use case: routing prove to a native iOS / Android plugin
     /// (`@miden/native-prover`) so mobile builds skip WASM prove entirely
@@ -245,13 +246,13 @@ unsafe impl Sync for JsCallbackTransactionProver {}
 impl TransactionProverTrait for JsCallbackTransactionProver {
     async fn prove(
         &self,
-        tx_inputs: TransactionInputs,
+        witness: TransactionWitness,
     ) -> Result<ProvenTransaction, TransactionProverError> {
-        // Wire format matches the existing gRPC `RemoteTransactionProver`:
-        // `tx_inputs.to_bytes()` in, `ProvenTransaction::read_from_bytes(..)`
-        // out. Keeping these identical means a native prover plugin can be
-        // re-used unchanged behind either dispatcher.
-        let serialized = tx_inputs.to_bytes();
+        // Wire format matches the gRPC `RemoteTransactionProver`: the protobuf
+        // message of the witness in, the protobuf message of the proven
+        // transaction out. Keeping these identical means a native prover
+        // plugin can be re-used unchanged behind either dispatcher.
+        let serialized = proto::transaction::TransactionWitness::from(&witness).encode_to_vec();
         let input_arr = Uint8Array::from(serialized.as_slice());
 
         let call_result =
@@ -278,10 +279,14 @@ impl TransactionProverTrait for JsCallbackTransactionProver {
             })?
             .to_vec();
 
-        ProvenTransaction::read_from_bytes(&bytes).map_err(|err| {
+        let undecodable = |err: &dyn core::fmt::Debug| {
             TransactionProverError::other(format!(
                 "callback prover returned undecodable ProvenTransaction: {err:?}"
             ))
-        })
+        };
+        proto::transaction::ProvenTransaction::decode(bytes.as_slice())
+            .map_err(|err| undecodable(&err))?
+            .decode_and_build_unchecked()
+            .map_err(|err| undecodable(&err))
     }
 }

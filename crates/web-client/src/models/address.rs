@@ -16,7 +16,7 @@ use super::NoteTag;
 use super::account_id::{AccountId, NetworkId};
 use crate::js_error_with_context;
 use crate::platform::{JsBytes, JsErr, from_str_err};
-use crate::utils::deserialize_from_bytes;
+use crate::serialization::deserialize_from_bytes;
 
 /// Representation of a Miden address (account ID plus routing parameters).
 #[cfg_attr(feature = "browser", wasm_bindgen(inspectable))]

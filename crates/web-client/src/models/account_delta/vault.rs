@@ -3,7 +3,7 @@ use miden_client::asset::{AccountVaultDelta as NativeAccountVaultDelta, Asset};
 
 use crate::models::fungible_asset::FungibleAsset;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::serialization::{deserialize_from_bytes, serialize_to_bytes};
 
 /// `AccountVaultDelta` stores the difference between the initial and final account vault states.
 ///

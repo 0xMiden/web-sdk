@@ -30,7 +30,7 @@ The `Cargo.toml` workspace dep `miden-client = "x.y.z"` pins compatibility with 
 
 - **Package manager**: pnpm 9 (workspace at `pnpm-workspace.yaml`). **Never** use `yarn` or `npm install` — they will desync the lockfile.
 - **Node**: ≥ 20 (`engines.node` in `package.json`, `.nvmrc`).
-- **Rust**: MSRV 1.98.1 (`rust-version` under `[workspace.package]` in `Cargo.toml`) plus the nightly pinned in `rust-toolchain.toml` (`nightly-2026-08-06`). The nightly is load-bearing, not a convenience: `-Z build-std` and `cfg(target_feature = "atomics")` are nightly-only and the MT WASM build needs both. It also backs `cargo +nightly fmt`, `clippy` and `fix`.
+- **Rust**: MSRV 1.99.1 (`rust-version` under `[workspace.package]` in `Cargo.toml`) plus the nightly pinned in `rust-toolchain.toml` (`nightly-2026-11-06`). The nightly is load-bearing, not a convenience: `-Z build-std` and `cfg(target_feature = "atomics")` are nightly-only and the MT WASM build needs both. It also backs `cargo +nightly fmt`, `clippy` and `fix`.
 - **Lefthook** runs pre-commit; `pnpm install` wires it via the `prepare` script.
 
 ## Build / lint / test

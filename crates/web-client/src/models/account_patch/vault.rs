@@ -5,7 +5,7 @@ use miden_objects::proto;
 use crate::models::fungible_asset::FungibleAsset;
 use crate::models::word::Word;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{decode_message, encode_message};
+use crate::serialization::{decode_message, encode_message};
 
 /// Absolute updates to account vault entries.
 #[derive(Clone)]

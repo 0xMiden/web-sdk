@@ -296,10 +296,11 @@ mod tests {
         PartialStorage,
     };
     use miden_protocol::asset::PartialVault;
+    use miden_protocol::block::code_tree::CodePatch;
     use miden_protocol::crypto::dsa::eddsa_25519_sha512::KeyExchangeKey;
     use miden_protocol::crypto::ies::{SealedMessage, UnsealingKey};
     use miden_protocol::testing::dummy_execution_proof;
-    use miden_protocol::transaction::{OutputNote, TxAccountUpdate};
+    use miden_protocol::transaction::{OutputNote, TransactionLogDetails, TxAccountUpdate};
     use miden_protocol::{Felt, Word as NativeWord};
 
     use super::*;
@@ -403,6 +404,8 @@ mod tests {
                         inputs.0.block_header().commitment(),
                         inputs.0.ref_block() + 10,
                         dummy_execution_proof(),
+                        TransactionLogDetails::Private(NativeWord::empty()),
+                        CodePatch::default(),
                     )
                     .unwrap(),
                 )
@@ -484,7 +487,11 @@ mod tests {
                 .unwrap();
             // Native Merkle stores serialize hash-map iteration order, which can change after
             // decoding the public Protobuf representation without changing any input data.
-            let unsealed_inputs = NativeTransactionInputs::read_from_bytes(&plaintext).unwrap();
+            let unsealed_inputs =
+                proto::transaction::TransactionInputs::decode(plaintext.as_slice())
+                    .unwrap()
+                    .decode_and_build_unchecked()
+                    .unwrap();
             assert_eq!(unsealed_inputs, inputs.0);
         }
 

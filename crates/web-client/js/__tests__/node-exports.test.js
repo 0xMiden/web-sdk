@@ -38,7 +38,7 @@ const fakeNative = vi.hoisted(() => {
     logoUri() {
       return null;
     }
-    externalLink() {
+    externalUri() {
       return null;
     }
   }
@@ -246,7 +246,7 @@ describe("Node napi boundary", () => {
 
     expect(faucet.description()).toBeUndefined();
     expect(faucet.logoUri()).toBeUndefined();
-    expect(faucet.externalLink()).toBeUndefined();
+    expect(faucet.externalUri()).toBeUndefined();
   });
 
   it("keeps the NoteScript.p2id and p2ide aliases", () => {

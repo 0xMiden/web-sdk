@@ -63,6 +63,7 @@ pub mod notes;
 pub(crate) mod platform;
 pub mod pswap;
 pub mod rpc_client;
+pub mod serialization;
 pub mod settings;
 pub mod sync;
 pub mod tags;

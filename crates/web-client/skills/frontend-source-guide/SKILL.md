@@ -111,7 +111,7 @@ The public client plus the Rust-to-WASM bridge underneath it.
 
 The browser storage layer for accounts, keys, notes, and transaction history.
 
-- **`src/ts/schema.ts`** - the Dexie schema and its version chain, which migrates a store across SDK upgrades. Its `version(8)` cutover clears, once, a store a client older than 0.17.0 (`MIGRATION_BASELINE`) last wrote, and `MidenDatabase.open` refuses a store a newer client wrote. See `frontend-pitfalls` FP7 and the `idxdb-patterns` skill.
+- **`src/ts/schema.ts`** - the Dexie schema and its version chain, which migrates a store across SDK upgrades. Its `version(8)` cutover clears, once, a store a client older than 0.17.0 (`MIGRATION_BASELINE`) last wrote, its `version(14)` cutover clears every store written before protocol 1.0, and `MidenDatabase.open` refuses a store a newer client wrote. See `frontend-pitfalls` FP7 and the `idxdb-patterns` skill.
 - **`src/ts/`** - per-table logic: `accounts.ts`, `auth.ts`, `chainData.ts`, `notes.ts`, `settings.ts`, `sync.ts`, `transactions.ts`, plus `export.ts` / `import.ts` for store dumps.
 
 **Explore when**: Debugging data persistence issues, understanding what's stored in IndexedDB, investigating storage isolation for external signers.

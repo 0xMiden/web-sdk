@@ -231,7 +231,7 @@ function patchSdkPrototypes(rawSdk) {
     // The optional token metadata is unset on every faucet `newFaucet` creates.
     [
       rawSdk.BasicFungibleFaucetComponent,
-      ["description", "logoUri", "externalLink"],
+      ["description", "externalUri", "logoUri"],
     ],
     // `feeNote` is absent whenever the chain charges nothing, which is the common case on a
     // local chain, so the "no fee note" reading has to be the same on both bindings.
@@ -273,6 +273,15 @@ function patchSdkPrototypes(rawSdk) {
   for (const [cls, getters] of [
     [rawSdk.Endpoint, ["port"]],
     [rawSdk.FetchedNote, ["note"]],
+    [
+      rawSdk.NetworkNoteSponsorship,
+      [
+        "committedBlockNum",
+        "lastAttemptBlockNum",
+        "lastError",
+        "reclaimHeight",
+      ],
+    ],
     [rawSdk.NetworkNoteStatusInfo, ["lastAttemptBlockNum", "lastError"]],
     [rawSdk.StorageValueSlotPatch, ["value"]],
   ]) {

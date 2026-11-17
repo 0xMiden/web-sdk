@@ -206,6 +206,7 @@ export const BasicFungibleFaucetComponent = /* @__PURE__ */ _reexport(
 );
 export const BatchItem = /* @__PURE__ */ _reexport("BatchItem");
 export const BlockHeader = /* @__PURE__ */ _reexport("BlockHeader");
+export const BoundSignature = /* @__PURE__ */ _reexport("BoundSignature");
 export const ChainAnchor = /* @__PURE__ */ _reexport("ChainAnchor");
 export const CodeBuilder = /* @__PURE__ */ _reexport("CodeBuilder");
 export const CommittedNote = /* @__PURE__ */ _reexport("CommittedNote");
@@ -239,6 +240,9 @@ export const NetworkAccountTarget = /* @__PURE__ */ _reexport(
   "NetworkAccountTarget"
 );
 export const NetworkId = /* @__PURE__ */ _reexport("NetworkId");
+export const NetworkNoteSponsorship = /* @__PURE__ */ _reexport(
+  "NetworkNoteSponsorship"
+);
 export const NetworkNoteStatusInfo = /* @__PURE__ */ _reexport(
   "NetworkNoteStatusInfo"
 );
@@ -342,6 +346,8 @@ export const TransactionEncryptionKey = /* @__PURE__ */ _reexport(
 export const TransactionFilter = /* @__PURE__ */ _reexport("TransactionFilter");
 export const TransactionId = /* @__PURE__ */ _reexport("TransactionId");
 export const TransactionInputs = /* @__PURE__ */ _reexport("TransactionInputs");
+export const TransactionLog = /* @__PURE__ */ _reexport("TransactionLog");
+export const TransactionLogs = /* @__PURE__ */ _reexport("TransactionLogs");
 export const TransactionProver = /* @__PURE__ */ _reexport("TransactionProver");
 export const TransactionRecord = /* @__PURE__ */ _reexport("TransactionRecord");
 export const TransactionRequest =

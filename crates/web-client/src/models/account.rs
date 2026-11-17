@@ -29,7 +29,7 @@ use crate::models::asset_vault::AssetVault;
 use crate::models::felt::Felt;
 use crate::models::word::Word;
 use crate::platform::{JsBytes, JsErr, from_str_err};
-use crate::utils::{decode_message, encode_message};
+use crate::serialization::{decode_message, encode_message};
 
 /// An account which can store assets and define rules for manipulating them.
 ///

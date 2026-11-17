@@ -4,7 +4,7 @@ use miden_client::vm::Package as NativePackage;
 use crate::models::library::Library;
 use crate::models::program::Program;
 use crate::platform::{JsBytes, JsErr, from_str_err};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::serialization::{deserialize_from_bytes, serialize_to_bytes};
 
 /// Compiled VM package containing libraries and metadata.
 #[derive(Clone)]

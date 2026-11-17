@@ -4,7 +4,7 @@ use miden_client::transaction::ChainAnchor as NativeChainAnchor;
 use super::block_header::BlockHeader;
 use super::word::Word;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{decode_untrusted_proto, encode_proto};
+use crate::serialization::{decode_untrusted_proto, encode_proto};
 
 /// A self-contained, verifiable anchor that pins transaction execution to a specific reference
 /// block instead of the client's current sync height.

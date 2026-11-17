@@ -6,7 +6,8 @@ use crate::models::felt::Felt;
 use crate::models::transaction_summary::TransactionSummary;
 use crate::models::word::Word;
 use crate::platform::{JsBytes, JsErr, from_str_err};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::serialization::encode_message;
+use crate::serialization::summary::{SigningInputsMessage, decode_signing_inputs};
 
 #[js_export]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -113,15 +114,14 @@ impl SigningInputs {
         self.inner.to_elements().into_iter().map(Into::into).collect::<Vec<_>>().into()
     }
 
-    /// Serializes the signing inputs into bytes.
+    /// Serializes the signing inputs as a protobuf message.
     pub fn serialize(&self) -> JsBytes {
-        serialize_to_bytes(&self.inner)
+        encode_message(&SigningInputsMessage::from(&self.inner))
     }
 
-    /// Deserializes signing inputs from bytes.
+    /// Deserializes signing inputs from the protobuf message that `serialize` writes.
     pub fn deserialize(bytes: JsBytes) -> Result<SigningInputs, JsErr> {
-        let native_signing_inputs = deserialize_from_bytes::<NativeSigningInputs>(&bytes)?;
-        Ok(native_signing_inputs.into())
+        decode_signing_inputs(&bytes).map(Into::into)
     }
 }
 

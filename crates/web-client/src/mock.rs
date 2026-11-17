@@ -12,7 +12,6 @@ use miden_client::testing::MockChain;
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::{MockNoteTransportApi, MockNoteTransportNode};
 use miden_client::utils::RwLock;
-use miden_protocol::utils::serde::{Deserializable, Serializable};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
@@ -35,8 +34,8 @@ impl WebClient {
     ) -> Result<String, JsErr> {
         let mock_rpc_api = match serialized_mock_chain {
             Some(chain) => {
-                Arc::new(MockRpcApi::new(MockChain::read_from_bytes(&chain).map_err(|err| {
-                    js_error_with_context(err, "failed to deserialize mock chain")
+                Arc::new(MockRpcApi::new(MockChain::try_from_bytes(&chain).map_err(|err| {
+                    from_str_err(&format!("failed to deserialize mock chain: {err:#}"))
                 })?))
             },
             None => Arc::new(MockRpcApi::default()),
@@ -105,8 +104,8 @@ impl WebClient {
     ) -> Result<String, JsErr> {
         let mock_rpc_api = match serialized_mock_chain {
             Some(chain) => {
-                Arc::new(MockRpcApi::new(MockChain::read_from_bytes(&chain).map_err(|err| {
-                    js_error_with_context(err, "failed to deserialize mock chain")
+                Arc::new(MockRpcApi::new(MockChain::try_from_bytes(&chain).map_err(|err| {
+                    from_str_err(&format!("failed to deserialize mock chain: {err:#}"))
                 })?))
             },
             None => Arc::new(MockRpcApi::default()),

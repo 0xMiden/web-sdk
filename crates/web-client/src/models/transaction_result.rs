@@ -5,7 +5,8 @@ use crate::models::executed_transaction::ExecutedTransaction;
 use crate::models::transaction_id::TransactionId;
 use crate::models::transaction_request::note_details_and_tag::NoteDetailsAndTag;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{decode_proto, encode_proto};
+use crate::serialization::encode_message;
+use crate::serialization::transaction::{TransactionResultMessage, decode_transaction_result};
 
 /// Represents the result of executing a transaction by the client.
 ///
@@ -45,12 +46,12 @@ impl TransactionResult {
 
     /// Serializes the transaction result into bytes.
     pub fn serialize(&self) -> JsBytes {
-        encode_proto(&self.result)
+        encode_message(&TransactionResultMessage::from(&self.result))
     }
 
     /// Deserializes a transaction result from bytes.
     pub fn deserialize(bytes: JsBytes) -> Result<TransactionResult, JsErr> {
-        decode_proto::<NativeTransactionResult>(&bytes).map(TransactionResult::from)
+        decode_transaction_result(&bytes).map(TransactionResult::from)
     }
 }
 

@@ -181,12 +181,12 @@ The serialization formats are:
 
 | Model | `serialize()` / `deserialize(bytes)` format |
 | --- | --- |
-| `ProvenTransaction` | Native Miden binary serialization. |
+| `ProvenTransaction` | `miden_objects::proto::transaction::ProvenTransaction` protobuf encoding. `deserialize` checks the invariants of the transaction and does not verify its proof. |
 | `TransactionInputs` | `miden_objects::proto::transaction::TransactionInputs` protobuf encoding. |
 | `ProposedBatch` | `miden_objects::proto::transaction::ProposedBatch` protobuf encoding. |
 | `ProvenBatch` | `miden_objects::proto::transaction::ProvenBatch` protobuf encoding. |
 
-Rust producers can convert each of the three protobuf models from its native
+Rust producers can convert each of the four protobuf models from its native
 value and encode it with `prost::Message::encode_to_vec()`. These protobuf
 payloads are not interchangeable with native `to_bytes()` serialization.
 
