@@ -69,10 +69,16 @@ impl BlockHeader {
         self.0.note_root().into()
     }
 
-    /// Returns the transaction commitment.
+    /// Returns the commitment to the transactions of the block.
     #[js_export(js_name = "txCommitment")]
     pub fn tx_commitment(&self) -> Word {
-        self.0.tx_commitment().into()
+        self.0.transactions_commitment().into()
+    }
+
+    /// Returns the root of the code tree.
+    #[js_export(js_name = "codeTreeRoot")]
+    pub fn code_tree_root(&self) -> Word {
+        self.0.code_tree_root().as_word().into()
     }
 
     /// Returns the commitment to the protocol configuration this block was built under.

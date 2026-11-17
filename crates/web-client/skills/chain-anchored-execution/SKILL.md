@@ -375,10 +375,12 @@ request; in the browser build it consumes the `Felt`s it is given.
 | --- | --- | --- |
 | `toCommitment()` | `Word` | The value co-signers compare and sign over |
 | `blockCommitment()` | `Word` | Reference block, for checking a received anchor cheaply |
+| `blockNum()` | `u32` | Number of the reference block; a deadline is `blockNum() + expirationDelta()` when the delta is not 0 |
 | `expirationDelta()` | `u16` | 0 means no expiration was set, not expired |
 | `accountDelta()` | `AccountDelta` | Inspect before signing; `.storage().valueSlots()` / `.mapSlots()` name the changed slots and map entries |
 | `inputNotes()` / `outputNotes()` | `InputNotes` / `OutputNotes` | Inspect before signing; `outputNotes()` includes the fee note |
-| `userParams()` | `Felt[]` | Seven elements; `signature.masm` puts the final nonce in `[0]`, multisig zeroes them |
+| `userParams()` | `Felt[]` | Six elements; `signature.masm` puts the final nonce in `[0]`, multisig zeroes them |
+| `logs()` | `TransactionLogs` | The logs the transaction emitted, bound by the summary commitment; its `logs()` returns each `TransactionLog` (`emitter()`, `topicPrefix()`, `topicSuffix()`, `content()`) |
 | `serialize()` / `TransactionSummary.deserialize(bytes)` | bytes / `TransactionSummary` | Transport |
 
 ### Determinism helpers for a request that travels

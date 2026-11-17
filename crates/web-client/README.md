@@ -672,7 +672,7 @@ faucet.maxSupply().toString();    // "10000000"
 faucet.tokenSupply().toString();  // amount minted so far, e.g. "0"
 faucet.description();             // string | undefined
 faucet.logoUri();                 // string | undefined
-faucet.externalLink();            // string | undefined
+faucet.externalUri();             // string | undefined
 ```
 
 ### Send Tokens

@@ -20,7 +20,7 @@ use super::note_script::NoteScript;
 use super::word::Word;
 use crate::js_error_with_context;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{decode_message, encode_message};
+use crate::serialization::{decode_message, encode_message};
 
 /// A note bundles public metadata with private details: assets, script, inputs, and a serial number
 /// grouped into a recipient. The public identifier (`NoteId`) commits to those

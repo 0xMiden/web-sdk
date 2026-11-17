@@ -5,7 +5,7 @@ use crate::models::account_id::AccountId;
 use crate::models::note_id::NoteId;
 use crate::models::transaction_id::TransactionId;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{decode_proto, encode_proto};
+use crate::serialization::{decode_proto, encode_proto};
 
 /// Contains stats about the sync operation.
 #[js_export]

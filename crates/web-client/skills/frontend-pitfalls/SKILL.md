@@ -257,23 +257,24 @@ const { pauseSync, resumeSync, isPaused } = useSyncControl();
 
 ## FP7: IndexedDB State Loss, Including From Your Own SDK Upgrade (HIGH)
 
-The client persists accounts, keys, notes and transaction history in IndexedDB. There are **two** distinct ways to lose all of it, and the second one is under your control:
+The client persists accounts, keys, notes and transaction history in IndexedDB. There are **three** distinct ways to lose all of it, and the last two are under your control:
 
 1. **The user or the browser deletes it** - "Clear site data", private browsing, storage pressure.
 2. **The one-time clear when upgrading from an SDK older than 0.17.0.** From 0.17.4 the store is kept across SDK upgrades, and a schema change migrates the existing data in place. The first open by 0.17.4 or later clears, once, a store last written by a client older than 0.17.0 (a 0.17.0 release candidate included) or carrying no client version; a store any 0.17.0 or later client wrote is kept. Earlier SDKs reset the store on every minor or major version bump.
+3. **The one-time clear when upgrading to protocol 1.0 (SDK 0.19).** The first open by 0.19 clears every store an earlier SDK wrote, whatever its client version, because protocol 1.0 runs on new networks and changed the encoding of the block headers. The secret keys in the store are cleared with everything else.
 
-**Upgrading a userbase from a pre-0.17.0 SDK destroys every locally-stored account, key and note on every user's device.** Nothing prompts, nothing warns, and the user's wallet is simply gone on next load.
+**Upgrading a userbase from a pre-0.17.0 SDK, or from any SDK before 0.19 to 0.19, destroys every locally-stored account, key and note on every user's device.** Nothing prompts, nothing warns, and the user's wallet is simply gone on next load.
 
 From 0.17.4 the SDK does not open a store a newer SDK wrote (one with a newer store schema): client creation fails with `Failed to initialize IdxdbStore: IndexedDB store "..." was written by a newer Miden client ...`, and nothing in the store is deleted. Rolling an app back to a 0.17.4 or later SDK with an older store schema therefore fails for every user who already ran the newer one, until you roll forward again or they clear the site's data.
 
 Mitigations:
 
-- **A pre-0.17.0 store cannot be carried across.** Its data belongs to networks that no longer exist, and `importStore` refuses a dump exported by a client older than 0.17.0 (or with no client version stamp), as it refuses one from a newer SDK. Export/import is for backups and moving a store between devices on 0.17.0 or later. The surface is `useExportStore()` / `useImportStore()` in `@miden-sdk/react`, backed by the standalone `exportStore(storeName)` / `importStore(storeName, dump)` from `@miden-sdk/miden-sdk`. Per-object export/import also exists on the high-level client (`accounts.export` / `accounts.import`, `notes.export` / `notes.import`).
+- **A store written before 0.19 cannot be carried across.** Its data belongs to networks that no longer exist, and `importStore` refuses a dump exported before 0.19, as it refuses one from a newer SDK. Export/import is for backups and moving a store between devices on 0.19 or later. The surface is `useExportStore()` / `useImportStore()` in `@miden-sdk/react`, backed by the standalone `exportStore(storeName)` / `importStore(storeName, dump)` from `@miden-sdk/miden-sdk`. Per-object export/import also exists on the high-level client (`accounts.export` / `accounts.import`, `notes.export` / `notes.import`).
 - Warn users that clearing browser data deletes their wallet.
 - Consider external signers (Para, Turnkey, wallet adapters) for production - the key material lives outside the browser store, so only cached chain state is lost.
 - Each signer identity gets its own database (`MidenClientDB_<storeName>`), so `SignerContextValue.storeName` must be unique per user.
 
-Verify before relying on this: `crates/idxdb-store/src/ts/schema.ts`, the `version(8)` cutover and `MIGRATION_BASELINE`.
+Verify before relying on this: `crates/idxdb-store/src/ts/schema.ts`, the `version(8)` and `version(14)` cutovers and `MIGRATION_BASELINE`, and `refuseUnkeptDump` in `import.ts`.
 
 ## FP8: Vite Configuration Requirements (MEDIUM)
 
@@ -503,11 +504,22 @@ Import `@miden-sdk/miden-sdk/lazy` (or `@miden-sdk/react/lazy`) there. Identical
 
 Verify: `crates/web-client/js/eager.js`.
 
+## Removed or Changed in 0.19 (check these first when upgrading from 0.18)
+
+- The SDK runs protocol 1.0 and works only with a node of the matching version.
+- The first open clears the IndexedDB store an earlier SDK wrote, secret keys included, and `importStore` refuses a dump an earlier SDK exported. See FP7.
+- Bytes an earlier SDK serialized do not deserialize. `serialize()` / `deserialize()` use protobuf messages for `Account`, `Note`, `NoteScript`, `AccountPatch`, `AccountStoragePatch`, `AccountVaultPatch`, `TransactionRequest`, `SyncSummary`, `ChainAnchor`, `ProvenTransaction`, `TransactionSummary`, `SigningInputs`, `TransactionResult` and `TransactionStoreUpdate`, and so do the mock chain and mock note transport bytes. A wallet or external signer (Para, Turnkey) must decode with the same SDK version as the dApp: `SigningInputs` from a 0.18 dApp do not decode in 0.19.
+- `TransactionProver.newCallbackProver(jsFn)` and the native `miden-mobile-prover` receive the protobuf message of a `TransactionWitness` and return the protobuf message of a `ProvenTransaction`. Rebuild a native prover from 0.19.
+- `Signature.toPreparedSignature(message)` throws when the public key of an ECDSA signature cannot be recovered from the signature and `message`.
+- `BasicFungibleFaucetComponent.externalLink()` is now `externalUri()`.
+- `TransactionArgs.adviceInputs()` no longer holds the recipients of the expected output notes or the signatures. Read them with `outputNoteRecipients()` and `signatures()` (`BoundSignature[]`).
+- `client.accounts.import(id)`, `WebClient.importAccountById()` and `useImportAccount({ type: "id" })` read the account at the client's sync height. Call `syncState()` after the account is created and before importing it.
+
 ## Removed or Changed in 0.16 (check these first when upgrading from 0.15)
 
 - `ClientOptions.debugMode` removed; `WasmWebClient.createClient*` no longer take a trailing `debugMode` argument.
 - `FungibleAsset.withCallbacks(flag)` removed. The flag is an immutable property of the issuing faucet's account id; `FungibleAsset.callbacks()` still reports it.
-- `TransactionSummary.salt()` replaced by `userParams()` (the seven user-defined field elements the summary commitment binds).
+- `TransactionSummary.salt()` replaced by `userParams()` (the user-defined field elements the summary commitment binds).
 - `ExecutedTransaction.accountDelta()` and `TransactionStoreUpdate.accountDelta()` replaced by `accountPatch()`, exposing the absolute-valued `AccountPatch` / `AccountStoragePatch` / `AccountVaultPatch`. `TransactionSummary.accountDelta()` remains relative. `AccountStorageDelta` was removed.
 - `AccountComponent.createNetworkAuth` renamed to `createNetworkAuthComponents(NoteScriptFee[], feeFaucetId)`, which returns an **array**. Add every returned component to the builder with `AccountBuilder.withComponent`. Since 0.17 `feeFaucetId` must be the chain's own (`client.feeFaucetId()`): the node never runs network transactions for an account whose fee asset differs from the chain's protocol configuration, and the notes sent to it silently go unconsumed.
 - MASM: note scripts calling `basic_wallet::add_assets_to_account` must switch to `basic_wallet::move_note_assets_to_account` (a stale script fails to compile with `undefined item 'add_assets_to_account'`). Account-component procedures now require `@account_procedure`, and transaction scripts use `@transaction_script pub proc main`.

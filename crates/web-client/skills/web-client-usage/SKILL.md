@@ -143,10 +143,10 @@ execution result.
 `rpc.submitProvenTxBatch(provenBatch, proposedBatch, transactionInputs, key)`
 requires an actual `ProvenBatch`, its matching `ProposedBatch`, and inputs in
 exact proposal order. Do not pass an array of transaction proofs as a batch.
-`TransactionInputs`, `ProposedBatch` and `ProvenBatch` expose `serialize()` /
-`deserialize(bytes)` using their corresponding
+`ProvenTransaction`, `TransactionInputs`, `ProposedBatch` and `ProvenBatch`
+expose `serialize()` / `deserialize(bytes)` using their corresponding
 `miden_objects::proto::transaction` protobuf encodings. These are not native
-`to_bytes()` payloads; `ProvenTransaction` retains its native binary encoding.
+`to_bytes()` payloads. `ProvenTransaction.deserialize` does not verify the proof.
 `ProposedBatch.deserialize` verifies transaction proofs and consistency.
 In the browser, the batch call consumes each `TransactionInputs` wrapper even
 if submission fails. Serialize the inputs first and deserialize fresh wrappers
@@ -1084,9 +1084,10 @@ identical: output-note serial numbers and the fee conversion salt are drawn from
 the client's RNG, so the summary you signed would not be the one the submitted
 transaction produces. Only `"custom"` accepts an `anchor`.
 
-`TransactionSummary` exposes `userParams()` (seven caller-defined field
+`TransactionSummary` exposes `userParams()` (six caller-defined field
 elements; this replaces the removed `salt()`, and the protocol assigns them no
-meaning), `blockCommitment()`, `expirationDelta()` and `toCommitment()`. Its
+meaning), `blockNum()`, `blockCommitment()`, `expirationDelta()`, `logs()` (the
+`TransactionLogs` the summary commitment binds) and `toCommitment()`. Its
 `accountDelta()` is still **relative**, unlike the absolute
 `ExecutedTransaction.accountPatch()` below. Its `storage()` is the same
 absolute `AccountStoragePatch` in both: `valueSlots()` and `mapSlots()` name

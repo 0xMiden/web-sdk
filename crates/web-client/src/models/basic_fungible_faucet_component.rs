@@ -92,9 +92,9 @@ impl BasicFungibleFaucetComponent {
         self.0.logo_uri().map(|uri| uri.as_str().to_string())
     }
 
-    /// Returns the optional external link (e.g. project website), or `undefined` when unset.
-    #[js_export(js_name = "externalLink")]
-    pub fn external_link(&self) -> Option<String> {
-        self.0.external_link().map(|link| link.as_str().to_string())
+    /// Returns the optional external URI (e.g. project website), or `undefined` when unset.
+    #[js_export(js_name = "externalUri")]
+    pub fn external_uri(&self) -> Option<String> {
+        self.0.external_uri().map(|uri| uri.as_str().to_string())
     }
 }

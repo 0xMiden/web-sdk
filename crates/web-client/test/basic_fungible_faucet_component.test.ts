@@ -29,7 +29,7 @@ test.describe("basic fungible faucet", () => {
         tokenSupply: basicFungibleFaucet.tokenSupply().toString(),
         description: basicFungibleFaucet.description(),
         logoUri: basicFungibleFaucet.logoUri(),
-        externalLink: basicFungibleFaucet.externalLink(),
+        externalUri: basicFungibleFaucet.externalUri(),
       };
     });
     expect(result.symbol).toEqual("DAG");
@@ -41,7 +41,7 @@ test.describe("basic fungible faucet", () => {
     // The optional descriptive metadata is not set by `newFaucet`.
     expect(result.description).toBeUndefined();
     expect(result.logoUri).toBeUndefined();
-    expect(result.externalLink).toBeUndefined();
+    expect(result.externalUri).toBeUndefined();
   });
 
   test("creates a basic fungible faucet component from account storage", async ({
@@ -71,7 +71,7 @@ test.describe("basic fungible faucet", () => {
         tokenSupply: basicFungibleFaucet.tokenSupply().toString(),
         description: basicFungibleFaucet.description(),
         logoUri: basicFungibleFaucet.logoUri(),
-        externalLink: basicFungibleFaucet.externalLink(),
+        externalUri: basicFungibleFaucet.externalUri(),
       };
     });
     expect(result.symbol).toEqual("DAG");
@@ -83,7 +83,7 @@ test.describe("basic fungible faucet", () => {
     // The optional descriptive metadata is not set by `newFaucet`.
     expect(result.description).toBeUndefined();
     expect(result.logoUri).toBeUndefined();
-    expect(result.externalLink).toBeUndefined();
+    expect(result.externalUri).toBeUndefined();
   });
 
   test("throws an error when creating a basic fungible faucet from non-faucet account storage", async ({

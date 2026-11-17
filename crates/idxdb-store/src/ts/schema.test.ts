@@ -7,6 +7,7 @@ import {
   MidenDatabase,
   CLIENT_VERSION_SETTING_KEY,
   MIGRATION_BASELINE,
+  PROTOCOL_V1_STAMP_KEY,
   SETTING_SCOPE_CLIENT,
   SETTING_SCOPE_USER,
   V1_STORES,
@@ -63,9 +64,10 @@ type CutoverReads = Record<
   (table: Dexie.Table) => PromiseLike<unknown>
 >;
 
-// A store that ran the v2, v3 or v4 upgrade lost its client version stamp with the v4 settings
-// drop, so the v8 cutover clears it in the same upgrade transaction. This reads each named table
-// as the cutover clears it, which is what the earlier upgrades left there.
+// Every store that an earlier schema version wrote is cleared in the upgrade transaction: by the
+// v8 cutover when it has no stamp at or above MIGRATION_BASELINE, and by the protocol 1.0 cutover
+// of v14 otherwise. This reads each named table as it is first cleared, which is what the
+// upgrades before that cutover left there.
 async function openReadingAtCutover(
   name: string,
   reads: CutoverReads
@@ -78,7 +80,9 @@ async function openReadingAtCutover(
     this: Dexie.Table
   ) {
     const read = reads[this.name];
-    if (!read) {
+    // Only the first clear of a table shows what the upgrades left there. The protocol 1.0
+    // cutover clears again a store that the v8 cutover cleared.
+    if (!read || this.name in seen) {
       return clear.call(this);
     }
     seen[this.name] = read(this);
@@ -98,6 +102,15 @@ async function openReadingAtCutover(
     seen: Object.fromEntries(Object.keys(seen).map((k, i) => [k, values[i]])),
   };
 }
+
+// What the settings split left, as the protocol 1.0 cutover clears it.
+const SETTINGS_AT_CUTOVER: CutoverReads = {
+  userSettings: (table) => table.toArray(),
+  clientConfig: (table) => table.toCollection().primaryKeys(),
+};
+const ANCHORS_AT_CUTOVER: CutoverReads = {
+  chainAnchors: (table) => table.toArray(),
+};
 
 describe("MidenDatabase migrations", () => {
   // v1 → v2: prunes note tags leaked by output-note registration
@@ -271,7 +284,7 @@ describe("MidenDatabase migrations", () => {
     });
     expect(seen.settings).toEqual([]);
     expect(await mdb.userSettings.count()).toBe(0);
-    expect(await mdb.clientConfig.count()).toBe(0);
+    expect(await mdb.clientConfig.toArray()).toEqual([protocolV1StampRow()]);
   });
 
   // v6: account witness registry. A null witness is a registered account the sync has not
@@ -324,16 +337,12 @@ describe("MidenDatabase migrations", () => {
     ]);
     dbV6.close();
 
-    const mdb = trackMidenDb(new MidenDatabase(name));
-    expect(await mdb.open("0.17.2")).toBe(true);
-
     // The v10 split then keeps the user row and, of the client rows, only the stamp.
-    expect(await mdb.userSettings.toArray()).toEqual([
+    const { seen } = await openReadingAtCutover(name, SETTINGS_AT_CUTOVER);
+    expect(seen.userSettings).toEqual([
       { key: outboxKey, value: new Uint8Array([2]) },
     ]);
-    expect(await mdb.clientConfig.toCollection().primaryKeys()).toEqual([
-      CLIENT_VERSION_SETTING_KEY,
-    ]);
+    expect(seen.clientConfig).toEqual([CLIENT_VERSION_SETTING_KEY]);
   });
 
   it("v9 migration deletes only the client-scope RPC limits row of a 0.17 store", async () => {
@@ -359,17 +368,16 @@ describe("MidenDatabase migrations", () => {
     ]);
     dbV8.close();
 
-    const mdb = trackMidenDb(new MidenDatabase(name));
-    expect(await mdb.open("0.18.0")).toBe(true);
-
     // The v10 split then keeps the user row and, of the client rows, only the stamp.
-    expect(await mdb.userSettings.toArray()).toEqual([
+    const { seen } = await openReadingAtCutover(name, {
+      ...SETTINGS_AT_CUTOVER,
+      accountAuth: (table) => table.toArray(),
+    });
+    expect(seen.userSettings).toEqual([
       { key: limitsKey, value: new Uint8Array([2]) },
     ]);
-    expect(await mdb.clientConfig.toCollection().primaryKeys()).toEqual([
-      CLIENT_VERSION_SETTING_KEY,
-    ]);
-    expect(await mdb.accountAuths.toArray()).toEqual([AUTH_SENTINEL]);
+    expect(seen.clientConfig).toEqual([CLIENT_VERSION_SETTING_KEY]);
+    expect(seen.accountAuth).toEqual([AUTH_SENTINEL]);
   });
 
   // v10/v11: `settings` splits into `userSettings` and `clientConfig`, as SQLite migration 5
@@ -398,18 +406,18 @@ describe("MidenDatabase migrations", () => {
     ]);
     dbV9.close();
 
-    const mdb = trackMidenDb(new MidenDatabase(name));
-    expect(await mdb.open("0.18.0")).toBe(true);
-
-    expect(await mdb.userSettings.toArray()).toEqual([
-      { key: "rpc_limits", value: value(4) },
+    const { mdb, seen } = await openReadingAtCutover(name, {
+      userSettings: (table) => table.toArray(),
+      clientConfig: (table) => table.toArray(),
+    });
+    expect(seen.userSettings).toEqual([{ key: "rpc_limits", value: value(4) }]);
+    expect(seen.clientConfig).toEqual([
+      {
+        key: CLIENT_VERSION_SETTING_KEY,
+        value: new TextEncoder().encode("0.18.0"),
+      },
+      { key: "protocol_config:0x01", value: value(1) },
     ]);
-    expect(
-      (await mdb.clientConfig.toCollection().primaryKeys()).sort()
-    ).toEqual([CLIENT_VERSION_SETTING_KEY, "protocol_config:0x01"]);
-    expect((await mdb.clientConfig.get("protocol_config:0x01"))!.value).toEqual(
-      value(1)
-    );
     expect(mdb.dexie.tables.map((table) => table.name)).not.toContain(
       "settings"
     );
@@ -440,10 +448,8 @@ describe("MidenDatabase migrations", () => {
       partialBlockchainPeaks: peaks,
     });
 
-    const mdb = trackMidenDb(new MidenDatabase(name));
-    expect(await mdb.open("0.18.0")).toBe(true);
-
-    expect(await mdb.chainAnchors.toArray()).toEqual([
+    const { mdb, seen } = await openReadingAtCutover(name, ANCHORS_AT_CUTOVER);
+    expect(seen.chainAnchors).toEqual([
       { blockNum: 0, peaks: new Uint8Array() },
       { blockNum: 42, peaks },
     ]);
@@ -459,19 +465,15 @@ describe("MidenDatabase migrations", () => {
       partialBlockchainPeaks: peaks,
     });
 
-    const mdb = trackMidenDb(new MidenDatabase(name));
-    expect(await mdb.open("0.18.0")).toBe(true);
-
-    expect(await mdb.chainAnchors.toArray()).toEqual([{ blockNum: 0, peaks }]);
+    const { seen } = await openReadingAtCutover(name, ANCHORS_AT_CUTOVER);
+    expect(seen.chainAnchors).toEqual([{ blockNum: 0, peaks }]);
   });
 
   it("v12 migration seeds the genesis anchor when there is no checkpoint row", async () => {
     const name = await v9StoreWithCheckpoint(null);
 
-    const mdb = trackMidenDb(new MidenDatabase(name));
-    expect(await mdb.open("0.18.0")).toBe(true);
-
-    expect(await mdb.chainAnchors.toArray()).toEqual([
+    const { seen } = await openReadingAtCutover(name, ANCHORS_AT_CUTOVER);
+    expect(seen.chainAnchors).toEqual([
       { blockNum: 0, peaks: new Uint8Array() },
     ]);
   });
@@ -679,6 +681,13 @@ function stampRow(version: string) {
   };
 }
 
+function protocolV1StampRow() {
+  return {
+    key: PROTOCOL_V1_STAMP_KEY,
+    value: new TextEncoder().encode("1"),
+  };
+}
+
 // The stamp as a row of the `settings` table, which version 11 removes.
 function legacyStampRow(version: string) {
   return { scope: SETTING_SCOPE_CLIENT, ...stampRow(version) };
@@ -742,16 +751,40 @@ async function expectCleared(mdb: MidenDatabase, version: string) {
     }
   }
   expect(await mdb.chainAnchors.toArray()).toEqual([GENESIS_ANCHOR]);
-  expect(await mdb.clientConfig.toArray()).toEqual([stampRow(version)]);
+  expect(await mdb.clientConfig.toArray()).toEqual([
+    stampRow(version),
+    protocolV1StampRow(),
+  ]);
 }
 
-// The notices a clear of the store logs.
+const PROTOCOL_V1_REASON = "before protocol 1.0";
+
+function storeNotices(
+  warn: { mock: { calls: unknown[][] } },
+  name: string
+): string[] {
+  return warn.mock.calls
+    .map((args) => String(args[0]))
+    .filter((notice) => notice.includes(`IndexedDB store ${name}:`));
+}
+
+// The notices that the v8 cutover logs when it clears the store.
 function clearNotices(
   warn: { mock: { calls: unknown[][] } },
   name: string
 ): number {
-  return warn.mock.calls.filter((args) =>
-    String(args[0]).includes(`IndexedDB store ${name}:`)
+  return storeNotices(warn, name).filter(
+    (notice) => !notice.includes(PROTOCOL_V1_REASON)
+  ).length;
+}
+
+// The notices that the protocol 1.0 cutover logs when it clears the store.
+function protocolV1Notices(
+  warn: { mock: { calls: unknown[][] } },
+  name: string
+): number {
+  return storeNotices(warn, name).filter((notice) =>
+    notice.includes(PROTOCOL_V1_REASON)
   ).length;
 }
 
@@ -799,20 +832,28 @@ describe("the v8 cutover", () => {
   });
 
   it.each([
-    ["0.17.3", "0.17.4"],
-    [MIGRATION_BASELINE, "0.17.4"],
-    ["0.18.0-rc.1", "0.18.0"],
-    ["not-a-version", "0.17.4"],
-  ])("keeps a v7 store stamped %s and stamps %s", async (stored, running) => {
+    ["0.17.3"],
+    [MIGRATION_BASELINE],
+    ["0.18.0-rc.1"],
+    ["not-a-version"],
+  ])("keeps a v7 store stamped %s through v8", async (stored) => {
     const name = await v7Store(stored);
     const warn = vi.spyOn(console, "warn");
 
-    const kept = await reopen(name, running);
-    await expectKept(kept, running);
-    expect(await kept.tags.count()).toBe(1);
-    expect((await kept.chainAnchors.get(42))!.peaks).toEqual(
-      new Uint8Array([7])
-    );
+    // The rows are still there when the protocol 1.0 cutover clears them.
+    const { seen } = await openReadingAtCutover(name, {
+      accountAuth: (table) => table.toArray(),
+      userSettings: (table) => table.toArray(),
+      tags: (table) => table.count(),
+      chainAnchors: (table) => table.get(42),
+    });
+    expect(seen.accountAuth).toEqual([AUTH_SENTINEL]);
+    expect(seen.userSettings).toEqual([USER_SENTINEL]);
+    expect(seen.tags).toBe(1);
+    expect(seen.chainAnchors).toEqual({
+      blockNum: 42,
+      peaks: new Uint8Array([7]),
+    });
     expect(clearNotices(warn, name)).toBe(0);
   });
 
@@ -851,6 +892,49 @@ describe("the v8 cutover", () => {
     expect(await second.accountAuths.toArray()).toEqual([written]);
     expect(await storedVersion(second)).toBe("0.17.4");
   });
+});
+
+describe("the protocol 1.0 cutover", () => {
+  // A store as the last release before protocol 1.0 left it: schema version 9, stamped with the
+  // version that the first build after the cutover also stamps.
+  async function v9Store(version: string): Promise<string> {
+    const name = uniqueDbName();
+    const db = trackDb(new Dexie(name));
+    db.version(9).stores(V6_STORES);
+    await db.open();
+    await db.table("accountAuth").put(AUTH_SENTINEL);
+    await db
+      .table("settings")
+      .bulkPut([LEGACY_USER_SENTINEL, legacyStampRow(version)]);
+    await db.table("blockchainCheckpoint").put({
+      id: 1,
+      blockNum: 42,
+      partialBlockchainPeaks: new Uint8Array([7]),
+    });
+    db.close();
+    return name;
+  }
+
+  it.each(["0.18.0", "0.17.9", "1.0.0", "not-a-version"])(
+    "clears a v9 store stamped %s in place, whatever the running version, and keeps it from then on",
+    async (stored) => {
+      const name = await v9Store(stored);
+      const deleteSpy = vi.spyOn(Dexie.prototype, "delete");
+      const warn = vi.spyOn(console, "warn");
+
+      const cleared = await reopen(name, "0.18.0");
+      await expectCleared(cleared, "0.18.0");
+      expect(deleteSpy).not.toHaveBeenCalled();
+      expect(protocolV1Notices(warn, name)).toBe(1);
+      expect(clearNotices(warn, name)).toBe(0);
+
+      await cleared.accountAuths.put(AUTH_SENTINEL);
+      await cleared.userSettings.put(USER_SENTINEL);
+      cleared.dexie.close();
+      await expectKept(await reopen(name, "0.18.0"), "0.18.0");
+      expect(protocolV1Notices(warn, name)).toBe(1);
+    }
+  );
 });
 
 describe("ensureClientVersion: a store that ran the cutover is kept", () => {
