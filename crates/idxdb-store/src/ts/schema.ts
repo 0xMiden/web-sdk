@@ -93,7 +93,8 @@ function reportOpenFailure(
 
 function installStoragePolicy(
   db: Dexie,
-  policies: () => Map<string, IndexedDbOptions> | undefined
+  policies: () => Map<string, IndexedDbOptions> | undefined,
+  isRegistered: () => boolean
 ): void {
   db.use({
     stack: "dbcore",
@@ -112,6 +113,17 @@ function installStoragePolicy(
           (value) => durabilities.includes(value)
         );
         const requestPhase = mode === "readonly" ? "read" : "write";
+        // The open operation reports initialization failures.
+        const reportTransactions = isRegistered();
+        let reported = false;
+        const report = (phase: FailurePhase, error: unknown) => {
+          if (!reportTransactions || reported) return;
+          const failure = storageFailure(phase, error);
+          if (!failure) return;
+          reported = true;
+          notify(policies()?.values(), failure);
+        };
+
         let transaction: IDBTransaction;
         try {
           transaction = downlevel.transaction(
@@ -122,19 +134,11 @@ function installStoragePolicy(
               : options
           ) as IDBTransaction;
         } catch (error) {
-          const failure = storageFailure(requestPhase, error);
-          if (failure) notify(policies()?.values(), failure);
+          report(requestPhase, error);
           throw error;
         }
 
-        let reported = false;
-        const report = (phase: FailurePhase, error: unknown) => {
-          if (reported) return;
-          const failure = storageFailure(phase, error);
-          if (!failure) return;
-          reported = true;
-          notify(policies()?.values(), failure);
-        };
+        if (!reportTransactions) return transaction;
         // Dexie stops request errors at their target.
         transaction.addEventListener(
           "error",
@@ -745,7 +749,11 @@ export class MidenDatabase {
 
   constructor(network: string) {
     this.dexie = new Dexie(network) as MidenDexie;
-    installStoragePolicy(this.dexie, () => storagePolicies.get(network));
+    installStoragePolicy(
+      this.dexie,
+      () => storagePolicies.get(network),
+      () => databaseRegistry.get(network)?.db === this
+    );
 
     // --- Schema versioning ---
     //

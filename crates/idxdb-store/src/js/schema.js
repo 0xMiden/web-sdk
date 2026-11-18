@@ -59,7 +59,7 @@ function reportOpenFailure(policies, error) {
     if (failure)
         notify(policies, failure);
 }
-function installStoragePolicy(db, policies) {
+function installStoragePolicy(db, policies, isRegistered) {
     db.use({
         stack: "dbcore",
         name: "miden-storage-policy",
@@ -72,21 +72,11 @@ function installStoragePolicy(db, policies) {
                 const durabilities = Array.from(active.values(), ({ durability }) => durability);
                 const durability = ["strict", "default", "relaxed"].find((value) => durabilities.includes(value));
                 const requestPhase = mode === "readonly" ? "read" : "write";
-                let transaction;
-                try {
-                    transaction = downlevel.transaction(stores, mode, durability && mode === "readwrite"
-                        ? { ...options, durability }
-                        : options);
-                }
-                catch (error) {
-                    const failure = storageFailure(requestPhase, error);
-                    if (failure)
-                        notify(policies()?.values(), failure);
-                    throw error;
-                }
+                // The open operation reports initialization failures.
+                const reportTransactions = isRegistered();
                 let reported = false;
                 const report = (phase, error) => {
-                    if (reported)
+                    if (!reportTransactions || reported)
                         return;
                     const failure = storageFailure(phase, error);
                     if (!failure)
@@ -94,6 +84,18 @@ function installStoragePolicy(db, policies) {
                     reported = true;
                     notify(policies()?.values(), failure);
                 };
+                let transaction;
+                try {
+                    transaction = downlevel.transaction(stores, mode, durability && mode === "readwrite"
+                        ? { ...options, durability }
+                        : options);
+                }
+                catch (error) {
+                    report(requestPhase, error);
+                    throw error;
+                }
+                if (!reportTransactions)
+                    return transaction;
                 // Dexie stops request errors at their target.
                 transaction.addEventListener("error", (event) => report(requestPhase, event.target?.error), { capture: true });
                 transaction.addEventListener("abort", () => report(requestPhase === "read" ? "read" : "commit", transaction.error));
@@ -352,7 +354,7 @@ export class MidenDatabase {
     accountWitnesses;
     constructor(network) {
         this.dexie = new Dexie(network);
-        installStoragePolicy(this.dexie, () => storagePolicies.get(network));
+        installStoragePolicy(this.dexie, () => storagePolicies.get(network), () => databaseRegistry.get(network)?.db === this);
         // --- Schema versioning ---
         //
         // A store survives client upgrades, so every change to a table's shape or to a stored
