@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          fetch-depth: 2
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -48,14 +48,15 @@ jobs:
       - name: Bind the complete Rust dependency set
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = e952d1476a548d14eaf2c76eecfc0209c2c13de9
+          git merge-base --is-ancestor e952d1476a548d14eaf2c76eecfc0209c2c13de9 HEAD
           test "$(git -C linked-rust rev-parse HEAD)" = b6afbe02c112768338ac6bde8ee9188cfccfd446
-          cat >> Cargo.toml <<'EOF'
+          mv linked-rust "$RUNNER_TEMP/storage-rust"
+          cat >> Cargo.toml <<EOF
 
           [patch.crates-io]
-          miden-client = { path = "linked-rust/crates/rust-client" }
-          miden-client-proto = { path = "linked-rust/crates/proto" }
-          miden-client-sqlite-store = { path = "linked-rust/crates/sqlite-store" }
+          miden-client = { path = "$RUNNER_TEMP/storage-rust/crates/rust-client" }
+          miden-client-proto = { path = "$RUNNER_TEMP/storage-rust/crates/proto" }
+          miden-client-sqlite-store = { path = "$RUNNER_TEMP/storage-rust/crates/sqlite-store" }
           EOF
           cargo update -p miden-client -p miden-client-proto -p miden-client-sqlite-store
       - name: Build browser SDK and verify package
