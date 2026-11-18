@@ -14,6 +14,8 @@ use miden_client::testing::note_transport::{MockNoteTransportApi, MockNoteTransp
 use miden_client::utils::{Deserializable, RwLock, Serializable};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
+#[cfg(feature = "browser")]
+use wasm_bindgen::JsValue;
 
 use crate::platform::{JsErr, from_str_err};
 use crate::{WebClient, create_rng, js_error_with_context};
@@ -31,7 +33,9 @@ impl WebClient {
         seed: Option<Vec<u8>>,
         serialized_mock_chain: Option<Vec<u8>>,
         serialized_mock_note_transport_node: Option<Vec<u8>>,
+        storage_options: JsValue,
     ) -> Result<String, JsErr> {
+        let (note_gate, storage_policy) = crate::note_acquisition::options(&storage_options)?;
         let mock_rpc_api = match serialized_mock_chain {
             Some(chain) => {
                 Arc::new(MockRpcApi::new(MockChain::read_from_bytes(&chain).map_err(|err| {
@@ -54,7 +58,7 @@ impl WebClient {
         let store_name = "mock_client_db".to_owned();
         let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
-            IdxdbStore::new(store_name.clone())
+            IdxdbStore::new_with_options(store_name.clone(), storage_policy)
                 .await
                 .map_err(|err| idxdb_store_init_error(&err))?,
         );
@@ -75,6 +79,7 @@ impl WebClient {
             rng,
             Some(mock_note_transport_api.clone()),
             Some(protocol_config.fee_asset_id().faucet_id()),
+            note_gate,
         )
         .await?;
 

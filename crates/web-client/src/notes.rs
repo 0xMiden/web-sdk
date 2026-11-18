@@ -12,6 +12,35 @@ use crate::{WebClient, js_error_with_context};
 
 #[js_export]
 impl WebClient {
+    /// Returns a bounded page of browser input notes, in ascending details commitment order.
+    #[js_export(js_name = "getInputNotesPage")]
+    pub async fn get_input_notes_page(
+        &self,
+        after: Option<String>,
+        limit: u32,
+    ) -> Result<Vec<InputNoteRecord>, JsErr> {
+        #[cfg(feature = "nodejs")]
+        {
+            let _ = (after, limit);
+            Err(from_str_err("notes.listPage is not supported on Node.js"))
+        }
+        #[cfg(feature = "browser")]
+        {
+            let store = self.store_identifier().await?;
+            let after = after
+                .map(|key| {
+                    Word::try_from(key)
+                        .map(|word| word.to_hex())
+                        .map_err(|_| from_str_err("Invalid input note page cursor"))
+                })
+                .transpose()?;
+            let page = idxdb_store::note::input_notes_page(&store, after, limit)
+                .await
+                .map_err(|err| js_error_with_context(err, "failed to read input note page"))?;
+            Ok(page.into_iter().map(Into::into).collect())
+        }
+    }
+
     #[js_export(js_name = "getInputNotes")]
     pub async fn get_input_notes(&self, filter: NoteFilter) -> Result<Vec<InputNoteRecord>, JsErr> {
         let mut guard = self.get_mut_inner().await;

@@ -59,6 +59,16 @@ impl NoteFile {
         }
     }
 
+    /// Returns the details commitment when this file contains the note details.
+    #[js_export(js_name = "detailsCommitment")]
+    pub fn details_commitment(&self) -> Option<String> {
+        match &self.inner {
+            NativeNoteFile::NoteId(_) => None,
+            NativeNoteFile::Committed { note, .. } => Some(note.details_commitment().to_hex()),
+            NativeNoteFile::ExpectedNote { details, .. } => Some(details.commitment().to_hex()),
+        }
+    }
+
     /// Returns the note details if present.
     #[js_export(js_name = "noteDetails")]
     pub fn note_details(&self) -> Option<NoteDetails> {

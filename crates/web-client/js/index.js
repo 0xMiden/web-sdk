@@ -2,6 +2,7 @@ import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
 import { coalesceRun, runUnderLock, withSyncLock } from "./syncLock.js";
 import {
+  DEFAULT_CALLBACK_TIMEOUT_MS,
   serializeCallbackError,
   validateCallbackTimeoutMs,
 } from "./callbackBridge.js";
@@ -162,6 +163,7 @@ const READ_METHODS = new Set([
   "getConsumableNotes",
   "getInputNote",
   "getInputNotes",
+  "getInputNotesPage",
   "getOutputNote",
   "getOutputNotes",
   "getPswapLineage",
@@ -188,6 +190,59 @@ const MOCK_STORE_NAME = "mock_client_db";
 // warnings for those two.
 void WRITE_METHODS;
 void READ_METHODS;
+
+function clientStorageOptions(options) {
+  const retainNotes = options?.beforeNoteAcquisition;
+  const indexedDb = options?.indexedDb;
+  if (retainNotes !== undefined && typeof retainNotes !== "function") {
+    throw new TypeError("beforeNoteAcquisition must be a function");
+  }
+  const beforeNoteAcquisition =
+    retainNotes &&
+    async function (batch) {
+      let timeout;
+      try {
+        const deadline = new Promise((_, reject) => {
+          timeout = setTimeout(() => {
+            reject(new Error("Note retention callback timed out"));
+          }, DEFAULT_CALLBACK_TIMEOUT_MS);
+        });
+        await Promise.race([
+          deadline,
+          Reflect.apply(retainNotes, this, [batch]),
+        ]);
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
+  if (indexedDb === undefined) {
+    return beforeNoteAcquisition === undefined
+      ? undefined
+      : { beforeNoteAcquisition };
+  }
+  if (!indexedDb || typeof indexedDb !== "object" || Array.isArray(indexedDb)) {
+    throw new TypeError("indexedDb must be an options object");
+  }
+  const { durability, onFailure } = indexedDb;
+  if (
+    durability !== undefined &&
+    !["default", "strict", "relaxed"].includes(durability)
+  ) {
+    throw new TypeError("indexedDb.durability is invalid");
+  }
+  if (onFailure !== undefined && typeof onFailure !== "function") {
+    throw new TypeError("indexedDb.onFailure must be a function");
+  }
+  return { beforeNoteAcquisition, indexedDb: { durability, onFailure } };
+}
+
+const storageErrorKinds = new Map([
+  ["QuotaExceededError", "quota"],
+  ["UnknownError", "io"],
+  ["SecurityError", "unavailable"],
+  ["InvalidStateError", "unavailable"],
+  ["MissingAPIError", "unavailable"],
+]);
 
 const buildTypedArraysExport = (exportObject) => {
   return Object.entries(exportObject).reduce(
@@ -527,6 +582,7 @@ class WebClient {
     this._noteTransportMaxRetries = noteTransportMaxRetries;
     this._noteTransportRetryIntervalMs = noteTransportRetryIntervalMs;
     this._callbackTimeoutMs = validateCallbackTimeoutMs(callbackTimeoutMs);
+    this._storageOptions = clientStorageOptions(observability);
     this.useWorker = useWorker !== false;
 
     // Check if Web Workers are available AND the caller didn't opt out via
@@ -603,26 +659,46 @@ class WebClient {
           return;
         }
 
+        if (data.action === WorkerAction.INDEXED_DB_FAILURE) {
+          const callback = this._storageOptions?.indexedDb?.onFailure;
+          const { phase, kind, errorName } = data.failure ?? {};
+          if (
+            callback &&
+            !this._terminated &&
+            ["open", "read", "write", "commit"].includes(phase) &&
+            storageErrorKinds.has(errorName) &&
+            storageErrorKinds.get(errorName) === kind
+          ) {
+            try {
+              await callback({ phase, kind, errorName });
+            } catch {
+              // Feedback cannot change the worker's original result.
+            }
+          }
+          return;
+        }
+
         if (data.action === WorkerAction.EXECUTE_CALLBACK) {
           const { callbackType, args, requestId } = data;
+          const noteRetention =
+            callbackType === CallbackType.BEFORE_NOTE_ACQUISITION;
           try {
             const callbackMapping = {
               [CallbackType.GET_KEY]: this.getKeyCb,
               [CallbackType.INSERT_KEY]: this.insertKeyCb,
               [CallbackType.SIGN]: this.signCb,
+              [CallbackType.BEFORE_NOTE_ACQUISITION]:
+                this._storageOptions?.beforeNoteAcquisition,
             };
             if (!callbackMapping[callbackType]) {
               throw new Error(`Callback ${callbackType} not available`);
             }
             const callbackFunction = callbackMapping[callbackType];
-            let result = callbackFunction.apply(this, args);
-            if (result instanceof Promise) {
-              result = await result;
-            }
+            const result = await callbackFunction.apply(this, args);
 
-            this.worker.postMessage({
+            this.worker?.postMessage({
               callbackOk: true,
-              callbackResult: result,
+              callbackResult: noteRetention ? undefined : result,
               callbackRequestId: requestId,
             });
           } catch (error) {
@@ -630,9 +706,11 @@ class WebClient {
             // (a string, `{ code: 4001 }`, `null`), so send an explicit failure
             // flag and the cloneable fields the worker needs to rebuild the
             // error, including when causes cycle or properties are unreadable.
-            this.worker.postMessage({
+            this.worker?.postMessage({
               callbackOk: false,
-              callbackError: serializeCallbackError(error, callbackType),
+              callbackError: noteRetention
+                ? { message: "Note retention was refused" }
+                : serializeCallbackError(error, callbackType),
               callbackRequestId: requestId,
             });
           }
@@ -958,6 +1036,20 @@ class WebClient {
         numThreads = navigator.hardwareConcurrency;
       }
     } catch {}
+    const indexedDb = this._storageOptions?.indexedDb;
+    const storageArgs = this._storageOptions
+      ? [
+          {
+            beforeNoteAcquisition: Boolean(
+              this._storageOptions.beforeNoteAcquisition
+            ),
+            indexedDb: indexedDb && {
+              durability: indexedDb.durability,
+              notify: Boolean(indexedDb.onFailure),
+            },
+          },
+        ]
+      : [];
     this.worker.postMessage({
       action: WorkerAction.INIT,
       args: [
@@ -974,6 +1066,7 @@ class WebClient {
         this._noteTransportMaxRetries,
         this._noteTransportRetryIntervalMs,
         this._callbackTimeoutMs,
+        ...storageArgs,
       ],
     });
   }
@@ -1074,7 +1167,8 @@ class WebClient {
         network,
         feeFaucetId,
         noteTransportMaxRetries,
-        noteTransportRetryIntervalMs
+        noteTransportRetryIntervalMs,
+        ...(instance._storageOptions ? [instance._storageOptions] : [])
       );
 
       // Wait for the worker to be ready
@@ -1171,7 +1265,8 @@ class WebClient {
         insertKeyCb,
         signCb,
         noteTransportMaxRetries,
-        noteTransportRetryIntervalMs
+        noteTransportRetryIntervalMs,
+        ...(instance._storageOptions ? [instance._storageOptions] : [])
       );
 
       await instance.ready;

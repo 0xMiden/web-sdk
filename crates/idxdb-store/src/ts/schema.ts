@@ -29,6 +29,132 @@ export const STORAGE_SLOT_TYPE_MAP = 1;
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
+// wasm-bindgen copies referenced snippets without their local dependencies.
+type FailurePhase = "open" | "read" | "write" | "commit";
+type FailureKind = "quota" | "io" | "unavailable";
+
+interface IndexedDbFailure {
+  phase: FailurePhase;
+  kind: FailureKind;
+  errorName: string;
+}
+
+interface IndexedDbOptions {
+  durability?: IDBTransactionDurability;
+  onFailure?: (failure: IndexedDbFailure) => void;
+}
+
+const kindByName = new Map<string, FailureKind>([
+  ["QuotaExceededError", "quota"],
+  ["UnknownError", "io"],
+  ["SecurityError", "unavailable"],
+  ["InvalidStateError", "unavailable"],
+  ["MissingAPIError", "unavailable"],
+]);
+
+function storageFailure(
+  phase: FailurePhase,
+  error: unknown
+): IndexedDbFailure | undefined {
+  const seen = new WeakSet();
+  while (error && typeof error === "object" && !seen.has(error)) {
+    seen.add(error);
+    const name = (error as { name?: unknown }).name;
+    if (typeof name === "string") {
+      const kind = kindByName.get(name);
+      if (kind) return { phase, kind, errorName: name };
+    }
+    error = (error as { inner?: unknown }).inner;
+  }
+  return undefined;
+}
+
+function notify(
+  policies: Iterable<IndexedDbOptions> | undefined,
+  failure: IndexedDbFailure
+): void {
+  if (!policies) return;
+  for (const { onFailure } of policies) {
+    try {
+      void Promise.resolve(onFailure?.({ ...failure })).catch(() => {});
+    } catch {
+      // A notification cannot replace the original IndexedDB error.
+    }
+  }
+}
+
+function reportOpenFailure(
+  policies: Iterable<IndexedDbOptions> | undefined,
+  error: unknown
+): void {
+  const failure = storageFailure("open", error);
+  if (failure) notify(policies, failure);
+}
+
+function installStoragePolicy(
+  db: Dexie,
+  policies: () => Map<string, IndexedDbOptions> | undefined,
+  isRegistered: () => boolean
+): void {
+  db.use({
+    stack: "dbcore",
+    name: "miden-storage-policy",
+    create: (downlevel) => ({
+      ...downlevel,
+      transaction(stores, mode, options) {
+        const active = policies();
+        if (!active?.size) return downlevel.transaction(stores, mode, options);
+
+        const durabilities = Array.from(
+          active.values(),
+          ({ durability }) => durability
+        );
+        const durability = (["strict", "default", "relaxed"] as const).find(
+          (value) => durabilities.includes(value)
+        );
+        const requestPhase = mode === "readonly" ? "read" : "write";
+        // The open operation reports initialization failures.
+        const reportTransactions = isRegistered();
+        let reported = false;
+        const report = (phase: FailurePhase, error: unknown) => {
+          if (!reportTransactions || reported) return;
+          const failure = storageFailure(phase, error);
+          if (!failure) return;
+          reported = true;
+          notify(policies()?.values(), failure);
+        };
+
+        let transaction: IDBTransaction;
+        try {
+          transaction = downlevel.transaction(
+            stores,
+            mode,
+            durability && mode === "readwrite"
+              ? { ...options, durability }
+              : options
+          ) as IDBTransaction;
+        } catch (error) {
+          report(requestPhase, error);
+          throw error;
+        }
+
+        if (!reportTransactions) return transaction;
+        // Dexie stops request errors at their target.
+        transaction.addEventListener(
+          "error",
+          (event) =>
+            report(requestPhase, (event.target as IDBRequest | null)?.error),
+          { capture: true }
+        );
+        transaction.addEventListener("abort", () =>
+          report(requestPhase === "read" ? "read" : "commit", transaction.error)
+        );
+        return transaction;
+      },
+    }),
+  });
+}
+
 interface RegistryEntry {
   db: MidenDatabase;
   holders: number;
@@ -45,6 +171,15 @@ interface PendingOpen {
 // Each name has one connection, held by every live Rust `IdxdbStore` on it.
 const databaseRegistry = new Map<string, RegistryEntry>();
 const pendingOpens = new Map<string, PendingOpen>();
+const storagePolicies = new Map<string, Map<string, IndexedDbOptions>>();
+let nextStorageHolder = 0;
+
+function removeStoragePolicy(network: string, holder: string): boolean {
+  const policies = storagePolicies.get(network);
+  if (!policies?.delete(holder)) return false;
+  if (!policies.size) storagePolicies.delete(network);
+  return true;
+}
 
 /**
  * Get a database instance from the registry by its ID.
@@ -64,7 +199,8 @@ export function getDatabase(dbId: string): MidenDatabase {
  * Releases one holder of the database registered for `network`, closing and
  * unregistering it when the last holder is gone. No-op for an unknown name.
  */
-export function closeDatabase(network: string): void {
+export function closeDatabase(network: string, holder?: string): void {
+  if (holder !== undefined && !removeStoragePolicy(network, holder)) return;
   const entry = databaseRegistry.get(network);
   if (!entry) {
     return;
@@ -75,6 +211,27 @@ export function closeDatabase(network: string): void {
   }
   entry.db.dexie.close();
   databaseRegistry.delete(network);
+}
+
+export async function openDatabaseWithOptions(
+  network: string,
+  clientVersion: string,
+  options: IndexedDbOptions
+): Promise<string> {
+  const holder = String(++nextStorageHolder);
+  let policies = storagePolicies.get(network);
+  if (!policies) {
+    policies = new Map();
+    storagePolicies.set(network, policies);
+  }
+  policies.set(holder, options);
+  try {
+    await openDatabase(network, clientVersion);
+    return holder;
+  } catch (error) {
+    removeStoragePolicy(network, holder);
+    throw error;
+  }
 }
 
 /**
@@ -592,6 +749,11 @@ export class MidenDatabase {
 
   constructor(network: string) {
     this.dexie = new Dexie(network) as MidenDexie;
+    installStoragePolicy(
+      this.dexie,
+      () => storagePolicies.get(network),
+      () => databaseRegistry.get(network)?.db === this
+    );
 
     // --- Schema versioning ---
     //
@@ -832,6 +994,7 @@ export class MidenDatabase {
       return true;
       /* v8 ignore next 4 — logWebStoreError always re-throws, so `return false` and this catch block are unreachable */
     } catch (err) {
+      reportOpenFailure(storagePolicies.get(this.dexie.name)?.values(), err);
       logWebStoreError(err, "Failed to open database");
       return false;
     }

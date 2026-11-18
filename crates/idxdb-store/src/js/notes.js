@@ -34,6 +34,17 @@ export async function getInputNotes(dbId, states) {
         logWebStoreError(err, "Failed to get input notes");
     }
 }
+export async function getInputNotesPage(dbId, after, limit) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 256) {
+        throw new RangeError("Input note page limit must be an integer from 1 to 256");
+    }
+    const { inputNotes } = getDatabase(dbId);
+    const query = after === undefined
+        ? inputNotes.orderBy("detailsCommitment")
+        : inputNotes.where("detailsCommitment").above(after);
+    const notes = await query.limit(limit).toArray();
+    return await processInputNotes(dbId, notes);
+}
 export async function getInputNotesFromIds(dbId, noteIds) {
     try {
         const db = getDatabase(dbId);

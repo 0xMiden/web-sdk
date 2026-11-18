@@ -64,11 +64,19 @@ export function createWasmWebClient(rawSdk, options) {
       storeName,
       _logLevel,
       _useWorker,
-      _observability,
+      browserOptions,
       feeFaucetId,
       noteTransportMaxRetries,
       noteTransportRetryIntervalMs
     ) => {
+      if (browserOptions?.beforeNoteAcquisition !== undefined) {
+        throw new TypeError(
+          "beforeNoteAcquisition is not supported on Node.js"
+        );
+      }
+      if (browserOptions?.indexedDb !== undefined) {
+        throw new TypeError("indexedDb is not supported on Node.js");
+      }
       validateNoteTransportRetryOptions(
         noteTransportMaxRetries,
         noteTransportRetryIntervalMs

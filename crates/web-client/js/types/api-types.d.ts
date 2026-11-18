@@ -207,6 +207,24 @@ export interface MidenObservation {
 // Client options
 // ════════════════════════════════════════════════════════════════
 
+export interface NoteAcquisitionBatch {
+  source: "import" | "note-transport";
+  notes: readonly Uint8Array[];
+}
+
+export interface IndexedDbFailure {
+  phase: "open" | "read" | "write" | "commit";
+  kind: "quota" | "io" | "unavailable";
+  errorName: string;
+}
+
+export interface IndexedDbOptions {
+  /** Browser durability hint for write transactions. */
+  durability?: "default" | "strict" | "relaxed";
+  /** Receives failures from IndexedDB without database names, messages or note data. */
+  onFailure?: (failure: IndexedDbFailure) => void;
+}
+
 export interface ClientOptions {
   /**
    * RPC endpoint. Accepts shorthands or a raw URL:
@@ -236,6 +254,17 @@ export interface ClientOptions {
   seed?: string | Uint8Array;
   /** Store isolation key. */
   storeName?: string;
+  /**
+   * Browser-only hook awaited before note import writes and before advancing
+   * the note transport cursor. Resolve after retaining the supplied NoteFile
+   * bytes. Each callback receives up to 2 MiB of serialized notes and has 30
+   * seconds to acknowledge them. A timeout or rejection prevents the import.
+   * A retry can repeat a previously acknowledged batch. The callback must
+   * avoid re-entering the client or its store.
+   */
+  beforeNoteAcquisition?: (batch: NoteAcquisitionBatch) => Promise<void>;
+  /** Browser-only IndexedDB durability and failure reporting. */
+  indexedDb?: IndexedDbOptions;
   /**
    * Faucet of the chain's fee asset, as a bech32 address or a hex account ID.
    *
@@ -1064,7 +1093,8 @@ export type NoteQuery =
    * state. Only supported by `notes.list`; `notes.listSent` returns an empty
    * list for this query.
    */
-  | { scriptRoots: (string | Word)[] };
+  | { scriptRoots: (string | Word)[] }
+  | { detailsCommitments: string[] };
 
 /** Options for standalone note creation utilities. */
 export interface NoteOptions {
@@ -1675,6 +1705,13 @@ export interface NotesResource {
    * @param query - Optional filter by note status, note IDs, or script roots.
    */
   list(query?: NoteQuery): Promise<InputNoteRecord[]>;
+
+  /**
+   * Browser-only scan of at most 256 input notes in details commitment order.
+   * Use the last record's detailsCommitment() as the exclusive next cursor.
+   * Each page reflects the store at the time of its own read.
+   */
+  listPage(options: { after?: string; limit: number }): Promise<InputNoteRecord[]>;
   /**
    * Retrieve a note by ID. Returns `null` if not found.
    *

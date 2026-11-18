@@ -24,6 +24,16 @@ export class NotesResource {
     return await this.#inner.getInputNotes(filter);
   }
 
+  async listPage({ after, limit }) {
+    this.#client.assertNotTerminated();
+    if (!Number.isInteger(limit) || limit < 1 || limit > 256) {
+      throw new RangeError(
+        "Input note page limit must be an integer from 1 to 256"
+      );
+    }
+    return await this.#inner.getInputNotesPage(after, limit);
+  }
+
   async get(noteId) {
     this.#client.assertNotTerminated();
     const result = await this.#inner.getInputNote(resolveNoteIdHex(noteId));
@@ -146,6 +156,15 @@ function buildNoteFilter(query, wasm) {
       wasm.NoteFilterTypes.ScriptRoots,
       undefined,
       scriptRoots
+    );
+  }
+
+  if (query.detailsCommitments) {
+    return new wasm.NoteFilter(
+      wasm.NoteFilterTypes.DetailsCommitments,
+      undefined,
+      undefined,
+      query.detailsCommitments.map((value) => wasm.Word.fromHex(value))
     );
   }
 
