@@ -1,0 +1,47 @@
+name: Web SDK storage focused green
+
+on:
+  push:
+    branches: [ci/fresh-web-native-request-green]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Verify Web SDK recovery wrapper and IndexedDB behavior
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = e952d1476a548d14eaf2c76eecfc0209c2c13de9
+          pnpm -C crates/web-client exec vitest run js/__tests__/storage-continuity.test.js js/__tests__/callbackBridge.test.js js/__tests__/note-transport-retry-options.test.js js/__tests__/worker-init.test.js js/__tests__/client.surface.test.js js/__tests__/constants.test.js --maxWorkers=2 --reporter=json --outputFile="$RUNNER_TEMP/web-storage.json"
+          pnpm -C crates/idxdb-store/src exec vitest run ts/storage-continuity.test.ts ts/notes.test.ts ts/schema.test.ts --maxWorkers=2 --reporter=json --outputFile="$RUNNER_TEMP/idb-storage.json"
+          pnpm -C crates/idxdb-store/src exec tsc --noEmit -p tsconfig.json
+          node --input-type=commonjs <<'NODE'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          for (const [file, expected] of [
+            ['web-storage.json', 124],
+            ['idb-storage.json', 109]
+          ]) {
+            const result = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/' + file, 'utf8'));
+            const tests = result.testResults.flatMap(suite => suite.assertionResults);
+            assert.equal(tests.length, expected);
+            assert.equal(tests.filter(test => test.status === 'passed').length, expected);
+            console.log(file, expected, 'passing tests');
+          }
+          NODE
