@@ -75,6 +75,7 @@ impl WebClient {
             rng,
             Some(mock_note_transport_api.clone()),
             Some(protocol_config.fee_asset_id().faucet_id()),
+            None,
         )
         .await?;
 
