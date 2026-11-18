@@ -48,7 +48,7 @@ jobs:
       - name: Bind the complete Rust dependency set
         run: |
           set -euo pipefail
-          git merge-base --is-ancestor e952d1476a548d14eaf2c76eecfc0209c2c13de9 HEAD
+          git diff --quiet c7a519cdbc52a1671dc869ae2fd47cd6bd261a1f HEAD -- . ':(exclude).github/workflows/fresh-storage-linked.yml'
           test "$(git -C linked-rust rev-parse HEAD)" = b6afbe02c112768338ac6bde8ee9188cfccfd446
           mv linked-rust "$RUNNER_TEMP/storage-rust"
           cat >> Cargo.toml <<EOF
