@@ -10,7 +10,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
   mockTest.describe.configure({ timeout: 720000 });
 
   mockTest(
-    "full flow: create accounts, mint, consume, check balance",
+    "full flow: create accounts, mint, replay, consume, check balance",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
         const client = await window.MidenClient.createMock();
@@ -43,6 +43,18 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
           .id()
           .toString();
 
+        const committedNote = (
+          await client.notes.list({ status: "committed" })
+        ).find((note) => note.id()?.toString() === mintedNoteId);
+        if (!committedNote) throw new Error("Minted note is not committed");
+        const recoveryFile = window.NoteFile.fromExpectedNote(
+          committedNote.details(),
+          committedNote.metadata().tag(),
+          0
+        );
+        const retainedCommitment = recoveryFile.detailsCommitment();
+        const replayedCommitment = await client.notes.import(recoveryFile);
+
         // Consume the minted note
         const { txId: consumeTxId } = await client.transactions.consume({
           account: wallet,
@@ -61,6 +73,8 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
           faucetId: faucet.id().toString(),
           mintTxId: mintTxId.toHex(),
           consumeTxId: consumeTxId.toHex(),
+          retainedCommitment,
+          replayedCommitment,
           balance: balance.toString(),
         };
       });
@@ -69,6 +83,8 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       expect(result.faucetId).toBeDefined();
       expect(result.mintTxId).toBeDefined();
       expect(result.consumeTxId).toBeDefined();
+      expect(result.retainedCommitment).toMatch(/^0x/);
+      expect(result.replayedCommitment).toBe(result.retainedCommitment);
       expect(result.balance).toBe("1000");
     }
   );

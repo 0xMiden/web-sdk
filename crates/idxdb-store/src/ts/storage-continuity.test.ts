@@ -157,6 +157,37 @@ it("reports a backing store open I/O failure even when the observer throws", asy
   });
 });
 
+it.each(["readonly", "readwrite"] as const)(
+  "reports a startup version stamp %s failure once",
+  async (failureMode) => {
+    const store = storeName();
+    const original = IDBDatabase.prototype.transaction;
+    const onFailure = vi.fn();
+    vi.spyOn(IDBDatabase.prototype, "transaction").mockImplementation(function (
+      this: IDBDatabase,
+      ...args
+    ) {
+      const [tables, mode] = args;
+      if (
+        mode === failureMode &&
+        (tables === "settings" ||
+          (Array.isArray(tables) &&
+            tables.length === 1 &&
+            tables[0] === "settings"))
+      ) {
+        throw new DOMException("private startup error", "UnknownError");
+      }
+      return original.apply(this, args);
+    });
+    await expect(openWithOptions(store, { onFailure })).rejects.toThrow();
+    expect(onFailure).toHaveBeenCalledExactlyOnceWith({
+      phase: "open",
+      kind: "io",
+      errorName: "UnknownError",
+    });
+  }
+);
+
 it("reports native request errors that Dexie handles at the request", async () => {
   const store = storeName();
   const onFailure = vi.fn();
