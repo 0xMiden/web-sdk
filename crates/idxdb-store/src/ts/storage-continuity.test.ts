@@ -156,3 +156,49 @@ it("reports a backing store open I/O failure even when the observer throws", asy
     errorName: "UnknownError",
   });
 });
+
+it("reports native request errors that Dexie handles at the request", async () => {
+  const store = storeName();
+  const onFailure = vi.fn();
+  const token = await openWithOptions(store, { onFailure });
+  try {
+    const { settings } = schema.getDatabase(store);
+    const entry = {
+      scope: schema.SETTING_SCOPE_USER,
+      key: "duplicate",
+      value: new Uint8Array([1]),
+    };
+    await settings.add(entry);
+    const add = IDBObjectStore.prototype.add;
+    const descriptor = Object.getOwnPropertyDescriptor(
+      IDBRequest.prototype,
+      "error"
+    )!;
+    vi.spyOn(IDBObjectStore.prototype, "add").mockImplementationOnce(function (
+      this: IDBObjectStore,
+      ...args
+    ) {
+      const request = add.apply(this, args);
+      Object.defineProperty(request, "error", {
+        get: descriptor.get,
+        set(error) {
+          descriptor.set!.call(
+            this,
+            error?.name === "ConstraintError"
+              ? new DOMException("browser request error", "UnknownError")
+              : error
+          );
+        },
+      });
+      return request;
+    });
+    await expect(settings.add(entry)).rejects.toThrow();
+    expect(onFailure).toHaveBeenCalledExactlyOnceWith({
+      phase: "write",
+      kind: "io",
+      errorName: "UnknownError",
+    });
+  } finally {
+    Reflect.apply(schema.closeDatabase, null, [store, token]);
+  }
+});
