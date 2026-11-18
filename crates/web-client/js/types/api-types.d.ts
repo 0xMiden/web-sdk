@@ -257,9 +257,10 @@ export interface ClientOptions {
   /**
    * Browser-only hook awaited before note import writes and before advancing
    * the note transport cursor. Resolve after retaining the supplied NoteFile
-   * bytes. The client waits up to 30 seconds for each callback. A timeout or
-   * rejection prevents the import. The callback must avoid re-entering the
-   * client or its store.
+   * bytes. Each callback receives up to 2 MiB of serialized notes and has 30
+   * seconds to acknowledge them. A timeout or rejection prevents the import.
+   * A retry can repeat a previously acknowledged batch. The callback must
+   * avoid re-entering the client or its store.
    */
   beforeNoteAcquisition?: (batch: NoteAcquisitionBatch) => Promise<void>;
   /** Browser-only IndexedDB durability and failure reporting. */
