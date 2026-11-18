@@ -1709,6 +1709,15 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
             sdk.AccountStorageMode.private(),
             sdk.AuthScheme.AuthRpoFalcon512
           );
+          const faucet = await client.newFaucet(
+            sdk.AccountStorageMode.private(),
+            false,
+            "TST",
+            "TST",
+            6,
+            sdk.u64(1000),
+            sdk.AuthScheme.AuthRpoFalcon512
+          );
           const address = sdk.Address.fromAccountId(wallet.id(), "BasicWallet");
           const tag = sdk.NoteTag.withAccountTarget(wallet.id());
           await client.addTag(String(tag.asU32()));
@@ -1722,9 +1731,13 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
             (_, i) => `push.${4_294_967_296 + i} drop`
           ).join("\n");
           const builder = await client.createCodeBuilder();
-          const script = builder.compileNoteScript(`begin\n${program}\nend`);
+          const script = builder.compileNoteScript(
+            `@note_script\npub proc main\n${program}\nend`
+          );
           const storage = new sdk.NoteStorage(new sdk.FeltArray([]));
-          const assets = new sdk.NoteAssets([]);
+          const assets = new sdk.NoteAssets([
+            new sdk.FungibleAsset(faucet.id(), sdk.u64(1)),
+          ]);
           const notes = [];
           for (let i = 0; i < 32; i++) {
             const serial = new sdk.Word(sdk.u64Array([i + 1, 0, 0, 0]));
