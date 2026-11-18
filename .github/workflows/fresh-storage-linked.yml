@@ -48,7 +48,7 @@ jobs:
       - name: Bind the complete Rust dependency set
         run: |
           set -euo pipefail
-          git diff --quiet c7a519cdbc52a1671dc869ae2fd47cd6bd261a1f HEAD -- . ':(exclude).github/workflows/fresh-storage-linked.yml'
+          git diff --quiet a5edd87a9ceafd523dbad6df7bc06518e3b21670 HEAD -- . ':(exclude).github/workflows/fresh-storage-linked.yml'
           test "$(git -C linked-rust rev-parse HEAD)" = b6afbe02c112768338ac6bde8ee9188cfccfd446
           mv linked-rust "$RUNNER_TEMP/storage-rust"
           cat >> Cargo.toml <<EOF
@@ -66,6 +66,8 @@ jobs:
           pnpm --filter @miden-sdk/miden-sdk run build
           test -s crates/web-client/dist/st/index.js
           test -s crates/web-client/dist/mt/index.js
+          test -s crates/web-client/dist/st/assets/miden_client_web.wasm
+          test -s crates/web-client/dist/mt/assets/miden_client_web.wasm
           mkdir -p "$RUNNER_TEMP/linked-sdk"
           pnpm -C crates/web-client pack --pack-destination "$RUNNER_TEMP/linked-sdk"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -74,10 +76,8 @@ jobs:
           path: ${{ runner.temp }}/linked-sdk/*.tgz
           if-no-files-found: error
       - name: Exercise note retention in Chromium
-        env:
-          TEST_MIDEN_NETWORK: testnet
         run: |
           set -euo pipefail
           pnpm --filter @miden-sdk/miden-sdk run test:install:ci
-          pnpm -C crates/web-client exec playwright test miden_client_api.test.ts --project=chromium --workers=2 \
+          pnpm -C crates/web-client exec playwright test miden_client_api.test.ts --project=chromium --workers=2 --reporter=line --retries=0 \
             -g 'retains note bytes before WASM import and supports recovery reads'

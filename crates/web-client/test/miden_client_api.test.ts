@@ -1523,14 +1523,8 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     expect(result.chainSize).toBeGreaterThan(0);
     expect(result.height).toBeGreaterThan(0);
   });
-});
 
-// ════════════════════════════════════════════════════════════════
-// Integration tests — require running node
-// ════════════════════════════════════════════════════════════════
-
-nodeTest.describe("MidenClient API - Integration", () => {
-  nodeTest(
+  mockTest(
     "retains note bytes before WASM import and supports recovery reads",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
@@ -1549,16 +1543,22 @@ nodeTest.describe("MidenClient API - Integration", () => {
             to: wallet,
             assets: { token: faucet, amount: 1n },
           });
-          const file = window.NoteFile.fromOutputNote(
+          const outputFile = window.NoteFile.fromOutputNote(
             window.OutputNote.full(note)
+          );
+          // Keep the synthetic note beyond the local sync height to skip RPC.
+          const file = window.NoteFile.fromExpectedNote(
+            outputFile.noteDetails(),
+            outputFile.noteTag(),
+            (await creator.getSyncHeight()) + 1
           );
           const bytes = file.serialize();
           const expected = file.detailsCommitment();
           let accept = false;
           const retained = [];
           client = await window.MidenClient.create({
-            rpcUrl: window.rpcUrl,
-            storeName: `${window.storeName}_retention`,
+            rpcUrl: "http://localhost:65535",
+            storeName: await creator.storeIdentifier(),
             useWorker: false,
             indexedDb: { durability: "strict" },
             beforeNoteAcquisition: async ({ source, notes }) => {
@@ -1608,7 +1608,13 @@ nodeTest.describe("MidenClient API - Integration", () => {
       expect(result.lookup).toEqual([result.expected]);
     }
   );
+});
 
+// ════════════════════════════════════════════════════════════════
+// Integration tests — require running node
+// ════════════════════════════════════════════════════════════════
+
+nodeTest.describe("MidenClient API - Integration", () => {
   nodeTest("MidenClient.create and sync", async ({ page }) => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.create({
