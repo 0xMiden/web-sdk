@@ -1,0 +1,59 @@
+name: Storage recovery hint assertion RED
+
+on:
+  push:
+    branches: [ci/fresh-web-storage-hint-red]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  red:
+    runs-on: warp-ubuntu-latest-x64-8x
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Wait for the exact pre-fix build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git diff --quiet 6ae58bbf948f8a0be3c0ec76bcadaa4832e549ba HEAD -- . ':(exclude).github/workflows/fresh-storage-hint-red.yml'
+          git diff --quiet a5edd87a9ceafd523dbad6df7bc06518e3b21670 HEAD -- . ':(exclude).github/workflows/fresh-storage-hint-red.yml' ':(exclude)crates/web-client/test/miden_client_api.test.ts'
+          test "$(gh run view 44308718656 --repo "$GITHUB_REPOSITORY" --json headSha --jq .headSha)" = 62c85c87b85a619e95df227817dfb81c2f4f58df
+          for attempt in $(seq 1 16); do
+            if gh run download 44308718656 --repo "$GITHUB_REPOSITORY" -n linked-storage-recovery-sdk -D "$RUNNER_TEMP/pre-fix"; then
+              exit 0
+            fi
+            sleep 30
+          done
+          exit 1
+      - name: Prove the SDK loses exact recovery hints before the fix
+        env:
+          NO_COLOR: '1'
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          tar -xzf "$RUNNER_TEMP"/pre-fix/*.tgz -C "$RUNNER_TEMP"
+          test -s "$RUNNER_TEMP/package/dist/st/index.js"
+          cp -a "$RUNNER_TEMP/package/dist" crates/web-client/dist
+          pnpm --filter @miden-sdk/miden-sdk run test:install:ci
+          result=0
+          pnpm -C crates/web-client exec playwright test miden_client_api.test.ts --project=chromium --workers=2 --reporter=line --retries=0 \
+            -g 'retains note bytes before WASM import and supports recovery reads' > "$RUNNER_TEMP/hint-red.log" 2>&1 || result=$?
+          cat "$RUNNER_TEMP/hint-red.log"
+          test "$result" -eq 1
+          grep -F 'Expected note recovery preserves its hint' "$RUNNER_TEMP/hint-red.log"
+          grep -E 'Received:[[:space:]]+undefined' "$RUNNER_TEMP/hint-red.log"
+          grep -F '1 failed' "$RUNNER_TEMP/hint-red.log"
