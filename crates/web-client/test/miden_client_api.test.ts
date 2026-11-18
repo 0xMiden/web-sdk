@@ -1685,9 +1685,8 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     "retains large private-note deliveries in bounded batches before importing",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
-        const sdk = window;
-        const { WebClient } = await sdk.getWasmOrThrow();
-        const client = new WebClient();
+        const sdk = await window.getWasmOrThrow();
+        const client = new sdk.WebClient();
         const batches = [];
         let refuseSecondBatch = true;
         await client.createMockClient(undefined, undefined, undefined, {
@@ -1715,7 +1714,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
             "TST",
             "TST",
             6,
-            sdk.u64(1000),
+            1000n,
             sdk.AuthScheme.AuthRpoFalcon512
           );
           const address = sdk.Address.fromAccountId(wallet.id(), "BasicWallet");
@@ -1736,11 +1735,13 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
           );
           const storage = new sdk.NoteStorage(new sdk.FeltArray([]));
           const assets = new sdk.NoteAssets([
-            new sdk.FungibleAsset(faucet.id(), sdk.u64(1)),
+            new sdk.FungibleAsset(faucet.id(), 1n),
           ]);
           const notes = [];
           for (let i = 0; i < 32; i++) {
-            const serial = new sdk.Word(sdk.u64Array([i + 1, 0, 0, 0]));
+            const serial = new sdk.Word(
+              new BigUint64Array([BigInt(i + 1), 0n, 0n, 0n])
+            );
             const recipient = new sdk.NoteRecipient(serial, script, storage);
             const note = new sdk.Note(assets, metadata, recipient);
             const file = sdk.NoteFile.fromOutputNote(sdk.OutputNote.full(note));
