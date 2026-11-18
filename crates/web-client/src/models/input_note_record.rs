@@ -1,11 +1,15 @@
 use js_export_macro::js_export;
-use miden_client::note::Note as NativeNote;
-use miden_client::store::InputNoteRecord as NativeInputNoteRecord;
+use miden_client::note::{Note as NativeNote, NoteFile as NativeNoteFile, NoteSyncHint};
+use miden_client::store::{
+    InputNoteRecord as NativeInputNoteRecord,
+    InputNoteState as NativeState,
+};
 use miden_client::transaction::InputNote as NativeInputNote;
 
 use super::input_note_state::InputNoteState;
 use super::note_attachment::NoteAttachment;
 use super::note_details::NoteDetails;
+use super::note_file::NoteFile;
 use super::note_id::NoteId;
 use super::note_inclusion_proof::NoteInclusionProof;
 use super::note_metadata::NoteMetadata;
@@ -55,6 +59,40 @@ impl InputNoteRecord {
     #[js_export(js_name = "detailsCommitment")]
     pub fn details_commitment(&self) -> String {
         self.0.details_commitment().to_hex()
+    }
+
+    /// Exports an unspent note for recovery with its stored scan hint or inclusion proof.
+    /// Returns `None` when the record cannot supply either.
+    #[js_export(js_name = "recoveryNoteFile")]
+    pub fn recovery_note_file(&self) -> Option<NoteFile> {
+        let sync_hint = match self.0.state() {
+            NativeState::Expected(state) => {
+                let tag = state.tag.or_else(|| state.metadata.as_ref().map(|data| data.tag()))?;
+                NoteSyncHint::new(state.after_block_num, tag)
+            },
+            NativeState::ProcessingUnauthenticated(state) => {
+                NoteSyncHint::new(state.after_block_num, state.metadata.tag())
+            },
+            NativeState::Unverified(_)
+            | NativeState::Committed(_)
+            | NativeState::ProcessingAuthenticated(_) => {
+                return Some(
+                    NativeNoteFile::Committed {
+                        note: (&self.0).try_into().ok()?,
+                        proof: self.0.inclusion_proof()?.clone(),
+                    }
+                    .into(),
+                );
+            },
+            _ => return None,
+        };
+        Some(
+            NativeNoteFile::ExpectedNote {
+                details: self.0.details().clone(),
+                sync_hint,
+            }
+            .into(),
+        )
     }
 
     /// Returns the note metadata if available.

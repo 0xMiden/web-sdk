@@ -1547,10 +1547,12 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
             window.OutputNote.full(note)
           );
           // Keep the synthetic note beyond the local sync height to skip RPC.
+          const afterBlockNum = (await creator.getSyncHeight()) + 1;
+          const tag = new window.NoteTag(42);
           const file = window.NoteFile.fromExpectedNote(
             outputFile.noteDetails(),
-            outputFile.noteTag(),
-            (await creator.getSyncHeight()) + 1
+            tag,
+            afterBlockNum
           );
           const bytes = file.serialize();
           const expected = file.detailsCommitment();
@@ -1584,8 +1586,15 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
           const lookup = await client.notes.list({
             detailsCommitments: [expected],
           });
+          const recovery = lookup[0]?.recoveryNoteFile?.();
           return {
             expected,
+            afterBlockNum,
+            recovered: recovery && {
+              detailsCommitment: recovery.detailsCommitment(),
+              tag: recovery.noteTag().asU32(),
+              afterBlockNum: recovery.afterBlockNum(),
+            },
             refusal,
             before: before.length,
             retained,
@@ -1606,6 +1615,14 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       ]);
       expect(result.page).toEqual([result.expected]);
       expect(result.lookup).toEqual([result.expected]);
+      expect(
+        result.recovered,
+        "Expected note recovery preserves its hint"
+      ).toEqual({
+        detailsCommitment: result.expected,
+        tag: 42,
+        afterBlockNum: result.afterBlockNum,
+      });
     }
   );
 });
