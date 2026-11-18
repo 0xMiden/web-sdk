@@ -2,6 +2,7 @@ import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
 import { coalesceRun, runUnderLock, withSyncLock } from "./syncLock.js";
 import {
+  DEFAULT_CALLBACK_TIMEOUT_MS,
   serializeCallbackError,
   validateCallbackTimeoutMs,
 } from "./callbackBridge.js";
@@ -191,14 +192,29 @@ void WRITE_METHODS;
 void READ_METHODS;
 
 function clientStorageOptions(options) {
-  const beforeNoteAcquisition = options?.beforeNoteAcquisition;
+  const retainNotes = options?.beforeNoteAcquisition;
   const indexedDb = options?.indexedDb;
-  if (
-    beforeNoteAcquisition !== undefined &&
-    typeof beforeNoteAcquisition !== "function"
-  ) {
+  if (retainNotes !== undefined && typeof retainNotes !== "function") {
     throw new TypeError("beforeNoteAcquisition must be a function");
   }
+  const beforeNoteAcquisition =
+    retainNotes &&
+    async function (batch) {
+      let timeout;
+      try {
+        const deadline = new Promise((_, reject) => {
+          timeout = setTimeout(() => {
+            reject(new Error("Note retention callback timed out"));
+          }, DEFAULT_CALLBACK_TIMEOUT_MS);
+        });
+        await Promise.race([
+          deadline,
+          Reflect.apply(retainNotes, this, [batch]),
+        ]);
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
   if (indexedDb === undefined) {
     return beforeNoteAcquisition === undefined
       ? undefined

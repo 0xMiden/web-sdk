@@ -257,7 +257,7 @@ export interface ClientOptions {
   /**
    * Browser-only hook awaited before note import writes and before advancing
    * the note transport cursor. Resolve after retaining the supplied NoteFile
-   * bytes. The Web Worker waits up to 30 seconds for the hook. A timeout or
+   * bytes. The client waits up to 30 seconds for each callback. A timeout or
    * rejection prevents the import. The callback must avoid re-entering the
    * client or its store.
    */
