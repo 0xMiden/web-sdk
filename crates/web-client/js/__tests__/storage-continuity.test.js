@@ -84,7 +84,10 @@ it("waits for method-worker note retention and forwards sanitized storage failur
     }
   );
   vi.spyOn(console, "log").mockImplementation(() => {});
-  const { promise, resolve } = Promise.withResolvers();
+  let resolve;
+  const promise = new Promise((done) => {
+    resolve = done;
+  });
   const beforeNoteAcquisition = vi.fn(() => promise);
   const onFailure = vi.fn();
   const client = new WasmWebClient(
