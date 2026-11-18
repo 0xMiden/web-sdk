@@ -1,0 +1,82 @@
+name: Linked storage recovery SDK proof
+
+on:
+  push:
+    branches: [ci/fresh-web-storage-green]
+
+permissions:
+  contents: read
+
+jobs:
+  linked:
+    runs-on: warp-ubuntu-latest-x64-8x
+    timeout-minutes: 45
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      MIDEN_FAST_BUILD: 'true'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: 0xMiden/rust-sdk
+          ref: b6afbe02c112768338ac6bde8ee9188cfccfd446
+          path: linked-rust
+          persist-credentials: false
+      - uses: ./.github/actions/cleanup-runner
+      - name: Install WASM toolchains
+        run: |
+          rustup update --no-self-update
+          rustup target add wasm32-unknown-unknown
+          rustup install stable --no-self-update
+          rustup target add wasm32-unknown-unknown --toolchain stable
+          ./scripts/install-binaryen.sh
+      - uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1
+        with:
+          shared-key: rust-wasm
+          prefix-key: rust-cache-2026.02.18
+          save-if: false
+      - uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Bind the complete Rust dependency set
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = e952d1476a548d14eaf2c76eecfc0209c2c13de9
+          test "$(git -C linked-rust rev-parse HEAD)" = b6afbe02c112768338ac6bde8ee9188cfccfd446
+          cat >> Cargo.toml <<'EOF'
+
+          [patch.crates-io]
+          miden-client = { path = "linked-rust/crates/rust-client" }
+          miden-client-proto = { path = "linked-rust/crates/proto" }
+          miden-client-sqlite-store = { path = "linked-rust/crates/sqlite-store" }
+          EOF
+          cargo update -p miden-client -p miden-client-proto -p miden-client-sqlite-store
+      - name: Build browser SDK and verify package
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm --filter @miden-sdk/miden-sdk run build
+          test -s crates/web-client/dist/st/index.js
+          test -s crates/web-client/dist/mt/index.js
+          mkdir -p "$RUNNER_TEMP/linked-sdk"
+          pnpm -C crates/web-client pack --pack-destination "$RUNNER_TEMP/linked-sdk"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linked-storage-recovery-sdk
+          path: ${{ runner.temp }}/linked-sdk/*.tgz
+          if-no-files-found: error
+      - name: Exercise note retention in Chromium
+        env:
+          TEST_MIDEN_NETWORK: testnet
+        run: |
+          set -euo pipefail
+          pnpm --filter @miden-sdk/miden-sdk run test:install:ci
+          pnpm -C crates/web-client exec playwright test miden_client_api.test.ts --project=chromium --workers=2 \
+            -g 'retains note bytes before WASM import and supports recovery reads'
