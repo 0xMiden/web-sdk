@@ -67,7 +67,9 @@ impl InputNoteRecord {
     pub fn recovery_note_file(&self) -> Option<NoteFile> {
         let sync_hint = match self.0.state() {
             NativeState::Expected(state) => {
-                let tag = state.tag.or_else(|| state.metadata.as_ref().map(|data| data.tag()))?;
+                let tag = state.tag.or_else(|| {
+                    state.metadata.as_ref().map(miden_client::note::NoteMetadata::tag)
+                })?;
                 NoteSyncHint::new(state.after_block_num, tag)
             },
             NativeState::ProcessingUnauthenticated(state) => {
