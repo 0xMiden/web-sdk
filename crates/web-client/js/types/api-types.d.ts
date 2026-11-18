@@ -257,8 +257,9 @@ export interface ClientOptions {
   /**
    * Browser-only hook awaited before note import writes and before advancing
    * the note transport cursor. Resolve after retaining the supplied NoteFile
-   * bytes. Rejection prevents the import. The callback must avoid re-entering
-   * the client or its store.
+   * bytes. The Web Worker waits up to 30 seconds for the hook. A timeout or
+   * rejection prevents the import. The callback must avoid re-entering the
+   * client or its store.
    */
   beforeNoteAcquisition?: (batch: NoteAcquisitionBatch) => Promise<void>;
   /** Browser-only IndexedDB durability and failure reporting. */
