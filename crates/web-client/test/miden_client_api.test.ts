@@ -1717,7 +1717,6 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
             1000n,
             sdk.AuthScheme.AuthRpoFalcon512
           );
-          const address = sdk.Address.fromAccountId(wallet.id(), "BasicWallet");
           const tag = sdk.NoteTag.withAccountTarget(wallet.id());
           await client.addTag(String(tag.asU32()));
           const metadata = new sdk.NoteMetadata(
@@ -1751,7 +1750,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
             });
             await client.sendPrivateNote(
               note,
-              address,
+              sdk.Address.fromAccountId(wallet.id(), "BasicWallet"),
               sdk.NoteInclusionProof.mockAtBlock(0)
             );
           }
