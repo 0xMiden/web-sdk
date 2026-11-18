@@ -71,7 +71,8 @@ export function installStoragePolicy(db, policies) {
                     reported = true;
                     notify(policies()?.values(), failure);
                 };
-                transaction.addEventListener("error", (event) => report(requestPhase, event.target?.error));
+                // Dexie stops request errors at their target.
+                transaction.addEventListener("error", (event) => report(requestPhase, event.target?.error), { capture: true });
                 transaction.addEventListener("abort", () => report(requestPhase === "read" ? "read" : "commit", transaction.error));
                 return transaction;
             },
