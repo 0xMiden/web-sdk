@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Enhancements
+
+* [FEATURE][web] Browser clients can retain private note files before import with `beforeNoteAcquisition`. The `indexedDb` option sets write durability and reports storage errors. `notes.listPage` scans input notes in bounded pages and `notes.list({ detailsCommitments })` looks up retained notes by their details.
+
 ## 0.18.0 (2026-11-16)
 
 ### Enhancements

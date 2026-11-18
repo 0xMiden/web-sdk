@@ -34,6 +34,7 @@ use js_bindings::{
     idxdb_get_input_notes_from_ids,
     idxdb_get_input_notes_from_nullifiers,
     idxdb_get_input_notes_from_script_roots,
+    idxdb_get_input_notes_page,
     idxdb_get_note_script,
     idxdb_get_output_notes,
     idxdb_get_output_notes_from_details_commitments,
@@ -52,6 +53,20 @@ use utils::{
     parse_output_note_idxdb_object,
     upsert_input_note_tx,
 };
+
+/// Reads one bounded page from the primary input-note index.
+pub async fn input_notes_page(
+    store_name: &str,
+    after: Option<String>,
+    limit: u32,
+) -> Result<Vec<InputNoteRecord>, StoreError> {
+    let page: Vec<InputNoteIdxdbObject> = await_js(
+        idxdb_get_input_notes_page(store_name, after, limit),
+        "failed to read input note page",
+    )
+    .await?;
+    page.into_iter().map(parse_input_note_idxdb_object).collect()
+}
 
 impl IdxdbStore {
     pub(crate) async fn get_input_notes(

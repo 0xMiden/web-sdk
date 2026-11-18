@@ -1,6 +1,11 @@
 import Dexie, { type Transaction } from "dexie";
 import * as semver from "semver";
 import { logWebStoreError } from "./utils.js";
+import {
+  installStoragePolicy,
+  reportOpenFailure,
+  type IndexedDbOptions,
+} from "./storage-policy.js";
 
 export const CLIENT_VERSION_SETTING_KEY = "clientVersion";
 
@@ -45,6 +50,15 @@ interface PendingOpen {
 // Each name has one connection, held by every live Rust `IdxdbStore` on it.
 const databaseRegistry = new Map<string, RegistryEntry>();
 const pendingOpens = new Map<string, PendingOpen>();
+const storagePolicies = new Map<string, Map<string, IndexedDbOptions>>();
+let nextStorageHolder = 0;
+
+function removeStoragePolicy(network: string, holder: string): boolean {
+  const policies = storagePolicies.get(network);
+  if (!policies?.delete(holder)) return false;
+  if (!policies.size) storagePolicies.delete(network);
+  return true;
+}
 
 /**
  * Get a database instance from the registry by its ID.
@@ -64,7 +78,8 @@ export function getDatabase(dbId: string): MidenDatabase {
  * Releases one holder of the database registered for `network`, closing and
  * unregistering it when the last holder is gone. No-op for an unknown name.
  */
-export function closeDatabase(network: string): void {
+export function closeDatabase(network: string, holder?: string): void {
+  if (holder !== undefined && !removeStoragePolicy(network, holder)) return;
   const entry = databaseRegistry.get(network);
   if (!entry) {
     return;
@@ -75,6 +90,27 @@ export function closeDatabase(network: string): void {
   }
   entry.db.dexie.close();
   databaseRegistry.delete(network);
+}
+
+export async function openDatabaseWithOptions(
+  network: string,
+  clientVersion: string,
+  options: IndexedDbOptions
+): Promise<string> {
+  const holder = String(++nextStorageHolder);
+  let policies = storagePolicies.get(network);
+  if (!policies) {
+    policies = new Map();
+    storagePolicies.set(network, policies);
+  }
+  policies.set(holder, options);
+  try {
+    await openDatabase(network, clientVersion);
+    return holder;
+  } catch (error) {
+    removeStoragePolicy(network, holder);
+    throw error;
+  }
 }
 
 /**
@@ -592,6 +628,7 @@ export class MidenDatabase {
 
   constructor(network: string) {
     this.dexie = new Dexie(network) as MidenDexie;
+    installStoragePolicy(this.dexie, () => storagePolicies.get(network));
 
     // --- Schema versioning ---
     //
@@ -832,6 +869,7 @@ export class MidenDatabase {
       return true;
       /* v8 ignore next 4 — logWebStoreError always re-throws, so `return false` and this catch block are unreachable */
     } catch (err) {
+      reportOpenFailure(storagePolicies.get(this.dexie.name)?.values(), err);
       logWebStoreError(err, "Failed to open database");
       return false;
     }

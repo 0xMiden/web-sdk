@@ -19,8 +19,10 @@ import type {
 import type {
   AuthSchemeType,
   GetKeyCallback,
+  IndexedDbOptions,
   InsertKeyCallback,
   MidenObservation,
+  NoteAcquisitionBatch,
   SignCallback,
 } from "./api-types";
 
@@ -147,12 +149,14 @@ export declare function wordToBigInt(word: Word): bigint;
 // ════════════════════════════════════════════════════════════════
 
 /**
- * @internal Observability fields `MidenClient.create` forwards to the low-level
- * factories. Mirrors the pair on {@link ClientOptions}; both are construction-only.
+ * @internal Construction fields `MidenClient.create` forwards to the low-level
+ * factories.
  */
 export interface ClientObservabilityOptions {
   observer?: (observation: MidenObservation) => void;
   observeSensitive?: boolean;
+  beforeNoteAcquisition?: (batch: NoteAcquisitionBatch) => Promise<void>;
+  indexedDb?: IndexedDbOptions;
 }
 
 /** @internal Low-level WebClient wrapper. Use MidenClient instead. */

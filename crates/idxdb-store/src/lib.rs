@@ -90,9 +90,16 @@ extern "C" {
     #[wasm_bindgen(js_name = openDatabase)]
     fn open_database(network: &str, client_version: &str) -> js_sys::Promise;
 
+    #[wasm_bindgen(js_name = openDatabaseWithOptions)]
+    fn open_database_with_options(
+        network: &str,
+        client_version: &str,
+        options: JsValue,
+    ) -> js_sys::Promise;
+
     /// Releases one holder of the database opened under `network`; the last one closes it.
     #[wasm_bindgen(js_name = closeDatabase)]
-    fn close_database(network: &str);
+    fn close_database(network: &str, holder: Option<String>);
 }
 
 /// `IdxdbStore` provides an `IndexedDB`-backed implementation of the Store trait.
@@ -102,21 +109,41 @@ extern "C" {
 /// which would prevent the struct from being Send + Sync.
 pub struct IdxdbStore {
     database_id: String,
+    storage_holder: Option<String>,
     smt_forest: RwLock<AccountForest>,
 }
 
 impl IdxdbStore {
     pub async fn new(database_name: String) -> Result<IdxdbStore, JsValue> {
+        Self::new_with_options(database_name, JsValue::UNDEFINED).await
+    }
+
+    pub async fn new_with_options(
+        database_name: String,
+        options: JsValue,
+    ) -> Result<IdxdbStore, JsValue> {
         // Built before the open: once the open counts this store as a holder, only `Drop`
         // releases it, so nothing after the open may fail.
         let smt_forest = AccountForest::new()
             .map_err(|e| JsValue::from_str(&format!("Failed to create SMT forest: {e:?}")))?;
 
-        let promise = open_database(database_name.as_str(), CLIENT_VERSION);
-        let _db_id = JsFuture::from(promise).await?;
+        let storage_holder = if options.is_undefined() {
+            JsFuture::from(open_database(&database_name, CLIENT_VERSION)).await?;
+            None
+        } else {
+            let holder =
+                JsFuture::from(open_database_with_options(&database_name, CLIENT_VERSION, options))
+                    .await?;
+            Some(
+                holder
+                    .as_string()
+                    .ok_or_else(|| JsValue::from_str("Invalid IndexedDB holder"))?,
+            )
+        };
 
         Ok(IdxdbStore {
             database_id: database_name,
+            storage_holder,
             smt_forest: RwLock::new(smt_forest),
         })
     }
@@ -132,7 +159,7 @@ impl IdxdbStore {
 /// by the `FinalizationRegistry`.
 impl Drop for IdxdbStore {
     fn drop(&mut self) {
-        close_database(&self.database_id);
+        close_database(&self.database_id, self.storage_holder.take());
     }
 }
 

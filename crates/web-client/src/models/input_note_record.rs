@@ -51,6 +51,12 @@ impl InputNoteRecord {
         self.0.details().into()
     }
 
+    /// Returns the metadata-independent commitment of the note details.
+    #[js_export(js_name = "detailsCommitment")]
+    pub fn details_commitment(&self) -> String {
+        self.0.details_commitment().to_hex()
+    }
+
     /// Returns the note metadata if available.
     pub fn metadata(&self) -> Option<NoteMetadata> {
         self.0.metadata().map(Into::into)

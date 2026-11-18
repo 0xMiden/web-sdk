@@ -1530,6 +1530,85 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
 // ════════════════════════════════════════════════════════════════
 
 nodeTest.describe("MidenClient API - Integration", () => {
+  nodeTest(
+    "retains note bytes before WASM import and supports recovery reads",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const creator = await window.MidenClient.createMock();
+        let client;
+        try {
+          const wallet = await creator.accounts.create();
+          const faucet = await creator.accounts.create({
+            type: window.FaucetType.FungibleFaucet,
+            symbol: "TST",
+            decimals: 6,
+            maxSupply: 1000n,
+          });
+          const note = window.createP2IDNote({
+            from: faucet,
+            to: wallet,
+            assets: { token: faucet, amount: 1n },
+          });
+          const file = window.NoteFile.fromOutputNote(
+            window.OutputNote.full(note)
+          );
+          const bytes = file.serialize();
+          const expected = file.detailsCommitment();
+          let accept = false;
+          const retained = [];
+          client = await window.MidenClient.create({
+            rpcUrl: window.rpcUrl,
+            storeName: `${window.storeName}_retention`,
+            useWorker: false,
+            indexedDb: { durability: "strict" },
+            beforeNoteAcquisition: async ({ source, notes }) => {
+              retained.push({
+                source,
+                commitment: window.NoteFile.deserialize(
+                  notes[0]
+                ).detailsCommitment(),
+              });
+              if (!accept) throw new Error("Recovery data could not be saved");
+            },
+          });
+          let refusal;
+          try {
+            await client.notes.import(window.NoteFile.deserialize(bytes));
+          } catch (error) {
+            refusal = error.code;
+          }
+          const before = await client.notes.listPage({ limit: 1 });
+          accept = true;
+          await client.notes.import(window.NoteFile.deserialize(bytes));
+          const page = await client.notes.listPage({ limit: 1 });
+          const lookup = await client.notes.list({
+            detailsCommitments: [expected],
+          });
+          return {
+            expected,
+            refusal,
+            before: before.length,
+            retained,
+            page: page.map((record) => record.detailsCommitment()),
+            lookup: lookup.map((record) => record.detailsCommitment()),
+          };
+        } finally {
+          client?.terminate();
+          creator.terminate();
+        }
+      });
+      expect(result.expected).toMatch(/^0x/);
+      expect(result.refusal).toBe("NOTE_ACQUISITION_REFUSED");
+      expect(result.before).toBe(0);
+      expect(result.retained).toEqual([
+        { source: "import", commitment: result.expected },
+        { source: "import", commitment: result.expected },
+      ]);
+      expect(result.page).toEqual([result.expected]);
+      expect(result.lookup).toEqual([result.expected]);
+    }
+  );
+
   nodeTest("MidenClient.create and sync", async ({ page }) => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.create({
