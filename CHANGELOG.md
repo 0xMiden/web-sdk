@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.1 (TBD)
+
+### Fixes
+
+* [FIX][react] A signer account built without `accountSeed` now uses a fixed default seed of 32 zero bytes, the same default as the Para and Turnkey core clients, instead of a random one. `ParaSignerProvider` and `TurnkeySignerProvider` never pass a seed, so every page load and every new device derived a different, empty account for the same signer key and never found the one used before ([web-sdk#549](https://github.com/0xMiden/web-sdk/pull/549)).
+
 ## 0.18.0 (2026-11-16)
 
 ### Enhancements

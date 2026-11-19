@@ -63,7 +63,10 @@ export interface SignerAccountConfig {
   accountType?: SignerAccountType;
   /** Storage mode (public or private) */
   storageMode: AccountStorageMode;
-  /** Optional seed for deterministic account ID */
+  /**
+   * Seed the account ID is derived from. Defaults to 32 zero bytes, so the
+   * same signer key always resolves to the same account.
+   */
   accountSeed?: Uint8Array;
   /** Optional custom account components to include in the account (e.g. from a compiled .masp package) */
   customComponents?: AccountComponent[];
