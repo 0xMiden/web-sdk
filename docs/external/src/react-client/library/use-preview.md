@@ -38,6 +38,16 @@ check below cannot read it from `request.blockNumbers()` and does not wait for
 it. Sync before previewing such a request, and treat `requested block N is
 after transaction reference block M` as a reason to sync again.
 
+The summary also binds a **max fee**. The auth args from
+`feeAwareTransactionRequestBuilder` and `withFeeAwareAuth` set none, so the
+auth procedure estimates the fee on each execution and the summary binds that
+estimate. The estimate depends on the verification base fee of the reference
+block and on the cycle count of the transaction. The parties derive the same
+summary at different tips only while the estimate comes out the same. If the
+base fee of the chain changes between the preview and the execution, the
+summary changes and the collected signatures no longer match it. Neither
+method takes a max fee.
+
 ```tsx
 import { useMiden, usePreview, useTransaction } from "@miden-sdk/react";
 import { TransactionRequest } from "@miden-sdk/miden-sdk";
@@ -211,16 +221,22 @@ the call site. Preview again on the new client.
 - **Agreement is not approval.** The request and the summary both come from
   the proposer, so they agree with each other for any request the proposer
   chose — including one that drains the account. Before signing, inspect
-  `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()` and
-  `summary.expirationDelta()` and confirm they are what you meant to approve.
+  `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()`,
+  `summary.logs()` and `summary.expirationDelta()` and confirm they are what
+  you meant to approve.
   `expirationDelta()` returns `0` when no expiration was set, meaning the
   authorization never expires — not that it already has.
 - **The summary does not cover the transaction script.** Its commitment is
   built from the account delta, the input and output note commitments, the
-  reference block (the bound block, for a multisig), the expiration delta and
-  the user params — not the script root, advice map, note arguments or
-  foreign-account inputs. Two requests with the same effects share one
+  reference block (the bound block, for a multisig), the logs commitment, the
+  expiration delta and the user params — not the script root, advice map, note
+  arguments or foreign-account inputs. Two requests with the same effects share one
   commitment, so the same signatures authorize both.
+- **A multisig summary has no fee note.** A multisig pays the fee after it
+  has checked the signatures, so `summary.outputNotes()` does not include the
+  fee note. The approvers sign the max fee instead, which is
+  `summary.userParams()[1]`. A preview stops at the signature check, so a fee
+  that the account cannot pay fails only the signed execution.
 - **Confirm the bound block of a proposal is real.** For a multisig,
   `summary.blockCommitment()` is the commitment of the bound block and
   `summary.blockNum()` is its number. Fetch that header with

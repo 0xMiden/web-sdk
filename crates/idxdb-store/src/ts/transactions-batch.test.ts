@@ -1,6 +1,10 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { openDatabase, getDatabase } from "./schema.js";
-import { applyTransactionBatch } from "./transactions.js";
+import {
+  applyTransactionBatch,
+  getTransactionLogs,
+  type JsTransactionLog,
+} from "./transactions.js";
 
 // Unique DB names to avoid collisions between tests.
 let dbCounter = 0;
@@ -30,7 +34,10 @@ async function openTestDb(): Promise<string> {
 // strings are fine here — the JS layer does not validate data formats (all
 // validation happens in the Rust layer before values reach IndexedDB).
 // See the same pattern in accounts.test.ts.
-function buildPayload(suffix: string) {
+function buildPayload(
+  suffix: string,
+  transactionLogs: JsTransactionLog[] = []
+) {
   const dummy = new Uint8Array([1, 2, 3]);
   return {
     transactionRecord: {
@@ -40,6 +47,7 @@ function buildPayload(suffix: string) {
       statusVariant: 0,
       status: dummy,
     },
+    transactionLogs,
     accountState: {
       kind: "delta" as const,
       accountId: `0xacc-${suffix}`,
@@ -74,8 +82,11 @@ function buildPayload(suffix: string) {
   };
 }
 
-function buildFullPayload(suffix: string) {
-  const payload = buildPayload(suffix);
+function buildFullPayload(
+  suffix: string,
+  transactionLogs: JsTransactionLog[] = []
+) {
+  const payload = buildPayload(suffix, transactionLogs);
   const code = new Uint8Array([4, 5, 6]);
   return {
     ...payload,
@@ -151,5 +162,66 @@ describe("applyTransactionBatch atomicity", () => {
     expect(await db.latestAccountHeaders.count()).toBe(0);
     expect(await db.accountCodes.count()).toBe(0);
     expect(await db.notesScripts.count()).toBe(0);
+  });
+});
+
+describe("applyTransactionBatch transaction logs", () => {
+  const topic = new Uint8Array(16).fill(1);
+  const otherTopic = new Uint8Array(16).fill(2);
+  const word = new Uint8Array(32).fill(3);
+
+  it("writes the logs of each transaction of a batch", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+
+    await applyTransactionBatch(dbId, [
+      buildPayload("a", [
+        { emitter: "0xacc-a", topic, content: word },
+        { emitter: "0xacc-a", topic: otherTopic, content: new Uint8Array() },
+      ]),
+      buildPayload("quiet"),
+      buildFullPayload("b", [{ emitter: "0xacc-b", topic, content: word }]),
+    ]);
+
+    expect(
+      (await getTransactionLogs(dbId, "tx-a"))!.map((log) => log.emitter)
+    ).toEqual(["0xacc-a", "0xacc-a"]);
+    expect(await getTransactionLogs(dbId, "tx-quiet")).toEqual([]);
+    expect(await getTransactionLogs(dbId, "tx-b")).toHaveLength(1);
+    expect(
+      (await db.transactionLogs.toArray()).map((row) => [
+        row.transactionId,
+        row.logIndex,
+        row.content.length,
+      ])
+    ).toEqual([
+      ["tx-a", 0, 32],
+      ["tx-a", 1, 0],
+      ["tx-b", 0, 32],
+    ]);
+  });
+
+  it("rolls back the logs when a later write of the batch fails", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+
+    // The second transaction fails after the first one wrote its record and its logs.
+    let noteCreations = 0;
+    db.inputNotes.hook("creating", () => {
+      noteCreations += 1;
+      if (noteCreations === 2) {
+        throw new Error("simulated Dexie write failure");
+      }
+    });
+
+    await expect(
+      applyTransactionBatch(dbId, [
+        buildPayload("a", [{ emitter: "0xacc-a", topic, content: word }]),
+        buildPayload("b", [{ emitter: "0xacc-b", topic, content: word }]),
+      ])
+    ).rejects.toThrow();
+
+    expect(await db.transactionLogs.count()).toBe(0);
+    expect(await getTransactionLogs(dbId, "tx-a")).toBeUndefined();
   });
 });

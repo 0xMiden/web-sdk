@@ -445,7 +445,10 @@ export class TransactionsResource {
    * reproduces the proposal's summary at the current tip, once this client
    * has synced to at least that block. For a builder's request that is the
    * largest of `request.blockNumbers()`; a `withFeeAwareAuth` copy does not
-   * declare it, so sync before previewing it.
+   * declare it, so sync before previewing it. The summary also binds a max
+   * fee, which these auth args leave for the auth procedure to estimate on
+   * each execution, so the summary reproduces only while that estimate comes
+   * out the same.
    */
   async preview(opts) {
     this.#client.assertNotTerminated();
@@ -882,6 +885,25 @@ export class TransactionsResource {
     }
 
     return await this.#inner.getTransactions(filter);
+  }
+
+  /**
+   * Returns the logs that a tracked transaction emitted, in emission order.
+   *
+   * The store records the logs when the transaction is applied, so this reads the store and
+   * does not contact the node. The logs are available before the transaction is committed. The
+   * store also keeps the logs of a discarded transaction, which the network did not apply.
+   *
+   * @param {string | TransactionId} txId - Transaction ID hex string or TransactionId object.
+   * @returns {Promise<TransactionLogs | null>} The logs, which are empty for a transaction
+   *   that emitted none, or `null` if the client does not track the transaction.
+   */
+  async logs(txId) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const id = wasm.TransactionId.fromHex(resolveTransactionIdHex(txId));
+    const logs = await this.#inner.getTransactionLogs(id);
+    return logs ?? null;
   }
 
   /**

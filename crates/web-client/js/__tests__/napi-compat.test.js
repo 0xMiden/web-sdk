@@ -5,6 +5,7 @@ describe("Node optional RPC results", () => {
   it.each([
     ["getNullifierCommitHeight", [{}, 12], 0],
     ["getNoteScriptByRoot", [{}], { script: true }],
+    ["getTransactionLogs", [{}, {}], { logs: true }],
   ])("%s matches the browser absence contract", async (method, args, value) => {
     class RpcClient {
       result = null;
@@ -24,6 +25,29 @@ describe("Node optional RPC results", () => {
     const error = new Error("RPC unavailable");
     nativeMethod.mockRejectedValueOnce(error);
     await expect(rpc[method](...args)).rejects.toBe(error);
+  });
+});
+
+describe("Node Option methods", () => {
+  it("TransactionLogsInfo.logs() reads undefined for a private account", () => {
+    class TransactionLogsInfo {
+      constructor(logs) {
+        this.stored = logs;
+      }
+      logs() {
+        return this.stored;
+      }
+      logsCommitment() {
+        return null;
+      }
+    }
+    createSdkWrapper({ TransactionLogsInfo });
+    const logs = { numLogs: () => 2 };
+
+    expect(new TransactionLogsInfo(null).logs()).toBeUndefined();
+    expect(new TransactionLogsInfo(logs).logs()).toBe(logs);
+    // Only listed methods are wrapped.
+    expect(new TransactionLogsInfo(null).logsCommitment()).toBeNull();
   });
 });
 

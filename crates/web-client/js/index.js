@@ -168,6 +168,7 @@ const READ_METHODS = new Set([
   "getPublicKeyCommitmentsOfAccount",
   "getSetting",
   "getSyncHeight",
+  "getTransactionLogs",
   "getTransactions",
   "isAccountAllowed",
   "isInvitationCodeValid",

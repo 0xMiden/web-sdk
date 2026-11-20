@@ -838,6 +838,28 @@ local apply fails; check its status before submitting again.
 
 To submit a proof produced somewhere that shares nothing with this client (a detached prover), pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
 
+### Read Transaction Logs
+
+An account procedure can emit logs while a transaction executes. The client stores the logs of every transaction that it applies, so `client.transactions.logs` reads them from the store and does not contact the node:
+
+```typescript
+const logs = await client.transactions.logs(txId); // hex string or TransactionId
+
+if (logs === null) {
+  // The client does not track this transaction.
+} else {
+  for (const log of logs.logs()) {
+    console.log(log.emitter().toString());
+    console.log(log.topicPrefix().toString(), log.topicSuffix().toString());
+    console.log(log.content().map((word) => word.toHex()));
+  }
+}
+```
+
+The logs are in emission order, and the collection is empty for a transaction that emitted none. They are stored when the transaction is applied, so they are available before the transaction is committed. The store also keeps the logs of a discarded transaction, which the network did not apply.
+
+For a transaction that the client does not track, `RpcClient.getTransactionLogs(accountId, transactionId)` fetches the logs of a committed transaction from the node. It resolves to `undefined` when the node has no such transaction for that account. The node holds the logs of a public account, and only their commitment for a private account, so `info.logs()` is `undefined` there while `info.logsCommitment()` is always set. See [the transactions guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/transactions.md#reading-transaction-logs).
+
 ### Paying Transaction Fees
 
 Since protocol 0.16 a chain can charge a verification fee, paid from inside the account's auth procedure rather than by the kernel. `fee::pay_fee` reads the asset and rate out of the transaction's auth argument, which has to be `hash(CONVERSION_INFO || SALT)` with the preimage in the advice map; a procedure that reaches `pay_fee` without that commitment aborts with `ERR_FEE_CONVERSION_INFO_MISSING`.
@@ -867,6 +889,8 @@ One path the SDK cannot declare a salt on: `client.pswap.cancelByOrder` builds i
 
 Since protocol 0.17 a multisig summary binds a **bound block** named in the multisig auth args, not the reference block the transaction executes at. `feeAwareTransactionRequestBuilder` binds the current sync height, and miden-client tracks that block when it executes the request, so the proposer, every co-signer and the executor can all run the proposal at their own current tip and derive the same summary. The builder also adds the bound block to the request with `withBlockNumbers`, which only the height check below reads. Each party's client must first have synced to at least the bound block (the largest of `request.blockNumbers()`, by default the proposer's sync height when it built the request); a client below it fails with `requested block N is after transaction reference block M` until it syncs. A request from `withFeeAwareAuth` does not declare the bound block, so sync before previewing it. Foreign accounts, the fee faucet among them, load at the tip, so a proposal still executes after the node has pruned the account state of its bound block (a node keeps account state for only 50 blocks).
 
+The summary also binds a **max fee**. These auth args set none, so the auth procedure estimates the fee on each execution and the summary binds that estimate, which depends on the verification base fee of the reference block and on the cycle count of the transaction. The parties derive the same summary only while the estimate comes out the same, and a change of the chain's base fee between the preview and the execution invalidates the collected signatures. Neither method takes a max fee. A multisig pays the fee after it has checked the signatures, so the fee note is not in `summary.outputNotes()`, and a preview does not reach the fee payment.
+
 ```typescript
 // Proposer
 const request = (await client.feeAwareTransactionRequestBuilder(multisig))
@@ -894,7 +918,7 @@ A co-signer re-derives the summary from the proposer's request bytes, never from
 
 A matching summary proves the request and the summary agree with each other. It does not prove the transaction does what you want — both came from the proposer, so they agree by construction for any request the proposer chose.
 
-Before signing, inspect what the transaction actually does — `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()`, and `summary.expirationDelta()` for how long the authorization stays live (`0` means no expiration was set, not that it has already expired) — and confirm it matches what you agreed to. For storage, `summary.accountDelta().storage()` names each changed slot: `valueSlots()` gives a value slot's `slotName`, `operation` and final `value`, and `mapSlots()` gives a map slot's `slotName`, `operation` and changed `entries()` (`key`, `value`), so a change to a multisig's signer set or threshold is visible before you sign.
+Before signing, inspect what the transaction actually does — `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()`, `summary.logs()`, and `summary.expirationDelta()` for how long the authorization stays live (`0` means no expiration was set, not that it has already expired) — and confirm it matches what you agreed to. For storage, `summary.accountDelta().storage()` names each changed slot: `valueSlots()` gives a value slot's `slotName`, `operation` and final `value`, and `mapSlots()` gives a map slot's `slotName`, `operation` and changed `entries()` (`key`, `value`), so a change to a multisig's signer set or threshold is visible before you sign.
 
 Account state and authenticated input-note records come from each participant's own local store, so every party must also agree on the account state. If the account moved in a way that changes the transaction's effects, the re-derived summary will not match - the most common reason a co-signing flow fails.
 

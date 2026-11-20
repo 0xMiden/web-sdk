@@ -334,8 +334,9 @@ each one before carrying a pre-0.16 fixture forward.
 - **`TransactionSummary` carries `userParams()`, not `salt()`**, and the value is **six**
   field elements the summary commitment binds. A fixture stubbing a single `salt()` word
   is wrong on both the name and the width.
-- **`outputNotes()` includes the fee note** on a fee-charging chain, on `TransactionSummary`
-  too - see "Forgetting the fee note" below.
+- **`outputNotes()` includes the fee note** on a fee-charging chain, on the
+  `TransactionSummary` of a single-signature account too - see "Forgetting the fee note"
+  below. The summary of a multisig has no fee note.
 
 **Pin `@miden-sdk/miden-sdk` and `@miden-sdk/react` to the same exact version.** They link
 against a shared WASM ABI, and two copies of the core in one bundle throw at runtime
@@ -509,7 +510,7 @@ Use your project's own runner invocation. `@miden-sdk/react` uses `vitest run`, 
 
 **Testing implementation details**: Test what the user sees (text, buttons, states), not internal hook calls. Use `screen.getByRole`, `screen.getByText`, not internal component state.
 
-**Forgetting the fee note**: as of 0.16, on any chain whose verification base fee is non-zero, `outputNotes()` includes the fee note, so a fixture or assertion built on `outputNotes()[0]` or on a note count is off by one. `ExecutedTransaction` has `userOutputNotes()` (without the fee note) and `feeNote()`; `TransactionRecord` and `TransactionSummary` have no split accessor. Nothing throws, which is exactly why a test is the only place this gets caught.
+**Forgetting the fee note**: as of 0.16, on any chain whose verification base fee is non-zero, `outputNotes()` includes the fee note, so a fixture or assertion built on `outputNotes()[0]` or on a note count is off by one. `ExecutedTransaction` has `userOutputNotes()` (without the fee note) and `feeNote()`; `TransactionRecord` and `TransactionSummary` have no split accessor. The summary of a multisig has no fee note, because a multisig pays the fee after it has checked the signatures. Nothing throws, which is exactly why a test is the only place this gets caught.
 
 ## Coverage, if you copy the SDK's setup
 

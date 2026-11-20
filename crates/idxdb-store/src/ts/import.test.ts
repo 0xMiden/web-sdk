@@ -8,6 +8,11 @@ import {
 } from "./schema.js";
 import { exportStore } from "./export.js";
 import { forceImportStore, transformForImport } from "./import.js";
+import {
+  getTransactionLogs,
+  insertTransactionLogs,
+  upsertTransactionRecord,
+} from "./transactions.js";
 import { uint8ArrayToBase64 } from "./utils.js";
 
 let dbCounter = 0;
@@ -216,6 +221,36 @@ describe("forceImportStore", () => {
     expect(imported!.inputs).toEqual(inputsBytes);
     expect(imported!.state).toEqual(stateBytes);
     expect(imported!.scriptRoot).toBe("sr-round-trip");
+  });
+
+  it("round-trip keeps the logs of a transaction in emission order", async () => {
+    const dbIdA = await openTestDb();
+    const topic = new Uint8Array(16).fill(5);
+    const word = new Uint8Array(32).fill(6);
+    await upsertTransactionRecord(
+      dbIdA,
+      "tx-exported",
+      new Uint8Array([1]),
+      1,
+      0,
+      new Uint8Array([0])
+    );
+    await insertTransactionLogs(dbIdA, "tx-exported", [
+      { emitter: "0xfirst", topic, content: word },
+      { emitter: "0xsecond", topic, content: new Uint8Array() },
+    ]);
+    const exported = await getTransactionLogs(dbIdA, "tx-exported");
+
+    const dbIdB = await openTestDb();
+    await forceImportStore(dbIdB, await exportStore(dbIdA));
+
+    expect(exported).toHaveLength(2);
+    expect(await getTransactionLogs(dbIdB, "tx-exported")).toEqual(exported);
+    expect(
+      (await getDatabase(dbIdB).transactionLogs.toArray()).map(
+        (row) => row.content
+      )
+    ).toEqual([word, new Uint8Array()]);
   });
 
   it("round-trip preserves all populated tables", async () => {

@@ -525,7 +525,9 @@ impl WebClient {
     /// the reference block. The client must have synced to at least that block: for a builder's
     /// request the largest of its `blockNumbers()`, while a `withFeeAwareAuth` copy does not
     /// declare it, so sync before executing the copy. Below it execution fails with "requested
-    /// block N is after transaction reference block M" until the client syncs.
+    /// block N is after transaction reference block M" until the client syncs. The summary also
+    /// binds a max fee, which these auth args leave for the auth procedure to estimate on each
+    /// execution, so the summary reproduces only while that estimate comes out the same.
     ///
     /// # Errors
     /// - If the transaction executes successfully (error code `TRANSACTION_ALREADY_AUTHORIZED`).
@@ -751,7 +753,9 @@ impl WebClient {
     /// bound block when it executes the request, and the summary stays bound to the bound block
     /// while foreign accounts, the fee faucet among them, load at the tip. It therefore still
     /// executes after the node has pruned the bound block's account state (about 50 blocks), and
-    /// `executeForSummary` reproduces the proposal's summary at the tip. The builder also
+    /// `executeForSummary` reproduces the proposal's summary at the tip while the fee estimate
+    /// that the summary binds comes out the same: the auth args set no max fee, so the auth
+    /// procedure estimates it on each execution. The builder also
     /// declares the bound block through `withBlockNumbers`, so a party can read it from
     /// `blockNumbers()` to check its sync height. Every party runs it once its client has synced
     /// to at least the bound block, which by default is this client's sync height when the
@@ -1049,7 +1053,9 @@ async fn multisig_auth_args_for(
 /// which is what lets a co-signer read it from the request; a `withFeeAwareAuth` copy does not
 /// declare it. A client whose sync height is still below the bound block cannot execute it yet.
 ///
-/// The approval does not expire unless `approval_expiration_delta` asks for one.
+/// The approval does not expire unless `approval_expiration_delta` asks for one. The auth args set
+/// no max fee, so the auth procedure estimates the fee on each execution and the summary binds
+/// the estimate.
 async fn multisig_auth_args(
     client: &mut Client<crate::ClientAuth>,
     overrides: MultisigAuthOverrides,

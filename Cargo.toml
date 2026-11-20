@@ -49,12 +49,12 @@ js-export-macro = { path = "crates/js-export-macro", version = "0.18.0" }
 # the items `miden-client` does not re-export. `miden-objects` holds the protobuf messages of the
 # protocol types, which `miden-client-proto` resolves. A requirement that drifts from
 # `miden-client`'s would resolve a second copy of the protocol types, so bump them together.
-miden-client              = { default-features = false, git = "https://github.com/0xMiden/rust-sdk", rev = "2c35a0cc2ee24a052c7634018a6fe873a6e68780" }
-miden-client-core         = { default-features = false, git = "https://github.com/0xMiden/rust-sdk", rev = "2c35a0cc2ee24a052c7634018a6fe873a6e68780" }
-miden-client-proto        = { default-features = false, git = "https://github.com/0xMiden/rust-sdk", rev = "2c35a0cc2ee24a052c7634018a6fe873a6e68780" }
-miden-client-sqlite-store = { default-features = false, git = "https://github.com/0xMiden/rust-sdk", rev = "2c35a0cc2ee24a052c7634018a6fe873a6e68780" }
-miden-objects             = { default-features = false, git = "https://github.com/0xMiden/protocol", rev = "b01c7502b2daab666001ff901617fce7908eb7fe" }
-miden-protocol            = { default-features = false, git = "https://github.com/0xMiden/protocol", rev = "b01c7502b2daab666001ff901617fce7908eb7fe" }
+miden-client              = { default-features = false, git = "https://github.com/0xMiden/rust-sdk", rev = "e241928d6ec7832b2b86c66f568667d170b0cb17" }
+miden-client-core         = { default-features = false, git = "https://github.com/0xMiden/rust-sdk", rev = "e241928d6ec7832b2b86c66f568667d170b0cb17" }
+miden-client-proto        = { default-features = false, git = "https://github.com/0xMiden/rust-sdk", rev = "e241928d6ec7832b2b86c66f568667d170b0cb17" }
+miden-client-sqlite-store = { default-features = false, git = "https://github.com/0xMiden/rust-sdk", rev = "e241928d6ec7832b2b86c66f568667d170b0cb17" }
+miden-objects             = { default-features = false, git = "https://github.com/0xMiden/protocol", rev = "c0ecc47e284fedd3975c437ca47af85e5c099342" }
+miden-protocol            = { default-features = false, git = "https://github.com/0xMiden/protocol", rev = "c0ecc47e284fedd3975c437ca47af85e5c099342" }
 
 
 # VM crates

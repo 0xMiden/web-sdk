@@ -1509,6 +1509,87 @@ describe("TransactionsResource", () => {
     });
   });
 
+  describe("logs", () => {
+    it("returns the stored logs of the transaction with the given hex ID", async () => {
+      const storedLogs = { numLogs: () => 2 };
+      const { resource, inner, wasm } = makeResource({
+        getTransactionLogs: vi.fn().mockResolvedValue(storedLogs),
+      });
+
+      const result = await resource.logs("0xtx");
+
+      expect(result).toBe(storedLogs);
+      expect(wasm.TransactionId.fromHex).toHaveBeenCalledWith("0xtx");
+      expect(inner.getTransactionLogs).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xtx" })
+      );
+    });
+
+    it("accepts a TransactionId object", async () => {
+      const { resource, inner, wasm } = makeResource({
+        getTransactionLogs: vi.fn().mockResolvedValue({}),
+      });
+
+      await resource.logs({ toHex: () => "0xfromObject" });
+
+      // A fresh ID is built from the hex, so the caller's object is not consumed.
+      expect(wasm.TransactionId.fromHex).toHaveBeenCalledWith("0xfromObject");
+      expect(inner.getTransactionLogs).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns null for a transaction that the client does not track", async () => {
+      // The browser binding resolves to undefined and the Node.js binding to null.
+      for (const missing of [undefined, null]) {
+        const { resource } = makeResource({
+          getTransactionLogs: vi.fn().mockResolvedValue(missing),
+        });
+        expect(await resource.logs("0xunknown")).toBeNull();
+      }
+    });
+
+    it("returns an empty collection as it is, not as null", async () => {
+      const empty = { isEmpty: () => true };
+      const { resource } = makeResource({
+        getTransactionLogs: vi.fn().mockResolvedValue(empty),
+      });
+      expect(await resource.logs("0xquiet")).toBe(empty);
+    });
+
+    it("rejects a missing transaction ID before it reads the store", async () => {
+      const getTransactionLogs = vi.fn();
+      const { resource } = makeResource({ getTransactionLogs });
+      await expect(resource.logs(undefined)).rejects.toThrow(
+        /Transaction ID cannot be null or undefined/
+      );
+      expect(getTransactionLogs).not.toHaveBeenCalled();
+    });
+
+    it("propagates a store error", async () => {
+      const { resource } = makeResource({
+        getTransactionLogs: vi
+          .fn()
+          .mockRejectedValue(new Error("failed to get transaction logs")),
+      });
+      await expect(resource.logs("0xtx")).rejects.toThrow(
+        "failed to get transaction logs"
+      );
+    });
+
+    it("refuses to run on a terminated client", async () => {
+      const getTransactionLogs = vi.fn();
+      const { resource } = makeResource(
+        { getTransactionLogs },
+        {
+          assertNotTerminated: vi.fn(() => {
+            throw new Error("Client terminated");
+          }),
+        }
+      );
+      await expect(resource.logs("0xtx")).rejects.toThrow("Client terminated");
+      expect(getTransactionLogs).not.toHaveBeenCalled();
+    });
+  });
+
   describe("waitFor", () => {
     it("uses default 60s timeout when opts.timeout is not provided", async () => {
       const committedStatus = {

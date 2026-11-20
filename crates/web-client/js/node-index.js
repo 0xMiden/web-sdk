@@ -347,6 +347,9 @@ export const TransactionId = /* @__PURE__ */ _reexport("TransactionId");
 export const TransactionInputs = /* @__PURE__ */ _reexport("TransactionInputs");
 export const TransactionLog = /* @__PURE__ */ _reexport("TransactionLog");
 export const TransactionLogs = /* @__PURE__ */ _reexport("TransactionLogs");
+export const TransactionLogsInfo = /* @__PURE__ */ _reexport(
+  "TransactionLogsInfo"
+);
 export const TransactionProver = /* @__PURE__ */ _reexport("TransactionProver");
 export const TransactionRecord = /* @__PURE__ */ _reexport("TransactionRecord");
 export const TransactionRequest =

@@ -237,6 +237,8 @@ function patchSdkPrototypes(rawSdk) {
     // local chain, so the "no fee note" reading has to be the same on both bindings.
     [rawSdk.ExecutedTransaction, ["feeNote"]],
     [rawSdk.NoteConsumptionStatus, ["consumableAfterBlock"]],
+    // The node holds only the commitment to the logs of a private account.
+    [rawSdk.TransactionLogsInfo, ["logs"]],
     // `authArg` and `feeConversionSalt` are how a caller checks what a request
     // declared about paying its fee, so they have to read the same on both
     // bindings — the salt tests in `fee_conversion_salt.test.ts` compare with
@@ -256,7 +258,11 @@ function patchSdkPrototypes(rawSdk) {
   }
 
   // RPC Option<T> results must be normalized after their Promise resolves.
-  for (const method of ["getNullifierCommitHeight", "getNoteScriptByRoot"]) {
+  for (const method of [
+    "getNullifierCommitHeight",
+    "getNoteScriptByRoot",
+    "getTransactionLogs",
+  ]) {
     const prototype = rawSdk.RpcClient?.prototype;
     const original = prototype?.[method];
     if (typeof original === "function") {

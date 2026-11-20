@@ -210,4 +210,49 @@ test.describe("multisig proposal", () => {
     expect(result.synced).toBeGreaterThanOrEqual(result.syncHeight + 1);
     expect(result.commitment).toMatch(/^0x[0-9a-f]+$/);
   });
+
+  // The user params of a multisig summary hold what the auth args name: the
+  // approval expiration, the max fee and the salt. The auth args of the
+  // builder set no max fee, and the mock chain charges nothing, so the fee
+  // that the auth procedure estimates is zero.
+  test("a multisig summary binds the approval expiration, the max fee and the salt", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { multisigAccountId } =
+        await helpers.setupMultisigWithConsumableNote();
+
+      const salt = new sdk.Word(sdk.u64Array([11, 12, 13, 14]));
+      // The builder consumes the salt, so read its elements first.
+      const saltElements = salt
+        .toFelts()
+        .map((felt) => felt.asInt().toString());
+      const boundBlock = await client.getSyncHeight();
+      const request = (
+        await client.feeAwareTransactionRequestBuilder(
+          multisigAccountId,
+          7,
+          salt
+        )
+      ).build();
+      const summary = await client.executeForSummary(
+        multisigAccountId,
+        request
+      );
+
+      return {
+        boundBlock,
+        saltElements,
+        summaryBlock: summary.blockNum(),
+        userParams: summary.userParams().map((felt) => felt.asInt().toString()),
+      };
+    });
+
+    expect(result.summaryBlock).toBe(result.boundBlock);
+    expect(result.userParams).toEqual([
+      String(result.boundBlock + 7),
+      "0",
+      ...result.saltElements,
+    ]);
+  });
 });

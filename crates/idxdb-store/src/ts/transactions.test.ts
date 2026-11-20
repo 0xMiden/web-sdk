@@ -1,7 +1,9 @@
 import { describe, it, expect, afterEach, vi, beforeEach } from "vitest";
 import { openDatabase, getDatabase } from "./schema.js";
 import {
+  getTransactionLogs,
   getTransactions,
+  insertTransactionLogs,
   insertTransactionScript,
   upsertTransactionRecord,
 } from "./transactions.js";
@@ -378,5 +380,193 @@ describe("transactions", () => {
     expect(ids).toEqual(
       expect.arrayContaining(["multi-1", "multi-2", "multi-3"])
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // Transaction logs
+  // -------------------------------------------------------------------------
+
+  async function insertPendingTransaction(dbId: string, id: string) {
+    await upsertTransactionRecord(
+      dbId,
+      id,
+      new Uint8Array([1]),
+      1,
+      0,
+      new Uint8Array([0])
+    );
+  }
+
+  const TOPIC_A = new Uint8Array([
+    1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0,
+  ]);
+  const TOPIC_B = new Uint8Array([
+    3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0,
+  ]);
+  const WORD = new Uint8Array(32).fill(7);
+  const TWO_WORDS = new Uint8Array(64).fill(9);
+
+  it("returns the logs of a transaction in emission order", async () => {
+    const dbId = await openTestDb();
+    await insertPendingTransaction(dbId, "tx-logs");
+
+    await insertTransactionLogs(dbId, "tx-logs", [
+      { emitter: "0xemitter", topic: TOPIC_A, content: WORD },
+      // A log with no content words.
+      { emitter: "0xemitter", topic: TOPIC_B, content: new Uint8Array() },
+      // A duplicate of the first log, which the store must keep.
+      { emitter: "0xemitter", topic: TOPIC_A, content: WORD },
+      { emitter: "0xforeign", topic: TOPIC_A, content: TWO_WORDS },
+    ]);
+
+    expect(await getTransactionLogs(dbId, "tx-logs")).toEqual([
+      {
+        emitter: "0xemitter",
+        topic: toBase64(TOPIC_A),
+        content: toBase64(WORD),
+      },
+      { emitter: "0xemitter", topic: toBase64(TOPIC_B), content: "" },
+      {
+        emitter: "0xemitter",
+        topic: toBase64(TOPIC_A),
+        content: toBase64(WORD),
+      },
+      {
+        emitter: "0xforeign",
+        topic: toBase64(TOPIC_A),
+        content: toBase64(TWO_WORDS),
+      },
+    ]);
+  });
+
+  it("orders the logs by their position and not by insertion", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await insertPendingTransaction(dbId, "tx-order");
+
+    // Twelve logs, written last to first. A string comparison would put position 10 before 2.
+    const positions = Array.from({ length: 12 }, (_, index) => index);
+    await db.transactionLogs.bulkPut(
+      positions
+        .map((logIndex) => ({
+          transactionId: "tx-order",
+          logIndex,
+          emitter: `0xemitter-${logIndex}`,
+          topic: toBase64(TOPIC_A),
+          content: new Uint8Array(),
+        }))
+        .reverse()
+    );
+
+    const logs = await getTransactionLogs(dbId, "tx-order");
+    expect(logs!.map((log) => log.emitter)).toEqual(
+      positions.map((logIndex) => `0xemitter-${logIndex}`)
+    );
+  });
+
+  it("returns an empty array for a transaction without logs", async () => {
+    const dbId = await openTestDb();
+    await insertPendingTransaction(dbId, "tx-quiet");
+    await insertTransactionLogs(dbId, "tx-quiet", []);
+
+    expect(await getTransactionLogs(dbId, "tx-quiet")).toEqual([]);
+  });
+
+  it("returns undefined for a transaction that the store does not hold", async () => {
+    const dbId = await openTestDb();
+    await insertPendingTransaction(dbId, "tx-known");
+    // Rows without a transaction, as nothing else could tell the two cases apart.
+    await insertTransactionLogs(dbId, "tx-unknown", [
+      { emitter: "0xemitter", topic: TOPIC_A, content: WORD },
+    ]);
+
+    expect(await getTransactionLogs(dbId, "tx-unknown")).toBeUndefined();
+    expect(await getTransactionLogs(dbId, "tx-never-seen")).toBeUndefined();
+  });
+
+  it("returns only the logs of the requested transaction", async () => {
+    const dbId = await openTestDb();
+    // One ID is a prefix of the other.
+    await insertPendingTransaction(dbId, "tx-1");
+    await insertPendingTransaction(dbId, "tx-10");
+    await insertTransactionLogs(dbId, "tx-1", [
+      { emitter: "0xone", topic: TOPIC_A, content: WORD },
+    ]);
+    await insertTransactionLogs(dbId, "tx-10", [
+      { emitter: "0xten", topic: TOPIC_B, content: WORD },
+      { emitter: "0xten", topic: TOPIC_B, content: WORD },
+    ]);
+
+    expect(
+      (await getTransactionLogs(dbId, "tx-1"))!.map((log) => log.emitter)
+    ).toEqual(["0xone"]);
+    expect(
+      (await getTransactionLogs(dbId, "tx-10"))!.map((log) => log.emitter)
+    ).toEqual(["0xten", "0xten"]);
+  });
+
+  it("keeps the logs when a status update replaces the transaction row", async () => {
+    const dbId = await openTestDb();
+    await insertPendingTransaction(dbId, "tx-committed");
+    await insertTransactionLogs(dbId, "tx-committed", [
+      { emitter: "0xemitter", topic: TOPIC_A, content: WORD },
+    ]);
+
+    // A sync writes the committed status over the pending row.
+    await upsertTransactionRecord(
+      dbId,
+      "tx-committed",
+      new Uint8Array([1]),
+      1,
+      1,
+      new Uint8Array([1])
+    );
+
+    expect(await getTransactionLogs(dbId, "tx-committed")).toHaveLength(1);
+  });
+
+  it("writes the same rows when the logs of a transaction are inserted twice", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await insertPendingTransaction(dbId, "tx-twice");
+    const logs = [
+      { emitter: "0xemitter", topic: TOPIC_A, content: WORD },
+      { emitter: "0xemitter", topic: TOPIC_B, content: WORD },
+    ];
+
+    await insertTransactionLogs(dbId, "tx-twice", logs);
+    await insertTransactionLogs(dbId, "tx-twice", logs);
+
+    expect(await db.transactionLogs.count()).toBe(2);
+  });
+
+  it("finds the logs of a topic through the topic index", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await insertTransactionLogs(dbId, "tx-a", [
+      { emitter: "0xemitter", topic: TOPIC_A, content: WORD },
+      { emitter: "0xemitter", topic: TOPIC_B, content: WORD },
+    ]);
+    await insertTransactionLogs(dbId, "tx-b", [
+      { emitter: "0xemitter", topic: TOPIC_B, content: WORD },
+    ]);
+
+    const rows = await db.transactionLogs
+      .where("topic")
+      .equals(toBase64(TOPIC_B))
+      .toArray();
+    expect(rows.map((row) => [row.transactionId, row.logIndex])).toEqual([
+      ["tx-a", 1],
+      ["tx-b", 0],
+    ]);
+  });
+
+  it("rejects when the database was never opened", async () => {
+    await expect(
+      insertTransactionLogs("never-opened-logs", "tx", [])
+    ).rejects.toThrow();
+    await expect(
+      getTransactionLogs("never-opened-logs", "tx")
+    ).rejects.toThrow();
   });
 });
