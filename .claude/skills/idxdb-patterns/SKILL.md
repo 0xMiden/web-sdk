@@ -14,14 +14,18 @@ The schema splits account-related tables into `Latest…` / `Historical…`
 pairs to support account-history pruning (`WasmWebClient.pruneAccountHistory()`
 - it is a WASM method, not part of the `MidenClient` resource surface).
 Always check `crates/idxdb-store/src/ts/schema.ts` for the canonical table
-list before adding rows or filters. The full set, in declaration order
-(`schema.ts:50-74`), is: `AccountCode`, `LatestAccountStorage`,
+list before adding rows or filters. The `Table` enum, in declaration order,
+is: `AccountCode`, `LatestAccountStorage`,
 `HistoricalAccountStorage`, `LatestAccountAssets`, `HistoricalAccountAssets`,
 `LatestStorageMapEntries`, `HistoricalStorageMapEntries`, `AccountAuth`,
 `AccountKeyMapping`, `LatestAccountHeaders`, `HistoricalAccountHeaders`,
 `Addresses`, `Transactions`, `TransactionScripts`, `InputNotes`,
 `OutputNotes`, `NotesScripts`, `BlockchainCheckpoint`, `BlockHeaders`,
-`PartialBlockchainNodes`, `Tags`, `ForeignAccountCode`, `Settings`.
+`PartialBlockchainNodes`, `Tags`, `ForeignAccountCode`, `Settings`,
+`AccountWitnesses`, `ClientConfig`, `UserSettings`, `PswapLineages`,
+`ChainAnchors`, `TransactionLogs`. Versions 11 and 13 drop the `settings` and
+`blockchainCheckpoint` tables; the enum keeps their names for the upgrades
+that read them.
 
 ## Build Workflow
 
@@ -263,6 +267,11 @@ enum Table {
   ForeignAccountCode = "foreignAccountCode",
   Settings = "settings",
   AccountWitnesses = "accountWitnesses",
+  ClientConfig = "clientConfig",
+  UserSettings = "userSettings",
+  PswapLineages = "pswapLineages",
+  ChainAnchors = "chainAnchors",
+  TransactionLogs = "transactionLogs",
 }
 ```
 
@@ -291,7 +300,7 @@ helper, e.g.
 `[Table.LatestAccountStorage]: indexes("[accountId+slotName]", "accountId")`.
 Every later change is its own `.version(N).stores({...})` block.
 
-**The current schema version is 14.**
+**The current schema version is 15.**
 
 | Version | Change |
 | --- | --- |
@@ -309,6 +318,7 @@ Every later change is its own `.version(N).stores({...})` block.
 | 12 | Adds `chainAnchors`, keyed by `blockNum`. `anchorsFromCheckpoint` moves the `blockchainCheckpoint` row into it next to the genesis anchor |
 | 13 | Drops `blockchainCheckpoint` |
 | 14 | The protocol 1.0 cutover: `.upgrade(clearStoreForProtocolV1)` clears every store that reaches it, whatever its stamp, and seeds it like `populate` (see below) |
+| 15 | Adds `transactionLogs`, primary key `[transactionId+logIndex]` with an index on `topic`: one row for each log that a transaction emitted, as the sqlite-store `transaction_logs` table. No `.upgrade()` hook, so a transaction that the store applied before this version has no rows and its logs read as empty |
 
 ### Migrations, not resets
 

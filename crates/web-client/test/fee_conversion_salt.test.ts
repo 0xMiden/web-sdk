@@ -592,8 +592,9 @@ test.describe("fee conversion salt", () => {
         sdk.NoteType.Private,
         BigInt(5)
       );
-      const anchor = await client.chainAnchorForRequest(request);
-      const header = anchor.blockHeader();
+      // The reference block of an execution is the latest block of the store.
+      const executed = await client.executeTransaction(faucet.id(), request);
+      const header = executed.executedTransaction().blockHeader();
 
       // Since 0.17 the fee asset lives in the protocol configuration, not in the
       // header, so the client reports it rather than the block.
@@ -848,10 +849,13 @@ test.describe("fee conversion salt", () => {
         sdk.NoteType.Private,
         BigInt(5)
       );
-      const anchor = await client.chainAnchorForRequest(request);
+      const executed = await client.executeTransaction(faucet.id(), request);
 
       return {
-        baseFee: anchor.blockHeader().verificationBaseFee(),
+        baseFee: executed
+          .executedTransaction()
+          .blockHeader()
+          .verificationBaseFee(),
         hasAuthArg: request.authArg() != null,
         hasSalt: request.feeConversionSalt() != null,
       };

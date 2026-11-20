@@ -9,10 +9,9 @@ This skill targets the `@miden-sdk/miden-sdk` npm package published from
 [`0xMiden/web-sdk`](https://github.com/0xMiden/web-sdk) (the JS web client; at
 0.16.1 it builds on the `miden-client` 0.16.1 Rust crate). For React-hook usage,
 prefer the `react-sdk-patterns` skill - only fall through to the raw client when
-a hook does not cover what you need. For pinning a reference block so a
-proposer, its co-signers and the executor all derive the same transaction
-summary, see the sibling `chain-anchored-execution` skill; do not re-derive that
-flow here.
+a hook does not cover what you need. For flows where a proposer, its co-signers
+and the executor must all derive the same transaction summary, see the sibling
+`multi-party-signing` skill; do not re-derive that flow here.
 
 ## API Overview
 
@@ -22,7 +21,7 @@ The SDK exposes a top-level `MidenClient` whose state is split across typed
 | Resource             | What it covers                                                                                                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `client.accounts`    | Wallets, faucets, custom contracts, listing, import/export, addresses                                                                                                          |
-| `client.transactions` | `send` / `mint` / `bridge` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
+| `client.transactions` | `send` / `mint` / `bridge` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `preview` / `executeRequest` / `submit` / `submitProven` / `list` / `logs` / `waitFor` |
 | `client.notes`       | Listing, fetching, importing/exporting, private-note transport                                                                                                                 |
 | `client.tags`        | Note-tag subscriptions                                                                                                                                                         |
 | `client.settings`    | Persistent client settings                                                                                                                                                     |
@@ -948,9 +947,10 @@ computes.
 The account's state and witness are read against the transaction's reference
 block, and the vault entries and storage-map keys the foreign code touches are
 resolved during execution as per-asset and per-key witnesses rather than up
-front. Pin the transaction to a block the node still serves account state for;
-prefetching the state to execute against an older block is no longer possible
-(`foreignAccountInputs` and `ForeignAccount.prefetched` were removed in 0.17).
+front. The reference block is the sync height of the client, so sync until the
+client is at a block the node still serves account state for; prefetching the
+state is not possible (`foreignAccountInputs` and `ForeignAccount.prefetched`
+were removed in 0.17).
 
 ```typescript
 const foreign = ForeignAccount.public(foreignAccountId, storageRequirements);
@@ -975,9 +975,10 @@ When several clients must execute the *same* request and agree on the resulting
   each input note is consumed authenticated or unauthenticated, in the mode its
   `InputNote` carries. Repeated calls add more notes, and the note stays usable
   by the caller. `withInputNotes` leaves that choice to each executor.
-- Prefetched foreign-account inputs (above) pin the foreign state.
-- A `ChainAnchor` pins the reference block - see the `chain-anchored-execution`
-  skill.
+- Nothing pins the reference block or the foreign-account state: a transaction
+  executes at the sync height of the client and reads foreign accounts there.
+  A multisig summary binds the block its auth args name instead; see the
+  `multi-party-signing` skill.
 
 ### Staged transaction lifecycle
 
@@ -994,8 +995,8 @@ await submitted.apply();
 ```
 
 - `executeRequest` returns a `TransactionExecution` (`.result`, `.id`,
-  `.prove(options?)`). Nothing is proven, submitted or persisted yet. It takes
-  an optional `anchor` to execute against a pinned reference block.
+  `.prove(options?)`). Nothing is proven, submitted or persisted yet. It
+  executes at the current sync height.
 - `.prove()` returns a `TransactionProof` (`.proof`, `.result`, `.submit()`).
   Pure computation: it touches neither the network nor the local store, and
   `.proof` is the `ProvenTransaction` to ship elsewhere.
@@ -1082,7 +1083,7 @@ and pass the **same** `TransactionRequest` object to both calls. Every other
 operation rebuilds its request from the options, and two builds are not
 identical: output-note serial numbers and the fee conversion salt are drawn from
 the client's RNG, so the summary you signed would not be the one the submitted
-transaction produces. Only `"custom"` accepts an `anchor`.
+transaction produces.
 
 `TransactionSummary` exposes `userParams()` (six caller-defined field
 elements; this replaces the removed `salt()`, and the protocol assigns them no
@@ -1110,6 +1111,9 @@ change most likely to pass unnoticed.
   record is read back from the store and the fee script root is not exposed to
   JS, so if you read `outputNotes()` on either, account for the extra note
   yourself.
+- The `TransactionSummary` of a multisig has no fee note. A multisig pays the
+  fee after it has checked the signatures, so its summary binds a max fee
+  instead (`summary.userParams()[1]`); see the `multi-party-signing` skill.
 
 `ExecutedTransaction.accountPatch()` and `TransactionStoreUpdate.accountPatch()`
 replaced `accountDelta()` and return the absolute-valued `AccountPatch` /
@@ -1128,6 +1132,63 @@ removed - expiry is now decided during state sync.
 `transactions.list({ expiredBefore })` **throws** rather than silently falling
 back to the unfiltered query. Use `{ status: "uncommitted" }` and compare
 `TransactionRecord.expirationBlockNum()` against the height you care about.
+
+### Reading transaction logs
+
+An account procedure can emit logs while a transaction executes. The client
+stores the logs of every transaction that it applies, so this reads the store
+and does not contact the node.
+
+```typescript
+const logs = await client.transactions.logs(txId); // hex string or TransactionId
+
+if (logs === null) {
+  // The client does not track this transaction.
+} else {
+  for (const log of logs.logs()) {
+    log.emitter(); // AccountId; can be a foreign account
+    log.topicPrefix(); // Felt
+    log.topicSuffix(); // Felt
+    log.content(); // Word[]
+  }
+}
+```
+
+- The result is `null` for a transaction that the client does not track, and an
+  empty collection (`logs.isEmpty()`) for a transaction that emitted no logs.
+  Do not treat `null` and empty as the same case.
+- The logs are in emission order. `logs.commitment()` commits to the logs and
+  to their order. `logs.numLogs()` and `logs.numContentWords()` give the sizes.
+- The logs are stored when the transaction is applied, so they are available
+  before it is committed. The store also keeps the logs of a discarded
+  transaction, which the network did not apply. Check
+  `transactionStatus()` on the record from `transactions.list({ ids: [txId] })`
+  when that matters.
+- `result.executedTransaction().logs()` returns the same collection before the
+  transaction is submitted, and `summary.logs()` returns the logs that a
+  transaction summary binds.
+
+For a transaction that the client does not track, ask the node with the
+stateless `RpcClient`:
+
+```typescript
+const info = await rpc.getTransactionLogs(
+  AccountId.fromHex(accountIdHex),
+  TransactionId.fromHex(txIdHex),
+);
+if (info !== undefined) {
+  info.blockNum(); // number
+  info.transactionIndex(); // number, the position in the block
+  info.logsCommitment(); // Word, set for public and private accounts
+  info.logs(); // TransactionLogs, or undefined for a private account
+}
+```
+
+`getTransactionLogs` resolves to `undefined` when the node has no committed
+transaction with this ID for this account, which includes a pending
+transaction and a transaction of another account. The node holds the logs of a
+public account, and only their commitment for a private account. The result
+relies on trusting the node.
 
 ### Waiting for a transaction
 

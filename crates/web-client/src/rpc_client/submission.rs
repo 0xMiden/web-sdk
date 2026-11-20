@@ -300,7 +300,12 @@ mod tests {
     use miden_protocol::crypto::dsa::eddsa_25519_sha512::KeyExchangeKey;
     use miden_protocol::crypto::ies::{SealedMessage, UnsealingKey};
     use miden_protocol::testing::dummy_execution_proof;
-    use miden_protocol::transaction::{OutputNote, TransactionLogDetails, TxAccountUpdate};
+    use miden_protocol::transaction::{
+        OutputNote,
+        PublicTransactionLogs,
+        TransactionLogDetails,
+        TxAccountUpdate,
+    };
     use miden_protocol::{Felt, Word as NativeWord};
 
     use super::*;
@@ -428,6 +433,7 @@ mod tests {
             proposal.output_notes().to_vec(),
             proposal.batch_expiration_block_num(),
             proposal.transaction_headers(),
+            PublicTransactionLogs::from_batch(&proposal).unwrap(),
             dummy_execution_proof(),
         )
         .unwrap();

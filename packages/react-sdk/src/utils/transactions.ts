@@ -27,23 +27,3 @@ export async function resolveTransactionRequest(
   }
   return resolved;
 }
-
-/**
- * Reject an `anchor` that is present but falsy — except `undefined`, which is
- * how an optional property spells "absent".
- *
- * Anchored branches are selected by truthiness, so `{ anchor: null }` would
- * otherwise execute at the current tip: the one outcome anchoring exists to
- * prevent. It is easy to hit, because `useChainAnchor().anchor` is `null` until
- * the capture resolves, and `cond && anchor` yields `false`.
- */
-export function assertAnchorValueUsable(options: { anchor?: unknown }): void {
-  const { anchor } = options;
-  if (anchor === undefined || anchor) return;
-  // String() rather than JSON.stringify: the latter throws on a BigInt and
-  // renders NaN as "null", and this is an error path that must not itself fail.
-  throw new Error(
-    `anchor was ${String(anchor)}; await captureAnchor(request) before ` +
-      "passing it, or omit the option entirely to execute at the current tip"
-  );
-}

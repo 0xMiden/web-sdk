@@ -357,7 +357,7 @@ const count = executed.userOutputNotes().length;
 const fee = executed.feeNote();
 ```
 
-`TransactionRecord` and `TransactionSummary` have **no** split accessor: both expose only `outputNotes(): OutputNotes`. If you read it on either, filter or account for the extra note yourself. The fee note is identified by its note script root, not by the `0xfee` note tag (which is a plain `u32` any caller-supplied note can carry).
+`TransactionRecord` and `TransactionSummary` have **no** split accessor: both expose only `outputNotes(): OutputNotes`. If you read it on either, filter or account for the extra note yourself. The summary of a multisig is the exception: a multisig pays the fee after it has checked the signatures, so its summary has no fee note and binds a max fee instead. The fee note is identified by its note script root, not by the `0xfee` note tag (which is a plain `u32` any caller-supplied note can carry).
 
 ## FP11: transactions.list({ expiredBefore }) Now Throws (HIGH)
 
@@ -398,7 +398,7 @@ Related: `notes.fetchPrivate({ mode: "all" })` is gone. `fetchPrivate()` takes n
 
 A foreign account's state and witness are fetched against the transaction's own reference block, and the vault entries and storage-map keys the foreign code reads are resolved during execution as per-asset and per-key witnesses. Nothing is prefetched: `foreignAccountInputs` and `ForeignAccount.prefetched` were removed in 0.17 along with the upstream types behind them.
 
-**The reference block must be one the node still serves account state for.** Nodes keep a bounded window of account history (50 blocks at the time of writing), so a transaction pinned to an older block - an anchor captured minutes earlier, say - fails naming the account and the block, and there is no longer a way to carry the state along with the request. Capture the `ChainAnchor` close to execution. For a multisig proposal, do not anchor at all: execute at the tip, where miden-client tracks the bound block of the auth args (chain-anchored-execution R0).
+**The reference block must be one the node still serves account state for.** Nodes keep a bounded window of account history (50 blocks at the time of writing), and the reference block is the sync height of the client. A client that is far behind the tip therefore fails naming the account and the block, and there is no way to carry the state along with the request. Sync before executing. A multisig proposal executes at the tip too, where miden-client tracks the bound block of the auth args (multi-party-signing R0).
 
 ```tsx
 const foreign = ForeignAccount.public(id, storageRequirements);
@@ -455,7 +455,7 @@ Four companions to the same boundary:
 
 - **`lastAuthError()` returns `null` under the worker.** The sign callback still fires under the worker, because it is proxied back to the main thread, but signing runs in the worker's WASM keystore while the accessor reads the main-thread instance, which never signed. Only the accessor misses the error, so if you need the signal, set `useWorker: false`. On the Node binding it always returns `null`, because signing goes through the filesystem keystore rather than a JS callback. Read it under your own lock: it is one of the raw-bound `SYNC_METHODS`, so unlike a forwarded async method it does not join `_serializeWasmCall`, and it takes a shared WASM borrow that can still lose the race against an in-flight call. The `keystore` getter has the same shape.
 - **Keystore callbacks wait on the main thread.** Under the worker, each `getKey`, `insertKey` and `sign` call is proxied to the main thread, and the worker gives `getKey` and `insertKey` 30 seconds by default while `sign` waits without a limit. Set `ClientOptions.callbackTimeoutMs` to put one limit on all three, rounded up to a whole millisecond (`0` removes them all). A negative, non-finite or non-number value, or one greater than 2147483647, throws `TypeError` at creation. A batch signs while it is built, so one failed or timed out `sign` fails the whole batch, and a stalled `sign` with no limit holds the batch and leaves later worker calls in the queue. If a signer can stall, set a finite value such as `callbackTimeoutMs: 120000`. See the [complete contract](https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts).
-- **`usePreview()` runs the VM on the main thread regardless.** It is not offloaded to the worker (matching the client's unanchored `executeForSummary`), so it blocks the UI for its whole duration and queues other client calls behind it. Budget for that in a confirmation flow; do not assume the worker is absorbing it.
+- **`usePreview()` runs the VM on the main thread regardless.** It is not offloaded to the worker (matching the client's `executeForSummary`), so it blocks the UI for its whole duration and queues other client calls behind it. Budget for that in a confirmation flow; do not assume the worker is absorbing it.
 - **A batch in the worker still holds the client.** `submitNewTransactionBatch` is forwarded to the worker, so `transactions.batch`, `submitBatch` and `useBatch` leave the page's main thread free while every transaction is proven, but the whole batch occupies the client: other client calls queue behind it until it settles. A batch forwarded to the worker also does not surface its auth error through `lastAuthError()`, for the reason given above. With `useWorker: false`, without `Worker` support, or on a mock client, the batch proves on the main thread and blocks the UI, so keep batches small there.
 
 **Config cannot carry a prover instance.** Neither `ClientOptions.proverUrl` nor the React
@@ -474,7 +474,7 @@ Verify: `crates/web-client/js/index.js`, `crates/web-client/js/client.js`, `pack
 Errors carry machine-readable codes; message strings are not a stable API.
 
 - Assigned by the React SDK (`MidenError`, the closed `MidenErrorCode` union): `WASM_CLASS_MISMATCH`, `WASM_POINTER_CONSUMED`, `WASM_NOT_INITIALIZED`, `WASM_SYNC_REQUIRED`, `SEND_BUSY`, `OPERATION_BUSY`, `BATCH_BUSY`, `STALE_CLIENT`, `UNKNOWN`.
-- Assigned by the Rust client and thrown out of WASM (`WasmErrorCode`): `INVALID_CHAIN_ANCHOR`, `TRANSACTION_ALREADY_AUTHORIZED`. This list is deliberately **not** exhaustive of what the client can emit - `CodedError.code` carries a `(string & {})` arm so codes from a newer client stay assignable. Handle the ones you care about and fall through on the rest.
+- Assigned by the Rust client and thrown out of WASM (`WasmErrorCode`): `TRANSACTION_ALREADY_AUTHORIZED`. This list is deliberately **not** exhaustive of what the client can emit - `CodedError.code` carries a `(string & {})` arm so codes from a newer client stay assignable. Handle the ones you care about and fall through on the rest.
 
 ```tsx
 import type { CodedError } from "@miden-sdk/react";
@@ -489,7 +489,7 @@ try {
 }
 ```
 
-**Gotcha - on Node the code prefixes the message** (`"INVALID_CHAIN_ANCHOR: …"`) instead of being a property, because the napi bindings cannot attach one. Code written as `err.code === …` works in the browser and silently never matches under Node.
+**Gotcha - on Node the code prefixes the message** (`"TRANSACTION_ALREADY_AUTHORIZED: …"`) instead of being a property, because the napi bindings cannot attach one. Code written as `err.code === …` works in the browser and silently never matches under Node.
 
 **`WASM_CLASS_MISMATCH` almost always means multiple copies of `@miden-sdk/miden-sdk` are bundled**, not that you passed the wrong type. The code is raised from a raw message matching `_assertClass` or `expected instance of`, which is what an object built by one copy looks like when handed to another. Its own message says so and names the fix: `resolve.dedupe` + `optimizeDeps.exclude` for the package - which `midenVitePlugin()` already does (FP8). Pin `@miden-sdk/miden-sdk` and `@miden-sdk/react` to the same exact version too, rather than to ranges that can drift apart.
 
@@ -508,12 +508,16 @@ Verify: `crates/web-client/js/eager.js`.
 
 - The SDK runs protocol 1.0 and works only with a node of the matching version.
 - The first open clears the IndexedDB store an earlier SDK wrote, secret keys included, and `importStore` refuses a dump an earlier SDK exported. See FP7.
-- Bytes an earlier SDK serialized do not deserialize. `serialize()` / `deserialize()` use protobuf messages for `Account`, `Note`, `NoteScript`, `AccountPatch`, `AccountStoragePatch`, `AccountVaultPatch`, `TransactionRequest`, `SyncSummary`, `ChainAnchor`, `ProvenTransaction`, `TransactionSummary`, `SigningInputs`, `TransactionResult` and `TransactionStoreUpdate`, and so do the mock chain and mock note transport bytes. A wallet or external signer (Para, Turnkey) must decode with the same SDK version as the dApp: `SigningInputs` from a 0.18 dApp do not decode in 0.19.
+- Bytes an earlier SDK serialized do not deserialize. `serialize()` / `deserialize()` use protobuf messages for `Account`, `Note`, `NoteScript`, `AccountPatch`, `AccountStoragePatch`, `AccountVaultPatch`, `TransactionRequest`, `SyncSummary`, `ProvenTransaction`, `TransactionSummary`, `SigningInputs`, `TransactionResult` and `TransactionStoreUpdate`, and so do the mock chain and mock note transport bytes. A wallet or external signer (Para, Turnkey) must decode with the same SDK version as the dApp: `SigningInputs` from a 0.18 dApp do not decode in 0.19.
 - `TransactionProver.newCallbackProver(jsFn)` and the native `miden-mobile-prover` receive the protobuf message of a `TransactionWitness` and return the protobuf message of a `ProvenTransaction`. Rebuild a native prover from 0.19.
 - `Signature.toPreparedSignature(message)` throws when the public key of an ECDSA signature cannot be recovered from the signature and `message`.
 - `BasicFungibleFaucetComponent.externalLink()` is now `externalUri()`.
 - `TransactionArgs.adviceInputs()` no longer holds the recipients of the expected output notes or the signatures. Read them with `outputNoteRecipients()` and `signatures()` (`BoundSignature[]`).
+- Chain-anchored execution is removed: `ChainAnchor`, `transactions.captureAnchor`, `WebClient.chainAnchorForRequest` / `executeTransactionAt` / `executeForSummaryAt`, the `anchor` option of `preview` / `executeRequest` / `submit` / `usePreview` / `useTransaction`, `useChainAnchor` and the `INVALID_CHAIN_ANCHOR` code. A transaction always executes at the sync height of the client. A multisig proposal already executes at the tip; a summary that binds the reference block reproduces only at the sync height it was derived at. See the `multi-party-signing` skill, which replaces `chain-anchored-execution`.
 - `client.accounts.import(id)`, `WebClient.importAccountById()` and `useImportAccount({ type: "id" })` read the account at the client's sync height. Call `syncState()` after the account is created and before importing it.
+- A multisig summary binds a max fee, and it no longer includes the fee note. The auth args that the SDK builds set no max fee, so the auth procedure estimates it on each execution, and a proposal reproduces its summary at a later block only while the estimate comes out the same. A multisig preview does not reach the fee payment. See the `multi-party-signing` skill.
+- MASM: `fee::pay_fee` takes `[num_extra_cycles, CONVERSION_INFO, serial_number_block, initial_nonce]` and returns `[fee_amount, total_sponsored_fee_amount]`. A custom auth component that calls it must pass the account nonce from before the transaction and drop two values.
+- The IndexedDB store has a new `transactionLogs` table. A store that this version opened cannot be opened by an earlier SDK.
 
 ## Removed or Changed in 0.16 (check these first when upgrading from 0.15)
 

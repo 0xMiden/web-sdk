@@ -68,9 +68,8 @@ export async function setupWalletAndFaucet(
  * Builds a 2-of-3 multisig account and leaves a note sitting consumable by it.
  *
  * Transactions on this account do not self-authorize, which is what makes
- * `executeForSummary`/`executeForSummaryAt` return a summary rather than
- * rejecting with `TRANSACTION_ALREADY_AUTHORIZED`. That is the co-signing shape
- * chain anchors exist to serve.
+ * `executeForSummary` return a summary rather than rejecting with
+ * `TRANSACTION_ALREADY_AUTHORIZED`.
  */
 export async function setupMultisigWithConsumableNote(
   client: any,

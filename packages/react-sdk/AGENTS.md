@@ -185,7 +185,7 @@ in-progress flag, and only the transaction family has a `stage`:
 |---|---|---|---|
 | Transaction | `useSend`, `useMultiSend`, `useBatch`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `useTransaction`, all four `usePswap*` writes | `isLoading` | yes |
 | Account create / import | `useCreateWallet`, `useCreateFaucet`, `useImportAccount` | `isCreating` (`isImporting` for the last) | no |
-| Everything else names its own | `useChainAnchor().isCapturing`, `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting` | as named | no |
+| Everything else names its own | `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting` | as named | no |
 
 Two more sit outside the pattern entirely: `useWaitForCommit()` returns
 `{ waitForCommit }` and nothing else, and `useCompile()` is not a write hook at
@@ -470,7 +470,7 @@ So hooks that build their own request (`useSend`, `useMultiSend`, `useConsume`,
 `useMint`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`,
 `usePswapCancel`) declare a salt for you where the executing account needs one.
 The hooks that take a request *from you* - `useTransaction`, `useBatch`,
-`usePreview`, `useChainAnchor` - cannot. A bare `new TransactionRequestBuilder()` is fine for
+`usePreview` - cannot. A bare `new TransactionRequestBuilder()` is fine for
 an ordinary account at any base fee; against a multisig on a fee-charging chain
 it fails with `FeeConversionInfoRequired` naming the component. So this matters
 for multisig, and for controlling the salt.
@@ -747,10 +747,9 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | `usePswapConsume()` | `pswapConsume({ accountId, note, fillAmount, noteFillAmount? })` - `note` accepts hex string \| `NoteId` \| `InputNoteRecord` \| `Note` | `TransactionResult` (fills PSWAP fully or partially) |
 | `usePswapCancel()` | `pswapCancel({ accountId, note })` - creator only, reclaims unfilled offered asset | `TransactionResult` |
 | `usePswapCancelByOrder()` | `pswapCancelByOrder({ orderId })` - creator only, resolves the current tip + creator from the tracked lineage | `TransactionResult` |
-| `useTransaction()` | `execute({ ..., anchor?, privateNoteTarget? })` | `TransactionResult` (custom tx; `anchor` pins the reference block; `privateNoteTarget` relays the private output notes) |
+| `useTransaction()` | `execute({ ..., privateNoteTarget? })` | `TransactionResult` (custom tx at the current sync height; `privateNoteTarget` relays the private output notes) |
 | `useResendPrivateNotes()` | `resend({ transactionId, notes })` | `void`; rejects with `PrivateNoteDeliveryError` for notes still undelivered. Returns `{ resend, isLoading, error }` only |
-| `useChainAnchor()` | `captureAnchor({ request })` | `ChainAnchor` (pins the current reference block for later replay) |
-| `usePreview()` | `preview({ accountId, request, anchor? })` | `TransactionSummary` awaiting authorization; rejects `TRANSACTION_ALREADY_AUTHORIZED` when none is pending |
+| `usePreview()` | `preview({ accountId, request })` | `TransactionSummary` awaiting authorization, derived at the current sync height; rejects `TRANSACTION_ALREADY_AUTHORIZED` when none is pending |
 | `useExecuteProgram()` | `execute(...)` | program output |
 | `useWaitForCommit()` | `waitForCommit({ txId })` | resolves when committed on-chain. Returns `{ waitForCommit }` only - no `result`, `isLoading`, `stage`, `error` or `reset` |
 
@@ -786,13 +785,13 @@ no `isLoading` of their own.
 | `useSigner()` | `isConnected`, `connect`, `disconnect`, `name` | The unified external-signer interface, whichever provider is mounted |
 | `useMultiSigner()` | `signers`, `activeSigner`, `connectSigner(name)`, `disconnectSigner()`, or **`null`** | Choosing between several signer providers. Returns `null` outside a `MultiSignerProvider` rather than throwing, so null-check it |
 
-## Chain-Anchored Execution
+## Multi-Party Signing
 
 Whenever one party signs a transaction summary and another party (or the same
 party, later) executes it, every party has to derive the same summary. How
 depends on what the summary binds.
 
-**Multisig proposals (0.17+): no anchor.** A multisig summary binds a bound
+**Multisig proposals: at the tip.** A multisig summary binds a bound
 block named in its auth args, and miden-client tracks that block when it
 executes the request. Build the request with
 `client.feeAwareTransactionRequestBuilder(accountId)`, which binds the current
@@ -800,7 +799,10 @@ sync height and also declares it with `withBlockNumbers`, and ship the request
 bytes. Every party previews and executes at its own tip once its client has
 synced to at least the bound block (the largest of `request.blockNumbers()`);
 below it the call fails with `requested block N is after transaction reference
-block M` until it syncs. `usePreview` does not sync, and `useTransaction` syncs
+block M` until it syncs. The summary also binds a max fee: these auth args set
+none, so the auth procedure estimates the fee on each execution, and the
+parties derive the same summary only while that estimate, which depends on the
+base fee of the reference block, comes out the same. `usePreview` does not sync, and `useTransaction` syncs
 through the provider's `sync()`, which returns early while another sync runs, so
 sync and then check the height before previewing or executing. A request from
 `client.withFeeAwareAuth` does not declare the bound block, so the height check
@@ -836,42 +838,29 @@ const derived = await preview({ accountId, request: received });
 await execute({ accountId, request: received, skipSync: true });
 ```
 
-Do not re-execute a multisig proposal at an anchor: a node keeps account state
-for only 50 blocks, so anchored re-execution of an older proposal fails with
-`block N has been pruned`.
+Foreign accounts, the fee faucet among them, load at the tip, so a proposal
+still executes after the node has pruned the account state of its bound block
+(a node keeps account state for only 50 blocks).
 
-**Summaries that bind the reference block (single-signature co-signing):
-anchor.** `useChainAnchor` captures that block; `usePreview` and
-`useTransaction` replay against it.
+**Summaries that bind the reference block (single-signature co-signing): same
+sync height.** A transaction always executes at the client's sync height, and
+nothing pins another reference block. Such a summary reproduces only at the
+sync height it was derived at. A sync between `preview` and `execute` moves the
+reference block: `execute` syncs first unless `skipSync` is set, and
+`MidenProvider` syncs on its `autoSyncInterval`. For signatures that are
+collected over time or on other clients, use a multisig account.
 
-```tsx
-const { captureAnchor, isCapturing } = useChainAnchor();
-const { preview, isPreviewing } = usePreview();
-const { execute } = useTransaction();
+`useChainAnchor` and the `anchor` option of `usePreview` and `useTransaction`
+were removed in 0.19.0.
 
-// Signer: pin the reference block alongside the request.
-const anchor = await captureAnchor({ request });
-
-// Co-signer: rebuild the same summary from the same anchor and inspect it
-// before authorizing. Rejects TRANSACTION_ALREADY_AUTHORIZED if none is pending.
-const summary = await preview({ accountId, request, anchor });
-
-// Executor: run it against the pinned block.
-await execute({ accountId, request, anchor });
-```
-
-Without an anchor, each party deriving such a summary executes against its own
-sync height, the summaries commit to different reference blocks, and the
-commitments never match.
-If you are debugging co-signers whose commitments disagree, or
-`INVALID_CHAIN_ANCHOR` / `STALE_CLIENT` / `OPERATION_BUSY`, read
-`node_modules/@miden-sdk/miden-sdk/skills/chain-anchored-execution/SKILL.md`
+If you are debugging co-signers whose commitments disagree, or `STALE_CLIENT` /
+`OPERATION_BUSY`, read
+`node_modules/@miden-sdk/miden-sdk/skills/multi-party-signing/SKILL.md`
 before changing anything - the failure modes there are not guessable from the
 type signatures.
 
-An anchor pins the reference block and chain data only. It does not pin account
-state, so a matching commitment does not by itself prove the two parties agree
-on the account.
+A matching commitment does not by itself prove the two parties agree on the
+account: the summary binds the account delta, not the account state.
 
 ## Type Imports
 

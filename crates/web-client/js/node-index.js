@@ -207,7 +207,6 @@ export const BasicFungibleFaucetComponent = /* @__PURE__ */ _reexport(
 export const BatchItem = /* @__PURE__ */ _reexport("BatchItem");
 export const BlockHeader = /* @__PURE__ */ _reexport("BlockHeader");
 export const BoundSignature = /* @__PURE__ */ _reexport("BoundSignature");
-export const ChainAnchor = /* @__PURE__ */ _reexport("ChainAnchor");
 export const CodeBuilder = /* @__PURE__ */ _reexport("CodeBuilder");
 export const CommittedNote = /* @__PURE__ */ _reexport("CommittedNote");
 export const ConsumableNoteRecord = /* @__PURE__ */ _reexport(
@@ -348,6 +347,9 @@ export const TransactionId = /* @__PURE__ */ _reexport("TransactionId");
 export const TransactionInputs = /* @__PURE__ */ _reexport("TransactionInputs");
 export const TransactionLog = /* @__PURE__ */ _reexport("TransactionLog");
 export const TransactionLogs = /* @__PURE__ */ _reexport("TransactionLogs");
+export const TransactionLogsInfo = /* @__PURE__ */ _reexport(
+  "TransactionLogsInfo"
+);
 export const TransactionProver = /* @__PURE__ */ _reexport("TransactionProver");
 export const TransactionRecord = /* @__PURE__ */ _reexport("TransactionRecord");
 export const TransactionRequest =

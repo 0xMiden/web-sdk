@@ -17,8 +17,8 @@ import type {
   TransactionStoreUpdate,
   ProvenTransaction,
   TransactionSummary,
-  ChainAnchor,
   TransactionRecord,
+  TransactionLogs,
   InputNoteRecord,
   OutputNoteRecord,
   ConsumableNoteRecord,
@@ -509,40 +509,6 @@ export interface RegisterAccountOptions {
 // Transaction types
 // ════════════════════════════════════════════════════════════════
 
-/**
- * Mixin for the methods that take a caller-built `TransactionRequest`, letting
- * them execute against a pinned reference block instead of the current sync
- * height.
- *
- * Deliberately not part of {@link TransactionOptions}: `send`, `mint`,
- * `consume` and friends build their request internally, so a caller can never
- * hold an anchor captured for one.
- */
-export interface AnchoredOptions {
-  /**
-   * A {@link ChainAnchor} from `transactions.captureAnchor(request)`, pinning
-   * execution to the reference block the anchor was captured at.
-   *
-   * When a signed transaction summary binds the reference block commitment,
-   * signatures only authorize an execution at that exact block, and supplying
-   * the proposer's anchor is what makes the signed summary reproduce on a client
-   * whose sync height has since advanced.
-   *
-   * A multisig request built by
-   * {@link MidenClient.feeAwareTransactionRequestBuilder}, or given its auth
-   * args by {@link MidenClient.withFeeAwareAuth}, does not need one: its
-   * summary binds the block its auth args name, and miden-client tracks that
-   * block when it executes the request, so it executes and reproduces its
-   * summary at the current tip. That keeps working after the node prunes the
-   * bound block's account state, which an anchor at that block does not. The
-   * executing client must have synced to at least the bound block first.
-   *
-   * When the anchor came from an untrusted party, compare `anchor.commitment()`
-   * against an independently trusted value before using it.
-   */
-  anchor?: ChainAnchor;
-}
-
 export interface TransactionOptions {
   waitForConfirmation?: boolean;
   /**
@@ -988,7 +954,7 @@ export interface PreviewPswapCancelOptions {
   note: NoteInput;
 }
 
-export interface PreviewCustomOptions extends AnchoredOptions {
+export interface PreviewCustomOptions {
   operation: "custom";
   account: AccountRef;
   request: TransactionRequest;
@@ -1390,14 +1356,19 @@ export interface TransactionsResource {
    * client's RNG — so the summary signed here would not be the summary the
    * submitted transaction produces.
    *
-   * Without an `anchor` the summary is derived at the current sync height. For
-   * a multisig request built by
-   * {@link MidenClient.feeAwareTransactionRequestBuilder} that reproduces the
-   * proposal's summary at any later tip, so a co-signer can verify it without
-   * the proposer's anchor once its client has synced to at least the bound
-   * block (the largest of `request.blockNumbers()`). A request from
+   * The summary is derived at the current sync height. For a multisig request
+   * built by {@link MidenClient.feeAwareTransactionRequestBuilder} that
+   * reproduces the proposal's summary at any later tip, so a co-signer can
+   * verify it once its client has synced to at least the bound block (the
+   * largest of `request.blockNumbers()`). A request from
    * {@link MidenClient.withFeeAwareAuth} does not declare the bound block, so
    * that check cannot read it: sync before previewing such a request.
+   *
+   * A multisig summary also binds a max fee. The auth args of both methods set
+   * none, so the auth procedure estimates the fee on each execution, and the
+   * summary reproduces at a later tip only while that estimate, which depends
+   * on the base fee of the reference block, comes out the same. A multisig
+   * preview does not reach the fee payment, and its summary has no fee note.
    *
    * @param options - Preview options discriminated by `operation` field.
    */
@@ -1419,46 +1390,13 @@ export interface TransactionsResource {
    *
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
-   * @param options - Optional transaction options (prover, confirmation, anchor).
+   * @param options - Optional transaction options (prover, confirmation).
    */
   submit(
     account: AccountRef,
     request: TransactionRequest,
-    options?: TransactionOptions & AnchoredOptions
+    options?: TransactionOptions
   ): Promise<TransactionSubmitResult>;
-
-  /**
-   * Capture a {@link ChainAnchor} at the current sync height for `request`,
-   * pinning the reference block that a later execution can replay against.
-   *
-   * The anchor tracks the blocks the request declares through
-   * `withBlockNumbers` and the creation blocks of its authenticated input
-   * notes, so it stays valid for that request once the chain advances. Pass it
-   * back through the `anchor` option on {@link preview}, {@link executeRequest},
-   * or {@link submit}; serialize it with `anchor.serialize()` to ship it
-   * alongside a summary awaiting signatures.
-   *
-   * ```ts
-   * const anchor  = await client.transactions.captureAnchor(request);
-   * const summary = await client.transactions.preview({
-   *   operation: "custom", account, request, anchor,
-   * });
-   * // ... collect signatures over `summary`, shipping `anchor.serialize()` ...
-   * await client.transactions.submit(account, request, { anchor });
-   * ```
-   *
-   * @throws An error with `code` `"INVALID_CHAIN_ANCHOR"` (on Node.js the code
-   * prefixes the message instead) if a sync lands mid-capture and leaves the
-   * anchor internally inconsistent. Retry.
-   *
-   * The caller owns the returned anchor. It carries a partial blockchain, so in
-   * a flow that captures repeatedly, call `anchor.free()` once done rather than
-   * leaving it to the finalizer.
-   *
-   * @param request - The request the anchor is captured for.
-   * @returns An anchor pinned to the current sync height.
-   */
-  captureAnchor(request: TransactionRequest): Promise<ChainAnchor>;
 
   /**
    * Execute a transaction request locally — nothing is proven, submitted, or
@@ -1487,12 +1425,11 @@ export interface TransactionsResource {
    * {@link MidenClient.withFeeAwareAuth}.
    *
    * @param account - The account executing the transaction.
-   * @param request - The pre-built transaction request.
-   * @param options - Pass `anchor` to execute against a pinned reference block
-   *   instead of the current sync height. Leave it out for a multisig request
-   *   from {@link MidenClient.feeAwareTransactionRequestBuilder} or
-   *   {@link MidenClient.withFeeAwareAuth}, which executes at the tip once this
-   *   client has synced to its bound block.
+   * @param request - The pre-built transaction request. It executes at the
+   *   current sync height. A multisig request from
+   *   {@link MidenClient.feeAwareTransactionRequestBuilder} or
+   *   {@link MidenClient.withFeeAwareAuth} executes once this client has synced
+   *   to its bound block.
    * @returns A handle to the executed transaction, ready to prove.
    * @throws `FeeConversionInfoRequired`, naming the auth component, when the
    *   executing account is a multisig and the request declares no fee
@@ -1506,8 +1443,7 @@ export interface TransactionsResource {
    */
   executeRequest(
     account: AccountRef,
-    request: TransactionRequest,
-    options?: AnchoredOptions
+    request: TransactionRequest
   ): Promise<TransactionExecution>;
 
   /**
@@ -1607,6 +1543,26 @@ export interface TransactionsResource {
    * instead.
    */
   list(query?: TransactionQuery): Promise<TransactionRecord[]>;
+
+  /**
+   * Returns the logs that a tracked transaction emitted, in emission order.
+   *
+   * The store records the logs when the transaction is applied, so this reads the store and
+   * does not contact the node. The logs are available before the transaction is committed. The
+   * store also keeps the logs of a discarded transaction, which the network did not apply.
+   *
+   * Each {@link TransactionLog} has an `emitter()` (the account that emitted it, which may be a
+   * foreign account), a topic (`topicPrefix()` and `topicSuffix()`) and `content()` words.
+   *
+   * To read the logs of a transaction that this client does not track, use
+   * `RpcClient.getTransactionLogs(accountId, transactionId)`. The node returns the logs of a
+   * public account, and only their commitment for a private account.
+   *
+   * @param txId - The transaction ID, as a hex string or a `TransactionId`.
+   * @returns The logs, which are empty for a transaction that emitted none, or `null` if the
+   *   client does not track the transaction.
+   */
+  logs(txId: string | TransactionId): Promise<TransactionLogs | null>;
 
   /**
    * Poll until a transaction is confirmed on-chain. Throws on rejection
@@ -2186,15 +2142,17 @@ export declare class MidenClient {
    * multisig auth procedure resolves its auth args whatever the chain charges,
    * so a multisig gets them on a fee-free chain too.
    *
-   * For a multisig the request executes at the current chain tip with no
-   * anchor: miden-client tracks the block the summary binds when it executes
-   * the request. The summary stays bound to that block while foreign accounts,
+   * For a multisig the request executes at the current chain tip:
+   * miden-client tracks the block the summary binds when it executes the
+   * request. The summary stays bound to that block while foreign accounts,
    * the fee faucet among them, load at the tip: the request still executes
    * after the node has pruned the bound block's account state (about 50
-   * blocks), and {@link TransactionsResource.preview} without an `anchor`
-   * reproduces the proposal's summary at the tip. The builder also declares
-   * the bound block through `withBlockNumbers`, which only
-   * {@link TransactionsResource.captureAnchor} and the height check below read.
+   * blocks), and {@link TransactionsResource.preview} reproduces the
+   * proposal's summary at the tip while the fee estimate that the summary
+   * binds comes out the same: the auth args set no max fee, so the auth
+   * procedure estimates it on each execution. The builder also declares the
+   * bound block through `withBlockNumbers`, which only the height check below
+   * reads.
    * Each party's client must first have synced to at least that bound block,
    * the largest of `request.blockNumbers()` and by default the proposer's sync
    * height when it built the request; below it execution fails with
@@ -2259,8 +2217,7 @@ export declare class MidenClient {
    *
    * The copy does not declare the bound block as a block number. miden-client
    * adds it when it executes the request, so the request executes at the chain
-   * tip with no anchor. An anchor from `chainAnchorForRequest` does not track
-   * the bound block, and a co-signer cannot read it from
+   * tip. A co-signer cannot read the bound block from
    * `request.blockNumbers()` to check its sync height, so it syncs before
    * previewing the copy.
    *

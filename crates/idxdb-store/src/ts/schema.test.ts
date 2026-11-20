@@ -23,6 +23,18 @@ const V6_STORES: Record<string, string> = {
   accountWitnesses: "&accountId",
 };
 
+// The schema the version chain reaches at v14: the settings and the blockchain checkpoint moved
+// to the tables that v10 and v12 add.
+const V14_STORES: Record<string, string> = Object.fromEntries(
+  Object.entries({
+    ...V6_STORES,
+    clientConfig: "key",
+    userSettings: "key",
+    pswapLineages: "orderId,creatorAccountId,[state+currentTipNoteId]",
+    chainAnchors: "blockNum",
+  }).filter(([name]) => name !== "settings" && name !== "blockchainCheckpoint")
+);
+
 // Track DBs for cleanup.
 const openDbs: Dexie[] = [];
 
@@ -476,6 +488,57 @@ describe("MidenDatabase migrations", () => {
     expect(seen.chainAnchors).toEqual([
       { blockNum: 0, peaks: new Uint8Array() },
     ]);
+  });
+
+  // v15: the transaction logs table. A v14 store has run the protocol 1.0 cutover, so the
+  // upgrade must keep its rows. A transaction from before the table has no log rows.
+  it("v15 migration adds transactionLogs and keeps the rows of a v14 store", async () => {
+    const name = uniqueDbName();
+    const transaction = {
+      id: "0xtx",
+      details: new Uint8Array([1]),
+      blockNum: 1,
+      statusVariant: 0,
+      status: new Uint8Array([2]),
+    };
+
+    const dbV14 = trackDb(new Dexie(name));
+    dbV14.version(14).stores(V14_STORES);
+    await dbV14.open();
+    expect(dbV14.tables.map((table) => table.name)).not.toContain(
+      "transactionLogs"
+    );
+    await dbV14.table("transactions").put(transaction);
+    dbV14.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    await mdb.dexie.open();
+
+    expect(await mdb.transactions.toArray()).toEqual([transaction]);
+    expect(await mdb.transactionLogs.count()).toBe(0);
+
+    await mdb.transactionLogs.bulkPut([
+      {
+        transactionId: "0xtx",
+        logIndex: 1,
+        emitter: "0xacc",
+        topic: "topic-b",
+        content: new Uint8Array([3]),
+      },
+      {
+        transactionId: "0xtx",
+        logIndex: 0,
+        emitter: "0xacc",
+        topic: "topic-a",
+        content: new Uint8Array(),
+      },
+    ]);
+    expect(
+      (await mdb.transactionLogs.toArray()).map((row) => row.logIndex)
+    ).toEqual([0, 1]);
+    expect(
+      await mdb.transactionLogs.where("topic").equals("topic-b").count()
+    ).toBe(1);
   });
 });
 

@@ -263,10 +263,9 @@ impl TransactionRequestBuilder {
     /// Adds blocks the transaction must be able to authenticate against its reference block.
     ///
     /// Each block's header and authentication path are added to the transaction's partial
-    /// blockchain, and to an anchor captured for the request with `chainAnchorForRequest`. A
-    /// header missing from the local store is fetched from the node. Every block must be at or
-    /// before the block the transaction executes against. Repeated calls add more blocks, and
-    /// duplicates collapse.
+    /// blockchain. A header missing from the local store is fetched from the node. Every block
+    /// must be at or before the block the transaction executes against. Repeated calls add more
+    /// blocks, and duplicates collapse.
     ///
     /// A multisig proposal needs the block its summary binds. `feeAwareTransactionRequestBuilder`
     /// already adds it, so this is only for requests whose auth args are assembled by hand.
@@ -285,10 +284,9 @@ impl TransactionRequestBuilder {
     /// Adds blocks the transaction must be able to authenticate against its reference block.
     ///
     /// Each block's header and authentication path are added to the transaction's partial
-    /// blockchain, and to an anchor captured for the request with `chainAnchorForRequest`. A
-    /// header missing from the local store is fetched from the node. Every block must be at or
-    /// before the block the transaction executes against. Repeated calls add more blocks, and
-    /// duplicates collapse.
+    /// blockchain. A header missing from the local store is fetched from the node. Every block
+    /// must be at or before the block the transaction executes against. Repeated calls add more
+    /// blocks, and duplicates collapse.
     ///
     /// A multisig proposal needs the block its summary binds. `feeAwareTransactionRequestBuilder`
     /// already adds it, so this is only for requests whose auth args are assembled by hand.

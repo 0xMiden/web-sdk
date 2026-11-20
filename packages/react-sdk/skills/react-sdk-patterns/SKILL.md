@@ -1,6 +1,6 @@
 ---
 name: react-sdk-patterns
-description: Complete guide to building Miden frontends with @miden-sdk/react hooks. Covers MidenProvider and MultiSignerProvider setup, query hooks, transaction hooks, private-note delivery, PSWAP hooks, chain-anchored execution (useChainAnchor / usePreview), session accounts, store and note import/export, transaction stages, signer integration, the coded error surface, and utility functions. Use when writing, editing, or reviewing Miden React frontend code.
+description: Complete guide to building Miden frontends with @miden-sdk/react hooks. Covers MidenProvider and MultiSignerProvider setup, query hooks, transaction hooks, private-note delivery, PSWAP hooks, multi-party signing (usePreview), session accounts, store and note import/export, transaction stages, signer integration, the coded error surface, and utility functions. Use when writing, editing, or reviewing Miden React frontend code.
 ---
 
 # Miden React SDK Patterns
@@ -88,7 +88,7 @@ The package exports 37 hooks from `src/hooks/`, plus the context accessors `useM
 | `useCreateNetworkNote()` | transaction | see "Network Notes" below |
 | `usePswapCreate/Consume/Cancel/CancelByOrder()` | transaction | see "PSWAP" below |
 | `usePswapLineages/LineagesFor/Lineage()` | query | tracked PSWAP lineages |
-| `useChainAnchor()` / `usePreview()` | see "Chain-Anchored Execution" | expose `isCapturing` / `isPreviewing`, not `isLoading` |
+| `usePreview()` | see "Multi-Party Signing" | exposes `isPreviewing`, not `isLoading` |
 | `useCompile()` | compile | `{ component, txScript, noteScript, isReady }` |
 | `useExecuteProgram()` | read-only view call | the action is named **`execute`**, not `executeProgram`: `execute({ accountId, script, adviceInputs?, foreignAccounts?, skipSync? })` returns `{ stack: bigint[] }` |
 | `useSyncControl()` | control | `{ pauseSync, resumeSync, isPaused }`. Use this instead of `autoSyncInterval: 0` when you need to stop auto-sync after mount; manual `useSyncState().sync()` still works while paused |
@@ -206,7 +206,7 @@ A note on `ids`: the hook uses `TransactionFilter.ids(...)` only when every entr
 Each returns its own action function plus `error` and `reset`. The families differ in their loading/progress fields:
 - **Transaction hooks** (`useSend`, `useMultiSend`, `useBatch`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`, `usePswapCancel`, `usePswapCancelByOrder`, `useTransaction`) expose `isLoading` and `stage` (a `TransactionStage`).
 - **Account create/import hooks** (`useCreateWallet`, `useCreateFaucet`, `useImportAccount`) expose `isCreating` (or `isImporting` for the latter) and have **no** `stage`.
-- **Everything else names its own busy flag**: `useChainAnchor().isCapturing`, `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting`.
+- **Everything else names its own busy flag**: `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting`.
 
 **Transaction stages**: `"idle"` -> `"executing"` -> `"proving"` -> `"submitting"` -> `"complete"`
 
@@ -395,13 +395,10 @@ await execute({
   skipSync: true,             // optional: skip the auto-sync before executing
   privateNoteTarget: "0x...", // optional: deliver private output notes to this account
                               //   after the transaction commits
-  anchor,                     // optional: execute against a pinned reference block;
-                              //   not for a multisig proposal, which runs at the tip
-                              //   (see "Chain-Anchored Execution")
 });
 ```
 
-> **The fee note is an output note (0.16, BREAKING, fails silently).** On any chain whose verification base fee is non-zero, `outputNotes()` returns one more note than it used to, on `ExecutedTransaction`, `TransactionRecord` and `TransactionSummary` alike. Nothing throws; the list is just one longer, so `outputNotes()[0]` may be the fee note rather than the note you created. `ExecutedTransaction` has the fix built in: `userOutputNotes()` is the list without the fee note, `feeNote()` is the fee note alone. `TransactionRecord` and `TransactionSummary` have **no** split accessor - filter or account for the extra note yourself.
+> **The fee note is an output note (0.16, BREAKING, fails silently).** On any chain whose verification base fee is non-zero, `outputNotes()` returns one more note than it used to, on `ExecutedTransaction`, `TransactionRecord` and `TransactionSummary` alike. Nothing throws; the list is just one longer, so `outputNotes()[0]` may be the fee note rather than the note you created. `ExecutedTransaction` has the fix built in: `userOutputNotes()` is the list without the fee note, `feeNote()` is the fee note alone. `TransactionRecord` and `TransactionSummary` have **no** split accessor - filter or account for the extra note yourself. The summary of a multisig is the exception: a multisig pays the fee after it has checked the signatures, so its summary has no fee note and binds a max fee instead (`summary.userParams()[1]`).
 
 ### useWaitForCommit()
 ```tsx
@@ -449,43 +446,39 @@ Three things that surprise people here:
 - **`assetId` is reserved and never read.** It is typed and documented as "reserved for future filtering of consumable notes"; the hook body does not consult it. Passing it does nothing, and omitting it changes nothing.
 - **The hook persists across reloads.** With a signer, it writes `${storagePrefix}:${clientStoreName}:accountId` and `${storagePrefix}:${clientStoreName}:ready` to `localStorage`, where `clientStoreName` belongs to the committed client, not the selected signer, and survives a `MidenProvider` remount with that client. Signer mode comes from `useMiden().hasSigner`, which reflects the signer context above `MidenProvider`; a signer provider nested below a local-mode `MidenProvider` leaves sessions in local mode. With a signer provider above `MidenProvider` but no committed signer client, it shows no session and refuses initialization until the client commits. It never reads or writes the plain keys for a signer, including while client initialization is pending or has failed. Local keystore mode keeps `${storagePrefix}:accountId` and `${storagePrefix}:ready`. It restores the session whenever that identity changes, including when the committed client is replaced with the same store name or in local mode; the previous flow stops and the step returns to the stored ready or idle state. An unchanged render does not re-read storage. `reset()` removes its two keys. So a session survives a refresh, and clearing it means calling `reset()` rather than dropping your own state.
 
-## Chain-Anchored Execution
+## Multi-Party Signing
 
-A summary that binds the reference block commitment only authorizes an execution at that exact block, so a flow that collects such signatures and executes later - single-signature offline co-signing - captures a `ChainAnchor` next to the summary and ships both.
+`usePreview()` derives the `TransactionSummary` that an account is asked to authorize, without submitting anything. The summary and every execution use the client's sync height: nothing pins a reference block.
 
-A multisig proposal (0.17+) needs no anchor: its summary binds the block its auth args name, and miden-client tracks that block when it executes the request. Build it with `client.feeAwareTransactionRequestBuilder(accountId)`, which also declares that block with `withBlockNumbers`, ship the request bytes, and let every party preview and execute at its own tip once its client has synced to at least the bound block (the largest of `request.blockNumbers()`). Below that height the call fails with `requested block N is after transaction reference block M` until the client syncs. `usePreview` does not sync first, and `useTransaction` syncs through the provider's `sync()`, which returns early while another sync runs and records failures instead of throwing, so after syncing confirm `await client.getSyncHeight()` is at least that block before previewing or executing. A finished request someone else built, such as a dApp's, gets the multisig auth args from `await client.withFeeAwareAuth(request, accountId)`; that copy does not declare the bound block, so `request.blockNumbers()` cannot drive the height check and a co-signer syncs before previewing it. Re-executing an older multisig proposal at an anchor fails once the node prunes that block's account state (50 blocks).
+A multisig proposal runs at the tip: its summary binds the block its auth args name, and miden-client tracks that block when it executes the request. Build it with `client.feeAwareTransactionRequestBuilder(accountId)`, which also declares that block with `withBlockNumbers`, ship the request bytes, and let every party preview and execute at its own tip once its client has synced to at least the bound block (the largest of `request.blockNumbers()`). Below that height the call fails with `requested block N is after transaction reference block M` until the client syncs. The summary also binds a max fee: these auth args set none, so the auth procedure estimates the fee on each execution, and the parties derive the same summary only while that estimate, which depends on the base fee of the reference block, comes out the same. `usePreview` does not sync first, and `useTransaction` syncs through the provider's `sync()`, which returns early while another sync runs and records failures instead of throwing, so after syncing confirm `await client.getSyncHeight()` is at least that block before previewing or executing. A finished request someone else built, such as a dApp's, gets the multisig auth args from `await client.withFeeAwareAuth(request, accountId)`; that copy does not declare the bound block, so `request.blockNumbers()` cannot drive the height check and a co-signer syncs before previewing it.
 
 ```tsx
-const { captureAnchor, anchor, anchoredRequest, isCapturing, error, reset } = useChainAnchor();
-const { preview, summary, isPreviewing } = usePreview();
+const { preview, summary, isPreviewing, error, reset } = usePreview();
 const { execute } = useTransaction();
 
-// 1. Capture the anchor for a concrete request.
-const captured = await captureAnchor({ request: txRequest });
+// 1. Derive the summary the account is being asked to authorize.
+const s = await preview({ accountId, request: txRequest });
 
-// 2. Derive the summary the account is being asked to authorize, at that block.
-const s = await preview({ accountId, request: txRequest, anchor: captured });
-
-// 3. Collect signatures, then execute against the SAME request and anchor. Inside this
-//    handler that is txRequest; on a later interaction use `anchoredRequest` and `anchor`.
-await execute({ accountId, request: txRequest, anchor: captured });
+// 2. Collect signatures, then execute the SAME request object.
+await execute({ accountId, request: txRequest });
 ```
 
-**The trap: never re-invoke a request factory once an anchor exists.** A factory resolves to a new object per call, and two draws from the client's RNG make that object differ every time: any builder minting an output note takes a fresh serial number, and on a fee-charging chain the fee conversion info takes a fresh salt, which reaches even a request with no output notes. A second call therefore yields a transaction the anchor does not pin and the co-signers did not approve. Preview and execute against `anchoredRequest`, the exact request the anchor was captured for. Note `anchoredRequest` is state: inside the handler that just captured, it still holds the previous render's value (`null` on a first capture), so use the object you resolved yourself there and `anchoredRequest` on a later interaction.
+A summary that binds the reference block commitment - a single-signature (`signature.masm`) account's - authorizes an execution only at that exact block, so the summary reproduces only at the sync height it was derived at. A sync between `preview` and `execute` moves the reference block: `execute` syncs first unless `skipSync` is set, and the provider syncs on its `autoSyncInterval`. For signatures that are collected over time or on other clients, use a multisig account.
+
+**The trap: never re-invoke a request factory between the preview and the execution.** A factory resolves to a new object per call, and two draws from the client's RNG make that object differ every time: any builder minting an output note takes a fresh serial number, and a multisig request takes a fresh salt, which reaches even a request with no output notes. A second call therefore yields a transaction the co-signers did not approve. Resolve the request once and pass that object to both calls.
 
 Other rules the hook enforces or documents:
-- `captureAnchor` rejects with one of **three** codes: `"OPERATION_BUSY"` if a capture is already running, `"INVALID_CHAIN_ANCHOR"` if a sync lands mid-capture (retry that one), and `"STALE_CLIENT"` if the provider swapped the client while the capture was in flight - a network or signer change, where recapturing on the new chain is the only correct move, not a retry. `INVALID_CHAIN_ANCHOR` comes from the client, so on Node it prefixes the message instead of appearing as a property; the other two are `MidenError`s from this package and always carry `code`.
-- Capturing runs on the main thread and walks the chain in WASM, so it blocks the UI briefly and queues other client calls behind it.
-- The caller owns the anchor. Neither `reset()` nor a client swap frees it. An anchor carries a partial blockchain, so call `anchor.free()` when done in a flow that captures repeatedly.
-- **`ChainAnchor` is re-exported type-only by `@miden-sdk/react`.** To rebuild one from bytes, import the class itself from `@miden-sdk/miden-sdk`:
+- `preview` rejects with `"OPERATION_BUSY"` if a preview is already running, with `"STALE_CLIENT"` if the provider swapped the client while the preview was in flight - a network or signer change, where previewing again on the new chain is the only correct move - and with `"TRANSACTION_ALREADY_AUTHORIZED"` when nothing awaits authorization. The last one comes from the client, so on Node it prefixes the message instead of appearing as a property; the other two are `MidenError`s from this package and always carry `code`.
+- Previewing runs the transaction in the VM on the main thread, so it blocks the UI and queues other client calls behind it.
+- **`TransactionRequest` and `TransactionSummary` are re-exported type-only by `@miden-sdk/react`.** To rebuild one from bytes, import the class itself from `@miden-sdk/miden-sdk`:
 
 ```tsx
-import { ChainAnchor } from "@miden-sdk/miden-sdk";   // value import, NOT from @miden-sdk/react
-const bytes = captured.serialize();                   // ship to co-signers
-const rebuilt = ChainAnchor.deserialize(bytes);
+import { TransactionRequest } from "@miden-sdk/miden-sdk";   // value import, NOT from @miden-sdk/react
+const bytes = txRequest.serialize();                         // ship to co-signers
+const rebuilt = TransactionRequest.deserialize(bytes);
 ```
 
-`usePreview` is the first summary surface in the React SDK: verifying and co-signing a multisig proposal no longer requires dropping to the WASM client. The summary only exists while authorization is pending, i.e. when the account's auth procedure aborts with the unauthorized event (a multisig below its signing threshold). A multisig request from `feeAwareTransactionRequestBuilder` declares its bound block and previews and executes without an anchor at the tip once the client has synced to it. A `withFeeAwareAuth` copy takes no anchor either, but declares no bound block, so sync before previewing or executing it; an anchor captured for that copy does not track the bound block. Pass `anchor` when verifying a summary that binds the reference block, because deriving that summary at the local sync height produces a different one.
+The summary only exists while authorization is pending, i.e. when the account's auth procedure aborts with the unauthorized event (a multisig below its signing threshold). `useChainAnchor` and the `anchor` option of `usePreview` and `useTransaction` were removed in 0.19.0.
 
 ## Network Notes
 
@@ -628,12 +621,12 @@ import type { CodedError, MidenErrorCode, WasmErrorCode } from "@miden-sdk/react
 ```
 
 - `MidenErrorCode` is the **closed** union assigned by this package: `"WASM_CLASS_MISMATCH" | "WASM_POINTER_CONSUMED" | "WASM_NOT_INITIALIZED" | "WASM_SYNC_REQUIRED" | "SEND_BUSY" | "OPERATION_BUSY" | "BATCH_BUSY" | "STALE_CLIENT" | "UNKNOWN"`. Every `MidenError` carries one, defaulting to `"UNKNOWN"`.
-- `WasmErrorCode` is the union assigned by the Rust client and thrown out of WASM: `"INVALID_CHAIN_ANCHOR" | "TRANSACTION_ALREADY_AUTHORIZED"`. These are not `MidenError`s.
+- `WasmErrorCode` is the code assigned by the Rust client and thrown out of WASM: `"TRANSACTION_ALREADY_AUTHORIZED"`. It is not a `MidenError`.
 - `CodedError = Error & { readonly code?: MidenErrorCode | WasmErrorCode | (string & {}) }`. The **`(string & {})` arm is open on purpose**: a code from a newer client stays assignable while the known ones keep autocomplete. So `switch` on `code`, but always leave a default branch - the union is not exhaustive of what you can receive.
 
 Branch on `code`, never on message text; the strings are not a stable API. `wrapWasmError(e)` is the helper that turns a raw WASM throw into a `MidenError` by pattern-matching the message, which is how `_assertClass` / `expected instance of` becomes `WASM_CLASS_MISMATCH` and `null pointer` becomes `WASM_POINTER_CONSUMED`.
 
-**On Node, client-assigned codes arrive as a `"CODE: "` prefix on the message rather than as a property**, because the napi bindings cannot attach one. Code that does `err.code === "INVALID_CHAIN_ANCHOR"` works in the browser and silently never matches under Node; check the message prefix as well if you support both.
+**On Node, client-assigned codes arrive as a `"CODE: "` prefix on the message rather than as a property**, because the napi bindings cannot attach one. Code that does `err.code === "TRANSACTION_ALREADY_AUTHORIZED"` works in the browser and silently never matches under Node; check the message prefix as well if you support both.
 
 ## Utility Functions
 
@@ -681,7 +674,7 @@ await runExclusive(async () => {
 });
 ```
 
-**The built-in hooks route their own client calls through `runExclusive` too.** 22 files under `src/hooks/` pull it out of `useMiden()` and wrap their multi-call work, using the pattern `const runExclusiveSafe = runExclusive ?? runExclusiveDirect;` so they still serialize when no provider-supplied lock is available: `useSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useTransaction`, `usePreview`, `useChainAnchor`, `useCreateWallet`, `useCreateFaucet`, `useExecuteProgram`, `useCreateNetworkNote`, `useMultiSend`, `useWaitForNotes`, the four export/import hooks and all four PSWAP transaction hooks. Use it for your own multi-step sequences for the same reason they do - the client serializes each individual forwarded call, not your group of them (see `frontend-pitfalls` FP2, which also names the raw-bound `SYNC_METHODS` that serialize themselves not at all).
+**The built-in hooks route their own client calls through `runExclusive` too.** 21 files under `src/hooks/` pull it out of `useMiden()` and wrap their multi-call work, using the pattern `const runExclusiveSafe = runExclusive ?? runExclusiveDirect;` so they still serialize when no provider-supplied lock is available: `useSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useTransaction`, `usePreview`, `useCreateWallet`, `useCreateFaucet`, `useExecuteProgram`, `useCreateNetworkNote`, `useMultiSend`, `useWaitForNotes`, the four export/import hooks and all four PSWAP transaction hooks. Use it for your own multi-step sequences for the same reason they do - the client serializes each individual forwarded call, not your group of them (see `frontend-pitfalls` FP2, which also names the raw-bound `SYNC_METHODS` that serialize themselves not at all).
 
 ## Non-Surface: Do Not Invent These
 
@@ -709,14 +702,14 @@ import type {
   PswapCreateOptions, PswapConsumeOptions, PswapCancelOptions,
   PswapCancelByOrderOptions, PswapLineagesResult, PswapLineageResult,
   CreateWalletOptions, CreateFaucetOptions, ImportAccountOptions,
-  ExecuteTransactionOptions, CaptureAnchorOptions, PreviewTransactionOptions,
+  ExecuteTransactionOptions, PreviewTransactionOptions,
   ExecuteProgramOptions, ExecuteProgramResult,
   TransactionResult, SyncState, WaitForCommitOptions, WaitForNotesOptions,
   TransactionHistoryOptions, TransactionHistoryResult, TransactionStatus,
   StreamedNote, UseNoteStreamOptions, UseNoteStreamReturn,
   UseSessionAccountOptions, UseSessionAccountReturn, SessionAccountStep,
   Account, AccountId, AccountHeader, InputNoteRecord, ConsumableNoteRecord,
-  TransactionRecord, TransactionRequest, TransactionSummary, ChainAnchor,
+  TransactionRecord, TransactionRequest, TransactionSummary,
   NoteType, AccountStorageMode, PswapLineageRecord,
   SignerContextValue, SignCallback, SignerAccountConfig,
   MultiSignerContextValue, WalletAdapterLike,
@@ -724,9 +717,9 @@ import type {
 } from "@miden-sdk/react";
 ```
 
-Every hook also exports its own result type from the package root, all suffixed `…Result` (`UseSendResult`, `UseCreateWalletResult`, `UseChainAnchorResult`, and so on) - with two exceptions that use `…Return`: `UseNoteStreamReturn` and `UseSessionAccountReturn`.
+Every hook also exports its own result type from the package root, all suffixed `…Result` (`UseSendResult`, `UseCreateWalletResult`, `UsePreviewResult`, and so on) - with two exceptions that use `…Return`: `UseNoteStreamReturn` and `UseSessionAccountReturn`.
 
-`TransactionSummary` and `ChainAnchor` are re-exported **as types only**. If you need the runtime class (e.g. `ChainAnchor.deserialize`), import it from `@miden-sdk/miden-sdk`.
+`TransactionRequest` and `TransactionSummary` are re-exported **as types only**. If you need the runtime class (e.g. `TransactionSummary.deserialize`), import it from `@miden-sdk/miden-sdk`.
 
 ## Reading Account Storage
 
@@ -782,7 +775,7 @@ For compile-from-source, call `await client.createCodeBuilder()` (returns `Promi
 Some `@miden-sdk/miden-sdk` 0.16.1 additions have **no** `@miden-sdk/react` hook or type. To use them, build the `TransactionRequest` yourself against `useMidenClient()` and hand it to `useTransaction().execute({ accountId, request })`:
 
 - `ForeignAccount.private(account)`. `useExecuteProgram()`'s `foreignAccounts` option only builds `ForeignAccount.public(id, storage)`, so a private foreign account has to go the manual route.
-- `TransactionRequestBuilder.withExplicitInputNote(note, args?)`, which pins whether each input note is consumed authenticated or unauthenticated so every client executing the request produces the same transaction summary. This matters most in chain-anchored flows, where co-signers must reproduce the summary exactly.
+- `TransactionRequestBuilder.withExplicitInputNote(note, args?)`, which pins whether each input note is consumed authenticated or unauthenticated so every client executing the request produces the same transaction summary. This matters most in multi-party signing flows, where co-signers must reproduce the summary exactly.
 
 ## Account Import then Sync then Read Storage Flow
 
@@ -945,7 +938,7 @@ const script = await noteScript({
 ```
 
   `Linking.Static` copies a helper library like `my_lib` into the script. `Linking.Dynamic` is only for procedures installed on an account the transaction reaches; a helper linked dynamically compiles and then fails at execution.
-- **Inside `useTransaction`'s `request` callback** the parameter is the raw WASM client. Use `await client.createCodeBuilder()` for compile, then build the `TransactionRequest` from `await client.feeAwareTransactionRequestBuilder(accountId)` and return it. The callback may be async; `request` accepts `TransactionRequest | Promise<TransactionRequest>`. Do not re-invoke the factory if a `ChainAnchor` is in play (see "Chain-Anchored Execution"). For the higher-level `MidenClient.compile.*` and `MidenClient.transactions.execute` resource API on a standalone `MidenClient`, see `web-client-usage`.
+- **Inside `useTransaction`'s `request` callback** the parameter is the raw WASM client. Use `await client.createCodeBuilder()` for compile, then build the `TransactionRequest` from `await client.feeAwareTransactionRequestBuilder(accountId)` and return it. The callback may be async; `request` accepts `TransactionRequest | Promise<TransactionRequest>`. Do not re-invoke the factory between a preview and its execution (see "Multi-Party Signing"). For the higher-level `MidenClient.compile.*` and `MidenClient.transactions.execute` resource API on a standalone `MidenClient`, see `web-client-usage`.
 
 ## Cross-SDK Type Reference
 
@@ -967,7 +960,7 @@ Common app-developer types:
 | `NoteVisibility` (constants + string-union) | `@miden-sdk/miden-sdk` | `const NoteVisibility = { Public: 'public', Private: 'private' }` plus `type NoteVisibility = 'public' \| 'private'` (`api-types.d.ts`). NOT an enum. Coexists with the raw WASM `NoteType` enum (`miden_client_web.d.ts`), which is what you use when building notes from the WASM classes directly. |
 | `AccountType`, `FaucetType`, `AuthScheme`, `StorageMode` | `@miden-sdk/miden-sdk` | enums; see `web-client-usage` "Visibility & Account Types". |
 | `TransactionRequest` | `@miden-sdk/react` | the client's `new*TransactionRequest` factories return `Promise<TransactionRequest>` as of 0.16 - always `await` them |
-| `TransactionSummary`, `ChainAnchor` | `@miden-sdk/react` | **type-only** re-exports. Import the `ChainAnchor` class itself from `@miden-sdk/miden-sdk` to call `ChainAnchor.deserialize(bytes)` |
+| `TransactionRequest`, `TransactionSummary` | `@miden-sdk/react` | **type-only** re-exports. Import the class itself from `@miden-sdk/miden-sdk` to call `TransactionSummary.deserialize(bytes)` |
 | `Word` | `@miden-sdk/miden-sdk` | 32-byte (4 felts) value; `Word.toU64s()` returns `BigUint64Array` of length 4 (each lane is a `bigint` after subscript). See `Word.toU64s` in `miden_client_web.d.ts`. |
 
 Do not hardcode this table for long-term reference. The `.d.ts` files stay in lockstep with the installed package version; this list will drift.
@@ -1001,6 +994,6 @@ Shipped alongside this one, readable out of `node_modules`:
 
 - `testing-patterns` (this package) - mocking `@miden-sdk/react` in a consumer app's tests.
 - `web-client-usage` (`@miden-sdk/miden-sdk`) - the standalone `MidenClient` resource API, for work outside React.
-- `chain-anchored-execution` (`@miden-sdk/miden-sdk`) - the `ChainAnchor` surface in depth.
+- `multi-party-signing` (`@miden-sdk/miden-sdk`) - multisig proposals and co-signing in depth.
 - `frontend-pitfalls`, `signer-integration`, `frontend-source-guide` (`@miden-sdk/miden-sdk`).
 - `vite-wasm-setup` (`@miden-sdk/vite-plugin`) - bundler configuration for the WASM payload.

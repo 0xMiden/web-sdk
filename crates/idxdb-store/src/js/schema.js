@@ -141,6 +141,7 @@ var Table;
     Table["UserSettings"] = "userSettings";
     Table["PswapLineages"] = "pswapLineages";
     Table["ChainAnchors"] = "chainAnchors";
+    Table["TransactionLogs"] = "transactionLogs";
 })(Table || (Table = {}));
 /** Scope of a row of the `settings` table, which version 11 removes. The upgrades before it read
  *  it. */
@@ -306,6 +307,7 @@ export class MidenDatabase {
     addresses;
     transactions;
     transactionScripts;
+    transactionLogs;
     inputNotes;
     outputNotes;
     notesScripts;
@@ -468,6 +470,13 @@ export class MidenDatabase {
         // v14 (protocol 1.0): the second clear. Rows that an earlier client wrote belong to networks
         // that no longer exist, and its block headers do not decode.
         this.dexie.version(14).stores({}).upgrade(clearStoreForProtocolV1);
+        // v15: the logs that each transaction emitted, one row for each log, as the SQLite
+        // `transaction_logs` table keeps them. The primary key orders the rows of a transaction by
+        // emission. A transaction that the store applied before this version has no rows, so its
+        // logs read as empty.
+        this.dexie.version(15).stores({
+            [Table.TransactionLogs]: indexes("[transactionId+logIndex]", "topic"),
+        });
         this.accountCodes = this.dexie.table(Table.AccountCode);
         this.latestAccountStorages = this.dexie.table(Table.LatestAccountStorage);
         this.historicalAccountStorages = this.dexie.table(Table.HistoricalAccountStorage);
@@ -482,6 +491,7 @@ export class MidenDatabase {
         this.addresses = this.dexie.table(Table.Addresses);
         this.transactions = this.dexie.table(Table.Transactions);
         this.transactionScripts = this.dexie.table(Table.TransactionScripts);
+        this.transactionLogs = this.dexie.table(Table.TransactionLogs);
         this.inputNotes = this.dexie.table(Table.InputNotes);
         this.outputNotes = this.dexie.table(Table.OutputNotes);
         this.notesScripts = this.dexie.table(Table.NotesScripts);

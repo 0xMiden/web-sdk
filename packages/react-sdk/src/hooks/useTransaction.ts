@@ -10,10 +10,7 @@ import { runExclusiveDirect } from "../utils/runExclusive";
 import { MidenError } from "../utils/errors";
 import { proveWithFallback } from "../utils/prover";
 import { useMidenStore } from "../store/MidenStore";
-import {
-  assertAnchorValueUsable,
-  resolveTransactionRequest,
-} from "../utils/transactions";
+import { resolveTransactionRequest } from "../utils/transactions";
 import {
   privateOutputNotesOwed,
   readOwedPrivateNotes,
@@ -49,14 +46,10 @@ export interface UseTransactionResult {
  * delivered and undelivered notes; every note is attempted. The SDK keeps no
  * queue: pass the undelivered notes to `useResendPrivateNotes` to try again.
  *
- * Pass `anchor` to execute against a pinned reference block instead of the
- * current sync height, so a summary signed at that block reproduces exactly.
- * Capture one with `useChainAnchor`. Leave it out for a multisig request from
- * `feeAwareTransactionRequestBuilder`, which declares its bound block and
- * executes at the tip once the client has synced to it. A `withFeeAwareAuth`
- * copy takes no anchor either, but declares no bound block: sync before
- * executing it. An anchor captured for that copy does not track the bound
- * block.
+ * The request executes at the current sync height. A multisig request from
+ * `feeAwareTransactionRequestBuilder` declares its bound block and executes at
+ * the tip once the client has synced to it. A `withFeeAwareAuth` copy declares
+ * no bound block: sync before executing it.
  *
  * Fees: the request is yours to build, so paying the verification fee is yours
  * too. A request assembled from `new TransactionRequestBuilder()` aborts with
@@ -134,8 +127,6 @@ export function useTransaction(): UseTransactionResult {
         );
       }
 
-      assertAnchorValueUsable(options);
-
       isBusyRef.current = true;
       setIsLoading(true);
       setStage("executing");
@@ -166,13 +157,7 @@ export function useTransaction(): UseTransactionResult {
         // Step 1: Execute
         const txResult = await runExclusiveSafe(() => {
           const accountIdObj = parseAccountId(options.accountId);
-          return options.anchor
-            ? client.executeTransactionAt(
-                accountIdObj,
-                txRequest,
-                options.anchor
-              )
-            : client.executeTransaction(accountIdObj, txRequest);
+          return client.executeTransaction(accountIdObj, txRequest);
         });
 
         // Step 2: Prove (with fallback)

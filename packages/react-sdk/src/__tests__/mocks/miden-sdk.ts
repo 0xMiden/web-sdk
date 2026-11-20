@@ -1,10 +1,6 @@
 import { vi } from "vitest";
 import { NoteType } from "@miden-sdk/miden-sdk";
-import type {
-  AdviceMap,
-  BlockHeader,
-  TransactionRequest,
-} from "@miden-sdk/miden-sdk";
+import type { AdviceMap, TransactionRequest } from "@miden-sdk/miden-sdk";
 
 // Mock AccountId
 export const createMockAccountId = (id: string = "0x1234567890abcdef") => ({
@@ -248,20 +244,6 @@ export const createMockTransactionRequest = () => ({
   [Symbol.dispose]: vi.fn(),
 });
 
-// Mock ChainAnchor. The real binding takes the anchor by reference, so a single
-// handle survives the capture → preview → execute sequence; the mock is
-// deliberately reusable to match.
-export const createMockChainAnchor = (blockNum: number = 100) => ({
-  blockNum: vi.fn(() => blockNum),
-  commitment: vi.fn(() => createMockWord(`0xanchor${blockNum}`)),
-  blockHeader: vi.fn(
-    () => ({ blockNum: vi.fn(() => blockNum) }) as unknown as BlockHeader
-  ),
-  serialize: vi.fn(() => new Uint8Array()),
-  free: vi.fn(),
-  [Symbol.dispose]: vi.fn(),
-});
-
 // Mock TransactionSummary
 export const createMockTransactionSummary = (
   commitment: string = "0xsummary",
@@ -330,10 +312,7 @@ const REQUEST_ARG_POSITION: Record<string, number> = {
   submitNewTransaction: 1,
   submitNewTransactionWithProver: 1,
   executeTransaction: 1,
-  executeTransactionAt: 1,
   executeForSummary: 1,
-  executeForSummaryAt: 1,
-  chainAnchorForRequest: 0,
 };
 
 /**
@@ -487,19 +466,9 @@ export const createMockWebClient = (
       assertIsRequest(request, "executeTransaction");
       return createMockTransactionResult();
     }),
-    executeTransactionAt: vi.fn(
-      async (_accountId: unknown, request: unknown) => {
-        assertIsRequest(request, "executeTransactionAt");
-        return createMockTransactionResult();
-      }
-    ),
     executeForSummary: vi
       .fn()
       .mockResolvedValue(createMockTransactionSummary()),
-    executeForSummaryAt: vi
-      .fn()
-      .mockResolvedValue(createMockTransactionSummary()),
-    chainAnchorForRequest: vi.fn().mockResolvedValue(createMockChainAnchor()),
     proveTransaction: vi.fn().mockResolvedValue({}),
     submitProvenTransaction: vi.fn().mockResolvedValue(0),
     applyTransaction: vi.fn().mockResolvedValue({}),
@@ -585,10 +554,7 @@ type MockWebClientType = {
   buildPswapCancelByOrder: ReturnType<typeof vi.fn>;
   submitNewTransactionBatch: ReturnType<typeof vi.fn>;
   executeTransaction: ReturnType<typeof vi.fn>;
-  executeTransactionAt: ReturnType<typeof vi.fn>;
   executeForSummary: ReturnType<typeof vi.fn>;
-  executeForSummaryAt: ReturnType<typeof vi.fn>;
-  chainAnchorForRequest: ReturnType<typeof vi.fn>;
   proveTransaction: ReturnType<typeof vi.fn>;
   submitProvenTransaction: ReturnType<typeof vi.fn>;
   applyTransaction: ReturnType<typeof vi.fn>;

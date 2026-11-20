@@ -1,6 +1,7 @@
 import {
   getDatabase,
   ITransaction,
+  ITransactionLog,
   ITransactionScript,
   JsStorageMapEntry,
   JsStorageSlot,
@@ -158,6 +159,89 @@ export async function upsertTransactionRecord(
   }
 }
 
+// TRANSACTION LOGS
+// ================================================================================================
+
+/** A log as the Rust side sends it. The topic is the encoded suffix and prefix. */
+export interface JsTransactionLog {
+  emitter: string;
+  topic: Uint8Array;
+  content: Uint8Array;
+}
+
+/** A stored log as the Rust side reads it. `topic` and `content` are base64 strings. */
+interface ProcessedTransactionLog {
+  emitter: string;
+  topic: string;
+  content: string;
+}
+
+/**
+ * Writes the logs of a transaction, one row for each log, in emission order.
+ *
+ * The topic is stored as a base64 string, like the other indexed byte values of the store.
+ */
+export async function insertTransactionLogs(
+  dbId: string,
+  transactionId: string,
+  logs: JsTransactionLog[],
+  tx?: Transaction
+) {
+  try {
+    const db = getDatabase(dbId);
+    const rows: ITransactionLog[] = logs.map((log, logIndex) => ({
+      transactionId,
+      logIndex,
+      emitter: log.emitter,
+      topic: uint8ArrayToBase64(new Uint8Array(log.topic)),
+      content: new Uint8Array(log.content),
+    }));
+
+    await (tx || db).transactionLogs.bulkPut(rows);
+  } catch (error) {
+    logWebStoreError(error, "Failed to insert transaction logs");
+    throw error;
+  }
+}
+
+/**
+ * Returns the logs that a stored transaction emitted, in emission order.
+ *
+ * Returns `undefined` if the store does not hold the transaction, and an empty array if the
+ * transaction emitted no logs.
+ */
+export async function getTransactionLogs(dbId: string, transactionId: string) {
+  try {
+    const db = getDatabase(dbId);
+    return await db.dexie.transaction(
+      "r",
+      db.transactions,
+      db.transactionLogs,
+      async (): Promise<ProcessedTransactionLog[] | undefined> => {
+        // A transaction without logs has no rows in `transactionLogs`, so `transactions` tells
+        // whether the store holds the transaction.
+        if ((await db.transactions.get(transactionId)) === undefined) {
+          return undefined;
+        }
+
+        // The primary key is `[transactionId+logIndex]`, so the rows come in emission order.
+        const rows = await db.transactionLogs
+          .where("[transactionId+logIndex]")
+          .between([transactionId, 0], [transactionId, Infinity], true, true)
+          .toArray();
+
+        return rows.map((row) => ({
+          emitter: row.emitter,
+          topic: row.topic,
+          content: uint8ArrayToBase64(row.content),
+        }));
+      }
+    );
+  } catch (error) {
+    logWebStoreError(error, "Failed to get transaction logs");
+  }
+}
+
 // BATCH APPLY
 // ================================================================================================
 
@@ -247,6 +331,7 @@ interface SerializedOutputNoteData {
 interface JsBatchUpdatePayload {
   initialAccountCommitment: string;
   transactionRecord: SerializedTransactionRecord;
+  transactionLogs: JsTransactionLog[];
   accountState: JsBatchAccountState;
   inputNotes: SerializedInputNoteData[];
   outputNotes: SerializedOutputNoteData[];
@@ -271,6 +356,7 @@ export async function applyTransactionBatch(
     [
       db.transactions,
       db.transactionScripts,
+      db.transactionLogs,
       db.latestAccountStorages,
       db.historicalAccountStorages,
       db.latestStorageMapEntries,
@@ -296,7 +382,7 @@ export async function applyTransactionBatch(
             `transaction input account commitment does not match persisted state for ${accountId}`
           );
         }
-        // 1. Insert the transaction record (script first, then record)
+        // 1. Insert the transaction record (script first, then record), then its logs
         const rec = payload.transactionRecord;
         if (rec.scriptRoot && rec.txScript) {
           await insertTransactionScript(dbId, rec.scriptRoot, rec.txScript);
@@ -310,6 +396,7 @@ export async function applyTransactionBatch(
           rec.status,
           rec.scriptRoot
         );
+        await insertTransactionLogs(dbId, rec.id, payload.transactionLogs);
 
         // 2. Apply account state (full or delta)
         if (acct.kind === "full") {

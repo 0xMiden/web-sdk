@@ -25,10 +25,8 @@ impl TransactionSummary {
 
     /// Deserializes a summary from bytes.
     ///
-    /// Uses the untrusted path, like [`ChainAnchor::deserialize`]: a summary crosses the same
-    /// wire, from the same counterparty, in the same envelope.
-    ///
-    /// [`ChainAnchor::deserialize`]: crate::models::chain_anchor::ChainAnchor::deserialize
+    /// A summary usually comes from a counterparty, such as the proposer of a multisig
+    /// transaction, so a message with unused bytes is rejected.
     pub fn deserialize(bytes: JsBytes) -> Result<TransactionSummary, JsErr> {
         decode_transaction_summary(&bytes).map(TransactionSummary)
     }
@@ -47,11 +45,14 @@ impl TransactionSummary {
 
     /// Returns the output notes referenced by the summary.
     ///
-    /// NOTE: this includes the kernel's `TX_FEE` note on any chain whose `verification_base_fee` is
-    /// non-zero. Every standard auth procedure calls `fee::pay_fee` before building the summary, so
-    /// the fee note is inside what a co-signer signs over — which is the point, but it means a UI
-    /// rendering this list for confirmation shows the fee note alongside the notes the user asked
-    /// for, and should label it rather than present it as one of theirs.
+    /// NOTE: for a single-signature account this includes the `TX_FEE` note on any chain whose
+    /// `verification_base_fee` is non-zero. Its auth procedure pays the fee before it builds the
+    /// summary, so the fee note is inside what the signer signs over. A UI that renders this list
+    /// for confirmation shows the fee note alongside the notes the user asked for, and should
+    /// label it rather than present it as one of theirs.
+    ///
+    /// The multisig auth procedures pay the fee after the signature check, so the summary of a
+    /// multisig has no fee note. It binds a max fee instead, as the second of `userParams`.
     #[js_export(js_name = "outputNotes")]
     pub fn output_notes(&self) -> Result<OutputNotes, JsErr> {
         Ok(self.0.output_notes().into())
@@ -66,7 +67,7 @@ impl TransactionSummary {
         self.0.user_params().as_elements().iter().map(Into::into).collect()
     }
 
-    /// Returns the number of the reference block this summary was built against.
+    /// Returns the number of the block bound by this summary. See `blockCommitment`.
     #[js_export(js_name = "blockNum")]
     pub fn block_num(&self) -> u32 {
         self.0.block_number().as_u32()
@@ -77,15 +78,11 @@ impl TransactionSummary {
         self.0.logs().clone().into()
     }
 
-    /// Returns the commitment of the reference block this summary was built against.
+    /// Returns the commitment of the block bound by this summary.
     ///
-    /// Signed into the summary, so a co-signer can check a received [`ChainAnchor`] against it
-    /// directly: `anchor.commitment()` must equal this. Cheaper than re-deriving the summary.
-    ///
-    /// It proves the anchor and the summary agree, not that either is what you meant to sign —
-    /// a proposer supplies both. Inspect the summary's effects before signing.
-    ///
-    /// [`ChainAnchor`]: crate::models::chain_anchor::ChainAnchor
+    /// Signed into the summary, so every signer commits to this block. It is the reference block
+    /// of the execution, unless the auth procedure binds another block, as the multisig
+    /// components do with the bound block of their auth args.
     #[js_export(js_name = "blockCommitment")]
     pub fn block_commitment(&self) -> Word {
         self.0.block_commitment().into()

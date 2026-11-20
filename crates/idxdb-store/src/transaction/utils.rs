@@ -1,12 +1,17 @@
-use alloc::string::String;
+use alloc::format;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use miden_client::Word;
+use miden_client::account::AccountId;
 use miden_client::note::{BlockNumber, ToInputNoteCommitments};
 use miden_client::store::StoreError;
 use miden_client::transaction::{
     ExecutedTransaction,
+    LogTopic,
     TransactionDetails,
+    TransactionLog,
+    TransactionLogs,
     TransactionRecord,
     TransactionScript,
     TransactionStatus,
@@ -15,8 +20,13 @@ use miden_client_proto::encode;
 use serde::Serialize;
 use wasm_bindgen::prelude::wasm_bindgen;
 
-use super::js_bindings::{idxdb_insert_transaction_script, idxdb_upsert_transaction_record};
-use crate::bytes::ToStoreBytes;
+use super::js_bindings::{
+    idxdb_insert_transaction_logs,
+    idxdb_insert_transaction_script,
+    idxdb_upsert_transaction_record,
+};
+use super::models::TransactionLogIdxdbObject;
+use crate::bytes::{FromStoreBytes, ToStoreBytes};
 use crate::promise::await_ok;
 
 // TYPES
@@ -41,6 +51,17 @@ pub struct SerializedTransactionData {
     pub status_variant: u8,
     #[serde(with = "serde_bytes")]
     pub status: Vec<u8>,
+}
+
+/// A transaction log as the JS side stores it. The JS side adds the position of the log.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SerializedTransactionLog {
+    pub emitter: String,
+    #[serde(with = "serde_bytes")]
+    pub topic: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    pub content: Vec<u8>,
 }
 
 // ================================================================================================
@@ -79,7 +100,8 @@ pub(crate) fn build_transaction_record(
     )
 }
 
-/// Converts an `ExecutedTransaction` into a `TransactionRecord` and inserts it into the store.
+/// Converts an `ExecutedTransaction` into a `TransactionRecord` and inserts it into the store,
+/// with the logs that the transaction emitted.
 /// `submission_height` is the block number at which the transaction was submitted to the network.
 pub async fn insert_proven_transaction_data(
     db_id: &str,
@@ -90,7 +112,64 @@ pub async fn insert_proven_transaction_data(
 
     upsert_transaction_record(db_id, &transaction_record).await?;
 
+    let logs =
+        serde_wasm_bindgen::to_value(&serialize_transaction_logs(executed_transaction.logs()))
+            .map_err(|err| StoreError::DatabaseError(format!("serialization error: {err}")))?;
+    let promise =
+        idxdb_insert_transaction_logs(db_id, transaction_record.id.as_word().to_hex(), logs);
+    await_ok(promise, "failed to insert transaction logs").await?;
+
     Ok(())
+}
+
+// TRANSACTION LOGS
+// ================================================================================================
+
+/// Serializes the logs of a transaction, in emission order. The content of a log is the bytes of
+/// its words, one after the other.
+pub(crate) fn serialize_transaction_logs(logs: &TransactionLogs) -> Vec<SerializedTransactionLog> {
+    logs.iter()
+        .map(|log| SerializedTransactionLog {
+            emitter: log.emitter().to_hex(),
+            topic: log.topic().to_store_bytes(),
+            content: log.content().iter().flat_map(ToStoreBytes::to_store_bytes).collect(),
+        })
+        .collect()
+}
+
+/// Builds the logs of a transaction from its stored rows, which are in emission order.
+///
+/// # Errors
+/// - If a row does not decode. The logs of a transaction are returned whole or not at all.
+pub(crate) fn transaction_logs_from_idxdb(
+    rows: Vec<TransactionLogIdxdbObject>,
+) -> Result<TransactionLogs, StoreError> {
+    let logs = rows
+        .into_iter()
+        .map(|row| {
+            TransactionLog::new(
+                AccountId::from_hex(&row.emitter)?,
+                LogTopic::from_store_bytes(&row.topic)?,
+                log_content_from_bytes(&row.content)?,
+            )
+            .map_err(|err| invalid_logs(&err))
+        })
+        .collect::<Result<Vec<_>, StoreError>>()?;
+
+    TransactionLogs::new(logs).map_err(|err| invalid_logs(&err))
+}
+
+fn log_content_from_bytes(bytes: &[u8]) -> Result<Vec<Word>, StoreError> {
+    let (words, remainder) = bytes.as_chunks::<{ Word::SERIALIZED_SIZE }>();
+    if !remainder.is_empty() {
+        return Err(invalid_logs(&format!("log content has {} bytes", bytes.len())));
+    }
+
+    words.iter().map(|word| Word::from_store_bytes(word)).collect()
+}
+
+fn invalid_logs(err: &impl ToString) -> StoreError {
+    StoreError::ParsingError(format!("invalid transaction logs: {}", err.to_string()))
 }
 
 /// Serializes the transaction record into a format suitable for storage in the database.

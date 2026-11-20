@@ -665,8 +665,9 @@ test.describe("Account.getPublicKeyCommitments", () => {
             dropw
             exec.fee::native_conversion_info
             push.NO_AUTH_POST_FEE_CYCLES
+            exec.active_account::get_nonce movdn.5
             exec.tx::get_reference_block_number movdn.5
-            exec.fee::pay_fee drop
+            exec.fee::pay_fee drop drop
             exec.native_account::has_state_changed
             exec.active_account::get_nonce eq.0
             or
@@ -756,8 +757,9 @@ test.describe("Account.getPublicKeyCommitments", () => {
             dropw
             exec.fee::native_conversion_info
             push.NO_AUTH_POST_FEE_CYCLES
+            exec.active_account::get_nonce movdn.5
             exec.tx::get_reference_block_number movdn.5
-            exec.fee::pay_fee drop
+            exec.fee::pay_fee drop drop
             exec.native_account::has_state_changed
             exec.active_account::get_nonce eq.0
             or
@@ -852,8 +854,9 @@ test.describe("Account.getPublicKeyCommitments", () => {
             dropw
             exec.fee::native_conversion_info
             push.NO_AUTH_POST_FEE_CYCLES
+            exec.active_account::get_nonce movdn.5
             exec.tx::get_reference_block_number movdn.5
-            exec.fee::pay_fee drop
+            exec.fee::pay_fee drop drop
             exec.native_account::has_state_changed
             exec.active_account::get_nonce eq.0
             or
@@ -945,6 +948,7 @@ test.describe("Account.getPublicKeyCommitments", () => {
       const lookalikeCode = `
         use miden::standards::auth::signature
         use miden::standards::fee
+        use miden::protocol::active_account
         use miden::protocol::native_account
         use miden::protocol::tx
 
@@ -958,8 +962,9 @@ test.describe("Account.getPublicKeyCommitments", () => {
             movdn.3 drop drop drop
             dup exec.signature::estimate_authentication_cycles
             swap movdn.5
+            exec.active_account::get_nonce movdn.5
             exec.tx::get_reference_block_number movdn.5
-            exec.fee::pay_fee drop
+            exec.fee::pay_fee drop drop
             push.PUBLIC_KEY_COMMITMENT_SLOT[0..2] exec.native_account::get_initial_item
             exec.signature::authenticate_transaction
         end
@@ -1064,9 +1069,10 @@ test.describe("Account.getPublicKeyCommitments", () => {
         end
       `;
       const restCode = `
+        use miden::protocol::active_account
         use miden::protocol::tx
         use miden::standards::auth::multisig
-        use miden::standards::auth::signature
+        use {MULTISIG_POST_FEE_CYCLES} from miden::standards::auth::multisig
         use miden::standards::fee
 
         pub use {update_signers_and_threshold} from miden::standards::auth::multisig
@@ -1078,12 +1084,21 @@ test.describe("Account.getPublicKeyCommitments", () => {
         pub proc auth_tx_multisig(auth_args: word)
             exec.multisig::resolve_auth_args
             dup.5 exec.tx::get_reference_block_number
-            exec.multisig::assert_approval_not_expired movdn.10
+            exec.multisig::assert_approval_not_expired movdn.11
             exec.multisig::get_initial_threshold_and_num_approvers drop
-            exec.signature::estimate_multisig_authentication_cycles
-            dup.5 movdn.5
-            exec.fee::pay_fee drop
+            exec.multisig::estimate_max_fee
+            movup.7 dup eq.0
+            movup.2 swap cdrop
+            movdn.6
+            dup.6 movdn.11
+            exec.active_account::get_nonce movdn.11
+            dup.4 movdn.11
+            movdn.10 movdn.10 movdn.10 movdn.10
             exec.multisig::auth_tx
+            movdnw.2
+            push.MULTISIG_POST_FEE_CYCLES
+            exec.fee::pay_bounded_fee
+            movdn.4
             exec.multisig::record_and_assert_new_tx
             exec.multisig::apply_approval_expiration
         end
@@ -1187,14 +1202,15 @@ test.describe("Account.getPublicKeyCommitments", () => {
     run,
   }) => {
     const result = await run(async ({ client, sdk }) => {
-      // miden-standards 0.17.1's guarded-multisig component source, compiled the way
+      // The guarded-multisig component source of miden-standards, compiled the way
       // client.compile.component compiles a component.
       const code = `
+        use miden::protocol::active_account
         use miden::protocol::tx
         use miden::standards::auth::multisig
-        use miden::standards::auth::guardian
-        use miden::standards::auth::signature
+        use {MULTISIG_POST_FEE_CYCLES} from miden::standards::auth::multisig
         use miden::standards::fee
+        use miden::standards::auth::guardian
 
         pub use {update_signers_and_threshold} from miden::standards::auth::multisig
         pub use {get_threshold_and_num_approvers} from miden::standards::auth::multisig
@@ -1207,18 +1223,27 @@ test.describe("Account.getPublicKeyCommitments", () => {
         pub proc auth_tx_guarded_multisig(auth_args: word)
             exec.multisig::resolve_auth_args
             dup.5 exec.tx::get_reference_block_number
-            exec.multisig::assert_approval_not_expired movdn.10
-            exec.guardian::assert_rotation_policy movdn.11
+            exec.multisig::assert_approval_not_expired movdn.11
             exec.multisig::get_initial_threshold_and_num_approvers drop
             add.1
-            exec.signature::estimate_multisig_authentication_cycles
-            dup.5 movdn.5
-            exec.fee::pay_fee drop
+            exec.multisig::estimate_max_fee
+            movup.7 dup eq.0
+            movup.2 swap cdrop
+            movdn.6
+            exec.guardian::assert_rotation_policy movdn.11
+            dup.6 movdn.12
+            exec.active_account::get_nonce movdn.12
+            dup.4 movdn.12
+            movdn.11 movdn.11 movdn.11 movdn.11
             exec.multisig::auth_tx
-            dupw movup.9
+            dupw movup.8
             exec.guardian::verify_signature
             exec.guardian::get_guardian_public_key
             exec.multisig::assert_not_approver_public_key
+            movdnw.2
+            push.MULTISIG_POST_FEE_CYCLES
+            exec.fee::pay_bounded_fee
+            movdn.4
             exec.multisig::record_and_assert_new_tx
             exec.multisig::apply_approval_expiration
         end
