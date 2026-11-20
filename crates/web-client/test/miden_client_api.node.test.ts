@@ -249,6 +249,76 @@ test.describe("MidenClient API - Mock Chain", () => {
     expect(result.isPublic).toBe(true);
   });
 
+  // The mock chain charges no fee, so its estimate is zero. The draft therefore
+  // starts from a max fee, which shows that the helper scales the value that
+  // the summary binds.
+  test("withEstimatedMaxFee caps a multisig proposal", async ({ sdk }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+
+    const approverKeys = [
+      sdk.AuthSecretKey.rpoFalconWithRNG(),
+      sdk.AuthSecretKey.rpoFalconWithRNG(),
+      sdk.AuthSecretKey.rpoFalconWithRNG(),
+    ];
+    const seed = new Uint8Array(32);
+    crypto.getRandomValues(seed);
+    const built = new sdk.AccountBuilder(seed)
+      .storageMode(sdk.AccountStorageMode.private())
+      .withAuthComponent(
+        sdk.createAuthFalcon512RpoMultisig(
+          new sdk.AuthFalcon512RpoMultisigConfig(
+            approverKeys.map((key) => key.publicKey().toCommitment()),
+            2
+          )
+        )
+      )
+      .withBasicWalletComponent()
+      .build();
+    const multisigId = built.account.id().toString();
+    await client.accounts.insert({ account: built.account });
+    const preview = (request) =>
+      client.transactions.preview({
+        operation: "custom",
+        account: multisigId,
+        request,
+      });
+
+    const draft = (
+      await client.feeAwareTransactionRequestBuilder(multisigId, {
+        maxFee: 1001,
+      })
+    ).build();
+    const previewed = await preview(draft);
+    const capped = await client.withEstimatedMaxFee(draft, previewed, {
+      feeMarginPercent: 150,
+    });
+    const rederived = await preview(capped.request);
+
+    expect(previewed.userParams()[1].asInt()).toBe(1001n);
+    // 1001 * 150 / 100, rounded up.
+    expect(capped.maxFee).toBe(1502n);
+    expect(capped.summary.userParams()[1].asInt()).toBe(1502n);
+    expect(rederived.toCommitment().toHex()).toBe(
+      capped.summary.toCommitment().toHex()
+    );
+
+    await expect(
+      client.withEstimatedMaxFee(draft, previewed, {})
+    ).rejects.toThrow(/feeMarginPercent must be a positive integer/);
+    await expect(
+      client.feeAwareTransactionRequestBuilder(multisigId, { maxFee: -1 })
+    ).rejects.toThrow(/maxFee must be a non-negative integer/);
+    await expect(
+      client.withEstimatedMaxFee(
+        new sdk.TransactionRequestBuilder().build(),
+        previewed,
+        { feeMarginPercent: 150 }
+      )
+    ).rejects.toThrow(/^AUTH_ARGS_NOT_MULTISIG: /);
+  });
+
   test("accounts.isAllowed and accounts.register on a chain without an allowlist", async ({
     sdk,
   }) => {

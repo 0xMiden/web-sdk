@@ -10,7 +10,8 @@ description: Rules for multi-party signing flows, where one party signs a transa
 `0.16.1`. `withBlockNumbers` and tip execution of multisig proposals (§1, R0)
 arrived in `0.17.0-rc.4`. `withFeeAwareAuth`, `TransactionRequest.withAuthArgs`,
 and tip execution of a multisig request that does not declare its bound block
-arrived in `0.17.4`.
+arrived in `0.17.4`. The `maxFee` option and `withEstimatedMaxFee` (R0) arrived in
+`0.19.0`.
 This skill ships inside the package, so if you are reading it from
 `node_modules/@miden-sdk/miden-sdk/skills/`, the installed version has these
 surfaces. If a symbol is missing anyway, you are on a build older than the release
@@ -73,14 +74,47 @@ Foreign accounts, the chain's fee faucet among them, load at the tip. A proposal
 therefore still executes after the node has pruned the account state of its bound
 block (a node keeps account state for 50 blocks).
 
-The summary also binds a **max fee**. The auth args from
-`feeAwareTransactionRequestBuilder` and `withFeeAwareAuth` set none, so the auth
-procedure estimates the fee on each execution and the summary binds that estimate. The
-estimate depends on the verification base fee of the reference block and on the cycle
-count of the transaction. The parties derive the same summary at different tips only
-while the estimate comes out the same. If the base fee of the chain changes between
-the preview and the execution, the summary changes and the collected signatures no
-longer match it. Neither method takes a max fee.
+The summary also binds a **max fee**, the fee cap that the approvers sign. Without
+one in the auth args, the auth procedure estimates the fee on each execution and the
+summary binds that estimate. The estimate depends on the verification base fee of the
+reference block and on the cycle count of the transaction. The parties then derive the
+same summary at different tips only while the estimate comes out the same. If the base
+fee of the chain changes between the preview and the execution, the summary changes
+and the collected signatures no longer match it.
+
+On a chain that charges a fee, sign a cap. Preview the request once, then pass the
+request and the summary to `client.withEstimatedMaxFee`:
+
+```js
+const draft = (await client.feeAwareTransactionRequestBuilder(multisig))
+  .withCustomScript(script)
+  .build();
+const estimated = await client.transactions.preview({
+  operation: "custom",
+  account: multisig,
+  request: draft,
+});
+
+// The max fee is the estimate plus 50%.
+const { request, summary } = await client.withEstimatedMaxFee(draft, estimated, {
+  feeMarginPercent: 150,
+});
+// Ship `request.serialize()` and `summary.serialize()`.
+```
+
+- The approvers sign the returned `summary`, and the executor submits the returned
+  `request`. Do not ship `draft` or `estimated`.
+- Executing the returned request reproduces the returned summary, so the proposer needs
+  no second preview.
+- `feeMarginPercent` is required: 100 keeps the estimate, and 150 adds half of it.
+- A max fee of zero means that the auth procedure estimates the fee. On a chain that
+  charges no fee the estimate is zero, and the helper returns an equal request and
+  summary.
+- To set a cap that you already know, pass `maxFee` in the options of
+  `feeAwareTransactionRequestBuilder` or `withFeeAwareAuth`. A co-signer that rebuilds
+  a proposal pins it together with `feeConversionSalt` and `boundBlockNum`.
+- `send`, `consume` and the other `client.transactions` operations that build their
+  own request set no max fee.
 
 R2's request transport still applies: co-signers must re-derive from the proposer's
 request bytes, because the salt in the auth args is drawn fresh per build.
@@ -235,6 +269,9 @@ Map an observed symptom to its cause before proposing a fix.
 | `FeeConversionInfoUnsupported` naming the auth component | A salt was declared against an auth component that never reads it. Drop the salt, or attach the auth args with `withAuthArgs`, or `request.withAuthArgs(preimage)` on a finished request |
 | `ERR_FEE_CONVERSION_INFO_MISSING` aborting in the VM | A custom auth procedure reads conversion info that nothing committed. Attach it yourself with `withAuthArgs`, or `request.withAuthArgs(preimage)` on a finished request |
 | `AUTH_ALREADY_SET` from `withFeeAwareAuth` | The executing account is a multisig and the request already carries an auth argument. Its author owns that argument, so `withFeeAwareAuth` does not replace it (R0) |
+| `AUTH_ARGS_NOT_MULTISIG` from `withEstimatedMaxFee` | The request has no auth argument, or its auth args are not multisig auth args. Build it from `feeAwareTransactionRequestBuilder`, or pass it through `withFeeAwareAuth`, for a multisig account (R0) |
+| `the summary does not belong to the request` from `withEstimatedMaxFee` | The summary binds another salt, bound block or approval expiration than the auth args of the request. Pass the summary from the preview of that same request (R0) |
+| A signed multisig transaction aborts in the fee payment, and a development build reports `the transaction fee and the sponsored fees exceed the max fee` | The fee at execution is above the cap that the approvers signed. Preview again and sign a new cap with a larger `feeMarginPercent` (R0) |
 | `preview` fails to find the account on the co-signer | Verification runs a real execution, so the account must already be in that participant's store. `accounts.getOrImport` for a public account; a private one needs its state transferred out of band (R2) |
 | Execution fails naming a foreign account and a block | The client is behind the node's account-history window. Sync, then retry (R4) |
 | `requested block N is after transaction reference block M` | A multisig proposal previewed or submitted on a client whose sync height M is still below its bound block N. Sync, then retry (R0) |
@@ -244,7 +281,7 @@ Map an observed symptom to its cause before proposing a fix.
 | `captureAnchor is not a function`, or `ChainAnchor` is undefined | The code targets an SDK before `0.19.0`. Anchored execution was removed: move a multisig to R0, and see R1 for a single-signature flow |
 
 **Node.js note:** codes originating in the client (`TRANSACTION_ALREADY_AUTHORIZED`,
-`AUTH_ALREADY_SET`) **prefix the message** instead of appearing as a property, because
+`AUTH_ALREADY_SET`, `AUTH_ARGS_NOT_MULTISIG`) **prefix the message** instead of appearing as a property, because
 the napi bindings cannot attach one. Codes originating in the React package
 (`OPERATION_BUSY`, `STALE_CLIENT`) are always properties. Write error handling that
 tolerates both shapes.
@@ -319,6 +356,16 @@ multisig resolves its auth args whatever the chain charges.
 `client.withFeeAwareAuth(request, account, options?)` returns a copy of a finished
 request with the auth args that builder would set, and returns any other account's
 request unchanged. The copy does not declare the bound block (R0).
+
+Both take the multisig-only `options` `approvalExpirationDelta`, `feeConversionSalt`,
+`boundBlockNum` and `maxFee` (a `bigint` or an integer `number`, in the native fee
+asset).
+
+`client.withEstimatedMaxFee(request, summary, { feeMarginPercent })` returns
+`{ request, summary, maxFee }`: the request with the max fee in its multisig auth args,
+the summary to sign, and the max fee as a `bigint` (R0). The binding behind it is
+`request.withEstimatedMaxFee(summary, feeMarginPercent)`, which returns an
+`EstimatedMaxFee` with `request()`, `summary()` and `maxFee()`.
 `request.withAuthArgs(preimage)` sets auth args you build yourself on a finished
 request; in the browser build it consumes the `Felt`s it is given.
 
@@ -415,6 +462,9 @@ Before considering multi-party signing work complete, confirm each of these:
 - [ ] A multisig proposal is built with `feeAwareTransactionRequestBuilder` (or, as a
       finished request, gets its auth args from `withFeeAwareAuth`) and every party
       syncs to its bound block before `preview` or `submit` (R0).
+- [ ] On a chain that charges a fee, a multisig proposal carries a max fee, from
+      `withEstimatedMaxFee` or the `maxFee` option, and the approvers sign the summary
+      that binds it (R0).
 - [ ] No flow depends on a summary that binds the reference block reproducing at
       another sync height (R1).
 - [ ] The verifying side uses the proposer's request bytes, not a rebuild, and already

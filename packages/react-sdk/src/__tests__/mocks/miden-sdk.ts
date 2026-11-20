@@ -1,6 +1,10 @@
 import { vi } from "vitest";
 import { NoteType } from "@miden-sdk/miden-sdk";
-import type { AdviceMap, TransactionRequest } from "@miden-sdk/miden-sdk";
+import type {
+  AdviceMap,
+  EstimatedMaxFee,
+  TransactionRequest,
+} from "@miden-sdk/miden-sdk";
 
 // Mock AccountId
 export const createMockAccountId = (id: string = "0x1234567890abcdef") => ({
@@ -239,6 +243,7 @@ export const createMockTransactionRequest = () => ({
   withAuthArgs: vi.fn(
     () => createMockTransactionRequest() as unknown as TransactionRequest
   ),
+  withEstimatedMaxFee: vi.fn(() => ({}) as unknown as EstimatedMaxFee),
   serialize: vi.fn(() => new Uint8Array()),
   free: vi.fn(),
   [Symbol.dispose]: vi.fn(),

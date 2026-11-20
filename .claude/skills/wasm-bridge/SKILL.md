@@ -181,6 +181,7 @@ kinds; `grep` both primitives for the full set:
 | `ACCOUNT_ALREADY_TRACKED` | `code_from_error` | `ClientError::AccountAlreadyTracked` |
 | `TRANSACTION_ALREADY_AUTHORIZED` | `from_str_err_with_code` | `executeForSummary` produced no summary because the transaction was already fully authorized (`new_transactions.rs`) |
 | `AUTH_ALREADY_SET` | `from_str_err_with_code` | `withFeeAwareAuth` got a multisig request that already has an auth argument (`new_transactions.rs`) |
+| `AUTH_ARGS_NOT_MULTISIG` | `from_str_err_with_code` | `TransactionRequest.withEstimatedMaxFee` got a request without multisig auth args (`models/transaction_request/mod.rs`) |
 
 `code_from_error` recurses through `err.source()`, so a code survives being
 wrapped. It maps typed `ClientError` variants only, and is reachable **only**
