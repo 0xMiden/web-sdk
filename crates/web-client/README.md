@@ -92,8 +92,8 @@ always version-matched to the code you have installed:
 
 - `node_modules/@miden-sdk/miden-sdk/AGENTS.md` - start here
 - `node_modules/@miden-sdk/miden-sdk/skills/` - task-scoped guides: client
-  usage, production pitfalls, signer integration, chain-anchored execution
-  (multisig and offline co-signing), and a source map of the SDK itself
+  usage, production pitfalls, signer integration, multi-party signing
+  (multisig proposals and co-signing), and a source map of the SDK itself
 
 Agents do not look inside `node_modules` on their own. To make yours read these
 automatically, paste this block into the `AGENTS.md` or `CLAUDE.md` at the root
@@ -857,7 +857,7 @@ To set the salt yourself — which co-signers must do when they need to agree on
 
 Do **not** reach for `builder.withFeeConversionSalt(salt)` on that builder. `withAuthArgs` and `withFeeConversionSalt` are mutually exclusive, and miden-client enforces that by having each setter clear the other, so calling it discards the three-word multisig auth args the builder already carries and the transaction aborts in the auth procedure. On a bare `new TransactionRequestBuilder()` the setter is still a declaration rather than a commitment — `request.feeConversionSalt()` reports it back, `request.authArg()` stays empty, and it survives serialization — which is what a single-sig or custom-auth caller wants. For a custom auth procedure that reads `AUTH_ARGS` as conversion info, attach the auth args yourself with `withAuthArgs`, which sets the commitment and adds its advice-map preimage — setting an auth argument opts the request out of the client's fee machinery, which commits only when the request carries none. Declaring a salt against such an account instead is rejected with `FeeConversionInfoUnsupported`.
 
-When another party built the request, such as a dApp that gives a finished request to a wallet, set the multisig auth args on it with `client.withFeeAwareAuth(request, multisig, options?)`. A request that declares a salt executes on a multisig as it is, because miden-client derives the auth args from the salt, but it binds them to the reference block of each execution and sets no approval expiration. `withFeeAwareAuth` returns a copy with the same auth argument and advice-map preimage that `feeAwareTransactionRequestBuilder` declares, keeps every other field, and returns the request unchanged, auth argument and all, for an account that is not a multisig. When `feeConversionSalt` is omitted, it uses the salt that the request declares, or draws one. miden-client tracks the bound block when it executes the request, so the request executes at the tip with no anchor; an anchor from `chainAnchorForRequest` does not track the bound block, and a co-signer cannot read it from `request.blockNumbers()`, so it syncs before previewing the copy. For a multisig it refuses a request that already has an auth argument (`AUTH_ALREADY_SET`).
+When another party built the request, such as a dApp that gives a finished request to a wallet, set the multisig auth args on it with `client.withFeeAwareAuth(request, multisig, options?)`. A request that declares a salt executes on a multisig as it is, because miden-client derives the auth args from the salt, but it binds them to the reference block of each execution and sets no approval expiration. `withFeeAwareAuth` returns a copy with the same auth argument and advice-map preimage that `feeAwareTransactionRequestBuilder` declares, keeps every other field, and returns the request unchanged, auth argument and all, for an account that is not a multisig. When `feeConversionSalt` is omitted, it uses the salt that the request declares, or draws one. miden-client tracks the bound block when it executes the request, so the request executes at the tip; a co-signer cannot read the bound block from `request.blockNumbers()`, so it syncs before previewing the copy. For a multisig it refuses a request that already has an auth argument (`AUTH_ALREADY_SET`).
 
 To set auth args that you build yourself on a finished request, use `request.withAuthArgs(preimage)`. It mirrors miden-client's `TransactionRequest::with_auth_args`: it returns a copy whose auth argument is the Poseidon2 hash of `preimage`, with `preimage` in the advice map under it, so the two always agree. It replaces an existing auth argument and a declared salt without a check, and keeps every other field. In the browser build the `Felt`s in `preimage` are consumed by the call, so read what you need from them first and pass fresh ones to another call. `withFeeAwareAuth` is built on it.
 
@@ -865,7 +865,7 @@ One path the SDK cannot declare a salt on: `client.pswap.cancelByOrder` builds i
 
 ### Multisig Proposals: Execute at the Tip
 
-Since protocol 0.17 a multisig summary binds a **bound block** named in the multisig auth args, not the reference block the transaction executes at. `feeAwareTransactionRequestBuilder` binds the current sync height, and miden-client tracks that block when it executes the request, so the proposer, every co-signer and the executor can all run the proposal at their own current tip and derive the same summary. The builder also adds the bound block to the request with `withBlockNumbers`, which only `captureAnchor` and the height check below read. Each party's client must first have synced to at least the bound block (the largest of `request.blockNumbers()`, by default the proposer's sync height when it built the request); a client below it fails with `requested block N is after transaction reference block M` until it syncs. A request from `withFeeAwareAuth` does not declare the bound block, so sync before previewing it. Do not re-execute a multisig proposal at an anchor: a node keeps account state for only 50 blocks and every fee-paying transaction loads the fee faucet as a foreign account, so anchored re-execution of an older proposal fails with `block N has been pruned`, and a transaction executed at an older reference block expires 20 blocks after it anyway.
+Since protocol 0.17 a multisig summary binds a **bound block** named in the multisig auth args, not the reference block the transaction executes at. `feeAwareTransactionRequestBuilder` binds the current sync height, and miden-client tracks that block when it executes the request, so the proposer, every co-signer and the executor can all run the proposal at their own current tip and derive the same summary. The builder also adds the bound block to the request with `withBlockNumbers`, which only the height check below reads. Each party's client must first have synced to at least the bound block (the largest of `request.blockNumbers()`, by default the proposer's sync height when it built the request); a client below it fails with `requested block N is after transaction reference block M` until it syncs. A request from `withFeeAwareAuth` does not declare the bound block, so sync before previewing it. Foreign accounts, the fee faucet among them, load at the tip, so a proposal still executes after the node has pruned the account state of its bound block (a node keeps account state for only 50 blocks).
 
 ```typescript
 // Proposer
@@ -880,76 +880,27 @@ await client.transactions.submit(multisig, request);
 
 Available from `0.17.0-rc.4`. See [the transactions guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/transactions.md#multisig-proposals-bind-a-block-execute-at-the-tip) for verification details.
 
-### Chain-Anchored Execution
+### Summaries That Bind the Reference Block
 
-For a multisig, use the tip flow above. This section applies when the summary binds the **reference block**, as a single-signature (`signature.masm`) account's does: signatures collected over it only authorize an execution at that exact block, which breaks any flow that collects signatures and executes later.
+For a multisig, use the tip flow above. This section applies when the summary binds the **reference block**, as a single-signature (`signature.masm`) account's does: a signature over it authorizes only an execution at that exact block.
 
-A `ChainAnchor` pins the reference block so the same summary reproduces on a client at a different sync height:
+A transaction always executes at the sync height of the client, and nothing pins another reference block. Such a summary therefore reproduces only at the sync height it was derived at: a sync between deriving the summary and executing moves the reference block, and a client at another sync height derives a different summary from the same request. For signatures that are collected over time or on other clients, use a multisig account.
 
-```typescript
-import {
-  ChainAnchor,
-  TransactionRequest,
-  TransactionSummary,
-} from "@miden-sdk/miden-sdk";
+`ChainAnchor`, `transactions.captureAnchor` and the `anchor` option of `preview`, `executeRequest` and `submit` pinned the reference block in earlier versions. They were removed in `0.19.0`.
 
-// Proposer: capture, derive the summary at the anchor, ship all three.
-const anchor = await client.transactions.captureAnchor(request);
-const summary = await client.transactions.preview({
-  operation: "custom",
-  account,
-  request,
-  anchor,
-});
-await shipToCosigners(
-  request.serialize(),
-  anchor.serialize(),
-  summary.serialize()
-);
+### What a Summary Proves
 
-// Co-signer: re-derive at the proposer's anchor and compare before signing.
-// Re-derive from the proposer's request bytes, never from a locally rebuilt
-// request: on a fee-charging chain its fee conversion info carries a salt drawn
-// fresh on every build, and output notes draw fresh serial numbers, so a rebuilt
-// request yields a different summary and the check below fails as if the
-// proposal had been tampered with.
-const received = ChainAnchor.deserialize(anchorBytes);
-const proposed = TransactionSummary.deserialize(summaryBytes);
-const proposedRequest = TransactionRequest.deserialize(requestBytes);
-const derived = await client.transactions.preview({
-  operation: "custom",
-  account,
-  request: proposedRequest,
-  anchor: received,
-});
-if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
-  throw new Error("proposal does not match the summary presented for signing");
-}
+A co-signer re-derives the summary from the proposer's request bytes, never from a locally rebuilt request: a multisig request carries auth args whose salt is drawn fresh on every build, and output notes draw fresh serial numbers, so a rebuilt request yields a different summary and the comparison fails as if the proposal had been tampered with.
 
-// Executor: replay at the same anchor, whatever the local height is by now.
-await client.transactions.submit(account, request, { anchor: received });
-```
+A matching summary proves the request and the summary agree with each other. It does not prove the transaction does what you want — both came from the proposer, so they agree by construction for any request the proposer chose.
 
-The `anchor` option is available on `preview({ operation: "custom" })`, `executeRequest`, and `submit` — the methods that take a caller-built request.
+Before signing, inspect what the transaction actually does — `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()`, and `summary.expirationDelta()` for how long the authorization stays live (`0` means no expiration was set, not that it has already expired) — and confirm it matches what you agreed to. For storage, `summary.accountDelta().storage()` names each changed slot: `valueSlots()` gives a value slot's `slotName`, `operation` and final `value`, and `mapSlots()` gives a map slot's `slotName`, `operation` and changed `entries()` (`key`, `value`), so a change to a multisig's signer set or threshold is visible before you sign.
 
-The re-derivation above proves the request, anchor and summary agree with each other. It does not prove the transaction does what you want — all three came from the proposer, so they agree by construction for any request the proposer chose. A cheap consistency check on top:
-
-```typescript
-// A summary that binds the reference block signs that block, so a mismatched
-// anchor is detectable without paying for an execution. (A multisig summary
-// binds its bound block instead and takes no anchor.)
-if (received.commitment().toHex() !== proposed.blockCommitment().toHex()) {
-  throw new Error("anchor is not the block this summary was built at");
-}
-```
-
-Before signing, inspect what the transaction actually does — `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()`, and `summary.expirationDelta()` for how long the authorization stays live (`0` means no expiration was set, not that it has already expired) — and confirm it matches what you agreed to. For storage, `summary.accountDelta().storage()` names each changed slot: `valueSlots()` gives a value slot's `slotName`, `operation` and final `value`, and `mapSlots()` gives a map slot's `slotName`, `operation` and changed `entries()` (`key`, `value`), so a change to a multisig's signer set or threshold is visible before you sign. `ChainAnchor` enforces only that its header and partial blockchain are consistent with each other, which is computable over an invented chain; fetch the header for `anchor.blockNum()` with `RpcClient.getBlockHeaderByNumber` and compare commitments to confirm the block is real.
-
-An anchor pins the **reference block and chain data only**. Account state and authenticated input-note records still come from each participant's own local store, so every party must also agree on the account state. If the account moved in a way that changes the transaction's effects, the re-derived summary will not match even though the anchor is correct - the most common reason a co-signing flow fails.
+Account state and authenticated input-note records come from each participant's own local store, so every party must also agree on the account state. If the account moved in a way that changes the transaction's effects, the re-derived summary will not match - the most common reason a co-signing flow fails.
 
 A match, however, does not prove the two parties agree on account state. The summary binds the account *delta*, not the state it applies to, so divergence that leaves the delta and note sets unchanged — an unrelated nonce bump, assets arriving, or a change to a multisig's signer set or threshold — yields an identical commitment and passes verification. Signatures gathered under one threshold stay valid after it is lowered. Check the state you care about directly.
 
-See [the transactions guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/transactions.md#chain-anchored-execution) for the full flow.
+See [the transactions guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/transactions.md#what-a-summary-proves) for the full list.
 
 ### Foreign Accounts
 

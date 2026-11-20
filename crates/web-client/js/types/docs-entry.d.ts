@@ -21,7 +21,6 @@ export {
   AssetVault,
   BasicFungibleFaucetComponent,
   BlockHeader,
-  ChainAnchor,
   ConsumableNoteRecord,
   Endpoint,
   EthAddress,

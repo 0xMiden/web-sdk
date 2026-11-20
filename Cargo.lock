@@ -2386,8 +2386,8 @@ dependencies = [
 
 [[package]]
 name = "miden-client"
-version = "0.18.0"
-source = "git+https://github.com/0xMiden/rust-sdk?rev=66d9884f3de96fc31ed0386e92ddfc381b4b1a41#66d9884f3de96fc31ed0386e92ddfc381b4b1a41"
+version = "0.18.2"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=2c35a0cc2ee24a052c7634018a6fe873a6e68780#2c35a0cc2ee24a052c7634018a6fe873a6e68780"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2429,8 +2429,8 @@ dependencies = [
 
 [[package]]
 name = "miden-client-core"
-version = "0.18.0"
-source = "git+https://github.com/0xMiden/rust-sdk?rev=66d9884f3de96fc31ed0386e92ddfc381b4b1a41#66d9884f3de96fc31ed0386e92ddfc381b4b1a41"
+version = "0.18.2"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=2c35a0cc2ee24a052c7634018a6fe873a6e68780#2c35a0cc2ee24a052c7634018a6fe873a6e68780"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2442,8 +2442,8 @@ dependencies = [
 
 [[package]]
 name = "miden-client-grpc"
-version = "0.18.0"
-source = "git+https://github.com/0xMiden/rust-sdk?rev=66d9884f3de96fc31ed0386e92ddfc381b4b1a41#66d9884f3de96fc31ed0386e92ddfc381b4b1a41"
+version = "0.18.2"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=2c35a0cc2ee24a052c7634018a6fe873a6e68780#2c35a0cc2ee24a052c7634018a6fe873a6e68780"
 dependencies = [
  "async-trait",
  "gloo-timers",
@@ -2463,8 +2463,8 @@ dependencies = [
 
 [[package]]
 name = "miden-client-proto"
-version = "0.18.0"
-source = "git+https://github.com/0xMiden/rust-sdk?rev=66d9884f3de96fc31ed0386e92ddfc381b4b1a41#66d9884f3de96fc31ed0386e92ddfc381b4b1a41"
+version = "0.18.2"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=2c35a0cc2ee24a052c7634018a6fe873a6e68780#2c35a0cc2ee24a052c7634018a6fe873a6e68780"
 dependencies = [
  "miden-client-core",
  "miden-objects",
@@ -2477,8 +2477,8 @@ dependencies = [
 
 [[package]]
 name = "miden-client-sqlite-store"
-version = "0.18.0"
-source = "git+https://github.com/0xMiden/rust-sdk?rev=66d9884f3de96fc31ed0386e92ddfc381b4b1a41#66d9884f3de96fc31ed0386e92ddfc381b4b1a41"
+version = "0.18.2"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=2c35a0cc2ee24a052c7634018a6fe873a6e68780#2c35a0cc2ee24a052c7634018a6fe873a6e68780"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2816,8 +2816,8 @@ dependencies = [
 
 [[package]]
 name = "miden-node-proto-build"
-version = "0.18.2"
-source = "git+https://github.com/0xMiden/node?rev=03670c14a6258bf999f5aaaac9f946060de8fb95#03670c14a6258bf999f5aaaac9f946060de8fb95"
+version = "0.18.3"
+source = "git+https://github.com/0xMiden/node?rev=100f44747d6b3bc02b8da2d1056aa42588280ef7#100f44747d6b3bc02b8da2d1056aa42588280ef7"
 dependencies = [
  "build-rs",
  "codegen",

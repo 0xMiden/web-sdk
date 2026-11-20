@@ -57,7 +57,6 @@ pub mod basic_fungible_faucet_component;
 pub mod batch_item;
 pub mod block_header;
 pub mod bound_signature;
-pub mod chain_anchor;
 pub mod code_builder;
 pub mod committed_note;
 pub mod components;

@@ -37,7 +37,7 @@ Never submit code that doesn't type-check. The verification loop is your quality
 
 ### 3. Context Engineering with Source Repos
 
-The basic skills (`web-client-usage`, `react-sdk-patterns`, `frontend-pitfalls`, `vite-wasm-setup`, `chain-anchored-execution`) cover standard patterns. For anything beyond those patterns, the web-sdk source repository is the knowledge base.
+The basic skills (`web-client-usage`, `react-sdk-patterns`, `frontend-pitfalls`, `vite-wasm-setup`, `multi-party-signing`) cover standard patterns. For anything beyond those patterns, the web-sdk source repository is the knowledge base.
 
 **How to use source repos effectively**:
 - Don't load entire repos into context. Use sub-agents to explore - they search, read relevant files, and summarize findings without filling the main conversation context.
@@ -103,7 +103,7 @@ The public client plus the Rust-to-WASM bridge underneath it.
 - **`src/`** - the Rust `WebClient` struct, exported to JS as `WasmWebClient`. Marked `@internal` in `js/types/index.d.ts` ("Use MidenClient instead"); `useMidenClient()` from the React SDK returns this low-level client, not `MidenClient`.
 - The standalone `RpcClient` struct (`getBlockHeaderByNumber`, `getNotesById`, `getAccountDetails`, `getAccountProof`, `syncNotes`, `getNetworkNoteStatus`, `getNullifierCommitHeight`, `getNoteScriptByRoot`, `syncStorageMaps`) lives in `src/rpc_client/`, and is exported separately from `@miden-sdk/miden-sdk` - it is NOT reachable through `useMidenClient()`.
 - **`src/models/`** - the Rust side of every JS-visible model type (`AccountId`, `Note`, `TransactionRequest` and the rest; some are directories rather than single files). This is where a method's JS name is actually decided: `#[js_export(js_name = "...")]` on the Rust fn is what both the wasm and napi builds spell. If a name in the TypeScript surface does not match the Rust one, this attribute is why.
-- **`skills/`** - the agent guides shipped with this package, including `web-client-usage` and `chain-anchored-execution`.
+- **`skills/`** - the agent guides shipped with this package, including `web-client-usage` and `multi-party-signing`.
 
 **Explore when**: A hook doesn't exist for your operation, understanding what client methods are available, debugging WASM-level errors.
 
@@ -163,7 +163,7 @@ Platform-native binaries consumed through `optionalDependencies`, and the native
 | State management | `src/store/MidenStore.ts` | Zustand selectors, cached state |
 | Direct WasmWebClient usage | `src/context/MidenProvider.tsx` | useMidenClient(), runExclusive |
 | Multi-step workflow | `src/hooks/useWaitForCommit.ts`, `useWaitForNotes.ts` | Polling, timeout patterns |
-| Multisig proposal / co-signing | `src/hooks/usePreview.ts`, `useChainAnchor.ts` | Multisig: preview and submit at the tip, no anchor (chain-anchored-execution R0). Single-signature co-signing: ChainAnchor capture, `anchoredRequest`, TransactionSummary |
+| Multisig proposal / co-signing | `src/hooks/usePreview.ts`, `useTransaction.ts` | Multisig: preview and submit at the tip (multi-party-signing R0). Single-signature co-signing: preview and execute at the same sync height (R1), TransactionSummary |
 | Foreign-account (FPI) reads | `crates/web-client/js/resources/transactions.js` (`executeRequest`, `submit`) | ForeignAccount.public/private, reference-block pinning |
 | Custom MASM component | `src/hooks/useCompile.ts`, `useExecuteProgram.ts` | `@account_procedure`, `@transaction_script pub proc main` |
 | Network note | `src/hooks/useCreateNetworkNote.ts` | NetworkAccountTarget, createNetworkAuthComponents |

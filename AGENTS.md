@@ -325,8 +325,8 @@ docs/external/src/
     ├── _category_.yml
     └── library/
         ├── _category_.yml
-        ├── use-chain-anchor.md
-        └── use-create-network-note.md
+        ├── use-create-network-note.md
+        └── use-preview.md
 ```
 
 Still missing, relative to what miden-client used to ship: the top-level `_category_.yml` and `index.md` (the Builder to Client landing page), `web-client/get-started/` (install, quick start, send/receive, custom signer), `web-client/examples.md` and `react-client/get-started/`.
