@@ -3,7 +3,7 @@ import { renderHook } from "@testing-library/react";
 import { useWaitForCommit } from "../../hooks/useWaitForCommit";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
-import { TransactionFilter } from "@miden-sdk/miden-sdk";
+import { TransactionFilter, TransactionId } from "@miden-sdk/miden-sdk";
 import {
   createMockWebClient,
   createMockTransactionId,
@@ -62,9 +62,8 @@ describe("useWaitForCommit", () => {
       intervalMs: 1,
     });
 
-    expect(mockClient.getTransactions).toHaveBeenCalledWith(
-      TransactionFilter.all()
-    );
+    expect(TransactionId.fromHex).toHaveBeenCalledWith("0xtx");
+    expect(TransactionFilter.all).not.toHaveBeenCalled();
   });
 
   it("should resolve when transaction is committed (TransactionId)", async () => {
@@ -95,9 +94,38 @@ describe("useWaitForCommit", () => {
       intervalMs: 1,
     });
 
-    expect(mockClient.getTransactions).toHaveBeenCalledWith(
-      TransactionFilter.ids([txId as never])
-    );
+    expect(TransactionId.fromHex).toHaveBeenCalledWith("0xtx123");
+    expect(TransactionFilter.ids).not.toHaveBeenCalledWith([txId]);
+  });
+
+  it("polls more than once with a caller's TransactionId and leaves it usable", async () => {
+    const txId = createMockTransactionId("0xtx123");
+    const recordWith = (committed: boolean) => ({
+      id: vi.fn(() => ({ toHex: () => "0xtx123" })),
+      transactionStatus: vi.fn(() => ({
+        isPending: vi.fn(() => !committed),
+        isCommitted: vi.fn(() => committed),
+        isDiscarded: vi.fn(() => false),
+      })),
+    });
+    const mockClient = createMockWebClient({
+      syncState: vi.fn().mockResolvedValue({}),
+      getTransactions: vi
+        .fn()
+        .mockResolvedValueOnce([recordWith(false)])
+        .mockResolvedValue([recordWith(true)]),
+    });
+    mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+
+    const { result } = renderHook(() => useWaitForCommit());
+
+    await result.current.waitForCommit(txId as never, {
+      timeoutMs: 1_000,
+      intervalMs: 1,
+    });
+
+    expect(mockClient.getTransactions).toHaveBeenCalledTimes(2);
+    expect(txId.toHex()).toBe("0xtx123");
   });
 
   it("should throw when transaction is discarded", async () => {

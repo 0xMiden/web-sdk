@@ -7,8 +7,6 @@
 export const DEFAULT_CALLBACK_TIMEOUT_MS = 30000;
 /** Largest delay `setTimeout` can store, in milliseconds. */
 const MAX_CALLBACK_TIMEOUT_MS = 2147483647;
-/** Rejection message when a callback reply has no readable error detail. */
-const UNREADABLE_CALLBACK_ERROR = "callback failed without an error detail";
 
 const isTransferableCode = (value) =>
   typeof value === "string" ||
@@ -121,73 +119,26 @@ export function serializeCallbackError(thrown, callbackType) {
  * Rebuilds the `Error` a failed callback reply describes, so the worker rejects
  * with the callback's own name, message, code, reason and cause.
  *
- * @param {ReturnType<typeof serializeCallbackError>} serialized
+ * @param {unknown} serialized
  * @returns {Error}
  */
 export function deserializeCallbackError(serialized) {
-  const rebuild = (value, seen) => {
-    if (typeof value === "string") {
-      return new Error(value !== "" ? value : UNREADABLE_CALLBACK_ERROR);
-    }
-    if (typeof value !== "object" || value === null) {
-      return new Error(UNREADABLE_CALLBACK_ERROR);
-    }
-    if (seen.has(value)) {
-      return new Error("callback failed with a circular cause");
-    }
-    seen.add(value);
-
-    const read = (key) => {
-      try {
-        return { ok: true, value: value[key] };
-      } catch {
-        return { ok: false };
-      }
-    };
-    const message = read("message");
-    const name = read("name");
-    const code = read("code");
-    const reason = read("reason");
-    const cause = read("cause");
-    let errorMessage = UNREADABLE_CALLBACK_ERROR;
-    if (
-      message.ok &&
-      typeof message.value === "string" &&
-      message.value !== ""
-    ) {
-      errorMessage = message.value;
-    }
-    const error = new Error(errorMessage);
-    if (name.ok && name.value !== undefined) error.name = name.value;
-    if (code.ok && code.value !== undefined) error.code = code.value;
-    if (reason.ok && reason.value !== undefined) error.reason = reason.value;
-    if (cause.ok && cause.value !== undefined) {
-      error.cause = rebuild(cause.value, seen);
-    }
-    return error;
-  };
-
-  try {
-    return rebuild(serialized, new WeakSet());
-  } catch {
-    return new Error(UNREADABLE_CALLBACK_ERROR);
+  if (
+    typeof serialized !== "object" ||
+    serialized === null ||
+    typeof serialized.message !== "string"
+  ) {
+    throw new TypeError("Invalid callback error reply from the main thread");
   }
-}
 
-/**
- * Whether a callback reply carries a successful result.
- *
- * Current replies set `callbackOk`. A reply that omits it is the previous
- * worker protocol: success sent `callbackResult` and no `callbackError`.
- *
- * @param {object} data
- * @returns {boolean}
- */
-function callbackReplySucceeded(data) {
-  if (Object.prototype.hasOwnProperty.call(data, "callbackOk")) {
-    return !!data.callbackOk;
+  const error = new Error(serialized.message);
+  if (serialized.name !== undefined) error.name = serialized.name;
+  if (serialized.code !== undefined) error.code = serialized.code;
+  if (serialized.reason !== undefined) error.reason = serialized.reason;
+  if (serialized.cause !== undefined) {
+    error.cause = deserializeCallbackError(serialized.cause);
   }
-  return !Object.prototype.hasOwnProperty.call(data, "callbackError");
+  return error;
 }
 
 /** Appends readable auth callback detail without serializing unrelated object fields. */
@@ -287,25 +238,31 @@ export function createCallbackForwarder({ post, timeoutMs }) {
     /**
      * Settles the callback a main-thread reply answers.
      *
-     * @param {{callbackRequestId?: string, callbackOk?: boolean, callbackResult?: unknown, callbackError?: object}} data
+     * @param {{callbackRequestId?: string, callbackOk?: boolean, callbackResult?: unknown, callbackError?: unknown}} data
      * @returns {boolean} Whether `data` answered a pending callback.
      */
     handleReply(data) {
       if (typeof data.callbackRequestId !== "string") return false;
       const entry = pending.get(data.callbackRequestId);
       if (!entry) return true;
+
+      let error;
+      if (!data.callbackOk) {
+        try {
+          error = deserializeCallbackError(data.callbackError);
+        } catch {
+          error = new Error(
+            "Invalid callback error reply from the main thread"
+          );
+        }
+      }
+
       clearTimeout(entry.timeoutId);
       pending.delete(data.callbackRequestId);
-      try {
-        if (callbackReplySucceeded(data)) {
-          entry.resolve(data.callbackResult);
-        } else {
-          entry.reject(deserializeCallbackError(data.callbackError));
-        }
-      } catch (error) {
-        entry.reject(
-          error instanceof Error ? error : new Error(UNREADABLE_CALLBACK_ERROR)
-        );
+      if (data.callbackOk) {
+        entry.resolve(data.callbackResult);
+      } else {
+        entry.reject(error);
       }
       return true;
     },

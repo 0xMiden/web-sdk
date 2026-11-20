@@ -87,6 +87,8 @@ describe("the production WebClient worker bridge", () => {
       true,
       undefined,
       "0xfee",
+      undefined,
+      undefined,
       callbackTimeoutMs
     );
     return { client, worker: RecordingWorker.instances.at(-1) };
@@ -292,13 +294,13 @@ describe("the production WebClient worker bridge", () => {
       const init = worker.messages.find(
         ({ action }) => action === WorkerAction.INIT
       );
-      expect(init.args).toHaveLength(11);
+      expect(init.args).toHaveLength(13);
       expect(init.args[0]).toBe("https://rpc.example");
       expect(init.args[4]).toBe(false);
       expect(init.args[5]).toBe(false);
       expect(init.args[6]).toBe(true);
       expect(init.args[9]).toBe("0xfee");
-      expect(init.args[10]).toBe(callbackTimeoutMs);
+      expect(init.args[12]).toBe(callbackTimeoutMs);
     }
   );
 
@@ -796,6 +798,8 @@ describe("callback time limits", () => {
           null,
           1,
           "0xfee",
+          undefined,
+          undefined,
           1000,
         ],
       },
@@ -905,23 +909,6 @@ describe("handleReply", () => {
     expect(error.message).toBeTruthy();
   });
 
-  it("resolves a success reply from the previous worker protocol", async () => {
-    const posted = [];
-    const forwarder = createCallbackForwarder({
-      post: (request) => posted.push(request),
-      timeoutMs: () => undefined,
-    });
-    const pending = forwarder.forward("sign", []);
-
-    expect(
-      forwarder.handleReply({
-        callbackRequestId: posted[0].requestId,
-        callbackResult: "signed",
-      })
-    ).toBe(true);
-    await expect(pending).resolves.toBe("signed");
-  });
-
   it.each([
     ["empty string", ""],
     ["null", null],
@@ -944,6 +931,48 @@ describe("handleReply", () => {
       await expect(pending).rejects.toBeInstanceOf(Error);
     }
   );
+
+  it("rejects the pending callback when a correlated error reply is malformed", async () => {
+    let request;
+    const forwarder = createCallbackForwarder({
+      post: (message) => {
+        request = message;
+      },
+      timeoutMs: () => undefined,
+    });
+    const result = forwarder.forward("sign", []).then(
+      () => ({ status: "resolved" }),
+      (error) => ({ status: "rejected", error })
+    );
+
+    let replyError = null;
+    try {
+      forwarder.handleReply({
+        callbackRequestId: request.requestId,
+        callbackOk: false,
+        callbackError: null,
+      });
+    } catch (error) {
+      replyError = error;
+    }
+
+    const settlement = await Promise.race([
+      result,
+      new Promise((resolve) =>
+        setTimeout(() => resolve({ status: "pending" }), 1000)
+      ),
+    ]);
+
+    expect({ replyError, settlement }).toMatchObject({
+      replyError: null,
+      settlement: {
+        status: "rejected",
+        error: {
+          message: "Invalid callback error reply from the main thread",
+        },
+      },
+    });
+  });
 });
 
 describe("deserializeCallbackError", () => {
@@ -966,6 +995,8 @@ describe("WebClient.createClient callback timeout", () => {
         undefined,
         undefined,
         false,
+        undefined,
+        undefined,
         undefined,
         undefined,
         2147483648

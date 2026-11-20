@@ -15,18 +15,16 @@ use crate::models::auth_secret_key::AuthSecretKey as WebAuthSecretKey;
 use crate::models::signature::Signature;
 use crate::models::signing_inputs::SigningInputs;
 
-fn callback_storage_error(prefix: &str, err: JsValue) -> KeyStoreError {
-    let detail = err
+fn callback_storage_error(fallback: &str, error: &JsValue) -> KeyStoreError {
+    let message = error
         .as_string()
-        .or_else(|| {
-            Reflect::get(&err, &JsValue::from_str("message"))
-                .ok()
-                .and_then(|message| message.as_string())
-                .filter(|message| !message.is_empty())
-        })
-        .unwrap_or_else(|| format!("{err:?}"));
+        .or_else(|| Reflect::get(error, &JsValue::from_str("message")).ok()?.as_string())
+        .filter(|message| !message.is_empty());
 
-    KeyStoreError::StorageError(format!("{prefix}: {detail}"))
+    KeyStoreError::StorageError(match message {
+        Some(message) => format!("{fallback}: {message}"),
+        None => fallback.to_string(),
+    })
 }
 
 /// Wrapper for the JavaScript `getKey` callback.
@@ -43,11 +41,11 @@ impl GetKeyCallback {
         let call_result = self
             .0
             .call1(&JsValue::NULL, &JsValue::from(pub_key_array))
-            .map_err(|err| callback_storage_error("JS getKey threw", err))?;
+            .map_err(|err| callback_storage_error("JS getKey threw", &err))?;
 
         let resolved = if let Some(promise) = call_result.dyn_ref::<Promise>() {
             JsFuture::from(promise.clone()).await.map_err(|err| {
-                callback_storage_error("Failed to get secret key via callback", err)
+                callback_storage_error("Failed to get secret key via callback", &err)
             })?
         } else {
             call_result
@@ -86,12 +84,12 @@ impl InsertKeyCallback {
                 &JsValue::from(pub_key_commitment.as_bytes().to_vec()),
                 &JsValue::from(secret_key.serialize()),
             )
-            .map_err(|err| callback_storage_error("JS insertKey threw", err))?;
+            .map_err(|err| callback_storage_error("JS insertKey threw", &err))?;
 
         if let Some(promise) = result.dyn_ref::<Promise>() {
             JsFuture::from(promise.clone())
                 .await
-                .map_err(|err| callback_storage_error("Failed to insert key via callback", err))?;
+                .map_err(|err| callback_storage_error("Failed to insert key via callback", &err))?;
         }
         Ok(())
     }

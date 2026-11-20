@@ -7,6 +7,7 @@
 ## Interfaces
 
 - [MidenFiSignerProviderProps](interfaces/MidenFiSignerProviderProps.md)
+- [MidenFiWalletContextState](interfaces/MidenFiWalletContextState.md)
 - [Wallet](interfaces/Wallet.md)
 - [WalletContextState](interfaces/WalletContextState.md)
 - [WalletProviderProps](interfaces/WalletProviderProps.md)
@@ -22,9 +23,3 @@
 - [useLocalStorage](functions/useLocalStorage.md)
 - [useMidenFiWallet](functions/useMidenFiWallet.md)
 - [useWallet](functions/useWallet.md)
-
-## References
-
-### MidenFiWalletContextState
-
-Renames and re-exports [WalletContextState](interfaces/WalletContextState.md)

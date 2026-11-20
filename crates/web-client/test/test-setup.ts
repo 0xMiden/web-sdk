@@ -128,7 +128,7 @@ export function wrapNodeClient(rawClient: any, storeName?: string): any {
     },
   };
 
-  return new Proxy(wrapClient(rawClient, storeName), {
+  return new Proxy(wrapClient(rawClient, storeName, loadNodeSdk()), {
     get(target, prop, receiver) {
       if (prop === "keystore") {
         return keystoreShim;
@@ -143,8 +143,9 @@ function createNodeSdkWrapper(): any {
   // Expose the StorageView JS wrapper on `sdk.*` so tests can reach it via the
   // same namespace on both platforms (browser exposes it on `window.*`).
   const sv = require("../js/storageView.js");
+  const standalone = require("../js/standalone.js");
 
-  return {
+  const sdk = {
     ...getNodeSdk(),
     // StorageView JS wrapper — browser exposes these on window via index.js.
     StorageView: sv.StorageView,
@@ -156,6 +157,13 @@ function createNodeSdkWrapper(): any {
     // accept bigint[] for Vec<u64> parameters.
     u64Array: (vals: number[]) => vals.map(BigInt),
   };
+  // standalone.js has one wasm slot, and createMidenClient plus node-adapter
+  // also write it, so point that slot at this wrapper on every call.
+  sdk.domainSeparatedSignCommitment = (data: Uint8Array, kind: string) => {
+    standalone._setWasm(sdk);
+    return standalone.domainSeparatedSignCommitment(data, kind);
+  };
+  return sdk;
 }
 
 // ── Test helpers ──────────────────────────────────────────────────────
@@ -966,8 +974,8 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           }
         },
 
-        createMidenMockClient: async () =>
-          await window.MidenClient.createMock(),
+        createMidenMockClient: async (options) =>
+          await window.MidenClient.createMock(options),
 
         getRpcUrl: () => window.rpcUrl,
       };
@@ -1095,10 +1103,10 @@ async function createNodeRunHelpers(client: any, sdk: any): Promise<any> {
         serializedNoteTransport
       ),
     createIntegrationClient: () => h.createIntegrationClient(),
-    createMidenMockClient: async () => {
+    createMidenMockClient: async (options?: any) => {
       const MidenClient = await h.createMidenClient(sdk);
       if (!MidenClient) throw new Error("MidenClient unavailable");
-      return MidenClient.createMock();
+      return MidenClient.createMock(options);
     },
     getRpcUrl: () => getRpcUrl(),
   };

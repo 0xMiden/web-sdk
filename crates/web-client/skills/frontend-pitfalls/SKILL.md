@@ -1,6 +1,6 @@
 ---
 name: frontend-pitfalls
-description: Critical pitfalls and safety rules for Miden frontend development. Covers per-hook readiness, non-atomic client sequences, COOP/COEP headers, BigInt boundaries, Bech32 network inference, IndexedDB state loss including the minor-version store wipe, auto-sync side effects, Vite configuration, React rendering race conditions, the Web Worker shim and callback-prover downgrade, structured error codes, eager vs lazy entry points, the fee note now included in outputNotes(), the removed expiredBefore filter, sendPrivate inclusion proofs, block-pinned foreign-account inputs, and transaction preview authorization. Use when reviewing, debugging, or writing Miden frontend code, or when upgrading from 0.15 to 0.16.
+description: Critical pitfalls and safety rules for Miden frontend development. Covers per-hook readiness, non-atomic client sequences, COOP/COEP headers, BigInt boundaries, Bech32 network inference, IndexedDB state loss including the one-time 0.17 store clear and the refusal of a newer client's store, auto-sync side effects, Vite configuration, React rendering race conditions, the Web Worker shim and callback-prover downgrade, structured error codes, eager vs lazy entry points, the fee note now included in outputNotes(), the removed expiredBefore filter, sendPrivate inclusion proofs, block-pinned foreign-account inputs, and transaction preview authorization. Use when reviewing, debugging, or writing Miden frontend code, or when upgrading from 0.15 to 0.16.
 ---
 
 # Miden Frontend Pitfalls
@@ -100,13 +100,42 @@ which one you are relying on tells you what a second browser tab can still do to
    promise chain (`_serializeWasmCall`), including methods it does not wrap explicitly.
    The raw-bound `SYNC_METHODS` are the only exceptions. This is what stops
    "recursive use of an object detected".
-2. **Web Locks.** Exactly three entry points run under `withSyncLock(dbId, methodId, fn)`:
-   `syncState`, `syncChain` and `syncNoteTransport` - six call sites, since `MockWebClient`
-   extends `WebClient`. It coalesces concurrent calls of the *same* method into one shared
-   promise and serializes *different* methods on the same database, **across tabs**. With
-   no Web Locks API it degrades to an in-process per-database chain. `fetchPrivateNotes`
-   is **not** among them: it has no JS wrapper, so it gets layer 1 only - no Web Lock, no
-   cross-tab coalescing.
+2. **Web Locks.** Every call that writes the chain MMR or its tracked block headers holds
+   one per-database Web Lock, **across tabs** and clients: the syncs (`syncState`,
+   `syncChain`, `syncNoteTransport`), `importNoteFile` (`notes.import`),
+   `fetchPrivateNotes` (`notes.fetchPrivate`) and `syncBeforeAccountCreation`, the sync
+   of a store still at genesis that account creation (`newWallet`, `newFaucet`,
+   `newAccount`, `newAccountWithSecretKey`) runs first. `syncBeforeAccountCreation` and
+   account creation request and wait for the lock only on a store still at genesis, the
+   only state in which that sync writes; past genesis they neither sync nor request it.
+   A creation holds the lock only for that sync and releases it before it generates a
+   key, stores the account or calls an external keystore's `insertKey`, so no callback
+   of yours runs under the lock. Two clients interleaving those writes leave a store
+   that fails every later sync and import with
+   `inconsistent partial mmr: missing sibling for tracked leaf`.
+   The lock is per store opened: a client that omits `storeName` opens
+   `MidenClientDB_<network id>` for its node URL and takes the same lock as one that names
+   that store, and clients on different default stores do not block each other. Such a
+   call takes its place on the layer 1 chain when it is made and requests the lock
+   when its turn comes (chain, then lock), so call order, `waitForIdle()` and
+   `terminate()` treat it like any other call. While it waits for another client's lock,
+   later calls on its own client wait behind it. A call of a sync joins its client's
+   pending run of the *same* sync only while no other call has been queued on that client
+   since the run; after one has, it starts a run of its own behind that call, so it never
+   settles ahead of a call made before it. Every other call, the same sync on another
+   client included, queues for the lock in turn. The exported `withSyncLock` takes this
+   same lock and is not reentrant: its callback must not wait, directly or through any
+   lock or queue, for anything that waits for a call on a client of the same store. That
+   is any call on such a client, not only the calls above: one of them already queued on
+   that client, an auto-sync for example, holds the client's chain while it waits for the
+   lock the callback holds, and every later call on that client waits behind it. It is
+   also any lock whose holder is waiting on such a call, such as `@miden-sdk/react`'s
+   `runExclusive`, which `MidenProvider` holds across its init sync, or an application
+   mutex around `_withInnerWebClient`. Every client on the store then stops. With no Web
+   Locks API it degrades to an in-process per-database chain. Two writes take no lock:
+   the free `importStore` function, which replaces a whole store, so run it only while no
+   client uses that store; and the genesis block header `createClient` stores in a store
+   that has none.
 3. **Cross-tab state change.** `client.onStateChanged(cb)` fires when another tab mutates
    the store, where `BroadcastChannel` exists. `MidenProvider` subscribes and refreshes the
    Zustand store so the UI re-renders; the client has already synced its own Rust state by
@@ -231,18 +260,20 @@ const { pauseSync, resumeSync, isPaused } = useSyncControl();
 The client persists accounts, keys, notes and transaction history in IndexedDB. There are **two** distinct ways to lose all of it, and the second one is under your control:
 
 1. **The user or the browser deletes it** - "Clear site data", private browsing, storage pressure.
-2. **An SDK version bump deletes it.** On open, `ensureClientVersion` compares the running client version against the one stored in the database. If both parse as semver and the running version's **major or minor is higher** than the stored one, the store is closed, `delete()`d and reopened **empty**. A version that does not parse as semver on either side forces the same reset. Same-major-minor (a patch bump) and downgrades are preserved and handled by Dexie migrations; the major/minor nuke is deliberate, tied to network resets.
+2. **The one-time clear when upgrading from an SDK older than 0.17.0.** From 0.17.4 the store is kept across SDK upgrades, and a schema change migrates the existing data in place. The first open by 0.17.4 or later clears, once, a store last written by a client older than 0.17.0 (a 0.17.0 release candidate included) or carrying no client version; a store any 0.17.0 or later client wrote is kept. Earlier SDKs reset the store on every minor or major version bump.
 
-**Upgrading the SDK across a minor version destroys every locally-stored account, key and note on every user's device.** Nothing prompts, nothing warns, and the user's wallet is simply gone on next load. This is the single most consequential item on this page: it turns a routine dependency bump into data loss for your whole userbase.
+**Upgrading a userbase from a pre-0.17.0 SDK destroys every locally-stored account, key and note on every user's device.** Nothing prompts, nothing warns, and the user's wallet is simply gone on next load.
+
+From 0.17.4 the SDK does not open a store a newer SDK wrote (one with a newer store schema): client creation fails with `Failed to initialize IdxdbStore: IndexedDB store "..." was written by a newer Miden client ...`, and nothing in the store is deleted. Rolling an app back to a 0.17.4 or later SDK with an older store schema therefore fails for every user who already ran the newer one, until you roll forward again or they clear the site's data.
 
 Mitigations:
 
-- **Ship export/import before you ship the bump**, not with it. Users need a build that can back up while their data still exists. The surface is `useExportStore()` / `useImportStore()` in `@miden-sdk/react`, backed by the standalone `exportStore(storeName)` / `importStore(storeName, dump)` from `@miden-sdk/miden-sdk`. Per-object export/import also exists on the high-level client (`accounts.export` / `accounts.import`, `notes.export` / `notes.import`).
+- **A pre-0.17.0 store cannot be carried across.** Its data belongs to networks that no longer exist, and `importStore` refuses a dump exported by a client older than 0.17.0 (or with no client version stamp), as it refuses one from a newer SDK. Export/import is for backups and moving a store between devices on 0.17.0 or later. The surface is `useExportStore()` / `useImportStore()` in `@miden-sdk/react`, backed by the standalone `exportStore(storeName)` / `importStore(storeName, dump)` from `@miden-sdk/miden-sdk`. Per-object export/import also exists on the high-level client (`accounts.export` / `accounts.import`, `notes.export` / `notes.import`).
 - Warn users that clearing browser data deletes their wallet.
 - Consider external signers (Para, Turnkey, wallet adapters) for production - the key material lives outside the browser store, so only cached chain state is lost.
 - Each signer identity gets its own database (`MidenClientDB_<storeName>`), so `SignerContextValue.storeName` must be unique per user.
 
-Verify before relying on this: `crates/idxdb-store/src/ts/schema.ts`, `ensureClientVersion`.
+Verify before relying on this: `crates/idxdb-store/src/ts/schema.ts`, the `version(8)` cutover and `MIGRATION_BASELINE`.
 
 ## FP8: Vite Configuration Requirements (MEDIUM)
 
@@ -289,22 +320,24 @@ useEffect(() => {
 <MidenProvider config={{ rpcUrl: "testnet" }}>
 ```
 
-If you genuinely need the low-level constructors, these are the current signatures. Note the trailing `observability` bag, and that there is **no debug-mode argument** anywhere (nor a `ClientOptions.debugMode`):
+If you genuinely need the low-level constructors, these are the current signatures. Note the `observability` bag and the arguments after it, and that there is **no debug-mode argument** anywhere (nor a `ClientOptions.debugMode`):
 
 ```ts
 WasmWebClient.createClient(
   rpcUrl, noteTransportUrl, seed, network,
-  logLevel, useWorker = true, observability
+  logLevel, useWorker = true, observability,
+  feeFaucetId, noteTransportMaxRetries, noteTransportRetryIntervalMs
 ): Promise<WebClient>
 
 WasmWebClient.createClientWithExternalKeystore(
   rpcUrl, noteTransportUrl, seed, storeName,
   getKeyCb, insertKeyCb, signCb,
-  logLevel, useWorker = true, observability
+  logLevel, useWorker = true, observability,
+  feeFaucetId, noteTransportMaxRetries, noteTransportRetryIntervalMs
 ): Promise<WebClient>
 ```
 
-`observability` is `{ observer?: (observation: object) => void, observeSensitive?: boolean }`. The fourth positional argument is the store name in both; `createClient` documents it as `network` and `createClientWithExternalKeystore` as `storeName`, but it is the same slot and the same meaning - set it when several clients share one browser.
+`observability` is `{ observer?: (observation: object) => void, observeSensitive?: boolean }`. The fourth positional argument is the store name in both; `createClient` documents it as `network` and `createClientWithExternalKeystore` as `storeName`, but it is the same slot and the same meaning - set it when several clients share one browser. The last three mirror the `ClientOptions` fields of the same names; the two retry options throw a `TypeError` when out of range (0 to 10 and 0 to 60000, and at most 120000 ms of total computed backoff, `interval * (2^retries - 1)` with an omitted value at its default). The retries run inside the client's serialized call, so a slow or rate-limiting transport blocks other client calls until the send finishes; a non-zero service `retry-after` replaces the computed delay with no upper bound and a zero one falls back to it. `noteTransportMaxRetries: 0` bounds a send to one attempt, which suits a latency-sensitive UI.
 
 ## FP10: outputNotes() Includes the Fee Note (CRITICAL - fails silently)
 
@@ -356,13 +389,15 @@ await client.notes.sendPrivate({ note, to, inclusionProof });
 await client.notes.sendPrivateOutput({ noteId, to });
 ```
 
+A rejection from either is final. The SDK keeps no queue, and neither `sync()` nor `syncNoteTransport()` sends the note again; only transient transport failures are retried, inside the call (`noteTransportMaxRetries` / `noteTransportRetryIntervalMs` on `ClientOptions`, at most 120000 ms of backoff in total). Those retries hold the client's serialized call, and the React provider lock in the hooks, so other calls wait until the send finishes. Keep the note id and send the same note again: delivery is idempotent by note id. The React hooks report the same situation as a `PrivateNoteDeliveryError` and retry it with `useResendPrivateNotes`.
+
 Related: `notes.fetchPrivate({ mode: "all" })` is gone. `fetchPrivate()` takes no arguments and always fetches incrementally from the stored cursor; historical notes for a newly tracked tag are backfilled by `sync()`, so after adding a tag just sync.
 
 ## FP13: Foreign-Account State Is Read at the Reference Block (HIGH)
 
 A foreign account's state and witness are fetched against the transaction's own reference block, and the vault entries and storage-map keys the foreign code reads are resolved during execution as per-asset and per-key witnesses. Nothing is prefetched: `foreignAccountInputs` and `ForeignAccount.prefetched` were removed in 0.17 along with the upstream types behind them.
 
-**The reference block must be one the node still serves account state for.** Nodes keep a bounded window of account history (50 blocks at the time of writing), so a transaction pinned to an older block - an anchor captured minutes earlier, say - fails naming the account and the block, and there is no longer a way to carry the state along with the request. Capture the `ChainAnchor` close to execution. For a multisig proposal, do not anchor at all: execute at the tip with the bound block in `withBlockNumbers` (chain-anchored-execution R0).
+**The reference block must be one the node still serves account state for.** Nodes keep a bounded window of account history (50 blocks at the time of writing), so a transaction pinned to an older block - an anchor captured minutes earlier, say - fails naming the account and the block, and there is no longer a way to carry the state along with the request. Capture the `ChainAnchor` close to execution. For a multisig proposal, do not anchor at all: execute at the tip, where miden-client tracks the bound block of the auth args (chain-anchored-execution R0).
 
 ```tsx
 const foreign = ForeignAccount.public(id, storageRequirements);
@@ -491,12 +526,12 @@ Verify: `crates/web-client/js/eager.js`.
 | FP4 | BigInt | HIGH | Hooks and the high-level `MidenClient` coerce `number`; strict `bigint` only at the low-level request constructors |
 | FP5 | Bech32 mismatch | HIGH | Match network in rpcUrl and addresses; the HRP is inferred from `client.endpoint()`, and an unrecognised endpoint renders hex |
 | FP6 | Auto-sync | MEDIUM | Default 15000ms; prefer `useSyncControl()` over `autoSyncInterval: 0` |
-| FP7 | IndexedDB loss | HIGH | A minor SDK bump wipes the store - ship `useExportStore`/`useImportStore` BEFORE upgrading |
+| FP7 | IndexedDB loss | HIGH | Upgrading from a pre-0.17.0 SDK clears the store once and its export cannot be imported; a newer SDK's store and export are refused |
 | FP8 | Vite config | MEDIUM | `midenVitePlugin()` has four options; bare call is right for ST, `crossOriginIsolation: true` only for `/mt` |
 | FP9 | StrictMode | LOW | Use MidenProvider, not manual `WasmWebClient.createClient()`; there is no debug-mode argument |
 | FP10 | Fee note in `outputNotes()` | CRITICAL | The list is one longer on a fee-charging chain; use `userOutputNotes()` / `feeNote()` on `ExecutedTransaction`, filter manually elsewhere |
 | FP11 | `expiredBefore` removed | HIGH | `transactions.list({ expiredBefore })` throws; use `{ status: "uncommitted" }` + `expirationBlockNum()` |
-| FP12 | `sendPrivate` inclusion proof | HIGH | Pass a `NoteInclusionProof`, or `sendPrivateOutput` after the note commits |
+| FP12 | `sendPrivate` inclusion proof | HIGH | Pass a `NoteInclusionProof`, or `sendPrivateOutput` after the note commits; a rejected send is final, so send it again yourself |
 | FP13 | Foreign-account inputs | HIGH | Pinned to one block; do not sync between fetching and executing |
 | FP14 | `preview` already authorized | MEDIUM | Summary only while auth is pending; otherwise rejects `TRANSACTION_ALREADY_AUTHORIZED` |
 | FP15 | `useAccounts().faucets` | MEDIUM | Always empty; classify from `accounts` with `isFaucet()` |
