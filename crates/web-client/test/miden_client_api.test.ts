@@ -1318,6 +1318,101 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     }
   );
 
+  // The mock chain charges no fee, so its estimate is zero. The draft therefore
+  // starts from a max fee, which shows that the helper scales the value that
+  // the summary binds.
+  mockTest("withEstimatedMaxFee caps a multisig proposal", async ({ page }) => {
+    const result = await page.evaluate(async () => {
+      const client = await window.MidenClient.createMock();
+
+      const approverKeys = [
+        window.AuthSecretKey.rpoFalconWithRNG(),
+        window.AuthSecretKey.rpoFalconWithRNG(),
+        window.AuthSecretKey.rpoFalconWithRNG(),
+      ];
+      const seed = new Uint8Array(32);
+      crypto.getRandomValues(seed);
+      const built = new window.AccountBuilder(seed)
+        .storageMode(window.AccountStorageMode.private())
+        .withAuthComponent(
+          window.createAuthFalcon512RpoMultisig(
+            new window.AuthFalcon512RpoMultisigConfig(
+              approverKeys.map((key) => key.publicKey().toCommitment()),
+              2
+            )
+          )
+        )
+        .withBasicWalletComponent()
+        .build();
+      const multisigId = built.account.id().toString();
+      await client.accounts.insert({ account: built.account });
+      const preview = (request) =>
+        client.transactions.preview({
+          operation: "custom",
+          account: multisigId,
+          request,
+        });
+      const refusal = async (call) => {
+        try {
+          await call();
+          return null;
+        } catch (error) {
+          return {
+            name: (error as Error).name,
+            code: (error as { code?: string }).code ?? null,
+            message: `${(error as Error).message ?? error}`,
+          };
+        }
+      };
+
+      const draft = (
+        await client.feeAwareTransactionRequestBuilder(multisigId, {
+          maxFee: 1001,
+        })
+      ).build();
+      const previewed = await preview(draft);
+      const capped = await client.withEstimatedMaxFee(draft, previewed, {
+        feeMarginPercent: 150,
+      });
+      const rederived = await preview(capped.request);
+
+      return {
+        previewedMaxFee: previewed.userParams()[1].asInt().toString(),
+        maxFee: capped.maxFee.toString(),
+        boundMaxFee: capped.summary.userParams()[1].asInt().toString(),
+        cappedSummary: capped.summary.toCommitment().toHex(),
+        rederived: rederived.toCommitment().toHex(),
+        noMargin: await refusal(() =>
+          client.withEstimatedMaxFee(draft, previewed, {})
+        ),
+        negativeMaxFee: await refusal(() =>
+          client.feeAwareTransactionRequestBuilder(multisigId, {
+            maxFee: -1,
+          })
+        ),
+        noAuthArgs: await refusal(() =>
+          client.withEstimatedMaxFee(
+            new window.TransactionRequestBuilder().build(),
+            previewed,
+            { feeMarginPercent: 150 }
+          )
+        ),
+      };
+    });
+
+    expect(result.previewedMaxFee).toBe("1001");
+    // 1001 * 150 / 100, rounded up.
+    expect(result.maxFee).toBe("1502");
+    expect(result.boundMaxFee).toBe("1502");
+    expect(result.rederived).toBe(result.cappedSummary);
+
+    expect(result.noMargin?.name).toBe("TypeError");
+    expect(result.noMargin?.message).toContain("feeMarginPercent");
+    expect(result.negativeMaxFee?.name).toBe("TypeError");
+    expect(result.negativeMaxFee?.message).toContain("maxFee");
+    expect(result.noAuthArgs?.code).toBe("AUTH_ARGS_NOT_MULTISIG");
+  });
+
   mockTest(
     "standalone createP2IDNote creates a valid note",
     async ({ page }) => {

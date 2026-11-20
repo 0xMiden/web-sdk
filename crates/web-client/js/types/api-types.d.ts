@@ -1364,11 +1364,13 @@ export interface TransactionsResource {
    * {@link MidenClient.withFeeAwareAuth} does not declare the bound block, so
    * that check cannot read it: sync before previewing such a request.
    *
-   * A multisig summary also binds a max fee. The auth args of both methods set
-   * none, so the auth procedure estimates the fee on each execution, and the
-   * summary reproduces at a later tip only while that estimate, which depends
-   * on the base fee of the reference block, comes out the same. A multisig
-   * preview does not reach the fee payment, and its summary has no fee note.
+   * A multisig summary also binds a max fee. Without the `maxFee` option of
+   * both methods the auth procedure estimates the fee on each execution, and
+   * the summary reproduces at a later tip only while that estimate, which
+   * depends on the base fee of the reference block, comes out the same.
+   * {@link MidenClient.withEstimatedMaxFee} turns the estimate of this preview
+   * into a cap. A multisig preview does not reach the fee payment, and its
+   * summary has no fee note.
    *
    * @param options - Preview options discriminated by `operation` field.
    */
@@ -1971,6 +1973,40 @@ export interface MultisigAuthOptions {
   feeConversionSalt?: Word;
   /** The block the summary binds. Omitted, the store's sync height. */
   boundBlockNum?: number;
+  /**
+   * The max fee that the summary binds, in the native fee asset. The signed
+   * transaction pays any fee up to it. Omitted or zero, the auth procedure
+   * estimates the fee on each execution and the summary binds that estimate,
+   * so the summary reproduces at a later block only while the estimate comes
+   * out the same.
+   *
+   * To take the cap from an estimate, see
+   * {@link MidenClient.withEstimatedMaxFee}.
+   */
+  maxFee?: number | bigint;
+}
+
+/** Options for {@link MidenClient.withEstimatedMaxFee}. */
+export interface EstimatedMaxFeeOptions {
+  /**
+   * The margin on the max fee that the summary binds, as a percentage: 100
+   * keeps the value, and 150 adds half of it. The result is rounded up. A
+   * positive integer.
+   */
+  feeMarginPercent: number;
+}
+
+/** What {@link MidenClient.withEstimatedMaxFee} returns. */
+export interface EstimatedMaxFeeResult {
+  /** The request whose multisig auth args carry the max fee. Submit this one. */
+  request: TransactionRequest;
+  /** The summary that binds the max fee. The approvers sign this one. */
+  summary: TransactionSummary;
+  /**
+   * The max fee, in the native fee asset. Zero means that the auth procedure
+   * estimates the fee on each execution.
+   */
+  maxFee: bigint;
 }
 
 export declare class MidenClient {
@@ -2148,11 +2184,12 @@ export declare class MidenClient {
    * the fee faucet among them, load at the tip: the request still executes
    * after the node has pruned the bound block's account state (about 50
    * blocks), and {@link TransactionsResource.preview} reproduces the
-   * proposal's summary at the tip while the fee estimate that the summary
-   * binds comes out the same: the auth args set no max fee, so the auth
-   * procedure estimates it on each execution. The builder also declares the
-   * bound block through `withBlockNumbers`, which only the height check below
-   * reads.
+   * proposal's summary at the tip. With `options.maxFee` the summary binds
+   * that value. Without it the summary binds the fee that the auth procedure
+   * estimates on each execution, so it reproduces only while that estimate
+   * comes out the same; see {@link MidenClient.withEstimatedMaxFee}. The
+   * builder also declares the bound block through `withBlockNumbers`, which
+   * only the height check below reads.
    * Each party's client must first have synced to at least that bound block,
    * the largest of `request.blockNumbers()` and by default the proposer's sync
    * height when it built the request; below it execution fails with
@@ -2170,6 +2207,8 @@ export declare class MidenClient {
    * @param account - The account that will execute the request.
    * @param options - Multisig-only overrides; every field is defaulted when
    *   omitted and ignored for an account that is not a multisig.
+   * @throws {TypeError} If `options.maxFee` is not a non-negative integer of
+   *   at most 64 bits.
    *
    * @example
    * ```js
@@ -2235,6 +2274,8 @@ export declare class MidenClient {
    *   (`TransactionRequest.withAuthArgs` replaces it without this check). On
    *   Node.js the code prefixes the message (`"AUTH_ALREADY_SET: ..."`)
    *   instead.
+   * @throws {TypeError} If `options.maxFee` is not a non-negative integer of
+   *   at most 64 bits.
    *
    * @example
    * ```js
@@ -2248,6 +2289,69 @@ export declare class MidenClient {
     account: AccountRef,
     options?: MultisigAuthOptions
   ): Promise<TransactionRequest>;
+
+  /**
+   * Returns a multisig request with a max fee, and the summary to sign.
+   *
+   * The summary of a multisig binds a max fee. A request from
+   * {@link MidenClient.feeAwareTransactionRequestBuilder} or
+   * {@link MidenClient.withFeeAwareAuth} without a `maxFee` makes the auth
+   * procedure estimate the fee on each execution, so its summary reproduces
+   * only while that estimate comes out the same. This turns the estimate of
+   * one preview into a cap that the approvers sign:
+   *
+   * 1. Build the request without a `maxFee` and preview it.
+   * 2. Pass the request and the summary here, with a margin.
+   * 3. Ship the returned request and summary. The approvers sign the returned
+   *    summary, and the executor submits the returned request.
+   *
+   * The max fee is the max fee that `summary` binds, scaled by
+   * `feeMarginPercent` and rounded up. Executing the returned request
+   * reproduces the returned summary, so no second preview is needed. The
+   * signed execution pays any fee up to the max fee, also after the fee of the
+   * chain has changed.
+   *
+   * On a chain that charges no fee the estimate is zero. Zero means that the
+   * auth procedure estimates the fee, so the result then equals the input.
+   *
+   * Neither the request nor the summary is consumed or changed.
+   *
+   * @param request - The multisig request that was previewed.
+   * @param summary - The summary from the preview of `request`.
+   * @param options - The margin on the max fee that `summary` binds.
+   * @throws {TypeError} If `options.feeMarginPercent` is not a positive
+   *   integer.
+   * @throws An error with `code` `"AUTH_ARGS_NOT_MULTISIG"` if the request has
+   *   no multisig auth args. On Node.js the code prefixes the message
+   *   (`"AUTH_ARGS_NOT_MULTISIG: ..."`) instead.
+   * @throws If `summary` is not the summary of `request`: it has to bind the
+   *   bound block, the approval expiration and the salt of the request's auth
+   *   args.
+   *
+   * @example
+   * ```js
+   * const draft = (await client.feeAwareTransactionRequestBuilder(multisig))
+   *   .withCustomScript(script)
+   *   .build();
+   * const estimated = await client.transactions.preview({
+   *   operation: "custom",
+   *   account: multisig,
+   *   request: draft,
+   * });
+   *
+   * // The fee cap is the estimate plus 50%.
+   * const { request, summary } = await client.withEstimatedMaxFee(
+   *   draft,
+   *   estimated,
+   *   { feeMarginPercent: 150 }
+   * );
+   * ```
+   */
+  withEstimatedMaxFee(
+    request: TransactionRequest,
+    summary: TransactionSummary,
+    options: EstimatedMaxFeeOptions
+  ): Promise<EstimatedMaxFeeResult>;
 
   /** Advances the mock chain by one block. Only available on mock clients. */
   proveBlock(): Promise<void>;

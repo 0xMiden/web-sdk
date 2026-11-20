@@ -38,15 +38,43 @@ check below cannot read it from `request.blockNumbers()` and does not wait for
 it. Sync before previewing such a request, and treat `requested block N is
 after transaction reference block M` as a reason to sync again.
 
-The summary also binds a **max fee**. The auth args from
-`feeAwareTransactionRequestBuilder` and `withFeeAwareAuth` set none, so the
-auth procedure estimates the fee on each execution and the summary binds that
-estimate. The estimate depends on the verification base fee of the reference
-block and on the cycle count of the transaction. The parties derive the same
-summary at different tips only while the estimate comes out the same. If the
-base fee of the chain changes between the preview and the execution, the
-summary changes and the collected signatures no longer match it. Neither
-method takes a max fee.
+The summary also binds a **max fee**, the fee cap that the approvers sign.
+Without one in the auth args, the auth procedure estimates the fee on each
+execution and the summary binds that estimate. The estimate depends on the
+verification base fee of the reference block and on the cycle count of the
+transaction. The parties then derive the same summary at different tips only
+while the estimate comes out the same. If the base fee of the chain changes
+between the preview and the execution, the summary changes and the collected
+signatures no longer match it.
+
+On a chain that charges a fee, the proposer turns the estimate of its preview
+into a cap with `client.withEstimatedMaxFee`, and ships the request and the
+summary that it returns:
+
+```tsx
+const draft = (await client.feeAwareTransactionRequestBuilder(multisig))
+  .withCustomScript(script)
+  .build();
+const estimated = await preview({ accountId: multisig, request: draft });
+
+// The max fee is the estimate plus 50%.
+const { request, summary } = await client.withEstimatedMaxFee(
+  draft,
+  estimated,
+  { feeMarginPercent: 150 }
+);
+await shipToCosigners({
+  request: request.serialize(),
+  summary: summary.serialize(),
+});
+```
+
+The approvers sign the returned `summary`. Executing the returned `request`
+reproduces it, so no second preview is needed. A max fee of zero means that the
+auth procedure estimates the fee: on a chain that charges nothing the estimate
+is zero, and the helper returns an equal request and summary. To set a cap that
+you already know, pass `maxFee` in the options of
+`feeAwareTransactionRequestBuilder` or `withFeeAwareAuth`.
 
 ```tsx
 import { useMiden, usePreview, useTransaction } from "@miden-sdk/react";

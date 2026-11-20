@@ -23,6 +23,7 @@ export {
   BlockHeader,
   ConsumableNoteRecord,
   Endpoint,
+  EstimatedMaxFee,
   EthAddress,
   ExecutedTransaction,
   Felt,

@@ -13,6 +13,39 @@ import {
 } from "./utils.js";
 import { validateCallbackTimeoutMs } from "./callbackBridge.js";
 
+const MAX_U64 = 0xffff_ffff_ffff_ffffn;
+const MAX_U32 = 0xffff_ffff;
+
+// The bindings take the max fee as a 64-bit integer. A value outside that range
+// must not reach them: the Node.js binding aborts on one.
+function resolveMaxFee(maxFee) {
+  if (maxFee === undefined || maxFee === null) {
+    return undefined;
+  }
+  const isInteger =
+    typeof maxFee === "bigint" ||
+    (typeof maxFee === "number" && Number.isSafeInteger(maxFee));
+  if (!isInteger || maxFee < 0 || BigInt(maxFee) > MAX_U64) {
+    throw new TypeError(
+      "maxFee must be a non-negative integer of at most 64 bits, in the native fee asset"
+    );
+  }
+  return BigInt(maxFee);
+}
+
+function resolveFeeMarginPercent(feeMarginPercent) {
+  if (
+    !Number.isInteger(feeMarginPercent) ||
+    feeMarginPercent < 1 ||
+    feeMarginPercent > MAX_U32
+  ) {
+    throw new TypeError(
+      "feeMarginPercent must be a positive integer: 100 keeps the max fee, and 150 adds half of it"
+    );
+  }
+  return feeMarginPercent;
+}
+
 /**
  * MidenClient wraps the existing proxy-wrapped WebClient with a resource-based API.
  *
@@ -529,7 +562,7 @@ export class MidenClient {
    * `withFeeConversionSalt` are mutually exclusive: each clears the other, so
    * whichever is called last wins.
    *
-   * Three options let a caller pin what the approvers sign over. All are
+   * Four options let a caller pin what the approvers sign over. All are
    * multisig-only and all are defaulted when omitted.
    *
    * `feeConversionSalt` and `boundBlockNum` are what a co-signer needs to
@@ -539,16 +572,21 @@ export class MidenClient {
    * by the summary. A co-signer holding the proposer's serialized request needs
    * neither - it carries the auth argument and its advice-map preimage.
    *
+   * `maxFee` is the fee cap that the summary binds. Left out, the auth
+   * procedure estimates the fee on each execution and the summary binds that
+   * estimate. See `withEstimatedMaxFee` for a cap taken from an estimate.
+   *
    * For a multisig the request executes at the current chain tip:
    * miden-client tracks the bound block when it executes the request.
    * The summary stays bound to the bound block while foreign accounts, the fee
    * faucet among them, load at the tip, so the request still executes after
    * the node has pruned the bound block's account state (about 50 blocks), and
-   * `transactions.preview` reproduces the proposal's summary at the tip while
-   * the fee estimate that the summary binds comes out the same: the auth args
-   * set no max fee, so the auth procedure estimates it on each execution. The
-   * builder also declares the bound block through `withBlockNumbers`, which
-   * only the height check below reads.
+   * `transactions.preview` reproduces the proposal's summary at the tip. With
+   * a max fee the summary binds that value. Without one it binds the fee that
+   * the auth procedure estimates on each execution, so it reproduces only
+   * while that estimate comes out the same. The builder also declares the
+   * bound block through `withBlockNumbers`, which only the height check below
+   * reads.
    * Each party's client must first have synced to at least that bound block,
    * the largest of `request.blockNumbers()` and by default the proposer's sync
    * height when it built the request; below it execution fails with
@@ -567,16 +605,23 @@ export class MidenClient {
    *   Consumed by the call: build a fresh `Word` per call, since a spent handle
    *   arrives as "no salt given" rather than as an error.
    * @param {number} [options.boundBlockNum] - The block the summary binds.
+   * @param {number | bigint} [options.maxFee] - The max fee that the summary
+   *   binds, in the native fee asset. Omitted or zero, the auth procedure
+   *   estimates the fee.
    * @returns {Promise<TransactionRequestBuilder>} A fee-aware builder.
+   * @throws {TypeError} If `maxFee` is not a non-negative integer of at most
+   *   64 bits.
    */
   async feeAwareTransactionRequestBuilder(account, options) {
     this.assertNotTerminated();
+    const maxFee = resolveMaxFee(options?.maxFee);
     const wasm = await this.#getWasm();
     return await this.#inner.feeAwareTransactionRequestBuilder(
       resolveAccountRef(account, wasm),
       options?.approvalExpirationDelta,
       options?.feeConversionSalt,
-      options?.boundBlockNum
+      options?.boundBlockNum,
+      maxFee
     );
   }
 
@@ -610,21 +655,78 @@ export class MidenClient {
    *   Consumed by the call. When omitted, the salt that the request declares,
    *   or a fresh one.
    * @param {number} [options.boundBlockNum] - The block the summary binds.
+   * @param {number | bigint} [options.maxFee] - The max fee that the summary
+   *   binds, in the native fee asset. Omitted or zero, the auth procedure
+   *   estimates the fee.
    * @returns {Promise<TransactionRequest>} The request with the auth inputs.
    * @throws An error with `code` `"AUTH_ALREADY_SET"` if the account is a
    *   multisig and the request already has an auth argument (on Node.js the
    *   code prefixes the message instead).
+   * @throws {TypeError} If `maxFee` is not a non-negative integer of at most
+   *   64 bits.
    */
   async withFeeAwareAuth(request, account, options) {
     this.assertNotTerminated();
+    const maxFee = resolveMaxFee(options?.maxFee);
     const wasm = await this.#getWasm();
     return await this.#inner.withFeeAwareAuth(
       request,
       resolveAccountRef(account, wasm),
       options?.approvalExpirationDelta,
       options?.feeConversionSalt,
-      options?.boundBlockNum
+      options?.boundBlockNum,
+      maxFee
     );
+  }
+
+  /**
+   * Returns a multisig request with a max fee, and the summary to sign.
+   *
+   * The summary of a multisig binds a max fee. A request from
+   * `feeAwareTransactionRequestBuilder` or `withFeeAwareAuth` without a
+   * `maxFee` makes the auth procedure estimate the fee on each execution, so
+   * its summary reproduces only while that estimate comes out the same. This
+   * turns the estimate of one preview into a cap that the approvers sign:
+   *
+   * 1. Build the request without a `maxFee` and preview it.
+   * 2. Pass the request and the summary here, with a margin.
+   * 3. Ship the returned request and summary. The approvers sign the returned
+   *    summary, and the executor submits the returned request.
+   *
+   * The max fee is the max fee that `summary` binds, scaled by
+   * `feeMarginPercent` and rounded up. Executing the returned request
+   * reproduces the returned summary, so no second preview is needed. The
+   * signed execution pays any fee up to the max fee, also after the fee of
+   * the chain has changed.
+   *
+   * On a chain that charges no fee the estimate is zero. Zero means that the
+   * auth procedure estimates the fee, so the result then equals the input.
+   *
+   * @param {TransactionRequest} request - The multisig request that was
+   *   previewed. It is not consumed and not changed.
+   * @param {TransactionSummary} summary - The summary from the preview of
+   *   `request`. It is not consumed and not changed.
+   * @param {object} options
+   * @param {number} options.feeMarginPercent - The margin on the max fee that
+   *   `summary` binds: 100 keeps it, and 150 adds half of it.
+   * @returns {Promise<{request: TransactionRequest, summary: TransactionSummary, maxFee: bigint}>}
+   *   The request to submit, the summary to sign, and the max fee in the
+   *   native fee asset.
+   * @throws {TypeError} If `feeMarginPercent` is not a positive integer.
+   * @throws An error with `code` `"AUTH_ARGS_NOT_MULTISIG"` if the request has
+   *   no multisig auth args (on Node.js the code prefixes the message
+   *   instead).
+   * @throws If `summary` is not the summary of `request`.
+   */
+  async withEstimatedMaxFee(request, summary, options) {
+    this.assertNotTerminated();
+    const feeMarginPercent = resolveFeeMarginPercent(options?.feeMarginPercent);
+    const estimated = request.withEstimatedMaxFee(summary, feeMarginPercent);
+    return {
+      request: estimated.request(),
+      summary: estimated.summary(),
+      maxFee: estimated.maxFee(),
+    };
   }
 
   // ── Mock-only methods ──
