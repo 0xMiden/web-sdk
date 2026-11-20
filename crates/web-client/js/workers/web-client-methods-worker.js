@@ -239,10 +239,20 @@ const methodHandlers = {
       transactionRequestBytes
     );
 
-    const result = await wasmWebClient.executeTransaction(
-      accountId,
-      transactionRequest
-    );
+    let result;
+    try {
+      result = await wasmWebClient.executeTransaction(
+        accountId,
+        transactionRequest
+      );
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") throw appendAuthError(error, authError);
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
+    }
 
     const transactionId = result.id().toHex();
 
@@ -308,10 +318,20 @@ const methodHandlers = {
       ? wasm.TransactionProver.deserialize(proverPayload)
       : undefined;
 
-    const result = await wasmWebClient.executeTransaction(
-      accountId,
-      transactionRequest
-    );
+    let result;
+    try {
+      result = await wasmWebClient.executeTransaction(
+        accountId,
+        transactionRequest
+      );
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") throw appendAuthError(error, authError);
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
+    }
 
     const transactionId = result.id().toHex();
 

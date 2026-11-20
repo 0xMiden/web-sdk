@@ -631,11 +631,22 @@ class WebClient {
             // (a string, `{ code: 4001 }`, `null`), so send an explicit failure
             // flag and the cloneable fields the worker needs to rebuild the
             // error, including when causes cycle or properties are unreadable.
-            this.worker.postMessage({
+            const reply = {
               callbackOk: false,
               callbackError: serializeCallbackError(error, callbackType),
               callbackRequestId: requestId,
-            });
+            };
+            try {
+              this.worker.postMessage(reply);
+            } catch {
+              this.worker.postMessage({
+                callbackOk: false,
+                callbackError: {
+                  message: `${callbackType} callback threw an unreadable value`,
+                },
+                callbackRequestId: requestId,
+              });
+            }
           }
           return;
         }
@@ -1373,10 +1384,20 @@ class WebClient {
       try {
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
-          return await wasmWebClient.submitNewTransaction(
-            accountId,
-            transactionRequest
-          );
+          try {
+            return await wasmWebClient.submitNewTransaction(
+              accountId,
+              transactionRequest
+            );
+          } catch (error) {
+            const authError = wasmWebClient.lastAuthError();
+            if (typeof error === "string")
+              throw appendAuthError(error, authError);
+            if (error instanceof Error) {
+              error.message = appendAuthError(error.message, authError);
+            }
+            throw error;
+          }
         }
 
         const wasm = await getWasmOrThrow();
@@ -1498,11 +1519,21 @@ class WebClient {
       try {
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
-          return await wasmWebClient.submitNewTransactionWithProver(
-            accountId,
-            transactionRequest,
-            prover
-          );
+          try {
+            return await wasmWebClient.submitNewTransactionWithProver(
+              accountId,
+              transactionRequest,
+              prover
+            );
+          } catch (error) {
+            const authError = wasmWebClient.lastAuthError();
+            if (typeof error === "string")
+              throw appendAuthError(error, authError);
+            if (error instanceof Error) {
+              error.message = appendAuthError(error.message, authError);
+            }
+            throw error;
+          }
         }
 
         const wasm = await getWasmOrThrow();
