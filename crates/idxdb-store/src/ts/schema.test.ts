@@ -397,7 +397,9 @@ describe("MidenDatabase migrations", () => {
   it("v10 migration prunes note-source tags for notes that are no longer inclusion-pending", async () => {
     const name = uniqueDbName();
     const consumedCommitment = "0x" + "dd".repeat(32);
-    const pendingCommitment = "0x" + "ee".repeat(32);
+    const invalidCommitment = "0x" + "cc".repeat(32);
+    const expectedCommitment = "0x" + "ee".repeat(32);
+    const unverifiedCommitment = "0x" + "ff".repeat(32);
 
     // A store at next's latest version (v9), stamped at or above MIGRATION_BASELINE so the
     // earlier clear leaves it alone.
@@ -410,16 +412,27 @@ describe("MidenDatabase migrations", () => {
       value: new TextEncoder().encode("0.18.0"),
     });
     await dbV9.table("inputNotes").bulkPut([
+      // ConsumedExternal (8) and Invalid (3) are not inclusion-pending.
       {
         detailsCommitment: consumedCommitment,
         noteId: "0xconsumed",
-        // ConsumedExternally, not inclusion-pending.
-        stateDiscriminant: 3,
+        stateDiscriminant: 8,
       },
       {
-        detailsCommitment: pendingCommitment,
-        noteId: "0xpending",
+        detailsCommitment: invalidCommitment,
+        noteId: "0xinvalid",
+        stateDiscriminant: 3,
+      },
+      // Expected (0) and Unverified (1) still need their tag.
+      {
+        detailsCommitment: expectedCommitment,
+        noteId: "0xexpected",
         stateDiscriminant: 0,
+      },
+      {
+        detailsCommitment: unverifiedCommitment,
+        noteId: "0xunverified",
+        stateDiscriminant: 1,
       },
     ]);
     await dbV9.table("tags").bulkPut([
@@ -429,8 +442,18 @@ describe("MidenDatabase migrations", () => {
         sourceAccountId: "",
       },
       {
-        tag: "dGFnUGVuZGluZw==",
-        sourceNoteId: pendingCommitment,
+        tag: "dGFnSW52YWxpZA==",
+        sourceNoteId: invalidCommitment,
+        sourceAccountId: "",
+      },
+      {
+        tag: "dGFnRXhwZWN0ZWQ=",
+        sourceNoteId: expectedCommitment,
+        sourceAccountId: "",
+      },
+      {
+        tag: "dGFnVW52ZXJpZmllZA==",
+        sourceNoteId: unverifiedCommitment,
         sourceAccountId: "",
       },
       { tag: "dGFnQWNjdA==", sourceNoteId: "", sourceAccountId: "0xacct" },
@@ -440,11 +463,12 @@ describe("MidenDatabase migrations", () => {
     const mdb = trackMidenDb(new MidenDatabase(name));
     expect(await mdb.open("0.18.0")).toBe(true);
 
-    const remaining = await mdb.tags.toArray();
-    const remainingTags = remaining.map((t) => t.tag).sort();
-    expect(remainingTags).toEqual(["dGFnQWNjdA==", "dGFnUGVuZGluZw=="]);
+    const remainingTags = (await mdb.tags.toArray()).map((t) => t.tag).sort();
+    expect(remainingTags).toEqual(
+      ["dGFnRXhwZWN0ZWQ=", "dGFnQWNjdA==", "dGFnVW52ZXJpZmllZA=="].sort()
+    );
     // The notes themselves survive.
-    expect(await mdb.inputNotes.count()).toBe(2);
+    expect(await mdb.inputNotes.count()).toBe(4);
   });
 });
 
