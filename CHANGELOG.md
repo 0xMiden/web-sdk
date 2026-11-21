@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Enhancements
+
+* [FEATURE][web] `Note.detailsCommitment()`, `OutputNote.detailsCommitment()`, `NoteDetails.detailsCommitment()` and `InputNoteRecord.detailsCommitment()` return the note's details commitment (recipient + assets, without metadata). Wallets can use this for B2AGG exit hashing instead of recomputing the Poseidon2 merge by hand ([#454](https://github.com/0xMiden/web-sdk/issues/454)).
+
 ### Fixes
 
 * [FIX][react] `useNoteStream` now refilters when `amountFilter` changes. The previous ref-only check never invalidated after the first render, so a new filter left the old note list on screen ([#521](https://github.com/0xMiden/web-sdk/issues/521)).
