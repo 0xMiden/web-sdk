@@ -353,6 +353,7 @@ describe("useTransactionHistory", () => {
     );
     await waitFor(() => expect(result.current.records).toHaveLength(1));
 
-    expect(getTransactions).toHaveBeenCalledWith(instance);
+    // The mocked filters are all `{}`, so assert identity, not equality.
+    expect(getTransactions.mock.calls[0][0]).toBe(instance);
   });
 });
