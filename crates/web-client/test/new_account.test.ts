@@ -280,6 +280,85 @@ test.describe("new_faucet tests", () => {
   });
 });
 
+// newAccount network fee-faucet check (#408)
+// =======================================================================================================
+
+test.describe("newAccount network fee faucet", () => {
+  test("rejects a network account built with the wrong fee faucet and accepts the chain's", async ({
+    run,
+  }) => {
+    // Issue #408: exercise the check on the mock chain, not a live node fixture.
+    const result = await run(async ({ sdk, helpers }) => {
+      const client = await helpers.createFreshMockClient();
+      await client.syncState();
+      const chainFee = await client.feeFaucetId();
+      const wrongFaucet = await client.newFaucet(
+        sdk.AccountStorageMode.public(),
+        false,
+        "WRG",
+        "WRG",
+        8,
+        sdk.u64(10000000),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+
+      const wrongComponents = sdk.AccountComponent.createNetworkAuthComponents(
+        [new sdk.NoteScriptFee(sdk.NoteScript.p2id().root(), sdk.u64(0))],
+        wrongFaucet.id()
+      );
+      const wrongSeed = new Uint8Array(32);
+      wrongSeed.fill(0x41);
+      const wrongBuilder = new sdk.AccountBuilder(wrongSeed).storageMode(
+        sdk.AccountStorageMode.public()
+      );
+      for (const component of wrongComponents) {
+        wrongBuilder.withComponent(component);
+      }
+      const wrongAccount = wrongBuilder.build().account;
+
+      let rejected = false;
+      let errorMessage = "";
+      try {
+        await client.newAccount(wrongAccount, false);
+      } catch (e) {
+        rejected = true;
+        errorMessage = e.message || String(e);
+      }
+
+      const okComponents = sdk.AccountComponent.createNetworkAuthComponents(
+        [new sdk.NoteScriptFee(sdk.NoteScript.p2id().root(), sdk.u64(0))],
+        chainFee
+      );
+      const okSeed = new Uint8Array(32);
+      okSeed.fill(0x42);
+      const okBuilder = new sdk.AccountBuilder(okSeed).storageMode(
+        sdk.AccountStorageMode.public()
+      );
+      for (const component of okComponents) {
+        okBuilder.withComponent(component);
+      }
+      const okAccount = okBuilder.build().account;
+      await client.newAccount(okAccount, false);
+
+      return {
+        rejected,
+        errorMessage,
+        namesChainFee: errorMessage.includes(chainFee.toString()),
+        namesWrongFaucet: errorMessage.includes(wrongFaucet.id().toString()),
+        okInserted: (await client.getAccount(okAccount.id())) != null,
+      };
+    });
+
+    expect(result.rejected).toBe(true);
+    expect(result.errorMessage).toContain(
+      "does not match the chain's fee faucet"
+    );
+    expect(result.namesChainFee).toBe(true);
+    expect(result.namesWrongFaucet).toBe(true);
+    expect(result.okInserted).toBe(true);
+  });
+});
+
 // AccountStorage.getMapEntries tests
 // =======================================================================================================
 
