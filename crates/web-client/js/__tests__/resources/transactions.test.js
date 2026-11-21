@@ -2547,17 +2547,30 @@ describe("TransactionsResource", () => {
     // answers the all, uncommitted, and ids filters. The poll still uses ids.
     // `_submitNewTransactionBatchForWait` snapshots with `all`, runs
     // `submitNewTransactionBatch`, then snapshots again.
-    function makeBatchStore({ pending = [], batch = ["0xb1", "0xb2"] } = {}) {
-      const records = new Map(pending.map((id) => [id, "pending"]));
+    function makeBatchStore({
+      pending = [],
+      discarded = [],
+      batch = ["0xb1", "0xb2"],
+    } = {}) {
+      const records = new Map([
+        ...pending.map((id) => [id, "pending"]),
+        ...discarded.map((id) => [id, "discarded"]),
+      ]);
       const accounts = new Map();
-      const record = (id) => ({
-        id: () => ({ toHex: () => id }),
-        accountId: () => ({ toString: () => accounts.get(id) ?? "0xsender" }),
-        transactionStatus: () => ({
-          isCommitted: () => records.get(id) === "committed",
-          isDiscarded: () => records.get(id) === "discarded",
-        }),
-      });
+      // A row is a snapshot: status and account are read when it is built, so a
+      // snapshot taken before the submit still shows the old status after it.
+      const record = (id) => {
+        const status = records.get(id);
+        const account = accounts.get(id) ?? "0xsender";
+        return {
+          id: () => ({ toHex: () => id }),
+          accountId: () => ({ toString: () => account }),
+          transactionStatus: () => ({
+            isCommitted: () => status === "committed",
+            isDiscarded: () => status === "discarded",
+          }),
+        };
+      };
       const getTransactions = vi.fn(async (filter) => {
         if (filter === "filterAll") return [...records.keys()].map(record);
         if (filter === "filterUncommitted") {
@@ -2815,6 +2828,88 @@ describe("TransactionsResource", () => {
         ([ids]) => ids.map((id) => id.toHex())
       );
       expect(polled).toEqual([["0xb1", "0xb2"]]);
+    });
+
+    it("submitBatch waitForConfirmation waits for a batch that reuses discarded transaction ids", async () => {
+      const store = makeBatchStore({ discarded: ["0xb1", "0xb2"] });
+      const syncChain = vi.fn(async () => {
+        store.records.set("0xb1", "committed");
+        store.records.set("0xb2", "committed");
+      });
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      await expect(
+        resource.submitBatch(batchItems(), {
+          waitForConfirmation: true,
+          interval: 0,
+        })
+      ).resolves.toEqual({ blockNumber: 100 });
+      const polled = store.wasmOverrides.TransactionFilter.ids.mock.calls.map(
+        ([ids]) => ids.map((id) => id.toHex())
+      );
+      expect(polled).toEqual([["0xb1", "0xb2"]]);
+    });
+
+    it("submitBatch waitForConfirmation does not wait for a discarded transaction the batch did not resubmit", async () => {
+      const store = makeBatchStore({ discarded: ["0xold", "0xb1"] });
+      const syncChain = vi.fn(async () => {
+        store.records.set("0xb1", "committed");
+        store.records.set("0xb2", "committed");
+      });
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      await expect(
+        resource.submitBatch(batchItems(), {
+          waitForConfirmation: true,
+          interval: 0,
+        })
+      ).resolves.toEqual({ blockNumber: 100 });
+      const polled = store.wasmOverrides.TransactionFilter.ids.mock.calls.map(
+        ([ids]) => ids.map((id) => id.toHex())
+      );
+      expect(polled).toEqual([["0xb1", "0xb2"]]);
+    });
+
+    it("submitBatch waitForConfirmation rejects when the submission records no transaction", async () => {
+      const store = makeBatchStore({ batch: [] });
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      await expect(
+        resource.submitBatch(batchItems(), {
+          waitForConfirmation: true,
+          interval: 0,
+        })
+      ).rejects.toThrow("Batch confirmation found no transactions to wait for");
+      expect(store.wasmOverrides.TransactionFilter.ids).not.toHaveBeenCalled();
     });
 
     it("submitBatch waitForConfirmation swallows a rejected sync attempt", async () => {

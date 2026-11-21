@@ -703,8 +703,10 @@ export class TransactionsResource {
    * @param {Array<{ account: AccountRef, request: TransactionRequest }>} items - Per-tx (account, request) pairs.
    * @param {object} [options] - Optional settings. `waitForConfirmation`
    *   resolves the call only once every transaction of the batch is committed,
-   *   and rejects if the node discards one or `timeout` (default 60000 ms, 0
-   *   for none) runs out first.
+   *   and rejects if the node discards one, if no stored transaction can be
+   *   attributed to the batch (`Batch confirmation found no transactions to
+   *   wait for`), or when `timeout` (default 60000 ms, 0 for none) runs out
+   *   first. A sync or query already in flight still finishes first.
    *   Every transaction is proven inside the batch primitive by the client's
    *   built-in local prover, so `proverUrl` does not apply; the V1 batch API has
    *   no per-call prover override.
@@ -746,20 +748,25 @@ export class TransactionsResource {
 
     // The batch primitive returns no transaction ids. While waiting, one chain
     // slot reads every stored row, submits, and reads again; the new rows for
-    // these items' accounts are the ones to wait for, in any status.
+    // these items' accounts are the ones to wait for, in any status. So is a
+    // discarded row that the submission reopened: a retried batch can have the
+    // same ids as the discarded one it replaces.
     if (options?.waitForConfirmation) {
       const { blockNumber, before, after } =
         await this.#inner._submitNewTransactionBatchForWait(wasmItems);
       const accounts = new Set(
         items.map((item) => resolveAccountRef(item.account, wasm).toString())
       );
-      const beforeIds = new Set((before ?? []).map((tx) => tx.id().toHex()));
+      const beforeById = new Map(
+        (before ?? []).map((tx) => [tx.id().toHex(), tx])
+      );
+      const isDiscarded = (tx) => tx.transactionStatus?.()?.isDiscarded();
       const batchTxIds = (after ?? [])
-        .filter(
-          (tx) =>
-            accounts.has(tx.accountId().toString()) &&
-            !beforeIds.has(tx.id().toHex())
-        )
+        .filter((tx) => {
+          if (!accounts.has(tx.accountId().toString())) return false;
+          const prior = beforeById.get(tx.id().toHex());
+          return !prior || (isDiscarded(prior) && !isDiscarded(tx));
+        })
         .map((tx) => tx.id().toHex());
       await this.#waitForBatch(batchTxIds, options);
       return { blockNumber };
@@ -773,8 +780,10 @@ export class TransactionsResource {
    * Polls until every transaction in `txIds` is committed, a transaction is
    * discarded, or the timeout expires. The batch counterpart of `waitFor`.
    *
-   * `txIds` are the batch accounts' new records in any status. A discarded id
-   * still rejects. The batch primitive returns no ids, so a transaction that
+   * `txIds` are the batch accounts' new records in any status, plus a
+   * discarded record this submission reopened. A discarded id still rejects,
+   * and an empty list throws: a non-empty batch always records a row.
+   * The batch primitive returns no ids, so a transaction that
    * another client instance on the same store writes for one of these accounts
    * during the submission cannot be told apart and is waited for as well.
    *
@@ -782,10 +791,14 @@ export class TransactionsResource {
    * chain tip as of submission, which the client has usually reached already.
    *
    * @param {string[]} txIds - Transaction ids to wait for, as hex.
-   * @param {object} [opts] - Polling options (timeout, interval).
+   * @param {object} [opts] - Polling options (timeout, interval). A finite
+   *   `timeout` ends the wait between polls at the deadline. A sync or query
+   *   already in flight still finishes first.
    */
   async #waitForBatch(txIds, opts) {
-    if (txIds.length === 0) return;
+    if (txIds.length === 0) {
+      throw new Error("Batch confirmation found no transactions to wait for");
+    }
 
     const timeout = opts?.timeout ?? 60_000;
     const interval = opts?.interval ?? 5_000;

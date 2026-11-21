@@ -733,7 +733,9 @@ export interface BatchOptions {
    * Resolve only once every transaction of the batch is committed. The call
    * syncs the chain and polls the transactions the submission recorded, and
    * rejects with `Batch transaction rejected: <id>` if the node discards one,
-   * or with `Batch confirmation timed out` when `timeout` runs out first.
+   * with `Batch confirmation found no transactions to wait for` when no stored
+   * transaction can be attributed to the batch, or with
+   * `Batch confirmation timed out` when `timeout` runs out first.
    *
    * The returned `blockNumber` is still the node's chain tip as of submission,
    * not the block the batch committed in.
@@ -742,7 +744,7 @@ export interface BatchOptions {
   /**
    * Wall-clock polling timeout for `waitForConfirmation` in milliseconds
    * (default 60_000). Set to 0 to poll until the batch is committed or
-   * discarded.
+   * discarded. A sync or query already in flight still finishes first.
    */
   timeout?: number;
 }
