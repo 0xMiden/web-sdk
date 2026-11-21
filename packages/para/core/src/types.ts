@@ -7,6 +7,8 @@ export interface MidenClientOpts {
    */
   nodeTransportUrl?: string;
   seed?: string;
+  /** Optional callback timeout in milliseconds. Omitted leaves signing unlimited. */
+  callbackTimeoutMs?: number;
 }
 
 export type MidenAccountStorageMode = "public" | "private";

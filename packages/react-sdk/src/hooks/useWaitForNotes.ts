@@ -1,13 +1,13 @@
 import { useCallback } from "react";
 import { useMiden } from "../context/MidenProvider";
-import { isConsumableNow } from "@miden-sdk/miden-sdk";
+import { isConsumableNow, isStandardPayment } from "@miden-sdk/miden-sdk";
 import type { ConsumableNoteRecord } from "@miden-sdk/miden-sdk";
 import type { WaitForNotesOptions } from "../types";
 import { parseAccountId } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
 
 export interface UseWaitForNotesResult {
-  /** Wait until an account has consumable notes */
+  /** Wait until an account has payments (P2ID or P2IDE notes) it can consume now */
   waitForConsumableNotes: (
     options: WaitForNotesOptions
   ) => Promise<ConsumableNoteRecord[]>;
@@ -29,11 +29,15 @@ export function useWaitForNotes(): UseWaitForNotesResult {
       }
 
       const timeoutMs = Math.max(0, options.timeoutMs ?? 10_000);
-      const intervalMs = Math.max(1, options.intervalMs ?? 1_000);
+      // A NaN interval would make every sleep a zero-length timer.
+      const flooredInterval = Math.max(1, options.intervalMs ?? 1_000);
+      const intervalMs = Number.isNaN(flooredInterval)
+        ? 1_000
+        : flooredInterval;
       const minCount = Math.max(1, options.minCount ?? 1);
-      let waited = 0;
+      const deadline = Date.now() + timeoutMs;
 
-      while (waited < timeoutMs) {
+      while (Date.now() < deadline) {
         await runExclusiveSafe(() =>
           (client as unknown as ClientWithNotes).syncState()
         );
@@ -45,15 +49,22 @@ export function useWaitForNotes(): UseWaitForNotesResult {
           await runExclusiveSafe(() =>
             (client as unknown as ClientWithNotes).getConsumableNotes(accountId)
           )
-        ).filter((record) => isConsumableNow(record, accountIdHex));
+        ).filter(
+          (record) =>
+            isConsumableNow(record, accountIdHex) && isStandardPayment(record)
+        );
         // A block-locked note is not something to stop waiting for: it cannot
         // be consumed yet, and the caller asked for notes it can use.
         if (consumable.length >= minCount) {
           return consumable;
         }
 
-        await new Promise((resolve) => setTimeout(resolve, intervalMs));
-        waited += intervalMs;
+        await new Promise((resolve) =>
+          setTimeout(
+            resolve,
+            Math.max(0, Math.min(intervalMs, deadline - Date.now()))
+          )
+        );
       }
 
       throw new Error("Timeout waiting for consumable notes");

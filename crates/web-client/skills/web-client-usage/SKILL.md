@@ -219,6 +219,11 @@ const client = await MidenClient.create({
 
 If `rpcUrl` is omitted, `create()` delegates to `createTestnet()`.
 
+`client.endpoint()` returns the resolved node URL synchronously, e.g.
+`"https://rpc.testnet.miden.io"` when `rpcUrl` was omitted; a `createMock()`
+client returns `undefined`. Build a standalone `RpcClient` against the same node
+with `new RpcClient(new Endpoint(client.endpoint()!))`.
+
 `noteTransportMaxRetries` (an integer from 0 to 10, default 3) and
 `noteTransportRetryIntervalMs` (0 to 60000, default 250, doubling for each
 later retry) set how a private note send retries a transient transport failure
@@ -249,6 +254,21 @@ prover and silently downgrades the callback variant to `"local"`), or when
 embedding in a single-WebView native shell. `client.lastAuthError()` - which
 returns the raw value your sign callback threw - is only meaningful with
 `useWorker: false`.
+
+Under the worker, `keystore` callbacks run on the main thread and the worker
+waits for each one. `callbackTimeoutMs` sets that wait: left unset, `sign` has
+no limit (a wallet or hardware approval can take minutes) and `getKey` and
+`insertKey` fail after 30 seconds; a positive value applies to all three,
+rounded up to a whole millisecond, and `0` removes all three limits. A negative,
+non-finite or non-number value, or one greater than 2147483647, throws
+`TypeError` at creation. Without a limit, a stalled `sign` holds its batch or
+transaction and leaves later worker calls in the queue, so pass a finite value
+such as `callbackTimeoutMs: 120000` if a signer can stall. See the
+[complete contract](https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts).
+Whatever a callback throws counts as a failure, including a
+bare string, `{ code: 4001 }` or `null`; cyclic causes and unreadable thrown
+properties are converted to finite, safe error replies. A failed `sign` fails
+the call with an error that includes the thrown value's message.
 
 There is no `debugMode` option. It was removed in 0.16 along with upstream
 transaction debug mode.
@@ -557,17 +577,15 @@ visibility matters.
 
 ### Standard auth components
 
-Two auth components must come from the SDK rather than from your own MASM,
-because the client identifies an auth component by its procedure root and
-declines to attach fee conversion info to one it cannot classify:
+Build these two auth components with the SDK's factories, the supported way to
+install them. The client identifies an auth component by its procedure root and
+declines to attach fee conversion info to one it cannot classify, and a factory
+builds exactly the code the Rust client builds:
 
-- `createAuthGuardedMultisig(config)` builds the standard guarded multisig,
-  statically linked exactly as the Rust client builds it. Configure it with
+- `createAuthGuardedMultisig(config)` builds the standard guarded multisig.
+  Configure it with
   `new AuthGuardedMultisigConfig(approvers, defaultThreshold, guardian, authScheme)`
-  (optionally `.withProcThresholds([...])`). Compiling equivalent MASM through
-  `AccountComponent.compile` links the standards package dynamically, yields a
-  different `auth_tx` root, and every transaction from the account then fails
-  on a fee-charging chain.
+  (optionally `.withProcThresholds([...])`).
 - `AccountComponent.createNetworkAuthComponents(allowedNoteScriptFees, feeFaucetId, allowedTxScriptRoots?)`
   builds a network account's auth. Each `new NoteScriptFee(noteScript.root(), amount)`
   pairs an allowlisted note script root with the fee the account charges to
@@ -638,11 +656,12 @@ What happens if you skip it:
 - Multisig / smart multisig / guarded multisig: `FeeConversionInfoRequired`,
   naming the component.
 - A custom auth procedure that reads conversion info: the transaction aborts in
-  the VM with `ERR_FEE_CONVERSION_INFO_MISSING`. Attach the commitment yourself
-  with `TransactionRequestBuilder.withAuthArg` plus `extendAdviceMap`, or on a
-  finished request with `request.withAuthArgs(preimage)`.
+  the VM with `ERR_FEE_CONVERSION_INFO_MISSING`. Attach the auth args yourself
+  with `TransactionRequestBuilder.withAuthArgs`, which sets the commitment and
+  adds its advice-map preimage, or on a finished request with
+  `request.withAuthArgs(preimage)`.
 
-`withAuthArg` and `withFeeConversionSalt` are mutually exclusive - each setter
+`withAuthArgs` and `withFeeConversionSalt` are mutually exclusive - each setter
 clears the other, so whichever is called last wins. Never call either on a builder from `feeAwareTransactionRequestBuilder` for a multisig: that builder already carries the three-word auth args, and either setter discards them, so the transaction aborts in the auth procedure. Pass `feeConversionSalt` to `feeAwareTransactionRequestBuilder` instead - and build a fresh `Word` for every call, because the parameter is moved across the WASM boundary and a spent handle arrives as "no salt given".
 
 A request you did not build, such as a finished one a dApp hands to a wallet,
@@ -811,15 +830,23 @@ await client.transactions.consume({
   waitForConfirmation: true,
 });
 
-// Drain everything consumable for the account
+// Drain the payments (P2ID and P2IDE notes) consumable for the account
 const { txId, consumed, remaining } = await client.transactions.consumeAll({
   account: wallet,
   maxNotes: 50, // optional cap
 });
 ```
 
-`ConsumeAllResult.txId` is `TransactionId | null`: when the account has nothing
-consumable, `consumeAll` submits no transaction and resolves to
+`consumeAll` and `notes.listAvailable` take only P2ID and P2IDE notes. Any
+other script can spend from the consuming account: the screener lists another
+trader's public PSWAP order for every account holding the asset it requests,
+and consuming it fills the order from that vault. `notes.listConsumable` and the
+low-level `getConsumableNotes` list those notes too, so filter with
+`isStandardPayment(record)` before consuming from them, and consume any other
+script only by name with `transactions.consume`.
+
+`ConsumeAllResult.txId` is `TransactionId | null`: when the account has no
+payment consumable, `consumeAll` submits no transaction and resolves to
 `{ txId: null, consumed: 0, remaining: 0 }`. Check `txId` before dereferencing
 it. (With `maxNotes: 0` it also returns a null `txId`, but `remaining` then
 carries the full count.)
@@ -990,40 +1017,49 @@ proof that runs locally (and slowly) when you configured a remote one.
 
 ### Batching
 
-`transactions.batch` builds each operation itself; `submitBatch(account, requests, options?)`
-is the pre-built-request counterpart. Both submit atomically - every transaction
-in the batch lands or none does.
+`transactions.batch` builds each operation itself; `submitBatch(items, options?)`
+is the pre-built-request counterpart, taking `{ account, request }` pairs. Both
+submit atomically - every transaction in the batch lands or none does.
 
 ```typescript
 const { blockNumber } = await client.transactions.batch({
-  account: wallet,
   operations: [
-    { kind: "consume", notes: [noteId] },
-    { kind: "send", to: other, token: faucet, amount: 10n },
-    { kind: "custom", request: prebuiltRequest },
+    { kind: "consume", account: wallet, notes: [noteId] },
+    { kind: "send", account: wallet, to: other, token: faucet, amount: 10n },
+    { kind: "custom", account: other, request: prebuiltRequest },
   ],
   waitForConfirmation: true,
 });
 ```
 
 `BatchOperation` kinds are `send`, `mint`, `consume`, `swap`, `execute` and
-`custom`; each mirrors the singular options **minus `account`**.
+`custom`; each mirrors the singular options, **including `account`**, which every
+operation must carry.
 
-**V1 is single-account, and it rewrites every operation's account.** The builder
-spreads `{ ...op, account: opts.account }` over each operation before building
-it, so the batch-level account executes all of them. Mixing account roles does
-not raise an error, it builds the wrong request: a `mint` inside a
-wallet-scoped batch is rebuilt as if the wallet were the issuing faucet.
-Minting on a faucet and spending from a wallet are two accounts, so they are two
-calls.
+**Each operation names the account that executes it.** One batch may mix any
+tracked local accounts, so minting on a faucet and spending from a wallet can
+share a batch: put `account: faucet` on the `mint` and `account: wallet` on the
+`send`. A later transaction may consume a note an earlier one produced, even
+across accounts, so order the producer first. Every account must be tracked by
+this client, and no note may be consumed twice in one batch.
 
 The result is `{ blockNumber }` only - the Rust V1 batch API returns no
-per-transaction ids, so `waitForConfirmation` polls local sync height until it
-reaches that block rather than watching transaction status. A
+per-transaction ids, and the number is the node's chain tip as of submission,
+not the block the batch commits in. `waitForConfirmation` does not currently
+work on a batch (#314): sync and check `transactions.list()` instead. A
 `custom` operation carries a request you built, so the fee rules above apply to
 it: use `client.feeAwareTransactionRequestBuilder(account)`, or
 `client.withFeeAwareAuth(request, account)` for a finished request you did not
-build. The V1 batch API has no per-call prover override.
+build. Every transaction is proven inside the batch primitive by the client's
+built-in local prover, so `proverUrl` does not apply, and the V1 batch API has
+no per-call prover override. In the browser the batch runs in the client's Web
+Worker, so the page stays responsive while it proves; with `useWorker: false`,
+without `Worker` support, or on a mock client it proves on the calling thread
+and blocks it until it settles, so keep batches small there.
+With an external keystore, `sign` waits without a limit unless
+`callbackTimeoutMs` sets one, so a stalled signer holds the batch and later
+worker calls. Set a finite timeout if a signer can stall; see the
+[complete callback timeout contract](https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts).
 
 ### Preview (dry run)
 
@@ -1117,7 +1153,7 @@ await client.notes.list({ status: "committed" }); // "consumed" | "committed" | 
 await client.notes.list({ scriptRoots: [noteScript.root()] }); // hex strings or Word instances
 await client.notes.get(noteId); // single record
 await client.notes.listSent(); // output notes
-await client.notes.listAvailable({ account: wallet }); // consumable for an account
+await client.notes.listAvailable({ account: wallet }); // payments the account can consume now
 
 // Import/export
 const idHex = await client.notes.import(noteFile); // hex string, NOT a NoteId
@@ -1290,6 +1326,38 @@ here forwards to a keystore handle on the inner client when one exists and falls
 back to a WASM client method otherwise. `remove` is the one with no fallback, so
 in the browser it throws `remove() is not supported on this platform`. The other
 four work everywhere.
+
+## Verify a signBytes signature
+
+`domainSeparatedSignCommitment` computes the commitment a wallet signs for a
+dApp's `signBytes` request. Verify the returned signature with
+`publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)`.
+
+The wallet signs under the domain tag `miden-wallet/sign-bytes/v1`, the
+Poseidon2 hash of that string, one field element per UTF-8 byte. `"word"`:
+`data` is a serialized `Word`; the signed commitment is that of
+`SigningInputs.newArbitrary([...tag, ...word.toFelts()])`. `"signingInputs"`:
+`data` is serialized `SigningInputs`. A Blind payload signs
+`[...tag, ...word.toFelts()]` and an Arbitrary payload signs
+`[...tag, ...payload]` (the tag alone when the payload is empty), both as
+Arbitrary inputs. A TransactionSummary is signed unchanged, so its own
+commitment is returned.
+
+Any other kind or variant throws.
+Wallets released before this change signed the raw value instead.
+
+Needs the SDK's WASM to be loaded: with a lazy entry, await
+`MidenClient.ready()` first.
+
+```typescript
+import {
+  domainSeparatedSignCommitment,
+  MidenClient,
+} from "@miden-sdk/miden-sdk/lazy";
+
+await MidenClient.ready();
+publicKey.verify(domainSeparatedSignCommitment(data, kind), signature);
+```
 
 ## Compile
 

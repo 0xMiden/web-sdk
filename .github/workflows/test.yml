@@ -28,8 +28,8 @@ env:
   # Re-pin whenever Cargo.lock moves, and to the release tag once one ships.
   # A `Client PR:` marker overrides this for the test-node jobs
   # (resolve-client-ref); this value stays the fallback for pushes to next.
-  # v0.17.5
-  MIDEN_CLIENT_REF: 9cd4e62cb9948fd4e2fce196bd355f1158f336cc
+  # v0.18.0
+  MIDEN_CLIENT_REF: de56694ceb46b315a14db31049ce2e86c25abf39
   # Sequencer 0.17.0-rc.2 will not start without a batch-builder wallet. The
   # binary reads this variable; the node repo's local runner uses the same
   # placeholder. A node that does not know it ignores the variable.
@@ -77,13 +77,23 @@ jobs:
               - '!**/*.md'
               - '!**/*.txt'
               - '!docs/**'
+            # Every in-repo manifest that can change the shipped WASM is
+            # listed alongside Cargo.lock, including js-export-macro, which
+            # is host-compiled but expands into the WASM. A feature-only edit
+            # changes what gets compiled without moving the lockfile, so
+            # Cargo.lock alone does not catch it.
             release_wasm:
               - '.github/workflows/publish-web-sdk.yml'
               - '.github/workflows/test.yml'
               - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'crates/idxdb-store/Cargo.toml'
+              - 'crates/js-export-macro/Cargo.toml'
+              - 'crates/web-client/Cargo.toml'
               - 'crates/web-client/rollup.config.js'
               - 'crates/web-client/scripts/wasm-opt-with-masp-strip.sh'
               - 'crates/web-client/scripts/verify-release-mt.mjs'
+              - 'patches/**'
               - 'rust-toolchain.toml'
               - 'scripts/install-binaryen.sh'
               - 'scripts/verify-wasm-size.sh'

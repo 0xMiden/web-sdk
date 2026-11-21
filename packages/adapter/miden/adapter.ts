@@ -60,7 +60,15 @@ export interface MidenWallet extends EventEmitter<MidenWalletEvents> {
   signBytes(
     message: Uint8Array,
     kind: SignKind
-  ): Promise<{ signature: Uint8Array }>;
+  ): Promise<{
+    signature: Uint8Array;
+    /**
+     * The word the wallet signed, serialized. Present when the wallet signs
+     * a domain-separated commitment; older wallets omit it and signed the
+     * raw value. Verify with `domainSeparatedSignCommitment(data, kind)`.
+     */
+    signedCommitment?: Uint8Array;
+  }>;
   importPrivateNote(note: Uint8Array): Promise<{ noteId: string }>;
   requestConsumableNotes(): Promise<{ consumableNotes: InputNoteDetails[] }>;
   createAccount(params?: CreateAccountParams): Promise<{ accountId: string }>;

@@ -74,6 +74,24 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
   );
 
   mockTest(
+    "endpoint: a mock client reports none, an RpcClient its own",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const rpcClient = new window.RpcClient(window.Endpoint.devnet());
+        return {
+          mock: client.endpoint() ?? null,
+          rpc: rpcClient.endpoint(),
+          expected: window.Endpoint.devnet().toString(),
+        };
+      });
+
+      expect(result.mock).toBeNull();
+      expect(result.rpc).toBe(result.expected);
+    }
+  );
+
+  mockTest(
     "accounts.create defaults to private mutable wallet",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
@@ -312,6 +330,94 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     expect(result.uncommittedBefore).toBe(1);
     expect(result.uncommittedAfter).toBe(0);
   });
+
+  // Regression guard for the mock batching path. A batch lands in the mock
+  // chain's `pending_batches`, which is not part of what `MockChain`
+  // serializes, so routing this through the worker like every other
+  // forwarded method would drop the batch on the way back and leave zero
+  // consumable notes here. Keep mock batching on the main thread.
+  mockTest(
+    "transactions.batch mints both notes on a mock chain",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const wallet = await client.accounts.create();
+        const faucet = await client.accounts.create({
+          type: window.FaucetType.FungibleFaucet,
+          symbol: "DAG",
+          decimals: 8,
+          maxSupply: 10_000_000n,
+        });
+
+        // The inverse of the real-client assertion in batch.browser.test.ts: a
+        // mock batch must NOT cross to the worker, because the worker would
+        // hand back a chain whose `pending_batches` the serializer dropped.
+        const postedMethods: string[] = [];
+        const originalPostMessage = Worker.prototype.postMessage;
+        Worker.prototype.postMessage = function (
+          this: Worker,
+          message: unknown,
+          ...rest: unknown[]
+        ) {
+          const methodName = (message as { methodName?: unknown } | null)
+            ?.methodName;
+          if (typeof methodName === "string") {
+            postedMethods.push(methodName);
+          }
+          return (
+            originalPostMessage as (this: Worker, ...args: unknown[]) => void
+          ).call(this, message, ...rest);
+        } as typeof Worker.prototype.postMessage;
+
+        let blockNumber: number;
+        try {
+          ({ blockNumber } = await client.transactions.batch({
+            operations: [
+              { kind: "mint", account: faucet, to: wallet, amount: 100n },
+              { kind: "mint", account: faucet, to: wallet, amount: 200n },
+            ],
+          }));
+
+          // Both must be awaited: the assertion depends on the block actually
+          // being sealed first, and proveBlock bypasses the serializing
+          // wrapper. Kept inside the spied window so that `sync` — which does
+          // go to the worker — proves the spy itself is wired up. Without that
+          // positive control the negative assertion below would pass even if
+          // the spy recorded nothing at all.
+          await client.proveBlock();
+          await client.sync();
+        } finally {
+          Worker.prototype.postMessage = originalPostMessage;
+        }
+
+        const consumable = await client.notes.listAvailable({
+          account: wallet,
+        });
+
+        return {
+          blockNumber,
+          consumableCount: consumable.length,
+          postedMethods,
+        };
+      });
+
+      // The mock node returns the tip as of submission, not the block the
+      // batch lands in, and a fresh mock chain starts at 0 — so only the type
+      // and non-negativity are meaningful here. `consumableCount` is the
+      // assertion that actually discriminates.
+      expect(typeof result.blockNumber).toBe("number");
+      expect(result.blockNumber).toBeGreaterThanOrEqual(0);
+      expect(result.consumableCount).toBe(2);
+
+      // Exact, not just "no batch method": a mock batch routed through the
+      // worker under ANY name would break the same way, and `pending_transactions`
+      // IS serialized, so a reintroduced per-transaction forwarding could still
+      // produce consumableCount === 2 and slip past a narrower check. `sync` is
+      // worker-forwarded on a mock client, so its presence here doubles as
+      // proof that the spy was actually wired up.
+      expect(result.postedMethods).toEqual(["syncStateMock"]);
+    }
+  );
 
   mockTest("notes.list and notes.get", async ({ page }) => {
     const result = await page.evaluate(async () => {
@@ -855,6 +961,88 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     expect(result.allAccountsCount).toBeGreaterThanOrEqual(1);
   });
 
+  mockTest(
+    "listAvailable and consumeAll leave out a public PSWAP order",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const maker = await client.accounts.create();
+        const taker = await client.accounts.create();
+        const faucet = (symbol) =>
+          client.accounts.create({
+            type: window.FaucetType.FungibleFaucet,
+            symbol,
+            decimals: 8,
+            maxSupply: 10_000_000n,
+          });
+        const offered = await faucet("SELL");
+        const requested = await faucet("BUY");
+
+        await client.transactions.mint({
+          account: offered,
+          to: maker,
+          amount: 1000n,
+        });
+        await client.transactions.mint({
+          account: requested,
+          to: taker,
+          amount: 1000n,
+        });
+        client.proveBlock();
+        await client.sync();
+        // Both mints are P2ID notes, so consumeAll takes them.
+        const funded = [
+          await client.transactions.consumeAll({ account: maker }),
+          await client.transactions.consumeAll({ account: taker }),
+        ].map((r) => r.consumed);
+        client.proveBlock();
+        await client.sync();
+
+        await client.transactions.pswapCreate({
+          account: maker,
+          offer: { token: offered, amount: 100n },
+          request: { token: requested, amount: 50n },
+          type: "public",
+        });
+        client.proveBlock();
+        await client.sync();
+
+        // The taker holds the requested asset, so a trial fill succeeds and the
+        // screener lists the maker's order for it.
+        const listed = await client.notes.listConsumable({ account: taker });
+        const available = await client.notes.listAvailable({ account: taker });
+        const takerResult = await client.transactions.consumeAll({
+          account: taker,
+        });
+        const makerAvailable = await client.notes.listAvailable({
+          account: maker,
+        });
+        const takerAccount = await client.accounts.get(taker);
+
+        return {
+          funded,
+          listedCount: listed.length,
+          availableCount: available.length,
+          takerConsumed: takerResult.consumed,
+          takerTxId: takerResult.txId,
+          makerAvailableCount: makerAvailable.length,
+          takerRequestedBalance: takerAccount
+            .vault()
+            .getBalance(requested.id())
+            .toString(),
+        };
+      });
+
+      expect(result.funded).toEqual([1, 1]);
+      expect(result.listedCount).toBe(1);
+      expect(result.availableCount).toBe(0);
+      expect(result.takerConsumed).toBe(0);
+      expect(result.takerTxId).toBeNull();
+      expect(result.makerAvailableCount).toBe(0);
+      expect(result.takerRequestedBalance).toBe("1000");
+    }
+  );
+
   mockTest("terminate prevents resource operations", async ({ page }) => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.createMock();
@@ -1394,6 +1582,27 @@ nodeTest.describe("MidenClient API - Integration", () => {
       });
 
       expect(result.configured).toBe(result.reported);
+    }
+  );
+
+  // Compared with the SDK's own normalization of the configured URL, so a client
+  // that reported its testnet default, or nothing, instead fails.
+  nodeTest(
+    "endpoint reports the node the client was created against",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.create({
+          rpcUrl: window.rpcUrl,
+          feeFaucetId: window.feeFaucetId,
+          storeName: "miden_client_api_endpoint_test",
+        });
+        return {
+          expected: new window.Endpoint(window.rpcUrl).toString(),
+          reported: client.endpoint(),
+        };
+      });
+
+      expect(result.reported).toBe(result.expected);
     }
   );
 

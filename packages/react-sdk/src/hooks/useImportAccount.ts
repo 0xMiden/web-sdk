@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
-import { captureClientCurrency, useMidenStore } from "../store/MidenStore";
+import { useMidenStore } from "../store/MidenStore";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import { AccountFile } from "@miden-sdk/miden-sdk";
 import type {
   Account,
@@ -74,7 +75,7 @@ export function useImportAccount(): UseImportAccountResult {
         throw new Error("Miden client is not ready");
       }
 
-      const isCurrent = captureClientCurrency(client);
+      const isCurrent = captureClientReadGuard(client);
       const assertCurrent = () => {
         if (!isCurrent()) throw new Error("Miden client is not ready");
       };

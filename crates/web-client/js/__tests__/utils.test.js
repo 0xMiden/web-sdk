@@ -8,6 +8,8 @@ import {
   resolveNoteIdHex,
   resolveTransactionIdHex,
   hashSeed,
+  assertBatchItems,
+  isStandardPaymentNote,
 } from "../utils.js";
 
 // ── WASM mock helpers ──────────────────────────────────────────────────────────
@@ -393,5 +395,105 @@ describe("hashSeed", () => {
 
   it("throws TypeError for object input", async () => {
     await expect(hashSeed({ seed: "bad" })).rejects.toThrow(TypeError);
+  });
+});
+
+describe("assertBatchItems", () => {
+  class BatchItem {}
+
+  it("accepts an array of BatchItem instances, including an empty one", () => {
+    expect(() =>
+      assertBatchItems([new BatchItem(), new BatchItem()], BatchItem)
+    ).not.toThrow();
+    // An empty batch is Rust's to reject, identically on both paths.
+    expect(() => assertBatchItems([], BatchItem)).not.toThrow();
+  });
+
+  it("rejects a non-array argument", () => {
+    expect(() => assertBatchItems(null, BatchItem)).toThrow(
+      /expected an array of BatchItem/
+    );
+    expect(() => assertBatchItems(new BatchItem(), BatchItem)).toThrow(
+      TypeError
+    );
+    expect(() => assertBatchItems({ length: 1, 0: null }, BatchItem)).toThrow(
+      TypeError
+    );
+  });
+
+  it("names the offending index when an element is not a BatchItem", () => {
+    const good = new BatchItem();
+    expect(() => assertBatchItems([good, null], BatchItem)).toThrow(
+      /index 1 is not a BatchItem/
+    );
+    // A look-alike carrying the accessors is still refused: wasm-bindgen's
+    // own in-thread check is `instanceof`, and the worker path must match it.
+    const lookAlike = { accountId: () => ({}), request: () => ({}) };
+    expect(() => assertBatchItems([lookAlike, good], BatchItem)).toThrow(
+      /index 0/
+    );
+  });
+
+  it("rejects a hole in a sparse array rather than skipping it", () => {
+    const sparse = new Array(2);
+    sparse[0] = new BatchItem();
+    expect(() => assertBatchItems(sparse, BatchItem)).toThrow(/index 1/);
+  });
+});
+
+describe("isStandardPaymentNote", () => {
+  const scriptWithRoot = (root) => ({ root: () => ({ toHex: () => root }) });
+  const paymentWasm = () => ({
+    NoteScript: {
+      p2id: vi.fn(() => scriptWithRoot("0xp2id")),
+      p2ide: vi.fn(() => scriptWithRoot("0xp2ide")),
+    },
+  });
+  const inputRecord = (root) => ({
+    details: () => ({
+      recipient: () => ({ script: () => scriptWithRoot(root) }),
+    }),
+  });
+
+  it("accepts P2ID and P2IDE input note records", () => {
+    const wasm = paymentWasm();
+    expect(isStandardPaymentNote(inputRecord("0xp2id"), wasm)).toBe(true);
+    expect(isStandardPaymentNote(inputRecord("0xp2ide"), wasm)).toBe(true);
+  });
+
+  it("rejects any other script, such as a PSWAP order", () => {
+    expect(isStandardPaymentNote(inputRecord("0xpswap"), paymentWasm())).toBe(
+      false
+    );
+  });
+
+  it("reads a consumable record through its input note record", () => {
+    const wasm = paymentWasm();
+    const consumable = (root) => ({
+      inputNoteRecord: () => inputRecord(root),
+    });
+    expect(isStandardPaymentNote(consumable("0xp2id"), wasm)).toBe(true);
+    expect(isStandardPaymentNote(consumable("0xswap"), wasm)).toBe(false);
+  });
+
+  it("treats a note whose script cannot be read as not a payment", () => {
+    const noDetails = {
+      details: () => {
+        throw new Error("record has no details");
+      },
+    };
+    expect(isStandardPaymentNote(noDetails, paymentWasm())).toBe(false);
+  });
+
+  it("builds the standard script roots once per WASM module", () => {
+    const wasm = paymentWasm();
+    isStandardPaymentNote(inputRecord("0xp2id"), wasm);
+    isStandardPaymentNote(inputRecord("0xpswap"), wasm);
+    expect(wasm.NoteScript.p2id).toHaveBeenCalledOnce();
+    expect(wasm.NoteScript.p2ide).toHaveBeenCalledOnce();
+
+    const other = paymentWasm();
+    isStandardPaymentNote(inputRecord("0xp2id"), other);
+    expect(other.NoteScript.p2id).toHaveBeenCalledOnce();
   });
 });
