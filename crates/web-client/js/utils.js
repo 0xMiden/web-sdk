@@ -84,6 +84,42 @@ export function isConsumableNow(record, accountIdHex) {
     );
 }
 
+const standardPaymentRoots = new WeakMap();
+
+/**
+ * True when `record`'s note runs the standard P2ID or P2IDE script.
+ *
+ * Consuming such a note only moves its assets into the consuming account, and
+ * the screener reports it consumable only for the account it pays, or for its
+ * sender once a P2IDE note can be reclaimed. Any other script can also spend
+ * from the consumer: anyone holding the requested asset can consume another
+ * trader's public PSWAP order, and doing so fills it from their vault at the
+ * creator's price. A record whose script cannot be read is not a payment.
+ *
+ * @param {ConsumableNoteRecord | InputNoteRecord} record - The note to check.
+ * @param {object} wasm - The WASM module.
+ * @returns {boolean} True for a P2ID or P2IDE note.
+ */
+export function isStandardPaymentNote(record, wasm) {
+  let roots = standardPaymentRoots.get(wasm);
+  if (!roots) {
+    roots = new Set([
+      wasm.NoteScript.p2id().root().toHex(),
+      wasm.NoteScript.p2ide().root().toHex(),
+    ]);
+    standardPaymentRoots.set(wasm, roots);
+  }
+  try {
+    const input =
+      typeof record.inputNoteRecord === "function"
+        ? record.inputNoteRecord()
+        : record;
+    return roots.has(input.details().recipient().script().root().toHex());
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Resolves a NoteVisibility string to a WASM NoteType value.
  *
@@ -128,11 +164,28 @@ export function resolveStorageMode(mode, wasm) {
 /**
  * Resolves an auth scheme string to a WASM AuthScheme enum value.
  *
- * @param {string | undefined} scheme - "falcon" or "ecdsa". Defaults to "falcon".
+ * A number passes through unchanged only when it is one of
+ * `wasm.AuthScheme`'s values, so callers that receive a pre-resolved value
+ * (e.g. `AccountsResource.create`, which resolves before forwarding to the
+ * low-level `newWallet`/`newFaucet`) don't get double-processed, while any
+ * other number is rejected here rather than at the WASM boundary. Members are
+ * read by name because the napi-rs enum on the Node entry defines them
+ * non-enumerable, so `Object.values` sees none of them there.
+ *
+ * @param {string | number | undefined} scheme - "falcon" or "ecdsa" (or an
+ *   already-resolved numeric enum value). Defaults to "falcon".
  * @param {object} wasm - The WASM module.
  * @returns {number} The AuthScheme enum value.
  */
 export function resolveAuthScheme(scheme, wasm) {
+  if (
+    typeof scheme === "number" &&
+    Object.getOwnPropertyNames(wasm.AuthScheme).some(
+      (name) => wasm.AuthScheme[name] === scheme
+    )
+  ) {
+    return scheme;
+  }
   if (scheme === "ecdsa") {
     return wasm.AuthScheme.AuthEcdsaK256Keccak;
   }
@@ -142,6 +195,109 @@ export function resolveAuthScheme(scheme, wasm) {
   throw new Error(
     `Unknown auth scheme: "${scheme}". Expected "falcon" or "ecdsa".`
   );
+}
+
+/**
+ * Resolves the auth scheme of a wasm binding that requires one, such as the
+ * `AuthGuardedMultisigConfig` constructor.
+ *
+ * Unlike {@link resolveAuthScheme}, a missing scheme is an error, not Falcon.
+ * In the browser the package's `AuthScheme.AuthEcdsaK256Keccak` reads as
+ * `undefined` (the export is the friendly string const), so defaulting would
+ * turn a caller's ECDSA request into a Falcon key.
+ *
+ * @param {string | number} scheme - "falcon", "ecdsa" or a numeric enum value.
+ * @param {object} wasm - An object whose `AuthScheme` is the native enum.
+ * @param {string} binding - The binding's name, for the error message.
+ * @returns {number} The AuthScheme enum value.
+ */
+export function resolveRequiredAuthScheme(scheme, wasm, binding) {
+  if (scheme == null) {
+    throw new TypeError(
+      `${binding} requires an auth scheme: AuthScheme.ECDSA ("ecdsa") or AuthScheme.Falcon ("falcon").`
+    );
+  }
+  return resolveAuthScheme(scheme, wasm);
+}
+
+/**
+ * Wraps a wasm `AuthGuardedMultisigConfig` class so its constructor accepts
+ * the friendly `AuthScheme` strings as well as the numeric enum.
+ *
+ * Instances are built by the wasm class itself, so they pass the wasm
+ * bindings' class checks, and `instanceof` against the wrapper defers to it.
+ * The wasm class and enum are read through getters at construction time, not
+ * when the wrapper is created.
+ *
+ * @param {() => Function} getClass - Returns the wasm class.
+ * @param {() => object} getWasm - Returns an object whose `AuthScheme` is the
+ *   native enum.
+ * @returns {Function} The wrapper constructor.
+ */
+export function wrapAuthGuardedMultisigConfig(getClass, getWasm) {
+  function AuthGuardedMultisigConfig(
+    approvers,
+    defaultThreshold,
+    guardian,
+    authScheme
+  ) {
+    if (!new.target) {
+      throw new TypeError(
+        "Class constructor AuthGuardedMultisigConfig cannot be invoked without 'new'"
+      );
+    }
+    const scheme = resolveRequiredAuthScheme(
+      authScheme,
+      getWasm(),
+      "AuthGuardedMultisigConfig"
+    );
+    const Cls = getClass();
+    return new Cls(approvers, defaultThreshold, guardian, scheme);
+  }
+  Object.defineProperty(AuthGuardedMultisigConfig, Symbol.hasInstance, {
+    value: (value) => value instanceof getClass(),
+  });
+  return AuthGuardedMultisigConfig;
+}
+
+const AUTH_FROM_COMMITMENT = "createAuthComponentFromCommitment";
+
+/**
+ * Makes `cls.createAuthComponentFromCommitment` accept the friendly
+ * `AuthScheme` strings as well as the numeric enum, in place. Does nothing if
+ * the static is missing, already wrapped, or cannot be redefined.
+ *
+ * @param {Function | undefined} cls - The `AccountComponent` class.
+ * @param {object} wasm - An object whose `AuthScheme` is the native enum.
+ */
+export function installAuthSchemeResolution(cls, wasm) {
+  const descriptor =
+    cls && Object.getOwnPropertyDescriptor(cls, AUTH_FROM_COMMITMENT);
+  if (
+    typeof descriptor?.value !== "function" ||
+    !(descriptor.writable || descriptor.configurable) ||
+    descriptor.value.__resolvesAuthScheme
+  ) {
+    return;
+  }
+  const original = descriptor.value;
+  const resolving = function (commitment, authScheme) {
+    return original.call(
+      this,
+      commitment,
+      resolveRequiredAuthScheme(
+        authScheme,
+        wasm,
+        `AccountComponent.${AUTH_FROM_COMMITMENT}`
+      )
+    );
+  };
+  resolving.__resolvesAuthScheme = true;
+  Object.defineProperty(cls, AUTH_FROM_COMMITMENT, {
+    value: resolving,
+    writable: true,
+    configurable: true,
+  });
 }
 
 /**
@@ -249,5 +405,71 @@ export function assertBatchItems(items, BatchItem) {
     if (!(items[index] instanceof BatchItem)) {
       throw new TypeError(`batch item at index ${index} is not a BatchItem`);
     }
+  }
+}
+
+/**
+ * Bounds for the note transport send-retry options. A retry waits
+ * `noteTransportRetryIntervalMs * 2^n` before attempt `n + 1`, so a send can
+ * spend `interval * (2^maxRetries - 1)` ms in backoff. Each value has its own
+ * cap, and the two together may not exceed a 120000 ms total: a send's retries
+ * run inside the client's serialized call, so every other call on the client
+ * waits for them. That also keeps each single delay far below the `2^31 - 1` ms
+ * at which the browser timer throws inside WASM. The defaults are the transport's
+ * own, used for an omitted value.
+ */
+const NOTE_TRANSPORT_MAX_RETRIES_CAP = 10;
+const NOTE_TRANSPORT_RETRY_INTERVAL_MS_CAP = 60_000;
+const NOTE_TRANSPORT_TOTAL_BACKOFF_MS_CAP = 120_000;
+const NOTE_TRANSPORT_DEFAULT_MAX_RETRIES = 3;
+const NOTE_TRANSPORT_DEFAULT_RETRY_INTERVAL_MS = 250;
+
+/**
+ * Validates the note transport send-retry options before any worker or WASM
+ * call sees them. Validation lives here because wasm-bindgen converts a JS
+ * number to `u32` with `>>> 0` (so `-1` silently becomes `4294967295`), while
+ * the napi binding throws; checking first makes both builds agree.
+ *
+ * `undefined` means "use the default" (3 retries, 250 ms) and is accepted.
+ *
+ * @param {unknown} noteTransportMaxRetries - Integer from 0 to 10, or undefined.
+ * @param {unknown} noteTransportRetryIntervalMs - Integer from 0 to 60000, or undefined.
+ * @throws {TypeError} Naming the option that is out of range, or the total
+ *   backoff `interval * (2^maxRetries - 1)` when it exceeds 120000 ms.
+ */
+export function validateNoteTransportRetryOptions(
+  noteTransportMaxRetries,
+  noteTransportRetryIntervalMs
+) {
+  checkRetryOption(
+    "noteTransportMaxRetries",
+    noteTransportMaxRetries,
+    NOTE_TRANSPORT_MAX_RETRIES_CAP
+  );
+  checkRetryOption(
+    "noteTransportRetryIntervalMs",
+    noteTransportRetryIntervalMs,
+    NOTE_TRANSPORT_RETRY_INTERVAL_MS_CAP
+  );
+  const maxRetries =
+    noteTransportMaxRetries ?? NOTE_TRANSPORT_DEFAULT_MAX_RETRIES;
+  const intervalMs =
+    noteTransportRetryIntervalMs ?? NOTE_TRANSPORT_DEFAULT_RETRY_INTERVAL_MS;
+  const totalMs = intervalMs * (2 ** maxRetries - 1);
+  if (totalMs > NOTE_TRANSPORT_TOTAL_BACKOFF_MS_CAP) {
+    throw new TypeError(
+      `noteTransportMaxRetries ${maxRetries} with noteTransportRetryIntervalMs ` +
+        `${intervalMs} allows ${totalMs} ms of retry backoff in total; the most ` +
+        `is ${NOTE_TRANSPORT_TOTAL_BACKOFF_MS_CAP} ms`
+    );
+  }
+}
+
+function checkRetryOption(name, value, cap) {
+  if (value === undefined) return;
+  if (!Number.isInteger(value) || value < 0 || value > cap) {
+    throw new TypeError(
+      `${name} must be an integer from 0 to ${cap}, got ${String(value)}`
+    );
   }
 }

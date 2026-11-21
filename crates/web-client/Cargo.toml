@@ -72,6 +72,7 @@ mt-threads = ["dep:rayon", "dep:wasm-bindgen-rayon", "miden-client/concurrent"]
 [dependencies]
 # Workspace dependencies
 miden-client   = { features = ["testing"], workspace = true }
+miden-objects  = { workspace = true }
 miden-protocol = { workspace = true }
 
 # Feature-only dependency: nothing in this crate uses it directly. Enabling its
@@ -146,6 +147,11 @@ web-sys = { features = ["console"], optional = true, version = "0.3" }
 
 [build-dependencies]
 napi-build = { optional = true, workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+h2    = "0.4"
+http  = "1"
+tokio = { features = ["net", "sync", "time"], workspace = true }
 
 [lints]
 workspace = true

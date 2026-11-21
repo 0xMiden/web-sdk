@@ -17,7 +17,81 @@ beforeEach(() => {
   useMidenStore.getState().reset();
 });
 
+describe("in-progress tokens", () => {
+  const flags = [
+    ["beginLoadingAccounts", "endLoadingAccounts", "isLoadingAccounts"],
+    ["beginLoadingNotes", "endLoadingNotes", "isLoadingNotes"],
+    ["beginSync", "endSync", "sync"],
+    ["beginInitializing", "endInitializing", "isInitializing"],
+  ] as const;
+
+  it.each(flags)("%s only ends the latest flow", (begin, end, flag) => {
+    const store = useMidenStore.getState();
+    const old = store[begin]();
+    const latest = store[begin]();
+    store[end](old);
+    const value = () =>
+      flag === "sync"
+        ? useMidenStore.getState().sync.isSyncing
+        : useMidenStore.getState()[flag];
+    expect(value()).toBe(true);
+    store[end](latest);
+    expect(value()).toBe(false);
+  });
+
+  it.each(flags)(
+    "%s invalidates ownership on full reset",
+    (begin, end, flag) => {
+      const store = useMidenStore.getState();
+      const old = store[begin]();
+      store.reset();
+      const latest = store[begin]();
+      store[end](old);
+      const value = () =>
+        flag === "sync"
+          ? useMidenStore.getState().sync.isSyncing
+          : useMidenStore.getState()[flag];
+      expect(value()).toBe(true);
+      store[end](latest);
+      expect(value()).toBe(false);
+    }
+  );
+
+  it.each(flags)(
+    "%s preserves only initialization ownership on cache reset",
+    (begin, end, flag) => {
+      const store = useMidenStore.getState();
+      const old = store[begin]();
+      store.resetInMemoryState();
+      if (flag === "isInitializing") {
+        expect(useMidenStore.getState().isInitializing).toBe(true);
+        store[end](old);
+        expect(useMidenStore.getState().isInitializing).toBe(false);
+      } else {
+        const latest = store[begin]();
+        store[end](old);
+        expect(
+          flag === "sync"
+            ? useMidenStore.getState().sync.isSyncing
+            : useMidenStore.getState()[flag]
+        ).toBe(true);
+        store[end](latest);
+      }
+    }
+  );
+});
+
 describe("MidenStore", () => {
+  describe("cacheGeneration", () => {
+    it("advances on resetInMemoryState and reset", () => {
+      const start = useMidenStore.getState().cacheGeneration;
+      useMidenStore.getState().resetInMemoryState();
+      expect(useMidenStore.getState().cacheGeneration).toBe(start + 1);
+      useMidenStore.getState().reset();
+      expect(useMidenStore.getState().cacheGeneration).toBe(start + 2);
+    });
+  });
+
   describe("initial state", () => {
     it("should have correct initial state", () => {
       const state = useMidenStore.getState();
@@ -35,8 +109,8 @@ describe("MidenStore", () => {
 
       expect(state.accounts).toEqual([]);
       expect(state.accountDetails.size).toBe(0);
-      expect(state.notes).toEqual([]);
-      expect(state.consumableNotes).toEqual([]);
+      expect(state.notesByFilter.size).toBe(0);
+      expect(state.consumableNotesByAccount.size).toBe(0);
       expect(state.cacheGeneration).toEqual(expect.any(Number));
 
       expect(state.isLoadingAccounts).toBe(false);
@@ -244,9 +318,9 @@ describe("MidenStore", () => {
         createMockInputNoteRecord("0xnote2"),
       ];
 
-      useMidenStore.getState().setNotes(notes as any);
+      useMidenStore.getState().setNotes(notes as any, "all");
 
-      expect(useMidenStore.getState().notes).toEqual(notes);
+      expect(useMidenStore.getState().notesByFilter.get("all")!).toEqual(notes);
     });
   });
 
@@ -257,9 +331,11 @@ describe("MidenStore", () => {
         createMockConsumableNoteRecord("0xnote2"),
       ];
 
-      useMidenStore.getState().setConsumableNotes(notes as any);
+      useMidenStore.getState().setConsumableNotes(notes as any, "default");
 
-      expect(useMidenStore.getState().consumableNotes).toEqual(notes);
+      expect(
+        useMidenStore.getState().consumableNotesByAccount.get("default")!
+      ).toEqual(notes);
     });
   });
 
@@ -378,7 +454,7 @@ describe("MidenStore", () => {
       const note2 = createMockInputNoteRecord("0xnote2");
 
       const before = Date.now();
-      useMidenStore.getState().setNotes([note1, note2] as any);
+      useMidenStore.getState().setNotes([note1, note2] as any, "all");
       const after = Date.now();
 
       const firstSeen = useMidenStore.getState().noteFirstSeen;
@@ -391,11 +467,11 @@ describe("MidenStore", () => {
     it("should not overwrite existing firstSeen timestamps", () => {
       const note = createMockInputNoteRecord("0xnote1");
 
-      useMidenStore.getState().setNotes([note] as any);
+      useMidenStore.getState().setNotes([note] as any, "all");
       const first = useMidenStore.getState().noteFirstSeen.get("0xnote1")!;
 
       // Wait a tick and set again
-      useMidenStore.getState().setNotes([note] as any);
+      useMidenStore.getState().setNotes([note] as any, "all");
       const second = useMidenStore.getState().noteFirstSeen.get("0xnote1")!;
 
       expect(second).toBe(first); // Should be the same timestamp
@@ -409,11 +485,11 @@ describe("MidenStore", () => {
       const note1 = createMockInputNoteRecord("0xnote1");
       const note2 = createMockInputNoteRecord("0xnote2");
 
-      useMidenStore.getState().setNotes([note1, note2] as any);
+      useMidenStore.getState().setNotes([note1, note2] as any, "all");
       expect(useMidenStore.getState().noteFirstSeen.size).toBe(2);
 
       // Remove note2 from the list
-      useMidenStore.getState().setNotes([note1] as any);
+      useMidenStore.getState().setNotes([note1] as any, "all");
       const firstSeen = useMidenStore.getState().noteFirstSeen;
       expect(firstSeen.size).toBe(1);
       expect(firstSeen.has("0xnote1")).toBe(true);
@@ -424,11 +500,11 @@ describe("MidenStore", () => {
       const note1 = createMockInputNoteRecord("0xnote1");
       const note2 = createMockInputNoteRecord("0xnote2");
 
-      useMidenStore.getState().setNotes([note1, note2] as any);
+      useMidenStore.getState().setNotes([note1, note2] as any, "all");
       expect(useMidenStore.getState().noteFirstSeen.size).toBe(2);
 
       // Remove note2
-      useMidenStore.getState().setNotesIfChanged([note1] as any);
+      useMidenStore.getState().setNotesIfChanged([note1] as any, "all");
       const firstSeen = useMidenStore.getState().noteFirstSeen;
       expect(firstSeen.size).toBe(1);
       expect(firstSeen.has("0xnote1")).toBe(true);
@@ -437,61 +513,70 @@ describe("MidenStore", () => {
   });
 
   describe("setNotesIfChanged", () => {
+    it("creates an empty bucket for a missing key", () => {
+      useMidenStore.getState().setNotesIfChanged([], "consumed");
+      expect(useMidenStore.getState().notesByFilter.get("consumed")).toEqual(
+        []
+      );
+    });
+
     it("should update notes when IDs change", () => {
       const note1 = createMockInputNoteRecord("0xnote1");
       const note2 = createMockInputNoteRecord("0xnote2");
 
-      useMidenStore.getState().setNotes([note1] as any);
-      useMidenStore.getState().setNotesIfChanged([note1, note2] as any);
+      useMidenStore.getState().setNotes([note1] as any, "all");
+      useMidenStore.getState().setNotesIfChanged([note1, note2] as any, "all");
 
-      expect(useMidenStore.getState().notes.length).toBe(2);
+      expect(useMidenStore.getState().notesByFilter.get("all")!.length).toBe(2);
     });
 
     it("should skip update when note IDs are the same", () => {
       const note1 = createMockInputNoteRecord("0xnote1");
       const note2 = createMockInputNoteRecord("0xnote2");
 
-      useMidenStore.getState().setNotes([note1, note2] as any);
-      const firstRef = useMidenStore.getState().notes;
+      useMidenStore.getState().setNotes([note1, note2] as any, "all");
+      const firstRef = useMidenStore.getState().notesByFilter.get("all")!;
 
       // Same IDs, possibly different objects
       const note1b = createMockInputNoteRecord("0xnote1");
       const note2b = createMockInputNoteRecord("0xnote2");
-      useMidenStore.getState().setNotesIfChanged([note1b, note2b] as any);
+      useMidenStore
+        .getState()
+        .setNotesIfChanged([note1b, note2b] as any, "all");
 
       // Should be the same reference (no update triggered)
-      expect(useMidenStore.getState().notes).toBe(firstRef);
+      expect(useMidenStore.getState().notesByFilter.get("all")!).toBe(firstRef);
     });
 
     it("should track firstSeen for new notes", () => {
       const note1 = createMockInputNoteRecord("0xnote1");
-      useMidenStore.getState().setNotes([note1] as any);
+      useMidenStore.getState().setNotes([note1] as any, "all");
 
       const note2 = createMockInputNoteRecord("0xnote2");
-      useMidenStore.getState().setNotesIfChanged([note1, note2] as any);
+      useMidenStore.getState().setNotesIfChanged([note1, note2] as any, "all");
 
       expect(useMidenStore.getState().noteFirstSeen.has("0xnote2")).toBe(true);
     });
 
     it("should update notes when a note's state changes but its ID does not", () => {
       const pending = createMockInputNoteRecord("0xnote1", false);
-      useMidenStore.getState().setNotes([pending] as any);
+      useMidenStore.getState().setNotes([pending] as any, "all");
 
       const consumed = createMockInputNoteRecord("0xnote1", true);
-      useMidenStore.getState().setNotesIfChanged([consumed] as any);
+      useMidenStore.getState().setNotesIfChanged([consumed] as any, "all");
 
-      const stored = useMidenStore.getState().notes;
+      const stored = useMidenStore.getState().notesByFilter.get("all")!;
       expect(stored).toHaveLength(1);
       expect(stored[0].isConsumed()).toBe(true);
     });
 
     it("should keep firstSeen when only a note's state changes", () => {
       const pending = createMockInputNoteRecord("0xnote1", false);
-      useMidenStore.getState().setNotes([pending] as any);
+      useMidenStore.getState().setNotes([pending] as any, "all");
       const seenAt = useMidenStore.getState().noteFirstSeen.get("0xnote1");
 
       const consumed = createMockInputNoteRecord("0xnote1", true);
-      useMidenStore.getState().setNotesIfChanged([consumed] as any);
+      useMidenStore.getState().setNotesIfChanged([consumed] as any, "all");
 
       expect(useMidenStore.getState().noteFirstSeen.get("0xnote1")).toBe(
         seenAt
@@ -505,18 +590,22 @@ describe("MidenStore", () => {
           throw new Error("state explosion");
         },
       });
-      useMidenStore.getState().setNotes([withBrokenState("0xnote1")] as any);
-      const firstRef = useMidenStore.getState().notes;
+      useMidenStore
+        .getState()
+        .setNotes([withBrokenState("0xnote1")] as any, "all");
+      const firstRef = useMidenStore.getState().notesByFilter.get("all")!;
 
       useMidenStore
         .getState()
-        .setNotesIfChanged([withBrokenState("0xnote1")] as any);
-      expect(useMidenStore.getState().notes).toBe(firstRef);
+        .setNotesIfChanged([withBrokenState("0xnote1")] as any, "all");
+      expect(useMidenStore.getState().notesByFilter.get("all")!).toBe(firstRef);
 
       useMidenStore
         .getState()
-        .setNotesIfChanged([withBrokenState("0xnote2")] as any);
-      expect(useMidenStore.getState().notes).not.toBe(firstRef);
+        .setNotesIfChanged([withBrokenState("0xnote2")] as any, "all");
+      expect(useMidenStore.getState().notesByFilter.get("all")!).not.toBe(
+        firstRef
+      );
     });
 
     it("ignores notes whose id() throws when comparing", () => {
@@ -526,40 +615,59 @@ describe("MidenStore", () => {
           throw new Error("note id explosion");
         },
       };
-      useMidenStore.getState().setNotes([note1] as any);
-      const firstRef = useMidenStore.getState().notes;
+      useMidenStore.getState().setNotes([note1] as any, "all");
+      const firstRef = useMidenStore.getState().notesByFilter.get("all")!;
 
       // The id-less record adds no key, so the key sets still match.
-      useMidenStore.getState().setNotesIfChanged([note1, brokenNote] as any);
-      expect(useMidenStore.getState().notes).toBe(firstRef);
+      useMidenStore
+        .getState()
+        .setNotesIfChanged([note1, brokenNote] as any, "all");
+      expect(useMidenStore.getState().notesByFilter.get("all")!).toBe(firstRef);
     });
   });
 
   describe("setConsumableNotesIfChanged", () => {
+    it("creates an empty bucket for a missing key", () => {
+      useMidenStore.getState().setConsumableNotesIfChanged([], "0xacct");
+      expect(
+        useMidenStore.getState().consumableNotesByAccount.get("0xacct")
+      ).toEqual([]);
+    });
+
     it("should update consumable notes when IDs change", () => {
       const cn1 = createMockConsumableNoteRecord("0xcn1");
       const cn2 = createMockConsumableNoteRecord("0xcn2");
 
-      useMidenStore.getState().setConsumableNotes([cn1] as any);
-      useMidenStore.getState().setConsumableNotesIfChanged([cn1, cn2] as any);
+      useMidenStore.getState().setConsumableNotes([cn1] as any, "default");
+      useMidenStore
+        .getState()
+        .setConsumableNotesIfChanged([cn1, cn2] as any, "default");
 
-      expect(useMidenStore.getState().consumableNotes.length).toBe(2);
+      expect(
+        useMidenStore.getState().consumableNotesByAccount.get("default")!.length
+      ).toBe(2);
     });
 
     it("should skip update when consumable note IDs are the same", () => {
       const cn1 = createMockConsumableNoteRecord("0xcn1");
-      useMidenStore.getState().setConsumableNotes([cn1] as any);
-      const firstRef = useMidenStore.getState().consumableNotes;
+      useMidenStore.getState().setConsumableNotes([cn1] as any, "default");
+      const firstRef = useMidenStore
+        .getState()
+        .consumableNotesByAccount.get("default")!;
 
       const cn1b = createMockConsumableNoteRecord("0xcn1");
-      useMidenStore.getState().setConsumableNotesIfChanged([cn1b] as any);
+      useMidenStore
+        .getState()
+        .setConsumableNotesIfChanged([cn1b] as any, "default");
 
-      expect(useMidenStore.getState().consumableNotes).toBe(firstRef);
+      expect(
+        useMidenStore.getState().consumableNotesByAccount.get("default")!
+      ).toBe(firstRef);
     });
 
     it("should update consumable notes when a note's state changes but its ID does not", () => {
       const cn1 = createMockConsumableNoteRecord("0xcn1");
-      useMidenStore.getState().setConsumableNotes([cn1] as any);
+      useMidenStore.getState().setConsumableNotes([cn1] as any, "default");
 
       const cn1Consumed = {
         ...createMockConsumableNoteRecord("0xcn1"),
@@ -567,9 +675,11 @@ describe("MidenStore", () => {
       };
       useMidenStore
         .getState()
-        .setConsumableNotesIfChanged([cn1Consumed] as any);
+        .setConsumableNotesIfChanged([cn1Consumed] as any, "default");
 
-      const stored = useMidenStore.getState().consumableNotes;
+      const stored = useMidenStore
+        .getState()
+        .consumableNotesByAccount.get("default")!;
       expect(stored).toHaveLength(1);
       expect(stored[0].inputNoteRecord().isConsumed()).toBe(true);
     });
@@ -582,7 +692,7 @@ describe("MidenStore", () => {
         },
       };
       // Combine OK + broken — OK is added to noteFirstSeen, broken is skipped.
-      useMidenStore.getState().setNotes([okNote, brokenNote] as any);
+      useMidenStore.getState().setNotes([okNote, brokenNote] as any, "all");
 
       // The OK note has its first-seen timestamp recorded. The broken note
       // didn't blow up the whole call (catch swallowed).
@@ -604,12 +714,18 @@ describe("MidenStore", () => {
           throw new Error("broken record 2");
         },
       };
-      // Seed prev with a broken record so safeId catch runs over `state.consumableNotes`.
-      useMidenStore.getState().setConsumableNotes([broken1] as any);
-      useMidenStore.getState().setConsumableNotesIfChanged([broken2] as any);
-      // Both safeId calls returned null → both Sets stay empty → "same" early-return.
-      // The reference may or may not change depending on whether the size compare matched.
-      expect(useMidenStore.getState().consumableNotes).toBeDefined();
+      // Seed the bucket with a broken record so safeId's catch runs over
+      // `consumableNotesByAccount.get("default")`.
+      const seeded = [broken1];
+      useMidenStore.getState().setConsumableNotes(seeded as any, "default");
+      useMidenStore
+        .getState()
+        .setConsumableNotesIfChanged([broken2] as any, "default");
+      // Both safeId calls return null, so both id sets are empty and the
+      // existing bucket takes the early return: the seeded array stays.
+      expect(
+        useMidenStore.getState().consumableNotesByAccount.get("default")
+      ).toBe(seeded);
     });
   });
 

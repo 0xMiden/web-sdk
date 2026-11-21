@@ -20,6 +20,41 @@ test.describe("account allowlist", () => {
     expect(result.allowed).toBe(true);
   });
 
+  test("isInvitationCodeValid answers true when the node enforces no allowlist", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client }) => {
+      return { valid: await client.isInvitationCodeValid("invitation-code") };
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  // Sent to the CI test node rather than the mock chain, so a node without the
+  // `IsInvitationCodeValid` endpoint (anything before 0.17.3) fails it.
+  test("isInvitationCodeValid reaches the test node through the client and RpcClient", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk, helpers }) => {
+      const integration = await helpers.createIntegrationClient();
+      if (!integration) return { skip: true };
+      const rpcClient = new sdk.RpcClient(
+        new sdk.Endpoint(helpers.getRpcUrl())
+      );
+      return {
+        skip: false,
+        viaClient:
+          await integration.client.isInvitationCodeValid("invitation-code"),
+        viaRpc: await rpcClient.isInvitationCodeValid("invitation-code"),
+      };
+    });
+    if (result.skip) {
+      test.skip(true, "requires running node");
+      return;
+    }
+    expect(result.viaClient).toBe(true);
+    expect(result.viaRpc).toBe(true);
+  });
+
   test("registerAccount keeps the code for an account the node already allows", async ({
     run,
   }) => {

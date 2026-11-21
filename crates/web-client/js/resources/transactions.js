@@ -1,5 +1,6 @@
 import {
   isConsumableNow,
+  isStandardPaymentNote,
   resolveAccountRef,
   resolveNoteType,
   resolveTransactionIdHex,
@@ -348,12 +349,15 @@ export class TransactionsResource {
     // Save hex so we can reconstruct for submitNewTransaction.
     const accountId = resolveAccountRef(opts.account, wasm);
     const accountIdHex = accountId.toString();
-    // Block-locked notes cannot be consumed yet and would fail the whole
-    // transaction, so they are not "available" here either (notes.listAvailable
-    // applies the same rule).
+    // The set notes.listAvailable returns. A block-locked note would fail the
+    // whole transaction. Any script but P2ID or P2IDE can spend from the
+    // account: consuming another trader's public PSWAP order fills it from this
+    // vault, so such a note is consumed only when the caller names it.
     const consumable = (
       (await this.#inner.getConsumableNotes(accountId)) ?? []
-    ).filter((c) => isConsumableNow(c, accountIdHex));
+    ).filter(
+      (c) => isConsumableNow(c, accountIdHex) && isStandardPaymentNote(c, wasm)
+    );
 
     if (consumable.length === 0) {
       return { txId: null, consumed: 0, remaining: 0 };
@@ -499,11 +503,13 @@ export class TransactionsResource {
    * different summary and the comparison fails.
    *
    * The exception is a multisig request built by
-   * `client.feeAwareTransactionRequestBuilder`: its summary binds the block its
-   * auth args name, which the request declares, so previewing it without an
-   * anchor reproduces the proposal's summary at the current tip, once this
-   * client has synced to at least that block (the largest of
-   * `request.blockNumbers()`).
+   * `client.feeAwareTransactionRequestBuilder` or given its auth args by
+   * `client.withFeeAwareAuth`: its summary binds the block its auth args name,
+   * which miden-client tracks when it executes the request, so previewing it
+   * without an anchor reproduces the proposal's summary at the current tip,
+   * once this client has synced to at least that block. For a builder's
+   * request that is the largest of `request.blockNumbers()`; a
+   * `withFeeAwareAuth` copy does not declare it, so sync before previewing it.
    */
   async preview(opts) {
     this.#client.assertNotTerminated();
@@ -613,10 +619,13 @@ export class TransactionsResource {
    * page's main thread stays responsive; without a worker (`useWorker: false`,
    * or no `Worker` in the environment), and on a mock client, it proves on the
    * calling thread and blocks it until it settles.
+   * With an external keystore and a worker, `sign` waits without a limit unless
+   * `callbackTimeoutMs` sets one, so a stalled signer holds the batch and later
+   * worker calls. See
+   * https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
    *
    * @param {BatchOptions} opts - Batch options: the operations array, and
-   *   `timeout` / `waitForConfirmation` (the latter does not currently work,
-   *   see `submitBatch`).
+   *   `waitForConfirmation` / `timeout` (see `submitBatch`).
    * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
    *   submission, not the block the batch commits in.
    */
@@ -688,27 +697,30 @@ export class TransactionsResource {
    * the request itself, or the push fails with `FeeConversionInfoRequired`.
    * Because a batch proves each transaction as it is pushed, such a rejection
    * has already cost the proofs ahead of it — build multisig requests from
-   * `client.feeAwareTransactionRequestBuilder`.
+   * `client.feeAwareTransactionRequestBuilder`, or pass a finished one through
+   * `client.withFeeAwareAuth` before batching it.
    *
    * @param {Array<{ account: AccountRef, request: TransactionRequest }>} items - Per-tx (account, request) pairs.
-   * @param {object} [options] - Optional settings (timeout, and
-   *   `waitForConfirmation`, which does not currently work, see #314).
+   * @param {object} [options] - Optional settings. `waitForConfirmation`
+   *   resolves the call only once every transaction of the batch is committed,
+   *   and rejects if the node discards one, if no stored transaction can be
+   *   attributed to the batch (`Batch confirmation found no transactions to
+   *   wait for`), or when `timeout` (default 60000 ms, 0 for none) runs out
+   *   first. A sync or query already in flight still finishes first.
    *   Every transaction is proven inside the batch primitive by the client's
    *   built-in local prover, so `proverUrl` does not apply; the V1 batch API has
    *   no per-call prover override.
    *   In the browser the batch runs in the client's Web Worker where it has
    *   one, so the page's main thread stays responsive; see `batch()` for when
    *   it runs in-thread instead.
-   *   With an external keystore and a worker, each of the batch's signature
-   *   callbacks has the worker's 30s ceiling, and since signing happens at
-   *   push time and this wrapper treats a failed push as fatal, one timeout
-   *   fails the whole batch. A rejection thrown as a non-nullish value with no
-   *   truthy `.message` (a bare string, `{ code }`)
-   *   loses its reason and surfaces as the generic
-   *   `sign callback must return a Uint8Array`. Both are shared with every
-   *   worker-forwarded method; tracked in #316. Relatedly, `lastAuthError()`
-   *   reads the main-thread instance, so it does not report a forwarded
-   *   batch's auth error.
+   *   With an external keystore and a worker, signing happens at push time
+   *   and this wrapper treats a failed push as fatal, so one failed or timed
+   *   out signature callback fails the whole batch. `sign` has no time limit
+   *   unless `callbackTimeoutMs` sets one, so a stalled signer holds the batch
+   *   and later worker calls. See
+   *   https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
+   *   Relatedly, `lastAuthError()` reads the main-thread instance, so it does
+   *   not report a forwarded batch's auth error.
    * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
    *   submission, not the block the batch commits in.
    */
@@ -734,48 +746,111 @@ export class TransactionsResource {
       );
     });
 
-    const blockNumber = await this.#inner.submitNewTransactionBatch(wasmItems);
-
+    // The batch primitive returns no transaction ids. While waiting, one chain
+    // slot reads every stored row, submits, and reads again; the new rows for
+    // these items' accounts are the ones to wait for, in any status. So is a
+    // discarded row that the submission reopened: a retried batch can have the
+    // same ids as the discarded one it replaces.
     if (options?.waitForConfirmation) {
-      await this.#waitForBlock(blockNumber, options);
+      let blockNumber;
+      let before;
+      let after;
+      if (typeof this.#inner._submitNewTransactionBatchForWait === "function") {
+        ({ blockNumber, before, after } =
+          await this.#inner._submitNewTransactionBatchForWait(wasmItems));
+      } else {
+        // Node has no chain slot to hold: read, submit and read directly. A
+        // sync between the calls could change a row, which the browser slot
+        // rules out. A reopened id that is discarded again in that window is
+        // left out, and the empty-list throw covers it when it was the only one.
+        before = await this.#inner.getTransactions(
+          wasm.TransactionFilter.all()
+        );
+        blockNumber = await this.#inner.submitNewTransactionBatch(wasmItems);
+        after = await this.#inner.getTransactions(wasm.TransactionFilter.all());
+      }
+      const accounts = new Set(
+        items.map((item) => resolveAccountRef(item.account, wasm).toString())
+      );
+      const beforeById = new Map(
+        (before ?? []).map((tx) => [tx.id().toHex(), tx])
+      );
+      const isDiscarded = (tx) => tx.transactionStatus?.()?.isDiscarded();
+      const batchTxIds = (after ?? [])
+        .filter((tx) => {
+          if (!accounts.has(tx.accountId().toString())) return false;
+          const prior = beforeById.get(tx.id().toHex());
+          return !prior || (isDiscarded(prior) && !isDiscarded(tx));
+        })
+        .map((tx) => tx.id().toHex());
+      await this.#waitForBatch(batchTxIds, options);
+      return { blockNumber };
     }
 
+    const blockNumber = await this.#inner.submitNewTransactionBatch(wasmItems);
     return { blockNumber };
   }
 
   /**
-   * Polls until the local sync height reaches `blockNumber` or the timeout
-   * expires. The Rust V1 batch API returns only a block number — there are no
-   * per-tx ids to poll on, so we wait on the chain height instead.
+   * Polls until every transaction in `txIds` is committed, a transaction is
+   * discarded, or the timeout expires. The batch counterpart of `waitFor`.
    *
-   * This does not currently work: `syncStateWithTimeout` below does not exist,
-   * so the call throws, the bare catch swallows it, and nothing here advances
-   * the height — the loop times out unless the client is already at or past
-   * `blockNumber`. Even once that is fixed the guarantee is weaker than it
-   * looks, since `blockNumber` is the tip as of submission rather than the
-   * batch's commit block. See https://github.com/0xMiden/web-sdk/issues/314.
+   * `txIds` are the batch accounts' new records in any status, plus a
+   * discarded record this submission reopened. A discarded id still rejects,
+   * and an empty list throws: a non-empty batch always records a row.
+   * The batch primitive returns no ids, so a transaction that
+   * another client instance on the same store writes for one of these accounts
+   * during the submission cannot be told apart and is waited for as well.
    *
-   * @param {number} blockNumber - The block height to wait for.
-   * @param {object} [opts] - Polling options (timeout, interval).
+   * The block number the submission returned is not used: it is the node's
+   * chain tip as of submission, which the client has usually reached already.
+   *
+   * @param {string[]} txIds - Transaction ids to wait for, as hex.
+   * @param {object} [opts] - Polling options (timeout, interval). A finite
+   *   `timeout` ends the wait between polls at the deadline. A sync or query
+   *   already in flight still finishes first.
    */
-  async #waitForBlock(blockNumber, opts) {
+  async #waitForBatch(txIds, opts) {
+    if (txIds.length === 0) {
+      throw new Error("Batch confirmation found no transactions to wait for");
+    }
+
     const timeout = opts?.timeout ?? 60_000;
     const interval = opts?.interval ?? 5_000;
     const start = Date.now();
+    const wasm = await this.#getWasm();
 
     while (true) {
       if (timeout > 0 && Date.now() - start >= timeout) {
         throw new Error(
-          `Batch confirmation timed out after ${timeout}ms (waiting for block ${blockNumber})`
+          `Batch confirmation timed out after ${timeout}ms ` +
+            `(waiting for ${txIds.length} transaction(s))`
         );
       }
       try {
-        await this.#inner.syncStateWithTimeout(0);
+        // Chain-only sync, as in waitFor: confirmation needs only on-chain
+        // state, and polling survives an unavailable note transport endpoint.
+        await this.#inner.syncChain();
       } catch {
-        // sync may fail transiently; continue polling
+        // Sync may fail transiently; continue polling
       }
-      const height = await this.#inner.getSyncHeight();
-      if (height >= blockNumber) return;
+
+      // Recreate filter each iteration: WASM consumes it by value
+      const filter = wasm.TransactionFilter.ids(
+        txIds.map((hex) => wasm.TransactionId.fromHex(hex))
+      );
+      const txs = (await this.#inner.getTransactions(filter)) ?? [];
+
+      let committed = 0;
+      for (const tx of txs) {
+        const status = tx.transactionStatus?.();
+        if (status?.isDiscarded()) {
+          throw new Error(`Batch transaction rejected: ${tx.id().toHex()}`);
+        }
+        if (status?.isCommitted()) committed += 1;
+      }
+      if (committed === txIds.length) return;
+
       await waitBeforeNextPoll(start, timeout, interval);
     }
   }

@@ -5,18 +5,28 @@ sidebar_position: 30
 
 # Consumable Notes
 
-A note your account owns is not always a note you can spend. A P2IDE note can
-carry a timelock, so the chain rejects it until a given block. The client's note
-screener reports that as a per-account consumption status, and the SDK splits
-the two readings:
+A note your account can consume is not always a note it should consume, or can
+consume yet. The client's note screener lists every note a trial consume
+succeeds for, with a per-account consumption status:
 
-- `notes.listAvailable({ account })` returns only what the account can consume
-  at the client's last synced block.
-- `notes.listConsumable({ account? })` returns those plus the block-locked ones,
-  with their consumability metadata.
+- A P2IDE note can carry a timelock, so the chain rejects it until a given
+  block. The screener reports it as consumable after that block.
+- A note running any script other than P2ID or P2IDE can spend from the
+  consuming account. Anyone holding the asset a public PSWAP order requests
+  can consume it, so the screener lists another trader's order for your
+  account, and consuming it fills the order from your vault at their price.
+
+The SDK splits the readings:
+
+- `notes.listAvailable({ account })` returns only the payments (P2ID and P2IDE
+  notes) the account can consume at the client's last synced block.
+- `notes.listConsumable({ account? })` returns every note the screener lists,
+  including block-locked ones and other scripts, with their consumability
+  metadata.
 - `transactions.consumeAll({ account })` consumes the first set. A block-locked
-  note would fail the whole transaction, so it is skipped, and it counts towards
-  neither `consumed` nor `remaining`.
+  note would fail the whole transaction, and another script is consumed only
+  when you name it, so both are skipped and count towards neither `consumed`
+  nor `remaining`.
 
 Both listings reflect the last sync, so sync first for a current answer.
 
@@ -28,9 +38,13 @@ await client.sync();
 
 const ready = await client.notes.listAvailable({ account: wallet });
 const result = await client.transactions.consumeAll({ account: wallet });
-// `remaining === 0` means nothing is consumable now, not that the account has
-// no unconsumed notes.
+// `remaining === 0` means no payment is consumable now, not that the account
+// has no unconsumed notes.
 ```
+
+To consume a note running another script, such as a PSWAP order you mean to
+fill, pass it by name to `transactions.consume({ account, notes })` or use
+`transactions.pswapConsume`.
 
 ## Reading why a note is not ready
 
@@ -63,13 +77,18 @@ Code that reads the low-level client directly can apply the SDK's own rule
 instead of restating it:
 
 ```typescript
-import { isConsumableNow } from "@miden-sdk/miden-sdk";
+import { isConsumableNow, isStandardPayment } from "@miden-sdk/miden-sdk";
 
-const ready = records.filter((record) => isConsumableNow(record, walletId));
+const ready = records.filter(
+  (record) => isConsumableNow(record, walletId) && isStandardPayment(record)
+);
 ```
+
+`isStandardPayment` reads the note's script, so it needs the SDK's WASM: with a
+lazy entry, await `MidenClient.ready()` first.
 
 `@miden-sdk/react` already does this: `useNotes().consumableNotes`,
 `useWaitForNotes()` and `useSessionAccount`'s funding poll all report and act on
-notes that are consumable now.
+payments that are consumable now.
 
 See also [Transactions](./transactions.md) for `consumeAll`'s fee handling.

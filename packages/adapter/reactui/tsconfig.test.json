@@ -1,0 +1,10 @@
+{
+  // tsconfig.json is the BUILD config: it includes only src, so __tests__ and
+  // vitest.config.ts never reach dist. vitest transpiles through esbuild
+  // without checking types, so this config type-checks them and emits nothing.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src", "__tests__", "vitest.config.ts"]
+}

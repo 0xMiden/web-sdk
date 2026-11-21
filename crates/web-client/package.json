@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/miden-sdk",
-  "version": "0.18.0-rc.0",
+  "version": "0.18.0",
   "description": "Miden WASM SDK for browser and Node.js. Run `npm create @miden-sdk@latest` to point your AI coding agent at version-matched guidance.",
   "license": "MIT",
   "repository": {
@@ -57,6 +57,7 @@
     "js/node-index.js",
     "js/node",
     "js/client.js",
+    "js/callbackBridge.js",
     "js/standalone.js",
     "js/storageView.js",
     "js/utils.js",
@@ -110,7 +111,8 @@
     "typedoc": "^0.28.1",
     "typedoc-plugin-markdown": "^4.8.1",
     "typescript": "^5.5.4",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "yaml": "2.8.3"
   },
   "dependencies": {
     "dexie": "^4.0.1",

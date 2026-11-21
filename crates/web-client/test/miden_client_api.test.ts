@@ -190,7 +190,22 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         } catch (error) {
           emptyCodeMessage = String(error.message ?? error);
         }
-        return { allowed, code, message, emptyCodeMessage };
+        const codeValid =
+          await client.accounts.isInvitationCodeValid("invitation-code");
+        let emptyCheckMessage = null;
+        try {
+          await client.accounts.isInvitationCodeValid("");
+        } catch (error) {
+          emptyCheckMessage = String(error.message ?? error);
+        }
+        return {
+          allowed,
+          code,
+          message,
+          emptyCodeMessage,
+          codeValid,
+          emptyCheckMessage,
+        };
       });
       // The mock node enforces no allowlist, so every account is allowed and
       // the client keeps the invitation code rather than spending it.
@@ -198,6 +213,9 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       expect(result.code).toBe("ACCOUNT_ALREADY_ALLOWED");
       expect(result.message).toContain("already allowed");
       expect(result.emptyCodeMessage).toContain("invitationCode");
+      // A node without an allowlist accepts every code.
+      expect(result.codeValid).toBe(true);
+      expect(result.emptyCheckMessage).toContain("invitationCode");
     }
   );
 
@@ -943,6 +961,88 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     expect(result.allAccountsCount).toBeGreaterThanOrEqual(1);
   });
 
+  mockTest(
+    "listAvailable and consumeAll leave out a public PSWAP order",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const maker = await client.accounts.create();
+        const taker = await client.accounts.create();
+        const faucet = (symbol) =>
+          client.accounts.create({
+            type: window.FaucetType.FungibleFaucet,
+            symbol,
+            decimals: 8,
+            maxSupply: 10_000_000n,
+          });
+        const offered = await faucet("SELL");
+        const requested = await faucet("BUY");
+
+        await client.transactions.mint({
+          account: offered,
+          to: maker,
+          amount: 1000n,
+        });
+        await client.transactions.mint({
+          account: requested,
+          to: taker,
+          amount: 1000n,
+        });
+        client.proveBlock();
+        await client.sync();
+        // Both mints are P2ID notes, so consumeAll takes them.
+        const funded = [
+          await client.transactions.consumeAll({ account: maker }),
+          await client.transactions.consumeAll({ account: taker }),
+        ].map((r) => r.consumed);
+        client.proveBlock();
+        await client.sync();
+
+        await client.transactions.pswapCreate({
+          account: maker,
+          offer: { token: offered, amount: 100n },
+          request: { token: requested, amount: 50n },
+          type: "public",
+        });
+        client.proveBlock();
+        await client.sync();
+
+        // The taker holds the requested asset, so a trial fill succeeds and the
+        // screener lists the maker's order for it.
+        const listed = await client.notes.listConsumable({ account: taker });
+        const available = await client.notes.listAvailable({ account: taker });
+        const takerResult = await client.transactions.consumeAll({
+          account: taker,
+        });
+        const makerAvailable = await client.notes.listAvailable({
+          account: maker,
+        });
+        const takerAccount = await client.accounts.get(taker);
+
+        return {
+          funded,
+          listedCount: listed.length,
+          availableCount: available.length,
+          takerConsumed: takerResult.consumed,
+          takerTxId: takerResult.txId,
+          makerAvailableCount: makerAvailable.length,
+          takerRequestedBalance: takerAccount
+            .vault()
+            .getBalance(requested.id())
+            .toString(),
+        };
+      });
+
+      expect(result.funded).toEqual([1, 1]);
+      expect(result.listedCount).toBe(1);
+      expect(result.availableCount).toBe(0);
+      expect(result.takerConsumed).toBe(0);
+      expect(result.takerTxId).toBeNull();
+      expect(result.makerAvailableCount).toBe(0);
+      expect(result.takerRequestedBalance).toBe("1000");
+    }
+  );
+
   mockTest("terminate prevents resource operations", async ({ page }) => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.createMock();
@@ -1165,6 +1265,106 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       expect(result.threw).toBe(true);
       expect(result.code).toBe("TRANSACTION_ALREADY_AUTHORIZED");
       expect(result.message).toContain("already fully authorized");
+    }
+  );
+
+  mockTest(
+    "transactions.preview summary names the storage slots and map entries it changes",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+
+        const approverKeys = [
+          window.AuthSecretKey.rpoFalconWithRNG(),
+          window.AuthSecretKey.rpoFalconWithRNG(),
+          window.AuthSecretKey.rpoFalconWithRNG(),
+        ];
+        const seed = new Uint8Array(32);
+        crypto.getRandomValues(seed);
+        const built = new window.AccountBuilder(seed)
+          .storageMode(window.AccountStorageMode.private())
+          .withAuthComponent(
+            window.createAuthFalcon512RpoMultisig(
+              new window.AuthFalcon512RpoMultisigConfig(
+                approverKeys.map((key) => key.publicKey().toCommitment()),
+                2
+              )
+            )
+          )
+          .withBasicWalletComponent()
+          .build();
+        const multisigId = built.account.id().toString();
+        await client.accounts.insert({ account: built.account });
+
+        // A 2-of-3 multisig cannot authorize alone, so the preview returns
+        // the summary awaiting signatures. The account is new, so its patch
+        // creates every slot with its initial content.
+        const request = (
+          await client.feeAwareTransactionRequestBuilder(multisigId)
+        ).build();
+        const summary = await client.transactions.preview({
+          operation: "custom",
+          account: multisigId,
+          request,
+        });
+        const storage = summary.accountDelta().storage();
+        const limbs = (word) => Array.from(word.toU64s(), String);
+
+        return {
+          approverCommitments: approverKeys.map((key) =>
+            key.publicKey().toCommitment().toHex()
+          ),
+          values: storage.values().map(limbs),
+          valueSlots: storage.valueSlots().map((slot) => ({
+            slotName: slot.slotName,
+            operation: slot.operation,
+            value: slot.value ? limbs(slot.value) : null,
+          })),
+          mapSlots: storage.mapSlots().map((slot) => ({
+            slotName: slot.slotName,
+            operation: slot.operation,
+            entries: slot.entries().map((entry) => ({
+              key: limbs(entry.key),
+              value: entry.value.toHex(),
+            })),
+          })),
+          create: window.StoragePatchOperation.Create,
+        };
+      });
+
+      const threshold = result.valueSlots.find(
+        (slot) =>
+          slot.slotName === "miden::standards::auth::multisig::threshold_config"
+      );
+      expect(result.create).toBe(0);
+      // [threshold, num_approvers, 0, 0]
+      expect(threshold).toEqual({
+        slotName: "miden::standards::auth::multisig::threshold_config",
+        operation: result.create,
+        value: ["2", "3", "0", "0"],
+      });
+
+      const approvers = result.mapSlots.find(
+        (slot) =>
+          slot.slotName ===
+          "miden::standards::auth::multisig::approver_public_keys"
+      );
+      expect(approvers?.operation).toBe(result.create);
+      expect(approvers?.entries).toEqual(
+        result.approverCommitments.map((commitment, index) => ({
+          key: [String(index), "0", "0", "0"],
+          value: commitment,
+        }))
+      );
+
+      // No slot is removed, so values() is valueSlots() without the names.
+      expect(result.values).toEqual(
+        result.valueSlots.map((slot) => slot.value)
+      );
+      const names = [...result.valueSlots, ...result.mapSlots].map(
+        (slot) => slot.slotName
+      );
+      expect(new Set(names).size).toBe(names.length);
     }
   );
 
