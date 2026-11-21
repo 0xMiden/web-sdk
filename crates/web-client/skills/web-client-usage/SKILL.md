@@ -1045,8 +1045,9 @@ this client, and no note may be consumed twice in one batch.
 
 The result is `{ blockNumber }` only - the Rust V1 batch API returns no
 per-transaction ids, and the number is the node's chain tip as of submission,
-not the block the batch commits in. `waitForConfirmation` does not currently
-work on a batch (#314): sync and check `transactions.list()` instead. A
+not the block the batch commits in. `waitForConfirmation: true` resolves the
+call once every transaction of the batch is committed, and rejects if the node
+discards one or `timeout` (default 60 s) runs out. A
 `custom` operation carries a request you built, so the fee rules above apply to
 it: use `client.feeAwareTransactionRequestBuilder(account)`, or
 `client.withFeeAwareAuth(request, account)` for a finished request you did not
