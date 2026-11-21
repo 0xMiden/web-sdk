@@ -1,6 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NotesResource } from "../../resources/notes.js";
 
+const P2ID_ROOT = "0xp2id";
+const P2IDE_ROOT = "0xp2ide";
+const PSWAP_ROOT = "0xpswap";
+
+const scriptWithRoot = (root) => ({ root: () => ({ toHex: () => root }) });
+
+// An InputNoteRecord whose recipient runs the script with `root`.
+const noteRecord = (name, root = P2ID_ROOT) => ({
+  name,
+  details: () => ({
+    recipient: () => ({ script: () => scriptWithRoot(root) }),
+  }),
+});
+
+const names = (records) => records.map((record) => record.name);
+
 function makeWasm(overrides = {}) {
   const NoteFilterTypes = {
     All: "All",
@@ -23,6 +39,10 @@ function makeWasm(overrides = {}) {
       fromHex: vi.fn((hex) => ({ hex })),
     },
     NoteExportFormat: { Full: "Full" },
+    NoteScript: {
+      p2id: vi.fn(() => scriptWithRoot(P2ID_ROOT)),
+      p2ide: vi.fn(() => scriptWithRoot(P2IDE_ROOT)),
+    },
     AccountId: {
       fromHex: vi.fn((hex) => ({ hex, toString: () => hex })),
       fromBech32: vi.fn((b) => ({ bech32: b, toString: () => b })),
@@ -207,8 +227,8 @@ describe("NotesResource", () => {
     }),
   });
 
-  const consumableNote = (record, afterBlock = null) => ({
-    inputNoteRecord: vi.fn().mockReturnValue(record),
+  const consumableNote = (record, afterBlock = null, root = P2ID_ROOT) => ({
+    inputNoteRecord: vi.fn().mockReturnValue(noteRecord(record, root)),
     noteConsumability: vi.fn().mockReturnValue([
       {
         accountId: () => ({ toString: () => ACC }),
@@ -223,7 +243,7 @@ describe("NotesResource", () => {
   // Never-consumable and unconsumable-conditions statuses report no unlock
   // block either, so only the status reader tells them from consumable-now.
   const neverConsumableNote = (record) => ({
-    inputNoteRecord: vi.fn().mockReturnValue(record),
+    inputNoteRecord: vi.fn().mockReturnValue(noteRecord(record)),
     noteConsumability: vi.fn().mockReturnValue([
       {
         accountId: () => ({ toString: () => ACC }),
@@ -243,7 +263,7 @@ describe("NotesResource", () => {
         account: ACC,
       });
       expect(client.assertNotTerminated).toHaveBeenCalledOnce();
-      expect(result).toEqual(["record1"]);
+      expect(names(result)).toEqual(["record1"]);
     });
 
     it("excludes block-locked (consumableAfter) notes", async () => {
@@ -253,7 +273,7 @@ describe("NotesResource", () => {
       ]);
       const resource = makeResource();
       const result = await resource.listAvailable({ account: ACC });
-      expect(result).toEqual(["nowRecord"]);
+      expect(names(result)).toEqual(["nowRecord"]);
     });
 
     it("excludes a never-consumable note, which reports no unlock block either", async () => {
@@ -263,7 +283,7 @@ describe("NotesResource", () => {
       ]);
       const resource = makeResource();
       const result = await resource.listAvailable({ account: ACC });
-      expect(result).toEqual(["nowRecord"]);
+      expect(names(result)).toEqual(["nowRecord"]);
     });
 
     it("reads the queried account's entry, not another account's", async () => {
@@ -271,7 +291,7 @@ describe("NotesResource", () => {
       // carrying a second account's status is defensive: the note is locked for
       // the caller and must not be listed because someone else could spend it.
       const mixed = {
-        inputNoteRecord: vi.fn().mockReturnValue("mixedRecord"),
+        inputNoteRecord: vi.fn().mockReturnValue(noteRecord("mixedRecord")),
         noteConsumability: vi
           .fn()
           .mockReturnValue([entry(ACC, 12345), entry("0xother")]),
@@ -279,6 +299,37 @@ describe("NotesResource", () => {
       inner.getConsumableNotes.mockResolvedValue([mixed]);
       const resource = makeResource();
       expect(await resource.listAvailable({ account: ACC })).toEqual([]);
+    });
+
+    it("lists P2ID and P2IDE payments only, not another trader's PSWAP order", async () => {
+      // The screener lists a public PSWAP order for any account holding the
+      // asset it requests; consuming it fills the order from that vault.
+      inner.getConsumableNotes.mockResolvedValue([
+        consumableNote("p2id", null, P2ID_ROOT),
+        consumableNote("p2ide", null, P2IDE_ROOT),
+        consumableNote("pswapOrder", null, PSWAP_ROOT),
+      ]);
+      const resource = makeResource();
+      const result = await resource.listAvailable({ account: ACC });
+      expect(names(result)).toEqual(["p2id", "p2ide"]);
+    });
+
+    it("excludes a note whose script cannot be read", async () => {
+      const unreadable = {
+        inputNoteRecord: vi.fn().mockReturnValue({
+          details: () => {
+            throw new Error("no details");
+          },
+        }),
+        noteConsumability: vi.fn().mockReturnValue([entry(ACC)]),
+      };
+      inner.getConsumableNotes.mockResolvedValue([
+        consumableNote("p2id"),
+        unreadable,
+      ]);
+      const resource = makeResource();
+      const result = await resource.listAvailable({ account: ACC });
+      expect(names(result)).toEqual(["p2id"]);
     });
 
     it("resolves bech32 account ref", async () => {
@@ -325,8 +376,23 @@ describe("NotesResource", () => {
       ]);
       // Same input, opposite contract.
       inner.getConsumableNotes.mockResolvedValue([now, locked]);
-      expect(await resource.listAvailable({ account: ACC })).toEqual([
+      expect(names(await resource.listAvailable({ account: ACC }))).toEqual([
         "nowRecord",
+      ]);
+    });
+
+    it("returns notes running other scripts, which listAvailable drops", async () => {
+      const payment = consumableNote("p2id");
+      const order = consumableNote("pswapOrder", null, PSWAP_ROOT);
+      inner.getConsumableNotes.mockResolvedValue([payment, order]);
+      const resource = makeResource();
+      expect(await resource.listConsumable({ account: ACC })).toEqual([
+        payment,
+        order,
+      ]);
+      inner.getConsumableNotes.mockResolvedValue([payment, order]);
+      expect(names(await resource.listAvailable({ account: ACC }))).toEqual([
+        "p2id",
       ]);
     });
 

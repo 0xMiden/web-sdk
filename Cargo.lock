@@ -2388,9 +2388,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client"
-version = "0.18.0"
+version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ffbfb396cf9a30ccfc4b929c998939826c80358a9891d180915d1c3ba2afde5"
+checksum = "4bb62bb18bf29c59d23c4ecd54e8ab6b336379f2bf1e01bb39a429b52a078a8b"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2430,9 +2430,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client-proto"
-version = "0.18.0"
+version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44ed70cdcb24294facc24044db2e2f9d68245f332de8e3f0aa28514f403651d5"
+checksum = "77f8b0f4a79a41288678a1ac04fa9758213c0778925c53dbbf0b3b1dd8bd1404"
 dependencies = [
  "miden-client",
  "miden-objects",
@@ -2445,9 +2445,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client-sqlite-store"
-version = "0.18.0"
+version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fdbc3b0b216871a18aa011030ef6335f10a31331e000d77d1e6ca3202766250"
+checksum = "f06053d311d54d950857ed5af75d3cf17105cbf4aa1393f8a566407f9077a600"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2470,12 +2470,15 @@ version = "0.18.0"
 dependencies = [
  "async-trait",
  "console_error_panic_hook",
+ "h2",
  "hex",
+ "http",
  "js-export-macro",
  "js-sys",
  "miden-client",
  "miden-client-sqlite-store",
  "miden-idxdb-store",
+ "miden-objects",
  "miden-precompiles-air",
  "miden-protocol",
  "napi",
@@ -4529,9 +4532,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.14"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0527518605e68109d875e248ea259b6758801cf165e4b2c2733ae3b51f12535a"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "ring",
  "rustls-pki-types",

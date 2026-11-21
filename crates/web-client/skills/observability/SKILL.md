@@ -20,7 +20,7 @@ required, and neither depends on its vendor - you pass the tracer or client in.
 interface MidenObservation {
   op: string;                    // always - the wrapped client method
   outcome: "ok" | "error";       // always
-  durationMs: number;            // always - fractional, round it yourself
+  durationMs: number;            // always - from the call's turn on its queue; fractional
   sensitive?: {                  // only when opted in AND the operation failed
     errorMessage?: string;
     errorStack?: string;
@@ -28,6 +28,16 @@ interface MidenObservation {
   };
 }
 ```
+
+`durationMs` runs from when the call's turn on its client's queue starts until
+it settles: time queued behind the same client's earlier calls is not in it.
+Round it yourself. A call that takes the store lock - `syncState`, `syncChain`,
+`syncNoteTransport`, `importNoteFile` (`notes.import`), `fetchPrivateNotes`
+(`notes.fetchPrivate`), and, on a store still at genesis only,
+`syncBeforeAccountCreation` and account creation (`newWallet`, `newFaucet`,
+`newAccount`, `newAccountWithSecretKey`) - requests the lock once its turn has
+started, so its `durationMs` includes any wait for another client's or tab's
+store lock. A slow observation of one of these can be lock wait, not work.
 
 `sensitive` is **absent**, not `undefined`, when it does not apply, so
 `"sensitive" in observation` is a truthful test.
@@ -84,10 +94,14 @@ Four categories emit nothing, and each has bitten someone:
 
 ## Counting: observations are not call sites
 
-- **Concurrent syncs coalesce.** `syncState`, `syncChain` and
-  `syncNoteTransport` run under a Web Lock that shares one in-flight promise per
-  database and method, so N concurrent `sync()` callers produce **one**
-  observation, timing only the winner's work.
+- **Concurrent syncs on one client coalesce.** `syncState`, `syncChain` and
+  `syncNoteTransport` share one in-flight run per client and method, so N
+  `sync()` callers on one client with no other call queued on it between them
+  produce **one** observation per run. A sync called after another call was
+  queued on that client starts, and reports, a run of its own. The same sync
+  on another client on the same store is not shared: it runs its own,
+  serialized by the store lock, and reports its own observation, lock wait
+  included.
 - **`waitForConfirmation: true` inflates the stream.** The wait loop polls
   `syncChain` plus `getTransactions` on every interval (5 s by default, up to a
   60 s timeout), so a single confirmed transaction can contribute dozens of

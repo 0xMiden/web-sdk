@@ -74,6 +74,9 @@ function MidenComponent() {
   - `noteTransportUrl`: URL for note transport service
   - `endpoint`: Override endpoint (defaults to nodeUrl)
   - `organizationId`: Turnkey organization ID (defaults to session's org ID)
+  - `callbackTimeoutMs`: Optional timeout in milliseconds; positive values bound
+    all three callbacks, `0` removes the limit, and omitted leaves signing
+    unlimited. Invalid values throw `TypeError` from `MidenClient.create`.
 
 #### Returns
 

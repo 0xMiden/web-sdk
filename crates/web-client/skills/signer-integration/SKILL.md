@@ -38,7 +38,7 @@ range is dropped and will not satisfy the peer.
 import { ParaSignerProvider, useParaSigner } from "@miden-sdk/para-react";
 
 <ParaSignerProvider apiKey="your-api-key" environment="PRODUCTION">
-  <MidenProvider config={{ rpcUrl: "testnet" }}>
+  <MidenProvider config={{ rpcUrl: "testnet", callbackTimeoutMs: 120000 }}>
     <App />
   </MidenProvider>
 </ParaSignerProvider>
@@ -70,6 +70,8 @@ import { TurnkeySignerProvider } from "@miden-sdk/turnkey-react";
   ...
 </TurnkeySignerProvider>
 ```
+
+`MidenProvider` accepts `callbackTimeoutMs` in its config to control how long the Web Worker waits for each external keystore callback (`sign`, `getKey` and `insertKey`). Left unset, `sign` waits without a limit so a wallet approval can take as long as needed; `getKey` and `insertKey` keep their 30-second limit. A positive value, such as `120000` for two minutes, applies the same limit to all three callbacks, rounded up to a whole millisecond. `0` removes the limit for all three. A negative, non-finite or non-number value, or one above `2147483647`, throws `TypeError` when the client is created. Callbacks use this timeout only through the Web Worker. Without a timeout, a stalled signer holds its batch or transaction and leaves later worker calls in the queue while its sign request waits indefinitely, so set a finite value if a signer can stall. See the [complete contract](https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts).
 
 `TurnkeySignerProvider` also accepts optional `customComponents` and `importAccountId` props, which it forwards into `accountConfig` (see "Custom Account Components").
 
@@ -233,7 +235,7 @@ The two shipped providers are the best worked examples of this contract: read `p
 ## How the Account Gets Initialized
 
 `MidenProvider` calls `initializeSignerAccount(client, accountConfig)`
-(`packages/react-sdk/src/utils/signerAccount.ts:48-164`) right after creating the
+(`packages/react-sdk/src/utils/signerAccount.ts:48-174`) right after creating the
 external-keystore client. There are two paths.
 
 **Fast path - `importAccountId` is set.** The builder is skipped and `client.importAccountById()`
@@ -246,14 +248,21 @@ runs. It tolerates exactly two machine-readable error codes and rethrows everyth
   only refreshes accounts the store already tracks; it never discovers one by ID.
 - `ACCOUNT_ALREADY_TRACKED` - already imported locally; harmless.
 
-**Slow path - build from the commitment** (`signerAccount.ts:105-113`):
+**Slow path - build from the commitment** (`signerAccount.ts:105-123`):
 
 ```ts
+// The package's `AuthScheme` export is the friendly string const; the auth
+// component takes the numeric enum, so read it from the wasm module.
+const ecdsaAuthScheme = (await getWasmOrThrow()).AuthScheme.AuthEcdsaK256Keccak;
+if (ecdsaAuthScheme === undefined) {
+  throw new Error("The Miden SDK wasm module has no AuthScheme.AuthEcdsaK256Keccak, ...");
+}
+
 new AccountBuilder(seed)
   .withAuthComponent(
     AccountComponent.createAuthComponentFromCommitment(
       commitmentWord,
-      AuthScheme.AuthEcdsaK256Keccak  // see the AuthScheme trap below
+      ecdsaAuthScheme  // see the AuthScheme note below
     )
   )
   .storageMode(config.storageMode)
@@ -268,8 +277,11 @@ never reached. Only when the import throws does it fall through to checking
 `client.getAccount(accountId)` for a local copy and finally `client.newAccount(account, false)`.
 
 Note the hard-coded ECDSA-K256/Keccak auth scheme: an external signer's commitment is registered
-as an ECDSA key, not Falcon. The `AuthScheme` symbol here is the numeric WASM enum, not the frozen
-string const the package exports - see "The `AuthScheme` trap" under Guarded Multisig below.
+as an ECDSA key, not Falcon. The value is the numeric WASM enum, read from the wasm module that the
+package's `getWasmOrThrow()` returns, never from the frozen string const the package exports as
+`AuthScheme` (that const has no `AuthEcdsaK256Keccak` member). If the wasm enum lacks the value,
+initialization throws instead of building an account - see "The `AuthScheme` note" under Guarded
+Multisig below.
 
 **`withAuthComponent` validates nothing.** Its body is `with_component` verbatim
 (`crates/web-client/src/models/account_builder.rs:81-85`), so the name is documentation,
@@ -358,7 +370,7 @@ const accountConfig: SignerAccountConfig = {
 
 Each entry must be a real `AccountComponent` - created via `AccountComponent.compile()`,
 `.fromPackage()` or `.fromLibrary()`. The initializer duck-checks for a `getProcedures` method and
-throws otherwise (`packages/react-sdk/src/utils/signerAccount.ts:116-128`):
+throws otherwise (`packages/react-sdk/src/utils/signerAccount.ts:126-138`):
 
 > Each entry in customComponents must be an AccountComponent instance created via AccountComponent.compile(), AccountComponent.fromPackage(), or AccountComponent.fromLibrary().
 
@@ -372,6 +384,7 @@ If the signer backs a guarded multisig account (a set of approvers plus a guardi
 
 ```tsx
 import {
+  AuthScheme,
   createAuthGuardedMultisig,
   AuthGuardedMultisigConfig,
 } from "@miden-sdk/miden-sdk";
@@ -384,7 +397,7 @@ const config = new AuthGuardedMultisigConfig(
   approvers,                       // Word[]
   2,                               // defaultThreshold
   guardian,                        // Word
-  authScheme                       // see the AuthScheme trap below
+  AuthScheme.ECDSA                 // or AuthScheme.Falcon; see the AuthScheme note below
 );
 
 // Optional: tighten the threshold for specific procedures.
@@ -399,19 +412,19 @@ const accountConfig: SignerAccountConfig = {
 };
 ```
 
-**The `AuthScheme` trap.** `@miden-sdk/miden-sdk` exports TWO different things under that
-name, and the one you get from the browser entry is not the enum this constructor wants.
-The package's own `AuthScheme` is a frozen string const, `{ Falcon: "falcon", ECDSA:
-"ecdsa" }`, and it **shadows** the wasm-bindgen enum of the same name. So
-`AuthScheme.AuthRpoFalcon512` evaluates to `undefined`, and the constructor fails when it
-tries to convert it.
-
-On Node the wasm class is re-exported under the non-colliding alias `AuthSchemeNative`, so
-`AuthSchemeNative.AuthRpoFalcon512` works there. The browser entry has no such escape
-hatch, which is why the SDK's own browser test harness restores it by hand
-(`window.AuthScheme = wasm.AuthScheme`). In a browser app, obtain the enum from the wasm
-namespace yourself rather than from the package's named export, and verify the value is
-not `undefined` before passing it.
+**The `AuthScheme` note.** `@miden-sdk/miden-sdk` exports TWO different things under that
+name. The package's own `AuthScheme` is a frozen string const, `{ Falcon: "falcon", ECDSA:
+"ecdsa" }`, and it **shadows** the wasm-bindgen enum of the same name, so
+`AuthScheme.AuthRpoFalcon512` and `AuthScheme.AuthEcdsaK256Keccak` evaluate to `undefined`.
+Pass the string const: `new AuthGuardedMultisigConfig(...)` and
+`AccountComponent.createAuthComponentFromCommitment(commitment, scheme)` resolve
+`AuthScheme.ECDSA` and `AuthScheme.Falcon` to the enum themselves, on both the browser and
+the Node entry. A numeric enum value (`1` for ECDSA, `2` for Falcon, or Node's
+`AuthSchemeNative.AuthEcdsaK256Keccak`) still passes through. A missing scheme throws
+`requires an auth scheme` rather than defaulting to Falcon, so an `undefined` read from the
+wrong `AuthScheme` cannot silently pick the other scheme. SDK versions before this change
+reject the strings with `invalid enum value passed` (browser) or `Failed to convert napi
+value into enum` (Node).
 
 
 **Build it with `createAuthGuardedMultisig`, the supported way to install the standard guarded multisig.** The client recognises an auth component only by its procedure root. If the account's auth procedure matches no standard component, for example MASM that differs from the bundled standard source, the client treats it as having no recognised auth component, declines to attach fee conversion info, and **every transaction from the account fails on a fee-charging chain**. Nothing warns you at account-creation time; the failure arrives later, at the first send.

@@ -32,9 +32,14 @@ export interface UseCompileResult {
  *
  * const script = await noteScript({
  *   code: noteSource,
- *   libraries: [{ namespace: "my_lib", code: libSource, linking: Linking.Dynamic }],
+ *   libraries: [{ namespace: "my_lib", code: libSource, linking: Linking.Static }],
  * });
  * ```
+ *
+ * `Linking.Static` copies a helper library like `my_lib` into the script.
+ * `Linking.Dynamic` is only for procedures installed on an account the
+ * transaction reaches; a helper linked dynamically compiles and then fails at
+ * execution.
  */
 export function useCompile(): UseCompileResult {
   const { client, isReady } = useMiden();
