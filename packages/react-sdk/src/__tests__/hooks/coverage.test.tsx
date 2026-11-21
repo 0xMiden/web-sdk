@@ -52,6 +52,7 @@ describe("useImportAccount — file-input variants", () => {
       importAccountFile: vi.fn().mockResolvedValue("Imported account"),
     });
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+    useMidenStore.getState().setClient(mockClient as never);
 
     const { result } = renderHook(() => useImportAccount());
     const buf = new ArrayBuffer(8);
@@ -110,6 +111,7 @@ describe("useImportAccount — file-input variants", () => {
     });
 
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+    useMidenStore.getState().setClient(mockClient as never);
 
     const { result } = renderHook(() => useImportAccount());
     await act(async () => {
@@ -140,6 +142,7 @@ describe("useImportAccount — file-input variants", () => {
       getAccount: vi.fn().mockResolvedValue(mockAccount),
     });
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+    useMidenStore.getState().setClient(mockClient as never);
 
     const { result } = renderHook(() => useImportAccount());
     await act(async () => {
@@ -171,6 +174,7 @@ describe("useImportAccount — file-input variants", () => {
       getAccount: vi.fn().mockResolvedValue(null),
     });
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+    useMidenStore.getState().setClient(mockClient as never);
 
     const { result } = renderHook(() => useImportAccount());
     await act(async () => {
@@ -199,6 +203,7 @@ describe("useImportAccount — file-input variants", () => {
         .mockRejectedValue(new Error("permission denied")),
     });
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+    useMidenStore.getState().setClient(mockClient as never);
 
     const { result } = renderHook(() => useImportAccount());
     await act(async () => {
@@ -217,6 +222,7 @@ describe("useImportAccount — file-input variants", () => {
       getAccount: vi.fn().mockResolvedValue(null),
     });
     mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+    useMidenStore.getState().setClient(mockClient as never);
 
     const { result } = renderHook(() => useImportAccount());
     await act(async () => {
@@ -335,16 +341,15 @@ describe("useNotes — sender + excludeIds filters on consumableNotes", () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// useSend: covers the "Missing full note for private send" error branch.
+// useSend: a private send whose transaction shows no output note.
 // ────────────────────────────────────────────────────────────────────────
 describe("useSend — private-send error branch", () => {
-  it("throws when note type is Private but no full note was extracted", async () => {
-    // Build a tx result whose executedTransaction has no output notes →
-    // extractFullNote returns null → the Private-send path throws.
+  it("reports the transaction when it shows no output note to deliver", async () => {
     const txResult = {
       id: () => ({ toString: () => "0xtx", toHex: () => "0xtx" }),
       executedTransaction: () => ({
         outputNotes: () => ({ notes: () => [] }),
+        userOutputNotes: () => [],
       }),
     };
     const mockClient = createMockWebClient({
@@ -372,7 +377,14 @@ describe("useSend — private-send error branch", () => {
           amount: 100n,
           noteType: "private",
         })
-      ).rejects.toThrow("Missing full note for private send");
+      ).rejects.toMatchObject({
+        code: "PRIVATE_NOTE_DELIVERY_FAILED",
+        transactionId: "0xtx",
+        undelivered: [],
+        message: expect.stringContaining(
+          "The send transaction created no output note"
+        ),
+      });
     });
   });
 });

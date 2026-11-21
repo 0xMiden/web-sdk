@@ -5,10 +5,12 @@ import {
   resolveNoteType,
   resolveStorageMode,
   resolveAuthScheme,
+  installAuthSchemeResolution,
   resolveNoteIdHex,
   resolveTransactionIdHex,
   hashSeed,
   assertBatchItems,
+  isStandardPaymentNote,
 } from "../utils.js";
 
 // ── WASM mock helpers ──────────────────────────────────────────────────────────
@@ -229,6 +231,54 @@ describe("resolveAuthScheme", () => {
     expect(resolveAuthScheme(undefined, wasm)).toBe(2);
   });
 
+  it("passes through an already-resolved numeric value unchanged", () => {
+    expect(resolveAuthScheme(1, wasm)).toBe(1);
+    expect(resolveAuthScheme(2, wasm)).toBe(2);
+  });
+
+  // The browser entry gets wasm-bindgen's frozen literal (enumerable members
+  // plus reverse name keys); the Node entry gets napi-rs's object, whose
+  // members are not enumerable.
+  it.each([
+    [
+      "wasm-bindgen",
+      Object.freeze({
+        AuthEcdsaK256Keccak: 1,
+        1: "AuthEcdsaK256Keccak",
+        AuthRpoFalcon512: 2,
+        2: "AuthRpoFalcon512",
+      }),
+    ],
+    [
+      "napi-rs",
+      Object.defineProperties(
+        {},
+        {
+          AuthEcdsaK256Keccak: { value: 1 },
+          AuthRpoFalcon512: { value: 2 },
+        }
+      ),
+    ],
+  ])("accepts exactly the %s enum's values", (_shape, AuthScheme) => {
+    const module = { AuthScheme };
+    expect(resolveAuthScheme(2, module)).toBe(2);
+    expect(resolveAuthScheme(1, module)).toBe(1);
+    expect(resolveAuthScheme("falcon", module)).toBe(2);
+    expect(resolveAuthScheme("ecdsa", module)).toBe(1);
+    expect(() => resolveAuthScheme(99, module)).toThrow(
+      'Unknown auth scheme: "99"'
+    );
+  });
+
+  it("throws for a number that is not an AuthScheme value", () => {
+    expect(() => resolveAuthScheme(99, wasm)).toThrow(
+      'Unknown auth scheme: "99"'
+    );
+    expect(() => resolveAuthScheme(0, wasm)).toThrow(
+      'Unknown auth scheme: "0"'
+    );
+  });
+
   // NOTE: main exposes a hardcoded-discriminant fallback when `wasm` is
   // omitted (1 for ecdsa, 2 for falcon); next dropped that and now
   // requires the WASM module to read enum values from
@@ -242,6 +292,53 @@ describe("resolveAuthScheme", () => {
     expect(() => resolveAuthScheme("rsa", wasm)).toThrow(
       'Unknown auth scheme: "rsa"'
     );
+  });
+});
+
+// ── installAuthSchemeResolution ───────────────────────────────────────────────
+
+describe("installAuthSchemeResolution", () => {
+  const wasm = { AuthScheme: { AuthEcdsaK256Keccak: 1, AuthRpoFalcon512: 2 } };
+  const makeComponent = () => {
+    const received = [];
+    class AccountComponent {
+      static createAuthComponentFromCommitment(commitment, scheme) {
+        received.push(scheme);
+        return "component";
+      }
+    }
+    return { AccountComponent, received };
+  };
+
+  it("resolves the friendly scheme once, even when installed twice", () => {
+    const { AccountComponent, received } = makeComponent();
+    installAuthSchemeResolution(AccountComponent, wasm);
+    const installed = AccountComponent.createAuthComponentFromCommitment;
+    installAuthSchemeResolution(AccountComponent, wasm);
+    expect(AccountComponent.createAuthComponentFromCommitment).toBe(installed);
+    expect(
+      AccountComponent.createAuthComponentFromCommitment("c", "ecdsa")
+    ).toBe("component");
+    expect(received).toEqual([1]);
+  });
+
+  it("leaves a static it cannot redefine untouched", () => {
+    const { AccountComponent } = makeComponent();
+    const original = AccountComponent.createAuthComponentFromCommitment;
+    Object.defineProperty(
+      AccountComponent,
+      "createAuthComponentFromCommitment",
+      { value: original, writable: false, configurable: false }
+    );
+    installAuthSchemeResolution(AccountComponent, wasm);
+    expect(AccountComponent.createAuthComponentFromCommitment).toBe(original);
+  });
+
+  it("does nothing without the class or its static", () => {
+    expect(() => installAuthSchemeResolution(undefined, wasm)).not.toThrow();
+    class Bare {}
+    installAuthSchemeResolution(Bare, wasm);
+    expect(Bare.createAuthComponentFromCommitment).toBeUndefined();
   });
 });
 
@@ -389,5 +486,62 @@ describe("assertBatchItems", () => {
     const sparse = new Array(2);
     sparse[0] = new BatchItem();
     expect(() => assertBatchItems(sparse, BatchItem)).toThrow(/index 1/);
+  });
+});
+
+describe("isStandardPaymentNote", () => {
+  const scriptWithRoot = (root) => ({ root: () => ({ toHex: () => root }) });
+  const paymentWasm = () => ({
+    NoteScript: {
+      p2id: vi.fn(() => scriptWithRoot("0xp2id")),
+      p2ide: vi.fn(() => scriptWithRoot("0xp2ide")),
+    },
+  });
+  const inputRecord = (root) => ({
+    details: () => ({
+      recipient: () => ({ script: () => scriptWithRoot(root) }),
+    }),
+  });
+
+  it("accepts P2ID and P2IDE input note records", () => {
+    const wasm = paymentWasm();
+    expect(isStandardPaymentNote(inputRecord("0xp2id"), wasm)).toBe(true);
+    expect(isStandardPaymentNote(inputRecord("0xp2ide"), wasm)).toBe(true);
+  });
+
+  it("rejects any other script, such as a PSWAP order", () => {
+    expect(isStandardPaymentNote(inputRecord("0xpswap"), paymentWasm())).toBe(
+      false
+    );
+  });
+
+  it("reads a consumable record through its input note record", () => {
+    const wasm = paymentWasm();
+    const consumable = (root) => ({
+      inputNoteRecord: () => inputRecord(root),
+    });
+    expect(isStandardPaymentNote(consumable("0xp2id"), wasm)).toBe(true);
+    expect(isStandardPaymentNote(consumable("0xswap"), wasm)).toBe(false);
+  });
+
+  it("treats a note whose script cannot be read as not a payment", () => {
+    const noDetails = {
+      details: () => {
+        throw new Error("record has no details");
+      },
+    };
+    expect(isStandardPaymentNote(noDetails, paymentWasm())).toBe(false);
+  });
+
+  it("builds the standard script roots once per WASM module", () => {
+    const wasm = paymentWasm();
+    isStandardPaymentNote(inputRecord("0xp2id"), wasm);
+    isStandardPaymentNote(inputRecord("0xpswap"), wasm);
+    expect(wasm.NoteScript.p2id).toHaveBeenCalledOnce();
+    expect(wasm.NoteScript.p2ide).toHaveBeenCalledOnce();
+
+    const other = paymentWasm();
+    isStandardPaymentNote(inputRecord("0xp2id"), other);
+    expect(other.NoteScript.p2id).toHaveBeenCalledOnce();
   });
 });

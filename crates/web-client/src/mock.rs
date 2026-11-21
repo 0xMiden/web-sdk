@@ -15,10 +15,10 @@ use miden_client::utils::{Deserializable, RwLock, Serializable};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
-#[cfg(feature = "browser")]
-use crate::WebKeyStore;
 use crate::platform::{JsErr, from_str_err};
 use crate::{WebClient, create_rng, js_error_with_context};
+#[cfg(feature = "browser")]
+use crate::{WebKeyStore, idxdb_store_init_error};
 
 #[cfg(feature = "browser")]
 #[js_export]
@@ -56,7 +56,7 @@ impl WebClient {
         let store: Arc<dyn Store> = Arc::new(
             IdxdbStore::new(store_name.clone())
                 .await
-                .map_err(|_| from_str_err("Failed to initialize IdxdbStore"))?,
+                .map_err(|err| idxdb_store_init_error(&err))?,
         );
         let keystore = WebKeyStore::new_with_callbacks(
             StdRng::from_rng(&mut rng),

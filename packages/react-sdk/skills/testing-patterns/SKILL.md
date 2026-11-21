@@ -278,7 +278,7 @@ vi.mocked(useMidenFiWallet).mockReturnValue({
 } as never);
 ```
 
-The real `WalletContextState` has more keys than the five stubbed here (`select`, `wallets`, `publicKey`, an optional `requestTransaction`); the `as never` casts are what let a five-key stub compile. Drop a cast and you will need the rest.
+`useMidenFiWallet()` returns `MidenFiWalletContextState`; `WalletContextState` is the `useWallet()` type. The canonical type has a three-argument `connect(privateDataPermission, network, allowedPrivateData?)` and required request-method properties typed `X | undefined`. The MidenFi type has optional `connect(privateDataPermission?, network?, allowedPrivateData?)`. Under `MidenFiSignerProvider` those arguments are ignored. On the exported-context fallback, `connect` forwards them and rejects with `useMidenFiWallet connect requires privateDataPermission and network` when `privateDataPermission` or `network` is omitted. It also has optional request methods and optional `createAccount`. It has more keys than the five stubbed here (`select`, `wallets`, `publicKey`, an optional `requestTransaction`, and an optional `createAccount`); the `as never` casts are what let a five-key stub compile. Drop a cast and you will need the rest.
 
 (template) See `src/components/__tests__/AppContent.test.tsx` in the [frontend template](https://github.com/0xMiden/frontend-template) for the full pattern (including a `walletState()` helper that cuts per-test boilerplate).
 
@@ -324,7 +324,7 @@ These pass against a loosely-typed fixture and diverge from the real API at runt
 each one before carrying a pre-0.16 fixture forward.
 
 - **`debugMode` does not exist.** `MidenConfig` is exactly
-  `{ rpcUrl?, noteTransportUrl?, autoSyncInterval?, seed?, prover?, proverUrls?, proverTimeoutMs?, useWorker? }`.
+  `{ rpcUrl?, noteTransportUrl?, noteTransportMaxRetries?, noteTransportRetryIntervalMs?, autoSyncInterval?, seed?, prover?, proverUrls?, proverTimeoutMs?, useWorker? }`.
   Drop any `debugMode` field and any trailing `debugMode` argument to `createClient*`.
   There is no `storeName` field on it either (that lives on `SignerContextValue`).
 - **`ExecutedTransaction` and `TransactionStoreUpdate` expose `accountPatch()`, not

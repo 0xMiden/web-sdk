@@ -61,6 +61,7 @@ Second argument (`MidenClientOpts & MidenAccountOpts`):
 | `noteTransportUrl` | `string` | Becomes `ClientOptions.noteTransportUrl`. |
 | `seed` | `Uint8Array` | Client seed, passed straight through. |
 | `accountSeed` | `string` | UTF-8, truncated to 32 bytes. Defaults to 32 zero bytes. |
+| `callbackTimeoutMs` | `number` | Optional limit in milliseconds; positive values bound all three callbacks, `0` removes the limits, and omitted leaves signing unlimited. Invalid values throw `TypeError` from `MidenClient.create`. |
 
 There is no `type` or `accountType` option. The README shows one; it is not in
 the type and nothing reads it.
@@ -126,6 +127,9 @@ const { client, accountId } = useTurnkeyMiden("testnet", "public", {
   account. The organization ID comes from `opts.organizationId`, else from the
   Turnkey session.
 - `opts.endpoint` overrides the `nodeUrl` argument when both are present.
+- `opts.callbackTimeoutMs` bounds each external keystore callback in milliseconds;
+  positive values set the limit, `0` removes it, and omitted leaves signing
+  unlimited. Invalid values throw `TypeError` from `MidenClient.create`.
 - The effect depends on the individual `opts` fields, not on the object, so an
   inline object literal is safe. Changing any of them rebuilds the client and
   re-derives the account.
@@ -150,7 +154,9 @@ The auth component comes from
 `AccountComponent.createAuthComponentFromCommitment(commitment, 1)`, where `1`
 is the WASM `AuthScheme` enum's ECDSA k256/keccak variant. (The `AuthScheme`
 constant exported from `@miden-sdk/miden-sdk` is a different thing, the string
-pair `{ Falcon, ECDSA }` for client options; do not pass it here.) The Turnkey
+pair `{ Falcon, ECDSA }`. SDK versions that include web-sdk#365's fix also
+accept `AuthScheme.ECDSA` here; older ones reject it, so `1` is the value that
+works with every version.) The Turnkey
 key must be secp256k1 and the wallet account Ethereum-format; a key on any other
 curve cannot back this account.
 

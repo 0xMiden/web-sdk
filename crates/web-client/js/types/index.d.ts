@@ -4,12 +4,56 @@ export * from "./crates/miden_client_web";
 // Re-export all simplified API types
 export * from "./api-types";
 
+// Both star exports above provide an `AuthScheme`; the runtime exports the
+// friendly const, so name it explicitly to keep the wasm enum from winning.
+export { AuthScheme } from "./api-types";
+
+// The runtime wraps these two bindings so they take the friendly scheme as
+// well as the wasm enum value; widen their declarations to match. Instances
+// and return values are still the wasm classes.
+export type AccountComponent = WasmAccountComponent;
+export declare const AccountComponent: typeof WasmAccountComponent & {
+  /**
+   * Builds a single-signature auth component from a public key commitment.
+   *
+   * @param commitment - The public key commitment.
+   * @param auth_scheme - `AuthScheme.ECDSA` or `AuthScheme.Falcon`, or a
+   *   numeric value of the wasm `AuthScheme` enum.
+   */
+  createAuthComponentFromCommitment(
+    commitment: Word,
+    auth_scheme: AuthSchemeType | number
+  ): WasmAccountComponent;
+};
+export type AuthGuardedMultisigConfig = WasmAuthGuardedMultisigConfig;
+export declare const AuthGuardedMultisigConfig: typeof WasmAuthGuardedMultisigConfig & {
+  /**
+   * Builds a guarded-multisig configuration.
+   *
+   * @param auth_scheme - `AuthScheme.ECDSA` or `AuthScheme.Falcon`, or a
+   *   numeric value of the wasm `AuthScheme` enum. It applies to every
+   *   approver and to the guardian.
+   */
+  new (
+    approvers: Word[],
+    default_threshold: number,
+    guardian: Word,
+    auth_scheme: AuthSchemeType | number
+  ): WasmAuthGuardedMultisigConfig;
+};
+
 // Import types needed for the @internal class declarations below
 import type {
+  Account,
+  AccountComponent as WasmAccountComponent,
+  AccountStorageMode,
+  AuthGuardedMultisigConfig as WasmAuthGuardedMultisigConfig,
+  AuthSecretKey,
   WebClient as WasmWebClientBase,
   SyncSummary,
 } from "./crates/miden_client_web";
 import type {
+  AuthSchemeType,
   GetKeyCallback,
   InsertKeyCallback,
   MidenObservation,
@@ -157,7 +201,10 @@ export declare class WasmWebClient extends WasmWebClientBase {
     logLevel?: LogLevel,
     useWorker?: boolean,
     observability?: ClientObservabilityOptions,
-    feeFaucetId?: string
+    feeFaucetId?: string,
+    noteTransportMaxRetries?: number,
+    noteTransportRetryIntervalMs?: number,
+    callbackTimeoutMs?: number
   ): Promise<WasmWebClient>;
 
   static createClientWithExternalKeystore(
@@ -171,13 +218,64 @@ export declare class WasmWebClient extends WasmWebClientBase {
     logLevel?: LogLevel,
     useWorker?: boolean,
     observability?: ClientObservabilityOptions,
-    feeFaucetId?: string
+    feeFaucetId?: string,
+    noteTransportMaxRetries?: number,
+    noteTransportRetryIntervalMs?: number,
+    callbackTimeoutMs?: number
   ): Promise<WasmWebClient>;
+
+  // The wrapper resolves a friendly scheme to the wasm enum and passes a
+  // numeric enum value through, so these accept both.
+  newWallet(
+    storage_mode: AccountStorageMode,
+    auth_scheme: AuthSchemeType | number,
+    init_seed?: Uint8Array | null
+  ): Promise<Account>;
+  newFaucet(
+    storage_mode: AccountStorageMode,
+    non_fungible: boolean,
+    token_name: string,
+    token_symbol: string,
+    decimals: number,
+    max_supply: bigint,
+    auth_scheme: AuthSchemeType | number
+  ): Promise<Account>;
+  importPublicAccountFromSeed(
+    init_seed: Uint8Array,
+    auth_scheme: AuthSchemeType | number
+  ): Promise<Account>;
+  // The wrapper runs a creation's pre-sync itself, under the store lock and
+  // only on a store still at genesis, and always skips the creation's own, so
+  // none of the four creations takes the generated trailing `skip_pre_sync`.
+  newAccount(account: Account, overwrite: boolean): Promise<void>;
+  newAccountWithSecretKey(
+    account: Account,
+    secret_key: AuthSecretKey
+  ): Promise<void>;
 
   syncState(): Promise<SyncSummary>;
   syncChain(): Promise<SyncSummary>;
   syncNoteTransport(): Promise<void>;
   onStateChanged(callback: (event: any) => void): (() => void) | undefined;
+  /**
+   * Terminates this WebClient: stops its Web Worker if there is one, and
+   * releases the main-realm wasm client and, through it, its IndexedDB store
+   * connection, which closes once no other client in this realm holds the
+   * same store.
+   *
+   * A call already queued or running that executes against the main-realm
+   * wasm client still finishes, one that waits for the store lock first
+   * included (the `frontend-pitfalls` skill lists those calls). A call that
+   * needs the worker, whether in flight, waiting for the worker to be ready
+   * or still queued behind terminate(), rejects with "WebClient terminated".
+   * Every wasm call made after terminate() fails with it too: a synchronous
+   * member or an accessor throws, every other member rejects. The release
+   * waits until all of these calls have settled. Calling it again is
+   * harmless.
+   *
+   * The release and the rejections are browser-only: on the Node.js binding
+   * WasmWebClient.terminate() is a no-op.
+   */
   terminate(): void;
 }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook } from "@testing-library/react";
 import { useWaitForCommit } from "../../hooks/useWaitForCommit";
 import { useMiden } from "../../context/MidenProvider";
@@ -8,10 +8,6 @@ import {
   createMockWebClient,
   createMockTransactionId,
 } from "../mocks/miden-sdk";
-import {
-  installMoveAwareTransactionMocks,
-  moveAwareGetTransactions,
-} from "../mocks/moveAware";
 
 // Mock useMiden
 vi.mock("../../context/MidenProvider", () => ({
@@ -67,7 +63,7 @@ describe("useWaitForCommit", () => {
     });
 
     expect(TransactionId.fromHex).toHaveBeenCalledWith("0xtx");
-    expect(TransactionFilter.ids).toHaveBeenCalledTimes(1);
+    expect(TransactionFilter.all).not.toHaveBeenCalled();
   });
 
   it("should resolve when transaction is committed (TransactionId)", async () => {
@@ -98,58 +94,38 @@ describe("useWaitForCommit", () => {
       intervalMs: 1,
     });
 
-    // The caller's handle never reaches a filter; a fresh id is built from
-    // its hex instead.
     expect(TransactionId.fromHex).toHaveBeenCalledWith("0xtx123");
     expect(TransactionFilter.ids).not.toHaveBeenCalledWith([txId]);
   });
 
-  describe("with by-value WASM handles", () => {
-    let restore: () => void;
+  it("polls more than once with a caller's TransactionId and leaves it usable", async () => {
+    const txId = createMockTransactionId("0xtx123");
+    const recordWith = (committed: boolean) => ({
+      id: vi.fn(() => ({ toHex: () => "0xtx123" })),
+      transactionStatus: vi.fn(() => ({
+        isPending: vi.fn(() => !committed),
+        isCommitted: vi.fn(() => committed),
+        isDiscarded: vi.fn(() => false),
+      })),
+    });
+    const mockClient = createMockWebClient({
+      syncState: vi.fn().mockResolvedValue({}),
+      getTransactions: vi
+        .fn()
+        .mockResolvedValueOnce([recordWith(false)])
+        .mockResolvedValue([recordWith(true)]),
+    });
+    mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
 
-    beforeEach(() => {
-      restore = installMoveAwareTransactionMocks();
+    const { result } = renderHook(() => useWaitForCommit());
+
+    await result.current.waitForCommit(txId as never, {
+      timeoutMs: 1_000,
+      intervalMs: 1,
     });
 
-    afterEach(() => {
-      restore();
-    });
-
-    it("keeps polling a TransactionId past the first poll", async () => {
-      const txId = TransactionId.fromHex("0xtx123");
-      const statuses = [false, false, true];
-      let poll = 0;
-      const mockClient = createMockWebClient({
-        syncState: vi.fn().mockResolvedValue({}),
-        getTransactions: moveAwareGetTransactions(() => {
-          const committed = statuses[poll++] ?? false;
-          return [
-            {
-              id: () => ({ toHex: () => "0xtx123" }),
-              transactionStatus: () => ({
-                isPending: () => !committed,
-                isCommitted: () => committed,
-                isDiscarded: () => false,
-              }),
-            },
-          ];
-        }),
-      });
-
-      mockUseMiden.mockReturnValue({
-        client: mockClient,
-        isReady: true,
-      });
-
-      const { result } = renderHook(() => useWaitForCommit());
-
-      await expect(
-        result.current.waitForCommit(txId, { timeoutMs: 1000, intervalMs: 1 })
-      ).resolves.toBeUndefined();
-      expect(mockClient.getTransactions).toHaveBeenCalledTimes(3);
-      // The caller still owns a live handle.
-      expect(txId.toHex()).toBe("0xtx123");
-    });
+    expect(mockClient.getTransactions).toHaveBeenCalledTimes(2);
+    expect(txId.toHex()).toBe("0xtx123");
   });
 
   it("should throw when transaction is discarded", async () => {

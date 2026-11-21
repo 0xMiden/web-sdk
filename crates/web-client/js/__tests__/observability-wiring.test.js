@@ -24,7 +24,14 @@ const { BatchItem } = vi.hoisted(() => {
   }
   return { BatchItem };
 });
-vi.mock("../wasm.js", () => ({ default: async () => ({ BatchItem }) }));
+vi.mock("../wasm.js", () => ({
+  default: async () => ({
+    BatchItem,
+    TransactionFilter: {
+      all: () => ({}),
+    },
+  }),
+}));
 
 import {
   WasmWebClient,
@@ -257,34 +264,64 @@ describe("submitNewTransactionBatch joins the chain when called", () => {
   }
 
   // Each host routes its batch to `call`. The mock has a worker, as a real
-  // mock client does, and must still batch in-thread.
+  // mock client does, and must still batch in-thread. The store starts with
+  // one row so a waiting submit can tell a pre-existing transaction from the
+  // batch's own write.
+  function batchStore() {
+    const records = new Map([
+      ["0xold", { account: "0xaccount", status: "pending" }],
+    ]);
+    const getTransactions = async () =>
+      [...records.entries()].map(([id, row]) => ({
+        id: () => ({ toHex: () => id }),
+        accountId: () => ({ toString: () => row.account }),
+      }));
+    return { records, getTransactions };
+  }
+
   const batchHosts = [
     [
       "worker client",
-      (call) =>
-        makeBatchHost(WasmWebClient, {
+      (call) => {
+        const { records, getTransactions } = batchStore();
+        return makeBatchHost(WasmWebClient, {
           worker: {},
+          records,
           callMethodWithWorker: call,
-        }),
+          getWasmWebClient: async () => ({ getTransactions }),
+        });
+      },
     ],
     [
       "in-thread client",
-      (call) =>
-        makeBatchHost(WasmWebClient, {
+      (call) => {
+        const { records, getTransactions } = batchStore();
+        return makeBatchHost(WasmWebClient, {
           worker: null,
-          getWasmWebClient: async () => ({ submitNewTransactionBatch: call }),
-        }),
+          records,
+          getWasmWebClient: async () => ({
+            submitNewTransactionBatch: call,
+            getTransactions,
+          }),
+        });
+      },
     ],
     [
       "mock client",
-      (call) =>
-        makeBatchHost(MockWasmWebClient, {
+      (call) => {
+        const { records, getTransactions } = batchStore();
+        return makeBatchHost(MockWasmWebClient, {
           worker: {},
-          callMethodWithWorker: async () => {
+          records,
+          callMethodWithWorker: vi.fn(async () => {
             throw new Error("a mock batch must not reach the worker");
-          },
-          getWasmWebClient: async () => ({ submitNewTransactionBatch: call }),
-        }),
+          }),
+          getWasmWebClient: async () => ({
+            submitNewTransactionBatch: call,
+            getTransactions,
+          }),
+        });
+      },
     ],
   ];
 
@@ -328,6 +365,44 @@ describe("submitNewTransactionBatch joins the chain when called", () => {
       expect(seen.map((o) => [o.op, o.outcome])).toEqual([
         ["submitNewTransactionBatch", "error"],
       ]);
+    }
+  );
+
+  it.each(batchHosts)(
+    "%s: _submitNewTransactionBatchForWait snapshots around the batch write",
+    async (label, makeHost) => {
+      let records;
+      let client;
+      const call = vi.fn(async () => {
+        records.set("0xb1", { account: "0xaccount", status: "pending" });
+        records.set("0xb2", { account: "0xaccount", status: "discarded" });
+        client._serializeWasmCall(async () => {
+          records.set("0xsame", { account: "0xaccount", status: "pending" });
+        });
+        // A sibling queued on the chain must not run before this write
+        // returns. Yielding gives an inline or later slot the chance to.
+        await Promise.resolve();
+        return 100;
+      });
+      client = makeHost(call);
+      records = client.records;
+
+      const result = await client._submitNewTransactionBatchForWait([
+        new BatchItem(),
+      ]);
+      const ids = (rows) => rows.map((tx) => tx.id().toHex());
+      expect(ids(result.before)).toEqual(["0xold"]);
+      expect(ids(result.after)).toEqual(
+        expect.arrayContaining(["0xold", "0xb1", "0xb2"])
+      );
+      expect(ids(result.after)).not.toContain("0xsame");
+      expect(ids(result.after)).toHaveLength(3);
+
+      await client.waitForIdle();
+      expect([...records.keys()]).toContain("0xsame");
+      if (label === "mock client") {
+        expect(client.callMethodWithWorker).not.toHaveBeenCalled();
+      }
     }
   );
 });

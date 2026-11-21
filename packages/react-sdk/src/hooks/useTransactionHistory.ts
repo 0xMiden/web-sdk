@@ -140,16 +140,14 @@ type FilterBuildResult = {
   localFilterHexes?: string[];
 };
 
-// `getTransactions` takes its filter by value and `TransactionFilter.ids` takes
-// its ids by value, so every refetch builds a fresh filter: a handle that has
-// been through one query is gone, and reusing it fails with
-// `null pointer passed to rust`.
 function buildFilter(
   filter: TransactionHistoryOptions["filter"],
   ids: Array<string | TransactionId> | null,
   idsHex: string[] | null
 ): FilterBuildResult {
   if (filter) {
+    // A factory runs per fetch; a caller's instance would be consumed by the
+    // first `getTransactions` call.
     return { filter: typeof filter === "function" ? filter() : filter };
   }
 
@@ -157,8 +155,8 @@ function buildFilter(
     return { filter: TransactionFilter.all() };
   }
 
-  // Build the ids from the hex snapshot rather than handing on the caller's
-  // handles, which the first query would consume.
+  // `TransactionFilter.ids` takes its handles by value, so every refetch builds
+  // fresh ones from the hex snapshot rather than handing on the caller's.
   const allTransactionIds = ids.every((id) => typeof id !== "string");
   if (allTransactionIds) {
     return {

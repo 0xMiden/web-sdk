@@ -13,14 +13,19 @@ type ClientWithTransactions = {
   >;
 };
 
+/** The transaction will never commit, so nothing it created can be delivered. */
+export class TransactionDiscardedError extends Error {
+  constructor() {
+    super("Transaction was discarded before commit");
+  }
+}
+
 /**
  * Poll until a transaction is committed or discarded.
  *
  * Takes the id as hex and builds a fresh `TransactionId` for every poll:
  * `TransactionFilter.ids` takes its handles by value, so a handle that has been
- * through one poll is gone and a second poll with it fails with
- * `null pointer passed to rust`. A hex string also survives
- * `applyTransaction`, which may invalidate the result's child handles.
+ * through one poll is gone and a second poll with it fails.
  */
 export async function waitForTransactionCommit(
   client: ClientWithTransactions,
@@ -45,7 +50,7 @@ export async function waitForTransactionCommit(
         return;
       }
       if (status.isDiscarded()) {
-        throw new Error("Transaction was discarded before commit");
+        throw new TransactionDiscardedError();
       }
     }
     await new Promise((resolve) =>
@@ -57,7 +62,7 @@ export async function waitForTransactionCommit(
 }
 
 /** `TransactionId.fromHex` wants a `0x` prefix. */
-export function normalizeTransactionIdHex(value: string): string {
+function normalizeTransactionIdHex(value: string): string {
   const trimmed = value.trim();
   const normalized =
     trimmed.startsWith("0x") || trimmed.startsWith("0X")
