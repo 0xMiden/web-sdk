@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.1 (TBD)
+
+### Fixes
+
+* [FIX][web] IndexedDB sync drops the tag of a tracked note once the note is consumed or invalidated before it commits, as it already did for a committed note, so the account no longer keeps tracking a tag nothing needs. A one-time store upgrade removes the tags earlier versions left behind ([#525](https://github.com/0xMiden/web-sdk/issues/525), [#533](https://github.com/0xMiden/web-sdk/pull/533)).
+
 ## 0.18.0 (2026-11-16)
 
 ### Enhancements
@@ -44,7 +50,6 @@
 * [FIX][web,react] Updated `miden-client` to 0.18.2. When a sync discards a local transaction, its input notes are released: an authenticated note returns to `Committed` and an unauthenticated one to `Expected`, so it can be consumed again, where it previously stayed `ProcessingAuthenticated` or `ProcessingUnauthenticated`. A note consumed on chain stays consumed ([rust-sdk#2585](https://github.com/0xMiden/rust-sdk/pull/2585)).
 * [FIX][web] `syncNoteTransport()` keeps a note fetched from the Note Transport Layer only when a tracked account can consume it or its tag was added with `client.tags.add()`. A note no tracked account could consume was previously kept when its tag was registered for an expected note or a subscription rather than for an account ([rust-sdk#2801](https://github.com/0xMiden/rust-sdk/pull/2801)).
 * [FIX][docs] The `@miden-sdk/react` `AGENTS.md` example and hook table for `useMultiSend` now call `sendMany` with `assetId` at the top level, as `MultiSendOptions` declares; they called a `multiSend` the hook does not return and put `assetId` on each recipient, so the example did not compile. The package README no longer documents `useInternalTransfer` or imports its `InternalTransferOptions`, `InternalTransferChainOptions` and `InternalTransferResult` types, all removed in 0.14.0 in favour of `useSend` and `useConsume` ([#519](https://github.com/0xMiden/web-sdk/pull/519)).
-* [FIX][web] IndexedDB sync now drops note-source tags for any input note that is no longer inclusion-pending, matching sqlite-store / rust-sdk#2323. Dexie schema v10 also prunes already-leaked tags left by the old committed-only path ([#525](https://github.com/0xMiden/web-sdk/issues/525)).
 
 ## 0.17.10 (2026-11-12)
 
