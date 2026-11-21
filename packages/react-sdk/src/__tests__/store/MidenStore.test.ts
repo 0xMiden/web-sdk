@@ -571,16 +571,22 @@ describe("MidenStore", () => {
     });
 
     it("should keep firstSeen when only a note's state changes", () => {
+      const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1000);
       const pending = createMockInputNoteRecord("0xnote1", false);
       useMidenStore.getState().setNotes([pending] as any, "all");
-      const seenAt = useMidenStore.getState().noteFirstSeen.get("0xnote1");
+      expect(useMidenStore.getState().noteFirstSeen.get("0xnote1")).toBe(1000);
 
+      nowSpy.mockReturnValue(2000);
       const consumed = createMockInputNoteRecord("0xnote1", true);
       useMidenStore.getState().setNotesIfChanged([consumed] as any, "all");
+      nowSpy.mockRestore();
 
-      expect(useMidenStore.getState().noteFirstSeen.get("0xnote1")).toBe(
-        seenAt
+      // The refresh was applied (the stored record is the consumed one) and
+      // the original timestamp survived it.
+      expect(useMidenStore.getState().notesByFilter.get("all")![0]).toBe(
+        consumed
       );
+      expect(useMidenStore.getState().noteFirstSeen.get("0xnote1")).toBe(1000);
     });
 
     it("falls back to the note ID when state() throws", () => {
