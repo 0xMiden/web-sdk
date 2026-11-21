@@ -4,6 +4,7 @@
 
 ### Fixes
 
+* [FIX][web] Resource API transaction helpers (`send`, `mint`, `consume`, …) wrap an `applyTransaction` failure that follows a successful submit with `code: "ApplyTransactionAfterSubmitFailed"`, the transaction id, the submission height, and the original error as `cause`. `code_from_error` maps the matching Rust `ClientError` to the same code so wallets can refuse a double-spend retry without matching display text ([#438](https://github.com/0xMiden/web-sdk/issues/438)).
 * [FIX][react] `useNoteStream` now refilters when `amountFilter` changes. The previous ref-only check never invalidated after the first render, so a new filter left the old note list on screen ([#521](https://github.com/0xMiden/web-sdk/issues/521)).
 * [FIX][web] IndexedDB sync drops the tag of a tracked note once the note is consumed or invalidated before it commits, as it already did for a committed note, so the account no longer keeps tracking a tag nothing needs. A one-time store upgrade removes the tags earlier versions left behind ([#525](https://github.com/0xMiden/web-sdk/issues/525), [#533](https://github.com/0xMiden/web-sdk/pull/533)).
 

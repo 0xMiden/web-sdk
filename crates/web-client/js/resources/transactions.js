@@ -1354,7 +1354,24 @@ export class TransactionsResource {
     );
     const txId = result.id();
     const height = await this.#inner.submitProvenTransaction(proven, result);
-    await this.#inner.applyTransaction(result, height);
+    try {
+      await this.#inner.applyTransaction(result, height);
+    } catch (applyError) {
+      // Submit already landed; a bare apply error looks like a pre-submit failure
+      // and invites a double-spend retry. Match the Rust
+      // ClientError::ApplyTransactionAfterSubmitFailed signal so wallets can
+      // refuse to resubmit (see issue #438).
+      const txIdHex =
+        typeof txId?.toHex === "function" ? txId.toHex() : String(txId);
+      const wrapped = new Error(
+        `Transaction ${txIdHex} was accepted into the node's mempool at block ${height} but the local store update failed. Do not resubmit the same transaction.`
+      );
+      wrapped.code = "ApplyTransactionAfterSubmitFailed";
+      wrapped.cause = applyError;
+      wrapped.transactionId = txIdHex;
+      wrapped.submissionHeight = height;
+      throw wrapped;
+    }
     return { txId, result };
   }
 }

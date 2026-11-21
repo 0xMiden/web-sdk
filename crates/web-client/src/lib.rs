@@ -905,6 +905,12 @@ fn code_from_error(err: &(dyn Error + 'static)) -> Option<&'static str> {
             ClientError::AccountAlreadyTracked(_) => Some("ACCOUNT_ALREADY_TRACKED"),
             ClientError::AccountNotAllowlisted(_) => Some("ACCOUNT_NOT_ALLOWLISTED"),
             ClientError::AccountAlreadyAllowed(_) => Some("ACCOUNT_ALREADY_ALLOWED"),
+            // Same string the resource API sets when apply fails after a successful submit
+            // (`#submitOrSubmitWithProver`), so wallets can refuse a double-spend retry
+            // without matching display text (issue #438).
+            ClientError::ApplyTransactionAfterSubmitFailed { .. } => {
+                Some("ApplyTransactionAfterSubmitFailed")
+            },
             // The node's verdict on a registration travels inside the RPC error rather than as
             // a `ClientError` variant of its own.
             ClientError::RpcError(rpc_error) => registration_code(rpc_error),

@@ -319,6 +319,38 @@ describe("TransactionsResource", () => {
       expect(result.note).toBeNull();
     });
 
+    it("wraps apply failure after submit with ApplyTransactionAfterSubmitFailed", async () => {
+      const storeError = new Error("IndexedDB quota exceeded");
+      const { resource, inner } = makeResource({
+        submitProvenTransaction: vi.fn().mockResolvedValue(42),
+        applyTransaction: vi.fn().mockRejectedValue(storeError),
+      });
+
+      let caught;
+      try {
+        await resource.send({
+          account: "0xsender",
+          to: "0xrecipient",
+          token: "0xfaucet",
+          type: "public",
+          amount: 100,
+        });
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeDefined();
+      expect(caught.code).toBe("ApplyTransactionAfterSubmitFailed");
+      expect(caught.cause).toBe(storeError);
+      expect(caught.transactionId).toBe("txHex");
+      expect(caught.submissionHeight).toBe(42);
+      expect(caught.message).toContain(
+        "accepted into the node's mempool at block 42"
+      );
+      expect(inner.submitProvenTransaction).toHaveBeenCalled();
+      expect(inner.applyTransaction).toHaveBeenCalledWith(inner._txResult, 42);
+    });
+
     it("waits for confirmation when waitForConfirmation=true", async () => {
       const { resource, inner } = makeResource();
       const committedStatus = {
