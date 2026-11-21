@@ -391,7 +391,7 @@ describe("submitNewTransactionBatch joins the chain when called", () => {
         new BatchItem(),
       ]);
       const ids = (rows) => rows.map((tx) => tx.id().toHex());
-      expect(ids(result.before)).toContain("0xold");
+      expect(ids(result.before)).toEqual(["0xold"]);
       expect(ids(result.after)).toEqual(
         expect.arrayContaining(["0xold", "0xb1", "0xb2"])
       );
