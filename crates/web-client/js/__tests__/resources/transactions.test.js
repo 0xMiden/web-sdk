@@ -2542,19 +2542,24 @@ describe("TransactionsResource", () => {
     });
 
     // A store double for the confirmation wait. `records` maps a transaction id
-    // to its status; `getTransactions` answers the pending filter and the ids
-    // filter from it, the two queries the wait makes. `submit` adds the batch's
-    // transactions as pending, as the real submission does in one store write.
+    // to its status; each row's `accountId().toString()` is its executing
+    // account, `0xsender` unless `accounts` says otherwise. `getTransactions`
+    // answers the all, uncommitted, and ids filters. The poll still uses ids.
+    // `_submitNewTransactionBatchForWait` snapshots with `all`, runs
+    // `submitNewTransactionBatch`, then snapshots again.
     function makeBatchStore({ pending = [], batch = ["0xb1", "0xb2"] } = {}) {
       const records = new Map(pending.map((id) => [id, "pending"]));
+      const accounts = new Map();
       const record = (id) => ({
         id: () => ({ toHex: () => id }),
+        accountId: () => ({ toString: () => accounts.get(id) ?? "0xsender" }),
         transactionStatus: () => ({
           isCommitted: () => records.get(id) === "committed",
           isDiscarded: () => records.get(id) === "discarded",
         }),
       });
       const getTransactions = vi.fn(async (filter) => {
+        if (filter === "filterAll") return [...records.keys()].map(record);
         if (filter === "filterUncommitted") {
           return [...records]
             .filter(([, status]) => status === "pending")
@@ -2573,10 +2578,22 @@ describe("TransactionsResource", () => {
           ids: vi.fn((txIds) => ({ ids: txIds.map((id) => id.toHex()) })),
         },
       };
+      const _submitNewTransactionBatchForWait = vi.fn(async () => {
+        const before = await getTransactions(
+          wasmOverrides.TransactionFilter.all()
+        );
+        const blockNumber = await submitNewTransactionBatch();
+        const after = await getTransactions(
+          wasmOverrides.TransactionFilter.all()
+        );
+        return { blockNumber, before, after };
+      });
       return {
         records,
+        accounts,
         getTransactions,
         submitNewTransactionBatch,
+        _submitNewTransactionBatchForWait,
         wasmOverrides,
       };
     }
@@ -2591,6 +2608,8 @@ describe("TransactionsResource", () => {
       const { resource, inner } = makeResource(
         {
           submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
           getTransactions: store.getTransactions,
         },
         {},
@@ -2620,6 +2639,8 @@ describe("TransactionsResource", () => {
       const { resource, inner } = makeResource(
         {
           submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
           getTransactions: store.getTransactions,
           syncChain,
           getSyncHeight,
@@ -2650,6 +2671,8 @@ describe("TransactionsResource", () => {
       const { resource, wasm } = makeResource(
         {
           submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
           getTransactions: store.getTransactions,
           syncChain,
         },
@@ -2680,6 +2703,8 @@ describe("TransactionsResource", () => {
       const { resource } = makeResource(
         {
           submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
           getTransactions: store.getTransactions,
           syncChain,
         },
@@ -2703,6 +2728,8 @@ describe("TransactionsResource", () => {
       const { resource } = makeResource(
         {
           submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
           getTransactions: store.getTransactions,
           syncChain,
         },
@@ -2718,6 +2745,78 @@ describe("TransactionsResource", () => {
       ).rejects.toThrow("Batch transaction rejected: 0xb2");
     });
 
+    it("submitBatch waitForConfirmation rejects a batch transaction discarded before the post-submit read", async () => {
+      const store = makeBatchStore();
+      const recordBatch =
+        store.submitNewTransactionBatch.getMockImplementation();
+      store.submitNewTransactionBatch.mockImplementation(async () => {
+        const blockNumber = await recordBatch();
+        // A sync that ran while the batch was being applied settled this one.
+        store.records.set("0xb2", "discarded");
+        return blockNumber;
+      });
+      const syncChain = vi.fn(async () => {
+        store.records.set("0xb1", "committed");
+      });
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      await expect(
+        resource.submitBatch(batchItems(), {
+          waitForConfirmation: true,
+          interval: 0,
+        })
+      ).rejects.toThrow("Batch transaction rejected: 0xb2");
+    });
+
+    it("submitBatch waitForConfirmation ignores a concurrent transaction on another account", async () => {
+      const store = makeBatchStore();
+      const recordBatch =
+        store.submitNewTransactionBatch.getMockImplementation();
+      store.submitNewTransactionBatch.mockImplementation(async () => {
+        const blockNumber = await recordBatch();
+        store.records.set("0xother", "pending");
+        store.accounts.set("0xother", "0xstranger");
+        return blockNumber;
+      });
+      const syncChain = vi.fn(async () => {
+        store.records.set("0xb1", "committed");
+        store.records.set("0xb2", "committed");
+        store.records.set("0xother", "discarded");
+      });
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      await expect(
+        resource.submitBatch(batchItems(), {
+          waitForConfirmation: true,
+          interval: 0,
+        })
+      ).resolves.toEqual({ blockNumber: 100 });
+      const polled = store.wasmOverrides.TransactionFilter.ids.mock.calls.map(
+        ([ids]) => ids.map((id) => id.toHex())
+      );
+      expect(polled).toEqual([["0xb1", "0xb2"]]);
+    });
+
     it("submitBatch waitForConfirmation swallows a rejected sync attempt", async () => {
       const store = makeBatchStore();
       const syncChain = vi.fn();
@@ -2729,6 +2828,8 @@ describe("TransactionsResource", () => {
       const { resource } = makeResource(
         {
           submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
           getTransactions: store.getTransactions,
           syncChain,
         },
@@ -2749,6 +2850,8 @@ describe("TransactionsResource", () => {
       const { resource } = makeResource(
         {
           submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
           getTransactions: store.getTransactions,
         },
         {},
@@ -2769,6 +2872,8 @@ describe("TransactionsResource", () => {
       const { resource } = makeResource(
         {
           submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
           getTransactions: store.getTransactions,
         },
         {},
@@ -2799,6 +2904,8 @@ describe("TransactionsResource", () => {
             .fn()
             .mockResolvedValue(fakeRequest("send")),
           submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
           getTransactions: store.getTransactions,
           syncChain,
         },

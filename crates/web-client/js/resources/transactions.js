@@ -744,48 +744,39 @@ export class TransactionsResource {
       );
     });
 
-    // The batch primitive returns no transaction ids, so the transactions it
-    // records are told apart from the ones that were already pending.
-    const pendingBefore = options?.waitForConfirmation
-      ? await this.#pendingTransactionIds(wasm)
-      : null;
-
-    const blockNumber = await this.#inner.submitNewTransactionBatch(wasmItems);
-
-    if (pendingBefore) {
-      const pendingAfter = await this.#pendingTransactionIds(wasm);
-      const batchTxIds = [...pendingAfter].filter(
-        (id) => !pendingBefore.has(id)
+    // The batch primitive returns no transaction ids. While waiting, one chain
+    // slot reads every stored row, submits, and reads again; the new rows for
+    // these items' accounts are the ones to wait for, in any status.
+    if (options?.waitForConfirmation) {
+      const { blockNumber, before, after } =
+        await this.#inner._submitNewTransactionBatchForWait(wasmItems);
+      const accounts = new Set(
+        items.map((item) => resolveAccountRef(item.account, wasm).toString())
       );
+      const beforeIds = new Set((before ?? []).map((tx) => tx.id().toHex()));
+      const batchTxIds = (after ?? [])
+        .filter(
+          (tx) =>
+            accounts.has(tx.accountId().toString()) &&
+            !beforeIds.has(tx.id().toHex())
+        )
+        .map((tx) => tx.id().toHex());
       await this.#waitForBatch(batchTxIds, options);
+      return { blockNumber };
     }
 
+    const blockNumber = await this.#inner.submitNewTransactionBatch(wasmItems);
     return { blockNumber };
-  }
-
-  /**
-   * The ids, as hex, of the transactions the local store holds as pending.
-   *
-   * @param {object} wasm - The WASM module.
-   * @returns {Promise<Set<string>>}
-   */
-  async #pendingTransactionIds(wasm) {
-    const txs = await this.#inner.getTransactions(
-      wasm.TransactionFilter.uncommitted()
-    );
-    return new Set((txs ?? []).map((tx) => tx.id().toHex()));
   }
 
   /**
    * Polls until every transaction in `txIds` is committed, a transaction is
    * discarded, or the timeout expires. The batch counterpart of `waitFor`.
    *
-   * `txIds` are the transactions that became pending during the submission.
-   * A batch is recorded as pending in one store write, so these are the
-   * batch's own transactions, plus those of any other submission this client
-   * made while the batch was being proven; waiting for those as well only
-   * makes the wait longer. A transaction that a concurrent sync already
-   * settled is no longer pending and is not waited for.
+   * `txIds` are the batch accounts' new records in any status. A discarded id
+   * still rejects. The batch primitive returns no ids, so a transaction that
+   * another client instance on the same store writes for one of these accounts
+   * during the submission cannot be told apart and is waited for as well.
    *
    * The block number the submission returned is not used: it is the node's
    * chain tip as of submission, which the client has usually reached already.
