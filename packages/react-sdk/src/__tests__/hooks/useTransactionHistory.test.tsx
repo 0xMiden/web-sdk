@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useTransactionHistory } from "../../hooks/useTransactionHistory";
@@ -355,5 +356,86 @@ describe("useTransactionHistory", () => {
 
     // The mocked filters are all `{}`, so assert identity, not equality.
     expect(getTransactions.mock.calls[0][0]).toBe(instance);
+  });
+
+  describe("when a sync stamp is already stored at mount", () => {
+    // MidenProvider writes `lastSyncTime` before `setClient`, so the hook
+    // becomes ready on a commit that already carries a stamp.
+    const setup = (getTransactions: ReturnType<typeof vi.fn>) => {
+      const mockClient = createMockWebClient({ getTransactions });
+      useMidenStore.getState().setClient(mockClient as any);
+      useMidenStore.getState().setSyncState({ lastSyncTime: 1 });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+    };
+
+    const consumedOnce = () => {
+      let consumed = false;
+      return vi.fn(async (_filter: unknown) => {
+        if (consumed) throw new Error("null pointer passed to rust");
+        consumed = true;
+        return [createRecord("0xabc")];
+      });
+    };
+
+    it("fetches once so a TransactionFilter instance is not consumed twice", async () => {
+      const getTransactions = consumedOnce();
+      setup(getTransactions);
+      const instance = TransactionFilter.uncommitted();
+
+      const { result } = renderHook(() =>
+        useTransactionHistory({ filter: instance })
+      );
+      await waitFor(() => expect(result.current.records).toHaveLength(1));
+
+      expect(getTransactions).toHaveBeenCalledTimes(1);
+      expect(getTransactions.mock.calls[0][0]).toBe(instance);
+      expect(result.current.error).toBeNull();
+    });
+
+    it("fetches once under StrictMode's replayed effects", async () => {
+      const getTransactions = consumedOnce();
+      setup(getTransactions);
+      const instance = TransactionFilter.uncommitted();
+
+      const { result } = renderHook(
+        () => useTransactionHistory({ filter: instance }),
+        { wrapper: StrictMode }
+      );
+      await waitFor(() => expect(result.current.records).toHaveLength(1));
+
+      expect(getTransactions).toHaveBeenCalledTimes(1);
+      expect(result.current.error).toBeNull();
+    });
+
+    it("refetches once for each later sync stamp", async () => {
+      const getTransactions = vi
+        .fn()
+        .mockResolvedValue([createRecord("0xabc")]);
+      setup(getTransactions);
+
+      renderHook(() => useTransactionHistory());
+      await waitFor(() => expect(getTransactions).toHaveBeenCalledTimes(1));
+
+      act(() => {
+        useMidenStore.getState().setSyncState({ lastSyncTime: 2 });
+      });
+      await waitFor(() => expect(getTransactions).toHaveBeenCalledTimes(2));
+    });
+
+    it("does not refetch on a later sync stamp when refreshOnSync is false", async () => {
+      const getTransactions = vi
+        .fn()
+        .mockResolvedValue([createRecord("0xabc")]);
+      setup(getTransactions);
+
+      renderHook(() => useTransactionHistory({ refreshOnSync: false }));
+      await waitFor(() => expect(getTransactions).toHaveBeenCalledTimes(1));
+
+      act(() => {
+        useMidenStore.getState().setSyncState({ lastSyncTime: 2 });
+      });
+      await act(async () => {});
+      expect(getTransactions).toHaveBeenCalledTimes(1);
+    });
   });
 });
