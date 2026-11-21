@@ -687,7 +687,7 @@ impl WebClient {
                     keystore.as_ref().and_then(|keystore| keystore.last_get_key_error()),
                 );
                 Err(js_error)
-            }
+            },
         }
     }
 
@@ -746,7 +746,7 @@ impl WebClient {
                     keystore.as_ref().and_then(|keystore| keystore.last_get_key_error()),
                 );
                 Err(js_error)
-            }
+            },
         }
     }
 
