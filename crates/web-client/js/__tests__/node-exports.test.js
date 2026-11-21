@@ -72,6 +72,9 @@ const fakeNative = vi.hoisted(() => {
       return new EthAddress();
     }
   }
+  // The browser entry exports its own wrapper for this class, so the parity
+  // check below needs the Node entry to export one too.
+  class AuthGuardedMultisigConfig {}
   class WebClient {
     constructor() {
       this.newWallet = vi.fn(async () => "wallet");
@@ -111,6 +114,7 @@ const fakeNative = vi.hoisted(() => {
     EthAddress,
     WebClient,
     AuthScheme,
+    AuthGuardedMultisigConfig,
     exportStore,
     NoteScript,
     rawStorage,
@@ -129,6 +133,7 @@ vi.mock("../node/loader.js", () => ({
     EthAddress: fakeNative.EthAddress,
     WebClient: fakeNative.WebClient,
     AuthScheme: fakeNative.AuthScheme,
+    AuthGuardedMultisigConfig: fakeNative.AuthGuardedMultisigConfig,
     exportStore: fakeNative.exportStore,
     NoteScript: fakeNative.NoteScript,
   }),

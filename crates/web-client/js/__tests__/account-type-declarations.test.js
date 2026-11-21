@@ -124,3 +124,60 @@ it("type-checks AuthScheme as the friendly const through the public declarations
     )
   ).toEqual([]);
 });
+
+it("type-checks the friendly AuthScheme in AuthGuardedMultisigConfig and createAuthComponentFromCommitment", () => {
+  expect(
+    diagnostics(
+      `
+      export enum AuthScheme { AuthEcdsaK256Keccak = 1, AuthRpoFalcon512 = 2 }
+      export class Word { free(): void; }
+      export class ProcedureThreshold { free(): void; }
+      export class AccountComponent {
+        private constructor();
+        free(): void;
+        static createAuthComponentFromCommitment(commitment: Word, auth_scheme: AuthScheme): AccountComponent;
+        static fromLibrary(library: string): AccountComponent;
+      }
+      export class AuthGuardedMultisigConfig {
+        free(): void;
+        constructor(approvers: Word[], default_threshold: number, guardian: Word, auth_scheme: AuthScheme);
+        withProcThresholds(proc_thresholds: ProcedureThreshold[]): AuthGuardedMultisigConfig;
+        readonly defaultThreshold: number;
+      }
+      export function createAuthGuardedMultisig(config: AuthGuardedMultisigConfig): AccountComponent;
+      export class Account { free(): void; }
+      export class AccountStorageMode { free(): void; }
+      export class AuthSecretKey { free(): void; }
+      export class AccountStorage { free(): void; }
+      export class Felt { free(): void; }
+      export class SyncSummary { free(): void; }
+      export class WebClient { free(): void; }
+    `,
+      `
+      import { AccountComponent, AuthGuardedMultisigConfig, AuthScheme,
+        createAuthGuardedMultisig, Word } from "./index";
+      declare const word: Word;
+      const config: AuthGuardedMultisigConfig = new AuthGuardedMultisigConfig(
+        [word], 1, word, AuthScheme.ECDSA
+      );
+      new AuthGuardedMultisigConfig([word], 1, word, AuthScheme.Falcon);
+      new AuthGuardedMultisigConfig([word], 1, word, 2);
+      const tuned: AuthGuardedMultisigConfig = config.withProcThresholds([]);
+      const threshold: number = tuned.defaultThreshold;
+      const guarded: AccountComponent = createAuthGuardedMultisig(config);
+      const single: AccountComponent =
+        AccountComponent.createAuthComponentFromCommitment(word, AuthScheme.ECDSA);
+      AccountComponent.createAuthComponentFromCommitment(word, 1);
+      AccountComponent.fromLibrary("lib");
+      const isConfig: boolean = config instanceof AuthGuardedMultisigConfig;
+      const isComponent: boolean = single instanceof AccountComponent;
+      // @ts-expect-error The scheme is required.
+      new AuthGuardedMultisigConfig([word], 1, word);
+      // @ts-expect-error Only "falcon" and "ecdsa" are friendly schemes.
+      new AuthGuardedMultisigConfig([word], 1, word, "rsa");
+      // @ts-expect-error Only "falcon" and "ecdsa" are friendly schemes.
+      AccountComponent.createAuthComponentFromCommitment(word, "rsa");
+    `
+    )
+  ).toEqual([]);
+});

@@ -13,7 +13,11 @@
  * - Array type polyfills (browser has typed WASM arrays, napi accepts plain JS arrays)
  */
 
-import { resolveAuthScheme } from "../utils.js";
+import {
+  installAuthSchemeResolution,
+  resolveAuthScheme,
+  wrapAuthGuardedMultisigConfig,
+} from "../utils.js";
 
 // ── Argument normalization ───────────────────────────────────────────
 
@@ -544,6 +548,18 @@ export function createSdkWrapper(rawSdk) {
     // Array type polyfills
     ...makeArrayPolyfills(),
   };
+  // The package's `AuthScheme` is the friendly string const, so these bindings
+  // resolve "falcon" and "ecdsa" against the native enum, as the browser
+  // entry does.
+  const NativeGuardedConfig = sdk.AuthGuardedMultisigConfig;
+  if (NativeGuardedConfig) {
+    sdk.AuthGuardedMultisigConfig = wrapAuthGuardedMultisigConfig(
+      () => NativeGuardedConfig,
+      () => rawSdk
+    );
+    sdk.AuthGuardedMultisigConfig.prototype = NativeGuardedConfig.prototype;
+  }
+  installAuthSchemeResolution(sdk.AccountComponent, rawSdk);
   // A wrapper shares its class's prototype, so instances report the final
   // export, whichever wrapper produced it, as their constructor.
   for (const [name, exported] of Object.entries(sdk)) {

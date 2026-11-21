@@ -26,8 +26,25 @@ import {
   StorageResult,
   wordToBigInt,
 } from "./storageView.js";
-import { resolveAuthScheme } from "./utils.js";
+import {
+  installAuthSchemeResolution,
+  resolveAuthScheme,
+  wrapAuthGuardedMultisigConfig,
+} from "./utils.js";
+import {
+  AuthGuardedMultisigConfig as WasmAuthGuardedMultisigConfig,
+  AuthScheme as WasmAuthScheme,
+} from "../Cargo.toml";
 export * from "../Cargo.toml";
+
+// The package's `AuthScheme` (below) is the friendly string const and shadows
+// the wasm enum, so these bindings resolve the friendly strings themselves.
+// AccountComponent.createAuthComponentFromCommitment is patched once the wasm
+// module loads (see ensureWasm).
+export const AuthGuardedMultisigConfig = wrapAuthGuardedMultisigConfig(
+  () => WasmAuthGuardedMultisigConfig,
+  () => ({ AuthScheme: WasmAuthScheme })
+);
 
 export {
   FaucetType,
@@ -246,6 +263,11 @@ const ensureWasm = async () => {
         // Install StorageView: account.storage() now returns a developer-friendly
         // wrapper that makes getItem() work correctly for StorageMap slots.
         installStorageView(module);
+        installAuthSchemeResolution(module.AccountComponent, module);
+        if (module.AuthGuardedMultisigConfig) {
+          AuthGuardedMultisigConfig.prototype =
+            module.AuthGuardedMultisigConfig.prototype;
+        }
       }
       return module;
     });
