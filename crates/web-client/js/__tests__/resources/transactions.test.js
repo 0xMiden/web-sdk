@@ -2912,6 +2912,49 @@ describe("TransactionsResource", () => {
       expect(store.wasmOverrides.TransactionFilter.ids).not.toHaveBeenCalled();
     });
 
+    it("submitBatch waitForConfirmation waits when the chain-slot helper is absent", async () => {
+      const store = makeBatchStore({
+        pending: ["0xold"],
+        discarded: ["0xb1", "0xstuck"],
+      });
+      const syncChain = vi.fn(async () => {
+        store.records.set("0xb1", "committed");
+        store.records.set("0xb2", "committed");
+      });
+      const { resource, inner } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+      expect(inner._submitNewTransactionBatchForWait).toBeUndefined();
+
+      await expect(
+        resource.submitBatch(batchItems(), {
+          waitForConfirmation: true,
+          timeout: 1000,
+          interval: 0,
+        })
+      ).resolves.toEqual({ blockNumber: 100 });
+      const polled = store.wasmOverrides.TransactionFilter.ids.mock.calls.map(
+        ([ids]) => ids.map((id) => id.toHex())
+      );
+      expect(polled).toEqual([["0xb1", "0xb2"]]);
+      expect(store.wasmOverrides.TransactionFilter.all).toHaveBeenCalledTimes(
+        2
+      );
+      expect(store.getTransactions.mock.calls[0][0]).toBe("filterAll");
+      expect(store.getTransactions.mock.calls[1][0]).toBe("filterAll");
+      const [firstRead, secondRead] =
+        store.getTransactions.mock.invocationCallOrder;
+      const [submit] = store.submitNewTransactionBatch.mock.invocationCallOrder;
+      expect(submit).toBeGreaterThan(firstRead);
+      expect(submit).toBeLessThan(secondRead);
+    });
+
     it("submitBatch waitForConfirmation swallows a rejected sync attempt", async () => {
       const store = makeBatchStore();
       const syncChain = vi.fn();
