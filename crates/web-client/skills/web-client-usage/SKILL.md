@@ -585,7 +585,8 @@ builds exactly the code the Rust client builds:
 - `createAuthGuardedMultisig(config)` builds the standard guarded multisig.
   Configure it with
   `new AuthGuardedMultisigConfig(approvers, defaultThreshold, guardian, authScheme)`
-  (optionally `.withProcThresholds([...])`).
+  (optionally `.withProcThresholds([...])`), where `authScheme` is
+  `AuthScheme.ECDSA` or `AuthScheme.Falcon`.
 - `AccountComponent.createNetworkAuthComponents(allowedNoteScriptFees, feeFaucetId, allowedTxScriptRoots?)`
   builds a network account's auth. Each `new NoteScriptFee(noteScript.root(), amount)`
   pairs an allowlisted note script root with the fee the account charges to
