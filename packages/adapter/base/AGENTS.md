@@ -34,7 +34,7 @@ This is the contract layer. It talks to no wallet and renders nothing.
   failure on `.error` and a stable `.name`.
 - **Transactions** - `SendTransaction`, `ConsumeTransaction`,
   `CustomTransaction`, plus the `Transaction` envelope and `TransactionType`.
-- **Enums** - `WalletAdapterNetwork` (`Devnet`, `Testnet`, `Localnet`),
+- **Enums** - `WalletAdapterNetwork` (`Mainnet`, `Devnet`, `Testnet`, `Localnet`),
   `PrivateDataPermission`, `AllowedPrivateData`.
 - **Helpers** - `scopePollingDetectionStrategy` for injection detection,
   `u8ToB64` and `b64ToU8` for the wire encoding.

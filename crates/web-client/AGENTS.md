@@ -43,8 +43,8 @@ const client = await MidenClient.createTestnet();
 await client.sync();
 ```
 
-`create(options)` targets an explicit endpoint; `createTestnet()` and
-`createDevnet()` are preconfigured; `createMock()` backs tests with an in-memory
+`create(options)` targets an explicit endpoint; `createTestnet()`,
+`createDevnet()` and `createMainnet()` are preconfigured; `createMock()` backs tests with an in-memory
 chain and no network.
 
 `feeFaucetId` is optional. Since 0.17 the chain's fee asset lives in the

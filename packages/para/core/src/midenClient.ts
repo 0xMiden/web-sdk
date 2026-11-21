@@ -109,6 +109,41 @@ async function createAccount(
   return account.id().toString();
 }
 
+const NOTE_TRANSPORT_URLS = {
+  mainnet: "https://transport.mainnet.miden.io",
+  devnet: "https://transport.devnet.miden.io",
+  testnet: "https://transport.miden.io",
+};
+
+const RPC_HOST_NETWORKS: Record<string, "mainnet" | "devnet"> = {
+  "rpc.mainnet.miden.io": "mainnet",
+  "rpc.devnet.miden.io": "devnet",
+};
+
+/**
+ * The note transport of the network `endpoint` names, used when no
+ * `noteTransportUrl` is given. `endpoint` names a network as a `mainnet`,
+ * `devnet` or `testnet` shorthand, or as the URL of that network's RPC. Any
+ * other endpoint keeps the testnet transport.
+ */
+function defaultNoteTransportUrl(endpoint?: string): string {
+  const normalized = endpoint?.trim().toLowerCase();
+  if (!normalized) {
+    return NOTE_TRANSPORT_URLS.testnet;
+  }
+  if (normalized === "mainnet" || normalized === "devnet") {
+    return NOTE_TRANSPORT_URLS[normalized];
+  }
+  let host: string;
+  try {
+    host = new URL(normalized).hostname;
+  } catch {
+    return NOTE_TRANSPORT_URLS.testnet;
+  }
+  const network = RPC_HOST_NETWORKS[host];
+  return network ? NOTE_TRANSPORT_URLS[network] : NOTE_TRANSPORT_URLS.testnet;
+}
+
 /**
  * Builds a MidenClient wired to Para wallets and ensures an account exists for the user.
  * Filters to EVM wallets, prompts for selection, creates the client, and
@@ -147,7 +182,7 @@ export async function createParaMidenClient(
   const noteTransportUrl =
     opts.noteTransportUrl ||
     opts.nodeTransportUrl ||
-    "https://transport.miden.io";
+    defaultNoteTransportUrl(opts.endpoint);
 
   const client = await MidenClient.create({
     rpcUrl: opts.endpoint,
