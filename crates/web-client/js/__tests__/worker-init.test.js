@@ -1,11 +1,12 @@
-import { describe, it, expect, beforeAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { WorkerAction } from "../constants.js";
 
-// The worker loads the built bindings from dist/; a stub stands in for them so
-// the INIT handler runs in node.
 const created = [];
-vi.mock("../../dist/wasm.js", () => ({
-  default: async () => ({
+const posted = [];
+
+beforeAll(async () => {
+  vi.resetModules();
+  vi.stubGlobal("__midenWorkerWasm", {
     WebClient: class {
       async createClient(...args) {
         created.push({ method: "createClient", args });
@@ -14,14 +15,13 @@ vi.mock("../../dist/wasm.js", () => ({
         created.push({ method: "createClientWithExternalKeystore", args });
       }
     },
-  }),
-}));
-
-const posted = [];
-
-beforeAll(async () => {
+  });
   vi.stubGlobal("self", { postMessage: (message) => posted.push(message) });
   await import("../workers/web-client-methods-worker.js");
+});
+
+afterAll(() => {
+  vi.unstubAllGlobals();
 });
 
 async function init(args) {

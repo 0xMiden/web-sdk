@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.1 (TBD)
+
+### Fixes
+
+* [FIX][web] Failed external `getKey` lookups remain visible in worker and direct transaction execution, summary, and submission errors, without duplicating callback detail or carrying it into later attempts ([#516](https://github.com/0xMiden/web-sdk/pull/516)).
+
 ## 0.18.0 (2026-11-16)
 
 ### Enhancements
