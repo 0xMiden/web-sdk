@@ -785,7 +785,6 @@ const { blockNumber } = await client.transactions.batch({
     { kind: "send", account: alice, to: carol, token: dagToken, amount: 30n, type: "public" },
     { kind: "consume", account: bob, notes: pendingNotes },
   ],
-  // waitForConfirmation is currently broken for batches — see below.
 });
 // The node's chain tip as of submission, not the block the batch commits in.
 console.log(`Batch submitted at chain tip ${blockNumber}`);
