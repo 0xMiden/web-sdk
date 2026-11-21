@@ -482,6 +482,70 @@ test.describe("MidenClient API - Mock Chain", () => {
     expect(isMock).toBe(true);
   });
 
+  test("transactions.batch waitForConfirmation follows the batch's own transactions", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+
+    const wallet = await client.accounts.create();
+    const faucet = await client.accounts.create({
+      type: "FungibleFaucet",
+      symbol: "DAG",
+      decimals: 8,
+      maxSupply: sdk.u64(10000000),
+    });
+
+    // A transaction that is pending before the batch and is not part of it.
+    await client.transactions.mint({
+      account: faucet,
+      to: wallet,
+      amount: sdk.u64(5),
+    });
+
+    // No block is proven, so the batch stays pending. The client is already at
+    // the block number the submission returns, so only the batch's
+    // transactions can tell the wait that nothing has committed.
+    await expect(
+      client.transactions.batch({
+        operations: [
+          { kind: "mint", account: faucet, to: wallet, amount: sdk.u64(100) },
+          { kind: "mint", account: faucet, to: wallet, amount: sdk.u64(200) },
+        ],
+        waitForConfirmation: true,
+        timeout: 1000,
+        interval: 100,
+      })
+    ).rejects.toThrow(
+      "Batch confirmation timed out after 1000ms (waiting for 2 transaction(s))"
+    );
+    expect(
+      (await client.transactions.list({ status: "uncommitted" })).length
+    ).toBe(3);
+
+    // Blocks are proven while a second batch waits, so its wait resolves.
+    const prover = setInterval(() => client.proveBlock(), 250);
+    let result;
+    try {
+      result = await client.transactions.batch({
+        operations: [
+          { kind: "mint", account: faucet, to: wallet, amount: sdk.u64(300) },
+        ],
+        waitForConfirmation: true,
+        timeout: 60_000,
+        interval: 100,
+      });
+    } finally {
+      clearInterval(prover);
+    }
+
+    expect(typeof result.blockNumber).toBe("number");
+    expect(
+      (await client.transactions.list({ status: "uncommitted" })).length
+    ).toBe(0);
+  });
+
   test("terminate prevents further operations", async ({ sdk }) => {
     const MidenClient = await createMidenClient(sdk);
     test.skip(!MidenClient, "requires napi binary (Node.js only)");

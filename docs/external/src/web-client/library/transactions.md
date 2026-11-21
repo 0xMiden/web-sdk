@@ -95,7 +95,6 @@ const { blockNumber } = await client.transactions.batch({
     { kind: "send", account: alice, to: carol, token: dagToken, amount: 30n, type: "public" },
     { kind: "consume", account: bob, notes: pendingNotes },
   ],
-  // waitForConfirmation is currently broken for batches — see below.
 });
 // The node's chain tip as of submission, not the block the batch commits in.
 console.log(`Batch submitted at chain tip ${blockNumber}`);
@@ -143,9 +142,16 @@ This is the plural counterpart of `client.transactions.submit(account, request)`
 
 ### `waitForConfirmation` semantics
 
-The batch primitive returns only a block number, so there are no per-tx ids to poll, and that number is the node's chain tip at submission, per the caveat above. Even were it the commit block, reaching it would confirm only that the client had caught up, not that the batch committed. `waitForConfirmation` on a batch does not currently work: its poll calls a sync method that does not exist, so the poll cannot advance the height itself and the call throws `Batch confirmation timed out` unless the client is already at or past that height. Tracked in [#314](https://github.com/0xMiden/web-sdk/issues/314); prefer syncing and checking `client.transactions.list()` yourself. The `timeout` option still applies; default is 60 seconds.
+The batch primitive returns only a block number, and that number is the node's chain tip at submission, per the caveat above, so reaching it says nothing about the batch. With `waitForConfirmation: true` the call instead follows the transactions the submission recorded in the local store: it syncs the chain and resolves once every one of them is committed. It rejects with `Batch transaction rejected: <id>` if the node discards one, and with `Batch confirmation timed out` when `timeout` runs out first; the default is 60 seconds, and `0` polls until the batch settles.
 
-The batch's own effects are already in the local store when the call returns, so what you are waiting for is chain inclusion:
+```typescript
+await client.transactions.batch({
+  operations,
+  waitForConfirmation: true,
+});
+```
+
+The batch's own effects are already in the local store when the call returns, so without the option what you are waiting for is chain inclusion:
 
 ```typescript
 await client.sync();
