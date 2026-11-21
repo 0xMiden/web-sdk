@@ -656,6 +656,12 @@ impl WebClient {
     ) -> Result<TransactionSummary, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        #[cfg(feature = "browser")]
+        let keystore = client.authenticator().cloned();
+        #[cfg(feature = "browser")]
+        if let Some(keystore) = keystore.as_ref() {
+            keystore.clear_auth_error();
+        }
 
         let native_request: NativeTransactionRequest = transaction_request.into();
         let fut = Box::pin(client.execute_transaction_at(
@@ -673,7 +679,15 @@ impl WebClient {
             Err(ClientError::TransactionExecutorError(TransactionExecutorError::Unauthorized(
                 summary,
             ))) => Ok(TransactionSummary::from(*summary)),
-            Err(err) => Err(map_anchor_err(err, "failed to execute transaction at anchor")),
+            Err(err) => {
+                let js_error = map_anchor_err(err, "failed to execute transaction at anchor");
+                #[cfg(feature = "browser")]
+                append_get_key_detail(
+                    &js_error,
+                    keystore.as_ref().and_then(|keystore| keystore.last_get_key_error()),
+                );
+                Err(js_error)
+            }
         }
     }
 
@@ -706,6 +720,12 @@ impl WebClient {
     ) -> Result<TransactionSummary, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        #[cfg(feature = "browser")]
+        let keystore = client.authenticator().cloned();
+        #[cfg(feature = "browser")]
+        if let Some(keystore) = keystore.as_ref() {
+            keystore.clear_auth_error();
+        }
 
         let native_request: NativeTransactionRequest = transaction_request.into();
         let fut = Box::pin(client.execute_transaction(account_id.into(), native_request));
@@ -718,7 +738,15 @@ impl WebClient {
             Err(ClientError::TransactionExecutorError(TransactionExecutorError::Unauthorized(
                 summary,
             ))) => Ok(TransactionSummary::from(*summary)),
-            Err(err) => Err(js_error_with_context(err, "failed to execute transaction")),
+            Err(err) => {
+                let js_error = js_error_with_context(err, "failed to execute transaction");
+                #[cfg(feature = "browser")]
+                append_get_key_detail(
+                    &js_error,
+                    keystore.as_ref().and_then(|keystore| keystore.last_get_key_error()),
+                );
+                Err(js_error)
+            }
         }
     }
 
