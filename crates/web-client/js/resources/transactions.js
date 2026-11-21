@@ -752,8 +752,23 @@ export class TransactionsResource {
     // discarded row that the submission reopened: a retried batch can have the
     // same ids as the discarded one it replaces.
     if (options?.waitForConfirmation) {
-      const { blockNumber, before, after } =
-        await this.#inner._submitNewTransactionBatchForWait(wasmItems);
+      let blockNumber;
+      let before;
+      let after;
+      if (typeof this.#inner._submitNewTransactionBatchForWait === "function") {
+        ({ blockNumber, before, after } =
+          await this.#inner._submitNewTransactionBatchForWait(wasmItems));
+      } else {
+        // Node has no chain slot to hold: read, submit and read directly. A
+        // sync between the calls could change a row, which the browser slot
+        // rules out. A reopened id that is discarded again in that window is
+        // left out, and the empty-list throw covers it when it was the only one.
+        before = await this.#inner.getTransactions(
+          wasm.TransactionFilter.all()
+        );
+        blockNumber = await this.#inner.submitNewTransactionBatch(wasmItems);
+        after = await this.#inner.getTransactions(wasm.TransactionFilter.all());
+      }
       const accounts = new Set(
         items.map((item) => resolveAccountRef(item.account, wasm).toString())
       );
