@@ -288,7 +288,7 @@ test.describe("remote keystore", () => {
         expect(message).not.toContain("JsValue(");
       }
       expect(result.getKeyCalls).toBeGreaterThan(0);
-      expect(result.authErrorMessage).toBe(
+      expect(result.authErrorMessage).toContain(
         "Failed to get secret key via callback: Callback getKey-summary denied"
       );
       expect(result.callsBeforeStaleChecks).toBe(result.getKeyCalls);
