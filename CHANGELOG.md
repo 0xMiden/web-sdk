@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+* [FIX][react] `useNoteStream` now refilters when `amountFilter` changes. The previous ref-only check never invalidated after the first render, so a new filter left the old note list on screen ([#521](https://github.com/0xMiden/web-sdk/issues/521)).
+
 ## 0.18.0 (2026-11-16)
 
 ### Enhancements
