@@ -21,9 +21,7 @@ impl WebClient {
     /// The chain's fee faucet as `feeFaucetId()` resolves it, or `None` when it is not known yet
     /// (nothing synced and no creation-time faucet). Storage and protocol-config read failures are
     /// errors, not `None`.
-    pub(crate) async fn known_fee_faucet_id(
-        &self,
-    ) -> Result<Option<AccountId>, JsErr> {
+    pub(crate) async fn known_fee_faucet_id(&self) -> Result<Option<AccountId>, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
 
