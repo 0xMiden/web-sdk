@@ -536,11 +536,32 @@ test("ParaProvider receives stable config objects across re-renders", async () =
     );
     assert.strictEqual(afterApiKeyChange.config, first.config);
 
-    await rerender({ appName: "Other App", apiKey: "other-api-key" });
+    await rerender({
+      appName: "Test App",
+      apiKey: "other-api-key",
+      environment: "PRODUCTION",
+    });
+    const afterEnvironmentChange =
+      paraProviderProps[paraProviderProps.length - 1];
+    assert.notStrictEqual(
+      afterEnvironmentChange.paraClientConfig,
+      afterApiKeyChange.paraClientConfig,
+      "paraClientConfig should change when environment changes"
+    );
+    assert.notStrictEqual(
+      afterEnvironmentChange.paraClientConfig.env,
+      afterApiKeyChange.paraClientConfig.env
+    );
+
+    await rerender({
+      appName: "Other App",
+      apiKey: "other-api-key",
+      environment: "PRODUCTION",
+    });
     const afterAppNameChange = paraProviderProps[paraProviderProps.length - 1];
     assert.strictEqual(
       afterAppNameChange.paraClientConfig,
-      afterApiKeyChange.paraClientConfig
+      afterEnvironmentChange.paraClientConfig
     );
     assert.deepStrictEqual(afterAppNameChange.config, { appName: "Other App" });
 
