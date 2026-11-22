@@ -78,6 +78,24 @@ async function proveResult(inner, defaultProver, result, opts) {
 }
 
 /**
+ * Wraps a failed local apply that follows an accepted submit. A bare apply
+ * error looks like a pre-submit failure and invites a double-spend retry.
+ * Matches the code `code_from_error` assigns to the Rust post-submit variants.
+ */
+function applyAfterSubmitError(applyError, txId, height) {
+  const txIdHex =
+    typeof txId?.toHex === "function" ? txId.toHex() : String(txId);
+  const wrapped = new Error(
+    `Transaction ${txIdHex} was accepted into the node's mempool at block ${height} but the local store update failed. Do not resubmit the same transaction.`
+  );
+  wrapped.code = "ApplyTransactionAfterSubmitFailed";
+  wrapped.cause = applyError;
+  wrapped.transactionId = txIdHex;
+  wrapped.submissionHeight = height;
+  return wrapped;
+}
+
+/**
  * Sleeps one polling interval, cut short at a finite `timeout` measured from
  * `start`, so a polling loop gives up at its deadline rather than up to one
  * interval after it. `timeout: 0` (poll indefinitely) sleeps the full interval.
@@ -1357,20 +1375,7 @@ export class TransactionsResource {
     try {
       await this.#inner.applyTransaction(result, height);
     } catch (applyError) {
-      // Submit already landed; a bare apply error looks like a pre-submit failure
-      // and invites a double-spend retry. Match the Rust
-      // ClientError::ApplyTransactionAfterSubmitFailed signal so wallets can
-      // refuse to resubmit (see issue #438).
-      const txIdHex =
-        typeof txId?.toHex === "function" ? txId.toHex() : String(txId);
-      const wrapped = new Error(
-        `Transaction ${txIdHex} was accepted into the node's mempool at block ${height} but the local store update failed. Do not resubmit the same transaction.`
-      );
-      wrapped.code = "ApplyTransactionAfterSubmitFailed";
-      wrapped.cause = applyError;
-      wrapped.transactionId = txIdHex;
-      wrapped.submissionHeight = height;
-      throw wrapped;
+      throw applyAfterSubmitError(applyError, txId, height);
     }
     return { txId, result };
   }
@@ -1526,13 +1531,28 @@ class TransactionSubmission {
    *
    * Browser stores require the stored account to match the execution input;
    * a mismatch rejects before changing account state or transaction history.
-   * Check network status before resubmitting after a local apply failure.
+   * The node already accepted the transaction, so a local apply failure
+   * rejects with `code: "ApplyTransactionAfterSubmitFailed"`, `transactionId`,
+   * `submissionHeight` and the original error as `cause`. Do not resubmit.
    *
    * @returns {Promise<TransactionStoreUpdate>} The pre-apply store update.
+   * @throws An error with `code` `"ApplyTransactionAfterSubmitFailed"` when the
+   *   local store update fails.
    */
   async apply() {
     this.#client.assertNotTerminated();
-    return await this.#inner.applyTransaction(this.#result, this.#blockNumber);
+    try {
+      return await this.#inner.applyTransaction(
+        this.#result,
+        this.#blockNumber
+      );
+    } catch (applyError) {
+      throw applyAfterSubmitError(
+        applyError,
+        this.#result.id(),
+        this.#blockNumber
+      );
+    }
   }
 
   /**

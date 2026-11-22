@@ -319,38 +319,6 @@ describe("TransactionsResource", () => {
       expect(result.note).toBeNull();
     });
 
-    it("wraps apply failure after submit with ApplyTransactionAfterSubmitFailed", async () => {
-      const storeError = new Error("IndexedDB quota exceeded");
-      const { resource, inner } = makeResource({
-        submitProvenTransaction: vi.fn().mockResolvedValue(42),
-        applyTransaction: vi.fn().mockRejectedValue(storeError),
-      });
-
-      let caught;
-      try {
-        await resource.send({
-          account: "0xsender",
-          to: "0xrecipient",
-          token: "0xfaucet",
-          type: "public",
-          amount: 100,
-        });
-      } catch (error) {
-        caught = error;
-      }
-
-      expect(caught).toBeDefined();
-      expect(caught.code).toBe("ApplyTransactionAfterSubmitFailed");
-      expect(caught.cause).toBe(storeError);
-      expect(caught.transactionId).toBe("txHex");
-      expect(caught.submissionHeight).toBe(42);
-      expect(caught.message).toContain(
-        "accepted into the node's mempool at block 42"
-      );
-      expect(inner.submitProvenTransaction).toHaveBeenCalled();
-      expect(inner.applyTransaction).toHaveBeenCalledWith(inner._txResult, 42);
-    });
-
     it("waits for confirmation when waitForConfirmation=true", async () => {
       const { resource, inner } = makeResource();
       const committedStatus = {
@@ -404,6 +372,90 @@ describe("TransactionsResource", () => {
         expect.anything(),
         callProver
       );
+    });
+  });
+
+  describe("apply failure after a successful submit", () => {
+    const storeError = new Error("IndexedDB quota exceeded");
+    const calls = {
+      send: (resource) =>
+        resource.send({
+          account: "0xsender",
+          to: "0xrecipient",
+          token: "0xfaucet",
+          type: "public",
+          amount: 100,
+        }),
+      mint: (resource) =>
+        resource.mint({
+          account: "0xfaucet",
+          to: "0xrecipient",
+          type: "public",
+          amount: 500,
+        }),
+      consume: (resource) =>
+        resource.consume({ account: "0xaccHex", notes: ["0xnote1"] }),
+      custom: (resource) =>
+        resource.execute({ account: "0xaccHex", script: "txScript" }),
+    };
+
+    const rejection = async (promise) => {
+      try {
+        await promise;
+      } catch (error) {
+        return error;
+      }
+      throw new Error("expected the call to reject");
+    };
+
+    it.each(Object.keys(calls))(
+      "%s wraps it with ApplyTransactionAfterSubmitFailed",
+      async (name) => {
+        const { resource, inner } = makeResource({
+          submitProvenTransaction: vi.fn().mockResolvedValue(42),
+          applyTransaction: vi.fn().mockRejectedValue(storeError),
+        });
+
+        const caught = await rejection(calls[name](resource));
+
+        expect(caught.code).toBe("ApplyTransactionAfterSubmitFailed");
+        expect(caught.cause).toBe(storeError);
+        expect(caught.transactionId).toBe("txHex");
+        expect(caught.submissionHeight).toBe(42);
+        expect(caught.message).toContain(
+          "accepted into the node's mempool at block 42"
+        );
+        expect(inner.applyTransaction).toHaveBeenCalledWith(
+          inner._txResult,
+          42
+        );
+      }
+    );
+
+    it("leaves a submit failure unwrapped and never applies", async () => {
+      const submitError = new Error("node rejected the transaction");
+      const { resource, inner } = makeResource({
+        submitProvenTransaction: vi.fn().mockRejectedValue(submitError),
+      });
+
+      const caught = await rejection(calls.send(resource));
+
+      expect(caught).toBe(submitError);
+      expect(caught.code).toBeUndefined();
+      expect(inner.applyTransaction).not.toHaveBeenCalled();
+    });
+
+    it("leaves an execution failure unwrapped and never submits", async () => {
+      const executeError = new Error("execution failed");
+      const { resource, inner } = makeResource({
+        executeTransaction: vi.fn().mockRejectedValue(executeError),
+      });
+
+      const caught = await rejection(calls.send(resource));
+
+      expect(caught).toBe(executeError);
+      expect(caught.code).toBeUndefined();
+      expect(inner.submitProvenTransaction).not.toHaveBeenCalled();
     });
   });
 
@@ -1775,6 +1827,32 @@ describe("TransactionsResource", () => {
       const update = await submitted.apply();
       expect(inner.applyTransaction).toHaveBeenCalledWith(inner._txResult, 123);
       expect(update).toBe("storeUpdate");
+    });
+
+    it("apply after a successful submit rejects with ApplyTransactionAfterSubmitFailed", async () => {
+      const storeError = new Error("IndexedDB quota exceeded");
+      const { resource, inner } = makeResource({
+        submitProvenTransaction: vi.fn().mockResolvedValue(123),
+        applyTransaction: vi.fn().mockRejectedValue(storeError),
+      });
+      const executed = await resource.executeRequest("0xaccHex", {});
+      const submitted = await (await executed.prove()).submit();
+
+      const caught = await submitted.apply().then(
+        () => {
+          throw new Error("expected apply to reject");
+        },
+        (error) => error
+      );
+
+      expect(caught.code).toBe("ApplyTransactionAfterSubmitFailed");
+      expect(caught.cause).toBe(storeError);
+      expect(caught.transactionId).toBe("txHex");
+      expect(caught.submissionHeight).toBe(123);
+      expect(caught.message).toContain(
+        "accepted into the node's mempool at block 123"
+      );
+      expect(inner.applyTransaction).toHaveBeenCalledWith(inner._txResult, 123);
     });
 
     it("waitForConfirmation delegates to resource.waitFor with the tx hex", async () => {
