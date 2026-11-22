@@ -75,7 +75,25 @@ test.describe("note detailsCommitment", () => {
         stored[stored.length - 1];
       const recordHex = record.detailsCommitment().toHex();
 
+      // The value must depend on both assets and recipient (not just one of them).
+      const recipientDigestHex = note.recipient().digest().toHex();
+      const otherAssets = new sdk.NoteAssets([
+        new sdk.FungibleAsset(faucet.id(), sdk.u64(43)),
+      ]);
+      const otherAmountHex = new sdk.NoteDetails(otherAssets, note.recipient())
+        .detailsCommitment()
+        .toHex();
+      const sameDetailsHex = new sdk.NoteDetails(
+        note.assets(),
+        note.recipient()
+      )
+        .detailsCommitment()
+        .toHex();
+
       return {
+        recipientDigestHex,
+        otherAmountHex,
+        sameDetailsHex,
         noteDetailsHex,
         noteIdHex,
         noteCommitmentHex,
@@ -90,6 +108,9 @@ test.describe("note detailsCommitment", () => {
 
     expect(result.differsFromId).toBe(true);
     expect(result.differsFromCommitment).toBe(true);
+    expect(result.noteDetailsHex).not.toBe(result.recipientDigestHex);
+    expect(result.otherAmountHex).not.toBe(result.noteDetailsHex);
+    expect(result.sameDetailsHex).toBe(result.noteDetailsHex);
     expect(result.outputFullHex).toBe(result.noteDetailsHex);
     expect(result.detailsHex).toBe(result.noteDetailsHex);
     expect(result.storedCount).toBeGreaterThan(0);

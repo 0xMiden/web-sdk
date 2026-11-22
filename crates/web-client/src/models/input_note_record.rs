@@ -73,8 +73,6 @@ impl InputNoteRecord {
     }
 
     /// Returns the commitment to the note's details (recipient + assets), without metadata.
-    ///
-    /// Always available, including for partial / metadata-less records where `id()` is `None`.
     #[js_export(js_name = "detailsCommitment")]
     pub fn details_commitment(&self) -> Word {
         self.0.details_commitment().as_word().into()
