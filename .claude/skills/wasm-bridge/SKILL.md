@@ -167,13 +167,15 @@ This:
    `ACCOUNT_NOT_FOUND_ON_CHAIN`, `ACCOUNT_ALREADY_TRACKED`) as properties on the
    JS `Error` via `Reflect::set`.
 4. Node.js path: returns `napi::Error::from_reason(...)` with the help inlined
-   into the message.
+   into the message. A post-submit failure (`post_submit_code`) is prefixed
+   `"ApplyTransactionAfterSubmitFailed: "`; other mapped codes stay unprefixed.
 
 ### The named error codes
 
 JS callers branch on a `code`, never on message text, so the vocabulary is a
-public contract. Two primitives produce one, and between them they emit exactly
-four codes today:
+public contract. Two primitives produce one. These are the transaction and
+account codes (the registration codes `code_from_error` also maps are not
+listed):
 
 | Code | Produced by | Raised when |
 |---|---|---|
@@ -181,6 +183,7 @@ four codes today:
 | `ACCOUNT_ALREADY_TRACKED` | `code_from_error` | `ClientError::AccountAlreadyTracked` |
 | `TRANSACTION_ALREADY_AUTHORIZED` | `from_str_err_with_code` | `executeForSummary` / `executeForSummaryAt` produced no summary because the transaction was already fully authorized (`new_transactions.rs:611`, `:649`) |
 | `INVALID_CHAIN_ANCHOR` | `from_str_err_with_code` | `ClientError::ChainAnchorError`, routed through `map_anchor_err` (`new_transactions.rs:910`) |
+| `ApplyTransactionAfterSubmitFailed` | `post_submit_code` (via `code_from_error`) and `js_post_submit_error` | The node accepted the transaction or batch but the local store update failed: `ClientError::ApplyTransactionAfterSubmitFailed`, the two `BatchBuilderError::BatchSubmitted*` variants, and every failure inside `applyTransaction`. Never resubmit. The JS resource helpers and `TransactionSubmission.apply()` raise it with `transactionId`, `submissionHeight` and `cause` |
 
 `code_from_error` recurses through `err.source()`, so a code survives being
 wrapped. It maps typed `ClientError` variants only, and is reachable **only**
