@@ -350,6 +350,69 @@ test.describe("newAccount network fee faucet", () => {
     expect(result.namesWrongFaucet).toBe(true);
     expect(result.okInserted).toBe(true);
   });
+
+  test("newAccountWithSecretKey applies the same fee faucet check", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk }) => {
+      const chainFee = await client.feeFaucetId();
+      const wrongFaucet = await client.newFaucet(
+        sdk.AccountStorageMode.public(),
+        false,
+        "WRG",
+        "WRG",
+        8,
+        sdk.u64(10000000),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+
+      const p2idRoot = sdk.NoteScript.p2id().root();
+      const buildNetworkAccount = (feeFaucet, seedByte) => {
+        const components = sdk.AccountComponent.createNetworkAuthComponents(
+          [new sdk.NoteScriptFee(p2idRoot, sdk.u64(0))],
+          feeFaucet
+        );
+        const seed = new Uint8Array(32);
+        seed.fill(seedByte);
+        const builder = new sdk.AccountBuilder(seed).storageMode(
+          sdk.AccountStorageMode.public()
+        );
+        for (const component of components) {
+          builder.withComponent(component);
+        }
+        return builder.build().account;
+      };
+
+      const wrongAccount = buildNetworkAccount(wrongFaucet.id(), 0x43);
+      let errorMessage = "";
+      try {
+        await client.newAccountWithSecretKey(
+          wrongAccount,
+          sdk.AuthSecretKey.rpoFalconWithRNG()
+        );
+      } catch (e) {
+        errorMessage = e.message || String(e);
+      }
+
+      const okAccount = buildNetworkAccount(chainFee, 0x44);
+      await client.newAccountWithSecretKey(
+        okAccount,
+        sdk.AuthSecretKey.rpoFalconWithRNG()
+      );
+
+      return {
+        errorMessage,
+        wrongInserted: (await client.getAccount(wrongAccount.id())) != null,
+        okInserted: (await client.getAccount(okAccount.id())) != null,
+      };
+    });
+
+    expect(result.errorMessage).toContain(
+      "does not match the chain's fee faucet"
+    );
+    expect(result.wrongInserted).toBe(false);
+    expect(result.okInserted).toBe(true);
+  });
 });
 
 // AccountStorage.getMapEntries tests

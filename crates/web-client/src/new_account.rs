@@ -18,6 +18,42 @@ use crate::platform::{JsErr, from_str_err, js_u64_to_u64, maybe_wrap_send};
 use crate::{WebClient, js_error_with_context};
 
 impl WebClient {
+    /// The chain's fee faucet as `feeFaucetId()` resolves it, or `None` when it is not known yet
+    /// (nothing synced and no creation-time faucet). Storage and protocol-config read failures are
+    /// errors, not `None`.
+    pub(crate) async fn known_fee_faucet_id(
+        &self,
+    ) -> Result<Option<AccountId>, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+
+        let sync_height = client
+            .get_sync_height()
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to read the sync height"))?;
+        let header = client
+            .get_block_header_by_num(sync_height)
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to read the synced block header"))?;
+        if let Some((header, _)) = header {
+            match client.get_protocol_config(header.protocol_config_commitment()).await {
+                Ok(config) => return Ok(Some(config.fee_asset_id().faucet_id().into())),
+                // Nothing has been synced yet, so no configuration is stored for the header.
+                Err(miden_client::ClientError::StoreError(
+                    miden_client::store::StoreError::ProtocolConfigNotFound(_),
+                )) => {},
+                Err(err) => {
+                    return Err(js_error_with_context(
+                        err,
+                        "failed to read the protocol configuration",
+                    ));
+                },
+            }
+        }
+
+        Ok((*self.fee_faucet.lock().await).map(Into::into))
+    }
+
     /// Syncs state if the client has never been synced (still at genesis block).
     ///
     /// This prevents a slow full-chain scan on the next sync after account creation.
@@ -55,7 +91,7 @@ impl WebClient {
             return Ok(());
         }
 
-        let Ok(chain_fee) = self.fee_faucet_id().await else {
+        let Some(chain_fee) = self.known_fee_faucet_id().await? else {
             return Ok(());
         };
         let chain_fee_native: miden_client::account::AccountId = (&chain_fee).into();
