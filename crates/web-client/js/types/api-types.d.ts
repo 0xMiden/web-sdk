@@ -823,10 +823,13 @@ export interface TransactionSubmission {
    *
    * Browser stores require the stored account to match the execution input;
    * a mismatch rejects before changing account state or transaction history.
-   * The network may already have accepted the transaction, so check its status
-   * before submitting again after a local apply failure.
+   * The node already accepted the transaction, so a local apply failure
+   * rejects with `code: "ApplyTransactionAfterSubmitFailed"`, `transactionId`,
+   * `submissionHeight` and the original error as `cause`. Do not resubmit.
    *
    * @returns The pre-apply store update.
+   * @throws An error with `code` `"ApplyTransactionAfterSubmitFailed"` when the
+   *   local store update fails.
    */
   apply(): Promise<TransactionStoreUpdate>;
   /**
