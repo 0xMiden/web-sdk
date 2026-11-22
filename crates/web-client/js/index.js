@@ -239,6 +239,33 @@ const deserializeError = (errorLike) => {
   return reconstructedError;
 };
 
+/**
+ * Builds the error a worker `error` event stands for. Before the worker
+ * reported `loaded`, the event means its script or a module it imports failed
+ * to load or evaluate; such an event usually carries no message (a plain
+ * `Event`). After it, the event is an error thrown outside any request.
+ *
+ * @param {Event | ErrorEvent} event - The worker's `error` event.
+ * @param {boolean} loaded - Whether the worker had reported `loaded`.
+ * @returns {Error}
+ */
+const workerFailureFromEvent = (event, loaded) => {
+  const message = typeof event?.message === "string" ? event.message : "";
+  const where = event?.filename
+    ? ` (${event.filename}:${event.lineno ?? 0}:${event.colno ?? 0})`
+    : "";
+  const detail = message ? `: ${message}${where}` : where;
+  const error = loaded
+    ? new Error(`WebClient worker failed: uncaught error${detail}`)
+    : new Error(
+        `WebClient worker failed to load${detail}. Check that the worker script and the modules it imports are served.`
+      );
+  if (event?.error instanceof Error) {
+    error.cause = event.error;
+  }
+  return error;
+};
+
 export const MidenArrays = {};
 
 let wasmModule = null;
@@ -615,6 +642,7 @@ class WebClient {
 
         // Worker script loaded.
         if (data.loaded) {
+          this._workerLoaded = true;
           this.loadedResolver();
           return;
         }
@@ -693,6 +721,25 @@ class WebClient {
           );
           this.readyRejecter(workerError);
         }
+      });
+
+      // The worker reports a script that fails to load, and an error thrown
+      // outside a request, only through `error`, and a reply it cannot
+      // deserialize only through `messageerror`. Neither names a request and
+      // the worker's state is unknown after either, so the client stops using
+      // the worker (see `_failWorker`) instead of leaving calls waiting on it.
+      this.worker.addEventListener("error", (event) => {
+        // We report it ourselves; uncancelled, the UA reports it again on the
+        // page.
+        event.preventDefault?.();
+        this._failWorker(workerFailureFromEvent(event, this._workerLoaded));
+      });
+      this.worker.addEventListener("messageerror", () => {
+        this._failWorker(
+          new Error(
+            "WebClient worker failed: it sent a message that could not be deserialized"
+          )
+        );
       });
 
       // Once the worker script has loaded, initialize the worker.
@@ -1215,11 +1262,18 @@ class WebClient {
     if (this._terminated) {
       throw new Error("WebClient terminated");
     }
+    if (this._workerFailure) {
+      throw this._workerFailure;
+    }
     await this.ready;
     // terminate() can land while this awaits a settled `ready`; the stopped
-    // worker would never answer a request posted now.
+    // worker would never answer a request posted now. The same holds for a
+    // worker that failed meanwhile.
     if (this._terminated) {
       throw new Error("WebClient terminated");
+    }
+    if (this._workerFailure) {
+      throw this._workerFailure;
     }
     // Create a unique request ID.
     const requestId = `${methodName}-${Date.now()}-${Math.random()}`;
@@ -1801,6 +1855,31 @@ class WebClient {
       console.error("INDEX.JS: Error in syncChain:", error);
       throw error;
     }
+  }
+
+  /**
+   * Stops using a worker that failed (see the `error` and `messageerror`
+   * listeners in the constructor). The worker is terminated, so it answers
+   * nothing more, and `ready`, every pending request and every later
+   * worker-forwarded call reject with `error`. Calls that run against the
+   * main-realm wasm client are unaffected, and `terminate()` still releases
+   * the client. Only the first failure counts.
+   *
+   * @param {Error} error - The failure to report.
+   * @private
+   */
+  _failWorker(error) {
+    if (this._terminated || this._workerFailure) {
+      return;
+    }
+    this._workerFailure = error;
+    console.error("WebClient: worker failed:", error);
+    this.worker.terminate();
+    this.readyRejecter(error);
+    for (const { reject } of this.pendingRequests.values()) {
+      reject(error);
+    }
+    this.pendingRequests.clear();
   }
 
   /**

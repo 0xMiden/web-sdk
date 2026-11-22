@@ -255,6 +255,13 @@ embedding in a single-WebView native shell. `client.lastAuthError()` - which
 returns the raw value your sign callback threw - is only meaningful with
 `useWorker: false`.
 
+If the worker fails - its script or a module it imports does not load (often a
+bundler that does not serve the worker or its `Cargo-*.js` chunk), it throws
+outside a call, or a reply cannot be deserialized - client creation rejects
+with `WebClient worker failed to load...` or `WebClient worker failed: ...`,
+and so does every call that needs the worker, in flight or later. Create a new
+client to recover.
+
 Under the worker, `keystore` callbacks run on the main thread and the worker
 waits for each one. `callbackTimeoutMs` sets that wait: left unset, `sign` has
 no limit (a wallet or hardware approval can take minutes) and `getKey` and

@@ -333,6 +333,13 @@ export interface ClientOptions {
    * - You're embedding the client in a single-WebView native shell (iOS/Android
    *   Capacitor host, Tauri, Electron preload), where the UI thread isn't
    *   competing with the WASM thread anyway.
+   *
+   * If the worker fails, because its script or a module it imports does not
+   * load, it throws outside a call, or one of its replies cannot be
+   * deserialized, the client stops it: creation rejects with a
+   * `WebClient worker failed` error, and so does every call that needs the
+   * worker, in flight or later. Calls queued behind them still run. Create a
+   * new client to recover.
    */
   useWorker?: boolean;
   /**
