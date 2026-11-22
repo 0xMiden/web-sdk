@@ -287,10 +287,10 @@ test.describe("newAccount network fee faucet", () => {
   test("rejects a network account built with the wrong fee faucet and accepts the chain's", async ({
     run,
   }) => {
-    // Issue #408: exercise the check on the mock chain, not a live node fixture.
-    const result = await run(async ({ sdk, helpers }) => {
-      const client = await helpers.createFreshMockClient();
-      await client.syncState();
+    // Issue #408: mock-chain check. Use the fixture mock client (same path as
+    // account.test network-account coverage). Do not syncState on a fresh mock:
+    // genesis tip validation can reject block 0 signatures in CI.
+    const result = await run(async ({ client, sdk }) => {
       const chainFee = await client.feeFaucetId();
       const wrongFaucet = await client.newFaucet(
         sdk.AccountStorageMode.public(),
@@ -302,19 +302,24 @@ test.describe("newAccount network fee faucet", () => {
         sdk.AuthScheme.AuthRpoFalcon512
       );
 
-      const wrongComponents = sdk.AccountComponent.createNetworkAuthComponents(
-        [new sdk.NoteScriptFee(sdk.NoteScript.p2id().root(), sdk.u64(0))],
-        wrongFaucet.id()
-      );
-      const wrongSeed = new Uint8Array(32);
-      wrongSeed.fill(0x41);
-      const wrongBuilder = new sdk.AccountBuilder(wrongSeed).storageMode(
-        sdk.AccountStorageMode.public()
-      );
-      for (const component of wrongComponents) {
-        wrongBuilder.withComponent(component);
-      }
-      const wrongAccount = wrongBuilder.build().account;
+      const p2idRoot = sdk.NoteScript.p2id().root();
+      const buildNetworkAccount = (feeFaucet, seedByte) => {
+        const components = sdk.AccountComponent.createNetworkAuthComponents(
+          [new sdk.NoteScriptFee(p2idRoot, sdk.u64(0))],
+          feeFaucet
+        );
+        const seed = new Uint8Array(32);
+        seed.fill(seedByte);
+        const builder = new sdk.AccountBuilder(seed).storageMode(
+          sdk.AccountStorageMode.public()
+        );
+        for (const component of components) {
+          builder.withComponent(component);
+        }
+        return builder.build().account;
+      };
+
+      const wrongAccount = buildNetworkAccount(wrongFaucet.id(), 0x41);
 
       let rejected = false;
       let errorMessage = "";
@@ -325,19 +330,7 @@ test.describe("newAccount network fee faucet", () => {
         errorMessage = e.message || String(e);
       }
 
-      const okComponents = sdk.AccountComponent.createNetworkAuthComponents(
-        [new sdk.NoteScriptFee(sdk.NoteScript.p2id().root(), sdk.u64(0))],
-        chainFee
-      );
-      const okSeed = new Uint8Array(32);
-      okSeed.fill(0x42);
-      const okBuilder = new sdk.AccountBuilder(okSeed).storageMode(
-        sdk.AccountStorageMode.public()
-      );
-      for (const component of okComponents) {
-        okBuilder.withComponent(component);
-      }
-      const okAccount = okBuilder.build().account;
+      const okAccount = buildNetworkAccount(chainFee, 0x42);
       await client.newAccount(okAccount, false);
 
       return {
