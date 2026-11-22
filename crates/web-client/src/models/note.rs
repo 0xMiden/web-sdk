@@ -77,6 +77,15 @@ impl Note {
         self.0.id().as_word().into()
     }
 
+    /// Returns the commitment to the note's details (recipient + assets), without metadata.
+    ///
+    /// This is the value wallets use for B2AGG exit hashing. It is not the note ID:
+    /// `note.id()` / `note.commitment()` also commit the metadata.
+    #[js_export(js_name = "detailsCommitment")]
+    pub fn details_commitment(&self) -> Word {
+        self.0.details_commitment().as_word().into()
+    }
+
     /// Returns the public metadata associated with the note.
     pub fn metadata(&self) -> NoteMetadata {
         (*self.0.metadata()).into()

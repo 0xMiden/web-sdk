@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Enhancements
+
+* [FEATURE][web] `Note.detailsCommitment()`, `OutputNote.detailsCommitment()`, `NoteDetails.detailsCommitment()` and `InputNoteRecord.detailsCommitment()` return the note's details commitment (recipient + assets, without metadata). Wallets can use this for B2AGG exit hashing instead of recomputing the Poseidon2 merge by hand ([#454](https://github.com/0xMiden/web-sdk/issues/454)).
+
 ### Fixes
 
 * [FIX][web] `newAccount` / `newAccountWithSecretKey` reject a network account whose `FeePolicyManager` fee faucet differs from `client.feeFaucetId()`, naming both, before the account is inserted. The node's network-transaction builder would otherwise accept the deploy and then never consume notes sent to that account ([#408](https://github.com/0xMiden/web-sdk/issues/408)).
