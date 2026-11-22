@@ -154,7 +154,9 @@ The auth component comes from
 `AccountComponent.createAuthComponentFromCommitment(commitment, 1)`, where `1`
 is the WASM `AuthScheme` enum's ECDSA k256/keccak variant. (The `AuthScheme`
 constant exported from `@miden-sdk/miden-sdk` is a different thing, the string
-pair `{ Falcon, ECDSA }` for client options; do not pass it here.) The Turnkey
+pair `{ Falcon, ECDSA }`. SDK versions that include web-sdk#365's fix also
+accept `AuthScheme.ECDSA` here; older ones reject it, so `1` is the value that
+works with every version.) The Turnkey
 key must be secp256k1 and the wallet account Ethereum-format; a key on any other
 curve cannot back this account.
 

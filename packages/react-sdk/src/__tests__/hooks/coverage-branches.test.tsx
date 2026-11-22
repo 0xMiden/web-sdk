@@ -1483,12 +1483,12 @@ describe("useTransactionHistory - filter + catch + normalizeHex", () => {
       expect(getTx).toHaveBeenCalledTimes(1);
     });
 
-    // Bump lastSyncTime - the second useEffect should fire and refetch.
+    // Bump lastSyncTime - the hook should refetch.
     act(() => {
       useMidenStore.getState().setSyncState({ lastSyncTime: Date.now() });
     });
     await waitFor(() => {
-      expect(getTx.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(getTx).toHaveBeenCalledTimes(2);
     });
   });
 

@@ -385,8 +385,12 @@ continue to sync before relying on on-chain balances.
 
 For browser stores, `apply` requires the stored account to match the
 transaction's execution input. A mismatch rejects before changing account state
-or transaction history. A submitted transaction may already be on-chain when
-local apply fails; check its status before submitting again.
+or transaction history. A submitted transaction is already accepted by the node when
+local apply fails, so `apply` and the single-transaction `transactions.*` helpers
+(which apply after submitting) reject with `code: "ApplyTransactionAfterSubmitFailed"`,
+`transactionId`, `submissionHeight` and the original error as `cause`. A batch whose
+local update fails after the node accepted it rejects with the same `code` and the
+accepted block in its message, without those fields. Do not submit it again.
 
 ## Type Conversions
 
@@ -585,7 +589,8 @@ builds exactly the code the Rust client builds:
 - `createAuthGuardedMultisig(config)` builds the standard guarded multisig.
   Configure it with
   `new AuthGuardedMultisigConfig(approvers, defaultThreshold, guardian, authScheme)`
-  (optionally `.withProcThresholds([...])`).
+  (optionally `.withProcThresholds([...])`), where `authScheme` is
+  `AuthScheme.ECDSA` or `AuthScheme.Falcon`.
 - `AccountComponent.createNetworkAuthComponents(allowedNoteScriptFees, feeFaucetId, allowedTxScriptRoots?)`
   builds a network account's auth. Each `new NoteScriptFee(noteScript.root(), amount)`
   pairs an allowlisted note script root with the fee the account charges to
