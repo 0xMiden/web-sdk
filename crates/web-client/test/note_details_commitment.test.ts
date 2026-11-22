@@ -57,6 +57,21 @@ test.describe("note detailsCommitment", () => {
       const details = new sdk.NoteDetails(note.assets(), note.recipient());
       const detailsHex = details.detailsCommitment().toHex();
 
+      // The value must depend on both assets and recipient (not just one of them).
+      const recipientDigestHex = note.recipient().digest().toHex();
+      const otherAssets = new sdk.NoteAssets([
+        new sdk.FungibleAsset(faucet.id(), sdk.u64(43)),
+      ]);
+      const otherAmountHex = new sdk.NoteDetails(otherAssets, note.recipient())
+        .detailsCommitment()
+        .toHex();
+      const sameDetailsHex = new sdk.NoteDetails(
+        note.assets(),
+        note.recipient()
+      )
+        .detailsCommitment()
+        .toHex();
+
       // Store via mock transport so we can read InputNoteRecord.detailsCommitment.
       // Prefer getInputNotes: getInputNote(id) can miss an uncommitted private note
       // on the napi path even after fetchPrivateNotes.
@@ -74,21 +89,6 @@ test.describe("note detailsCommitment", () => {
         stored.find((n) => n.detailsCommitment().toHex() === noteDetailsHex) ??
         stored[stored.length - 1];
       const recordHex = record.detailsCommitment().toHex();
-
-      // The value must depend on both assets and recipient (not just one of them).
-      const recipientDigestHex = note.recipient().digest().toHex();
-      const otherAssets = new sdk.NoteAssets([
-        new sdk.FungibleAsset(faucet.id(), sdk.u64(43)),
-      ]);
-      const otherAmountHex = new sdk.NoteDetails(otherAssets, note.recipient())
-        .detailsCommitment()
-        .toHex();
-      const sameDetailsHex = new sdk.NoteDetails(
-        note.assets(),
-        note.recipient()
-      )
-        .detailsCommitment()
-        .toHex();
 
       return {
         recipientDigestHex,
