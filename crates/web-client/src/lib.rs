@@ -29,7 +29,7 @@ use miden_client::note_transport::grpc::GrpcNoteTransportClient;
 #[cfg(feature = "browser")]
 use miden_client::rpc::RpcError;
 use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, VerifyingRpcClient};
-use miden_client::store::{Store, StoreError};
+use miden_client::store::Store;
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::MockNoteTransportApi;
 use miden_client::transaction::BatchBuilderError;
@@ -327,32 +327,7 @@ impl WebClient {
     /// mock client, the one the mock chain itself commits to, and fails when neither is set.
     #[js_export(js_name = "feeFaucetId")]
     pub async fn fee_faucet_id(&self) -> Result<models::account_id::AccountId, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-
-        let sync_height = client
-            .get_sync_height()
-            .await
-            .map_err(|err| js_error_with_context(err, "failed to read the sync height"))?;
-        let header = client
-            .get_block_header_by_num(sync_height)
-            .await
-            .map_err(|err| js_error_with_context(err, "failed to read the synced block header"))?;
-        if let Some((header, _)) = header {
-            match client.get_protocol_config(header.protocol_config_commitment()).await {
-                Ok(config) => return Ok(config.fee_asset_id().faucet_id().into()),
-                // Nothing has been synced yet, so no configuration is stored for the header.
-                Err(ClientError::StoreError(StoreError::ProtocolConfigNotFound(_))) => {},
-                Err(err) => {
-                    return Err(js_error_with_context(
-                        err,
-                        "failed to read the protocol configuration",
-                    ));
-                },
-            }
-        }
-
-        (*self.fee_faucet.lock().await).map(Into::into).ok_or_else(|| {
+        self.known_fee_faucet_id().await?.ok_or_else(|| {
             from_str_err(
                 "the chain's fee faucet is not known yet: sync the client so it receives the \
                  protocol configuration from the node, or pass `feeFaucetId` when creating it",
