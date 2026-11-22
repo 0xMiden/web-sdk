@@ -58,6 +58,8 @@ test.describe("note detailsCommitment", () => {
       const detailsHex = details.detailsCommitment().toHex();
 
       // Store via mock transport so we can read InputNoteRecord.detailsCommitment.
+      // Prefer getInputNotes: getInputNote(id) can miss an uncommitted private note
+      // on the napi path even after fetchPrivateNotes.
       const recipientAddress = sdk.Address.fromAccountId(
         target.id(),
         "BasicWallet"
@@ -65,7 +67,12 @@ test.describe("note detailsCommitment", () => {
       const proof = sdk.NoteInclusionProof.mockAtBlock(0);
       await mockClient.sendPrivateNote(note, recipientAddress, proof);
       await mockClient.fetchPrivateNotes();
-      const record = await mockClient.getInputNote(note.id().toString());
+      const stored = await mockClient.getInputNotes(
+        new sdk.NoteFilter(sdk.NoteFilterTypes.All)
+      );
+      const record =
+        stored.find((n) => n.detailsCommitment().toHex() === noteDetailsHex) ??
+        stored[stored.length - 1];
       const recordHex = record.detailsCommitment().toHex();
 
       return {
@@ -75,6 +82,7 @@ test.describe("note detailsCommitment", () => {
         outputFullHex,
         detailsHex,
         recordHex,
+        storedCount: stored.length,
         differsFromId: noteDetailsHex !== noteIdHex,
         differsFromCommitment: noteDetailsHex !== noteCommitmentHex,
       };
@@ -84,6 +92,7 @@ test.describe("note detailsCommitment", () => {
     expect(result.differsFromCommitment).toBe(true);
     expect(result.outputFullHex).toBe(result.noteDetailsHex);
     expect(result.detailsHex).toBe(result.noteDetailsHex);
+    expect(result.storedCount).toBeGreaterThan(0);
     expect(result.recordHex).toBe(result.noteDetailsHex);
   });
 });

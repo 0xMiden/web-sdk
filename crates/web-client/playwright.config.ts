@@ -77,6 +77,7 @@ const ciShardProjects = process.env.CI
           "test/sync_lock.test.ts",
           "test/tags.test.ts",
           "test/notes.test.ts",
+          "test/note_details_commitment.test.ts",
           "test/note_transport.test.ts",
           "test/rpc_client.browser.test.ts",
         ],
