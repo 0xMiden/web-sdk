@@ -139,6 +139,50 @@ test.describe("public key", () => {
     });
     expect(result.original).toEqual(result.roundtripped);
   });
+
+  test("recoverFrom recovers the signer's public key: Falcon Scheme", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const secretKey = sdk.AuthSecretKey.rpoFalconWithRNG();
+      const message = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
+      const signature = secretKey.sign(message);
+      const recovered = sdk.PublicKey.recoverFrom(message, signature);
+      return {
+        commitmentMatches:
+          recovered.toCommitment().toHex() ===
+          secretKey.publicKey().toCommitment().toHex(),
+        verifies: recovered.verify(message, signature),
+      };
+    });
+    expect(result).toEqual({ commitmentMatches: true, verifies: true });
+  });
+
+  test("recoverFrom recovers the signer's public key: ECDSA Scheme", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const secretKey = sdk.AuthSecretKey.ecdsaWithRNG();
+      const otherSecretKey = sdk.AuthSecretKey.ecdsaWithRNG();
+      const message = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
+      const signature = secretKey.sign(message);
+      const recovered = sdk.PublicKey.recoverFrom(message, signature);
+      return {
+        commitmentMatches:
+          recovered.toCommitment().toHex() ===
+          secretKey.publicKey().toCommitment().toHex(),
+        otherCommitmentDiffers:
+          recovered.toCommitment().toHex() !==
+          otherSecretKey.publicKey().toCommitment().toHex(),
+        verifies: recovered.verify(message, signature),
+      };
+    });
+    expect(result).toEqual({
+      commitmentMatches: true,
+      otherCommitmentDiffers: true,
+      verifies: true,
+    });
+  });
 });
 
 test.describe("signing inputs", () => {
