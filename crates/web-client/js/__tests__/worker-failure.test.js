@@ -122,5 +122,8 @@ describe("a worker that fails", () => {
     await expect(outcome(client.callMethodWithWorker("x"))).resolves.toBe(
       "WebClient terminated"
     );
+    // The late error is not a second failure: nothing stops or reports it.
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+    expect(console.error).not.toHaveBeenCalled();
   });
 });
