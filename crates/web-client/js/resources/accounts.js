@@ -39,7 +39,12 @@ export class AccountsResource {
 
   /**
    * Create a wallet by default, a faucet via `FaucetType`, or a contract via
-   * `components`. Visibility is selected separately with `storage`.
+   * `components`. A contract also needs a raw 32-byte `seed` and `auth`.
+   * `auth` is an `AuthSecretKey` stored with the account, or `"none"` for a
+   * NoAuth contract that anyone can call and that stores no key. Omitting
+   * `auth` is rejected and does not default to NoAuth. `"none"` is only valid
+   * on a contract; wallet and faucet `auth` stays `AuthScheme.Falcon` or
+   * `AuthScheme.ECDSA`. Visibility is selected separately with `storage`.
    *
    * The legacy 0, 1 and "NonFungibleFaucet" still select a faucet; 0 and 1 are
    * also AccountType.Private/Public, so a visibility value passed as `type` is
