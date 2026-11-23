@@ -194,7 +194,9 @@ export interface MidenObservation {
   /**
    * Milliseconds from when the call's turn on its client's queue started
    * until it settled; time queued behind the same client's earlier calls is
-   * not counted.
+   * not counted. A store-locked call that times out before its turn starts
+   * has no turn, so it reports 0, delivered when it rejects, and the wait it
+   * spent queued is not counted.
    */
   durationMs: number;
   /**

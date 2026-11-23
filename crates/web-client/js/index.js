@@ -1,6 +1,12 @@
 import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
-import { coalesceRun, runUnderLock, withSyncLock } from "./syncLock.js";
+import {
+  coalesceRun,
+  lockWaitError,
+  LOCK_WAIT_TIMEOUT_MS,
+  runUnderLock,
+  withSyncLock,
+} from "./syncLock.js";
 import {
   appendAuthError,
   serializeCallbackError,
@@ -344,6 +350,24 @@ function applyObserverOptions(options) {
     );
   }
   return observeSensitive;
+}
+
+/**
+ * Error detail for one failed observation. Undefined unless `enabled` is
+ * true, so the caller can leave `sensitive` off the object entirely.
+ *
+ * @param {boolean} enabled
+ * @param {unknown} error
+ * @returns {{ errorMessage: string, errorStack?: string } | undefined}
+ */
+function observationSensitive(enabled, error) {
+  if (enabled !== true) return undefined;
+  return {
+    errorMessage: error instanceof Error ? error.message : String(error),
+    ...(error instanceof Error && error.stack
+      ? { errorStack: error.stack }
+      : {}),
+  };
 }
 
 function createClientProxy(instance) {
@@ -809,9 +833,12 @@ class WebClient {
    * @param {() => Promise<any>} fn - The async function to execute.
    * @param {string} [opName] - Operation name to observe this call under.
    *   Omit to leave the call unobserved.
+   * @param {{ emitted: boolean }} [gate] - Set when a store-locked deadline
+   *   already emitted this call's observation, so this turn does not emit
+   *   again. Other callers omit it.
    * @returns {Promise<any>} The result of fn.
    */
-  _serializeWasmCall(fn, opName) {
+  _serializeWasmCall(fn, opName, gate) {
     // A call nested in an in-flight `_withInnerWebClient` still runs inline:
     // it belongs to work that was already queued when terminate() ran.
     if (this._terminated && this._withInnerLockDepth === 0) {
@@ -822,6 +849,11 @@ class WebClient {
     const observed = opName !== undefined && hasObserver();
     const wrapped = observed
       ? async () => {
+          // The deadline already reported this call. The skipped turn still
+          // runs, with no clock and no second observation.
+          if (gate?.emitted) {
+            return fn();
+          }
           const startedAt = performance.now();
           try {
             const value = await fn();
@@ -837,16 +869,10 @@ class WebClient {
             // empty object. A consumer branching on
             // `"sensitive" in observation` has to be able to tell "not
             // enabled" from "enabled but nothing to report".
-            const sensitive =
-              this._observeSensitive === true
-                ? {
-                    errorMessage:
-                      error instanceof Error ? error.message : String(error),
-                    ...(error instanceof Error && error.stack
-                      ? { errorStack: error.stack }
-                      : {}),
-                  }
-                : undefined;
+            const sensitive = observationSensitive(
+              this._observeSensitive,
+              error
+            );
             emitObservation({
               op: opName,
               outcome: "error",
@@ -909,13 +935,17 @@ class WebClient {
    * that has none. The shipped `frontend-pitfalls` skill keeps the consumer
    * copy of this list.
    *
-   * Lock order is always call chain, then store lock: the call takes its
-   * chain slot when it is made, like any other call, and requests the lock
-   * when that slot starts. So call order, `terminate()` and `waitForIdle()`
-   * treat it like any other call, and a lock holder never waits for a
-   * callback of its own instance. A call waiting for another instance's
-   * holder holds this instance's chain meanwhile, and its observation, named
-   * by `opName`, includes that wait.
+   * Lock order is always call chain, then store lock. The budget starts when
+   * the store-locked call is made and covers the chain and then the lock: the
+   * call takes its chain slot when it is made, like any other call, and
+   * requests the lock when that slot starts, with the time still left. The
+   * deadline rejection emits the one error observation then, with `durationMs`
+   * 0, the skipped turn emits nothing, and a turn that reaches the lock still
+   * observes the lock wait from the turn. So call order, `terminate()` and
+   * `waitForIdle()` treat it like any other call, and a lock holder never
+   * waits for a callback of its own instance. A call waiting for another
+   * instance's holder holds this instance's chain meanwhile, and its
+   * observation, named by `opName`, includes that wait.
    *
    * `syncMethod` lets a call of that sync join this instance's pending run of
    * it, registered when the run's own call was made, but only while no other
@@ -942,12 +972,78 @@ class WebClient {
    */
   _withStoreLock(fn, opName, syncMethod) {
     // `_serializeWasmCall` rejects too, but a joiner never reaches it.
+    // The terminated check arms nothing.
     if (this._terminated && this._withInnerLockDepth === 0) {
       return Promise.reject(new Error("WebClient terminated"));
     }
     const dbId = this._storeLockId();
-    const run = () =>
-      this._serializeWasmCall(() => runUnderLock(dbId, fn), opName);
+    // Both branches call `run`: a store-locked call without `syncMethod`
+    // (importNoteFile, fetchPrivateNotes) or nested in `_withInnerWebClient`,
+    // and `coalesceRun`'s start for a sync. A joiner shares that promise and
+    // gets no timer of its own.
+    const run = () => {
+      const startedAt = Date.now();
+      let timedOut = false;
+      let timeoutError;
+      let resolveCaller = () => {};
+      let rejectCaller = () => {};
+      const caller = new Promise((resolve, reject) => {
+        resolveCaller = resolve;
+        rejectCaller = reject;
+      });
+      const fail = () => {
+        if (!timeoutError) {
+          timeoutError = lockWaitError(dbId, LOCK_WAIT_TIMEOUT_MS);
+        }
+        return timeoutError;
+      };
+      // Taken when the call is made. A joiner never reaches `run`, and a
+      // listener registered later is not this call's observer.
+      const observe = opName !== undefined && hasObserver();
+      const gate = observe ? { emitted: false } : undefined;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        if (observe) {
+          gate.emitted = true;
+        }
+        const error = fail();
+        rejectCaller(error);
+        if (observe) {
+          const sensitive = observationSensitive(this._observeSensitive, error);
+          emitObservation({
+            op: opName,
+            outcome: "error",
+            durationMs: 0,
+            ...(sensitive !== undefined ? { sensitive } : {}),
+          });
+        }
+      }, LOCK_WAIT_TIMEOUT_MS);
+      const chain = this._serializeWasmCall(
+        () => {
+          const remaining = LOCK_WAIT_TIMEOUT_MS - (Date.now() - startedAt);
+          if (timedOut || remaining <= 0) {
+            clearTimeout(timer);
+            // The chain catch already attached swallows this late throw.
+            throw fail();
+          }
+          clearTimeout(timer);
+          return runUnderLock(dbId, fn, remaining);
+        },
+        opName,
+        gate
+      );
+      chain.then(
+        (value) => {
+          clearTimeout(timer);
+          resolveCaller(value);
+        },
+        (error) => {
+          clearTimeout(timer);
+          rejectCaller(error);
+        }
+      );
+      return caller;
+    };
     if (!syncMethod || this._withInnerLockDepth > 0) {
       return run();
     }
