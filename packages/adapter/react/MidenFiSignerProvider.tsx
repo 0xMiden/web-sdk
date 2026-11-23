@@ -224,6 +224,8 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
     }))
   );
   const isSingleWallet = wallets.length === 1;
+  const isSingleWalletRef = useRef(isSingleWallet);
+  isSingleWalletRef.current = isSingleWallet;
 
   // When the adapters change, start to listen for changes to their `readyState`
   useEffect(() => {
@@ -334,10 +336,24 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
     });
   }, [adapter]);
 
+  // Clear connection state on disconnect without bouncing a sole wallet's name.
+  const clearConnectionOnDisconnect = useCallback(() => {
+    if (adapter) setAutoConnectFailed(adapter.name);
+    if (isSingleWallet) {
+      setState((prev) =>
+        prev.connected || prev.address !== null || prev.publicKey !== null
+          ? { ...prev, connected: false, address: null, publicKey: null }
+          : prev
+      );
+    } else {
+      setName(null);
+    }
+  }, [adapter, isSingleWallet, setName]);
+
   // Handle the adapter's disconnect event
   const handleDisconnect = useCallback(() => {
-    if (!isUnloading.current) setName(null);
-  }, [isUnloading, setName]);
+    if (!isUnloading.current) clearConnectionOnDisconnect();
+  }, [clearConnectionOnDisconnect, isUnloading]);
 
   // Handle the adapter's error event
   const handleError = useCallback(
@@ -390,6 +406,7 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
     )
       return;
 
+    let cancelled = false;
     (async function () {
       isConnecting.current = true;
       setConnecting(true);
@@ -400,16 +417,20 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
           allowedPrivateData
         );
       } catch (error: any) {
+        if (cancelled) return;
         setAutoConnectFailed(adapter.name);
         // Keep the sole wallet selected so a failed autoConnect does not
         // bounce `adapter` through null (firing disconnect cleanup and
         // localStorage churn) before single-wallet auto-select restores it.
-        if (!isSingleWallet) setName(null);
+        if (!isSingleWalletRef.current) setName(null);
       } finally {
         setConnecting(false);
         isConnecting.current = false;
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [
     isConnecting,
     connected,
@@ -441,7 +462,7 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
         readyState === WalletReadyState.Loadable
       )
     ) {
-      setName(null);
+      if (!isSingleWallet) setName(null);
 
       if (typeof window !== "undefined") {
         window.open(adapter.url, "_blank");
@@ -458,7 +479,10 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
       // Preserve a still-live session: a re-drive that fails while the
       // adapter is still connected (e.g. wallet locked and the unlock prompt
       // was dismissed) must not tear down the selected wallet (#470).
-      if (!adapter.connected) setName(null);
+      if (!adapter.connected) {
+        setAutoConnectFailed(adapter.name);
+        if (!isSingleWallet) setName(null);
+      }
       throw error;
     } finally {
       setConnecting(false);
@@ -470,6 +494,7 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
     connected,
     adapter,
     readyState,
+    isSingleWallet,
     handleError,
     setName,
     privateDataPermission,
@@ -480,20 +505,29 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
   // Disconnect the adapter from the wallet
   const disconnect = useCallback(async () => {
     if (isDisconnecting.current) return;
-    if (!adapter) return setName(null);
+    if (!adapter) {
+      if (!isSingleWallet) setName(null);
+      return;
+    }
 
     isDisconnecting.current = true;
     setDisconnecting(true);
     try {
       await adapter.disconnect();
     } catch (error: any) {
-      setName(null);
+      clearConnectionOnDisconnect();
       throw error;
     } finally {
       setDisconnecting(false);
       isDisconnecting.current = false;
     }
-  }, [isDisconnecting, adapter, setName]);
+  }, [
+    isDisconnecting,
+    adapter,
+    isSingleWallet,
+    setName,
+    clearConnectionOnDisconnect,
+  ]);
 
   // Request transaction
   const requestTransaction:
