@@ -292,6 +292,10 @@ class FakeProver {
     if (this.freed) throw new Error("null pointer passed to rust");
     return this.descriptor;
   }
+
+  free() {
+    this.freed = true;
+  }
 }
 
 /** A `proveTransaction` that consumes its prover the way wasm-bindgen does. */
@@ -428,6 +432,109 @@ describe("TransactionsResource", () => {
         expect.anything(),
         callProver
       );
+    });
+
+    it("copies defaultProver when passed explicitly as opts.prover", async () => {
+      const prover = new FakeProver("remote|https://prover.example");
+      const { resource, inner } = makeResource(
+        { proveTransaction: consumingProveTransaction() },
+        { defaultProver: prover }
+      );
+      await resource.send({
+        account: "0xsender",
+        to: "0xrecipient",
+        token: "0xfaucet",
+        type: "public",
+        amount: 100,
+        prover,
+      });
+      expect(prover.freed).toBe(false);
+      await resource.send({
+        account: "0xsender",
+        to: "0xrecipient",
+        token: "0xfaucet",
+        type: "public",
+        amount: 100,
+      });
+      expect(inner.proveTransaction).toHaveBeenCalledTimes(2);
+      expect(prover.freed).toBe(false);
+    });
+
+    it("passes defaultProver directly without copying in worker mode", async () => {
+      const prover = new FakeProver("remote|https://prover.example");
+      const deserializeSpy = vi.spyOn(FakeProver, "deserialize");
+      try {
+        const { resource, inner } = makeResource(
+          { worker: {} },
+          { defaultProver: prover }
+        );
+        await resource.send({
+          account: "0xsender",
+          to: "0xrecipient",
+          token: "0xfaucet",
+          type: "public",
+          amount: 100,
+        });
+        await resource.send({
+          account: "0xsender",
+          to: "0xrecipient",
+          token: "0xfaucet",
+          type: "public",
+          amount: 100,
+          prover,
+        });
+        expect(deserializeSpy).not.toHaveBeenCalled();
+        expect(inner.proveTransaction).toHaveBeenNthCalledWith(
+          1,
+          expect.anything(),
+          prover
+        );
+        expect(inner.proveTransaction).toHaveBeenNthCalledWith(
+          2,
+          expect.anything(),
+          prover
+        );
+        expect(prover.freed).toBe(false);
+      } finally {
+        deserializeSpy.mockRestore();
+      }
+    });
+
+    it("frees internal copy on pre-consumption rejection without freeing defaultProver or caller prover", async () => {
+      const defaultProver = new FakeProver("remote|https://prover.example");
+      const failBeforeConsume = vi
+        .fn()
+        .mockRejectedValue(new Error("worker init failed"));
+      const { resource, inner } = makeResource(
+        { proveTransaction: failBeforeConsume },
+        { defaultProver }
+      );
+      await expect(
+        resource.send({
+          account: "0xsender",
+          to: "0xrecipient",
+          token: "0xfaucet",
+          type: "public",
+          amount: 100,
+        })
+      ).rejects.toThrow("worker init failed");
+      const copied = inner.proveTransaction.mock.calls[0][1];
+      expect(copied).not.toBe(defaultProver);
+      expect(copied.freed).toBe(true);
+      expect(defaultProver.freed).toBe(false);
+
+      const callProver = new FakeProver("remote|https://custom.example");
+      await expect(
+        resource.send({
+          account: "0xsender",
+          to: "0xrecipient",
+          token: "0xfaucet",
+          type: "public",
+          amount: 100,
+          prover: callProver,
+        })
+      ).rejects.toThrow("worker init failed");
+      expect(callProver.freed).toBe(false);
     });
   });
 
@@ -1786,6 +1893,21 @@ describe("TransactionsResource", () => {
       await expect(second.prove()).resolves.toBeDefined();
       expect(inner.proveTransaction).toHaveBeenCalledTimes(2);
       expect(inner.proveTransaction.mock.calls[1][1].descriptor).toBe("local");
+    });
+
+    it("prove copies defaultProver when passed explicitly as opts.prover", async () => {
+      const defaultProver = new FakeProver("local");
+      const { resource, inner } = makeResource(
+        { proveTransaction: consumingProveTransaction() },
+        { defaultProver }
+      );
+      const first = await resource.executeRequest("0xaccHex", {});
+      await first.prove({ prover: defaultProver });
+      expect(defaultProver.freed).toBe(false);
+      const second = await resource.executeRequest("0xaccHex", {});
+      await expect(second.prove()).resolves.toBeDefined();
+      expect(inner.proveTransaction).toHaveBeenCalledTimes(2);
+      expect(defaultProver.freed).toBe(false);
     });
 
     it("submit forwards proof + result and exposes the block height", async () => {
