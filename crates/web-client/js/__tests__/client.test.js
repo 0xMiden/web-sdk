@@ -226,6 +226,34 @@ describe("MidenClient.endpoint", () => {
   });
 });
 
+describe("MidenClient.protocolConfig", () => {
+  it("returns what the inner client reads", async () => {
+    const config = { kind: "protocolConfig" };
+    const { client, inner } = makeClient({
+      protocolConfig: vi.fn().mockResolvedValue(config),
+    });
+
+    await expect(client.protocolConfig()).resolves.toBe(config);
+    expect(inner.protocolConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces the inner error when no configuration is stored", async () => {
+    const { client } = makeClient({
+      protocolConfig: vi.fn().mockRejectedValue(new Error("not known yet")),
+    });
+
+    await expect(client.protocolConfig()).rejects.toThrow("not known yet");
+  });
+
+  it("throws once terminated", async () => {
+    const { client, inner } = makeClient({ protocolConfig: vi.fn() });
+    client.terminate();
+
+    await expect(client.protocolConfig()).rejects.toThrow("Client terminated");
+    expect(inner.protocolConfig).not.toHaveBeenCalled();
+  });
+});
+
 describe("MidenClient.withFeeAwareAuth", () => {
   let client;
   let inner;

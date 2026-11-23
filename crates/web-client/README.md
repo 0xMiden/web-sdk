@@ -273,6 +273,13 @@ protocol configuration, which the client receives from the node when it syncs,
 so execution never needs the option: it only sets what `client.feeFaucetId()`
 reports before the first sync. Snippets below leave it out.
 
+`client.protocolConfig()` returns that configuration as a `ProtocolConfig`: its
+`feeFaucetId()` is the faucet `client.feeFaucetId()` reports after a sync, and
+its `commitment()` is what block headers carry as `protocolConfigCommitment()`.
+It rejects with "the network's protocol configuration is not known yet" until
+the first sync stores the configuration; a mock client is seeded with its
+chain's.
+
 `noteTransportMaxRetries` (0 to 10, default 3) and
 `noteTransportRetryIntervalMs` (0 to 60000, default 250), with a total computed
 backoff `interval * (2^retries - 1)` of at most 120000 ms, set how
@@ -1058,9 +1065,10 @@ To create the receiving account, build a **public** account carrying the network
 ```typescript
 // Each allowed note script carries the fee charged to consume it, in the
 // chain's fee asset. Zero is a valid price. The fee faucet must be the chain's
-// own: the node never runs network transactions for an account whose fee asset
-// differs from the chain's protocol configuration, and says nothing to the
-// client - the account's notes are simply never consumed.
+// own, the one `client.protocolConfig()` names: the node never runs network
+// transactions for an account whose fee asset differs from the chain's
+// protocol configuration, and says nothing to the client - the account's notes
+// are simply never consumed.
 const feeFaucetId = await client.feeFaucetId();
 const components = AccountComponent.createNetworkAuthComponents(
   [new NoteScriptFee(myNoteScript.root(), 0n)],

@@ -195,6 +195,7 @@ const READ_METHODS = new Set([
   "listTags",
   "executeProgram",
   "feeFaucetId",
+  "protocolConfig",
   "storeIdentifier",
 ]);
 

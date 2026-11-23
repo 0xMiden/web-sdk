@@ -335,6 +335,22 @@ impl WebClient {
         })
     }
 
+    /// Returns the protocol configuration of the connected network: its fee asset and the
+    /// commitment that block headers carry for it.
+    ///
+    /// The client receives the configuration from the node when it syncs, so this rejects until
+    /// the first sync has stored it. Mock clients are seeded with their chain's configuration.
+    #[js_export(js_name = "protocolConfig")]
+    pub async fn protocol_config(&self) -> Result<models::protocol_config::ProtocolConfig, JsErr> {
+        let config = self.synced_protocol_config().await?;
+        config.map(Into::into).ok_or_else(|| {
+            from_str_err(
+                "the network's protocol configuration is not known yet: sync the client so it \
+                 receives the configuration from the node",
+            )
+        })
+    }
+
     /// Returns the identifier of the underlying store (e.g. `IndexedDB` database name, file path).
     #[js_export(js_name = "storeIdentifier")]
     pub async fn store_identifier(&self) -> Result<String, JsErr> {
@@ -924,6 +940,7 @@ fn code_from_error(err: &(dyn Error + 'static)) -> Option<&'static str> {
         return match client_error {
             ClientError::AccountNotFoundOnChain(_) => Some("ACCOUNT_NOT_FOUND_ON_CHAIN"),
             ClientError::AccountAlreadyTracked(_) => Some("ACCOUNT_ALREADY_TRACKED"),
+            ClientError::AccountIsPrivate(_) => Some("ACCOUNT_IS_PRIVATE"),
             ClientError::AccountNotAllowlisted(_) => Some("ACCOUNT_NOT_ALLOWLISTED"),
             ClientError::AccountAlreadyAllowed(_) => Some("ACCOUNT_ALREADY_ALLOWED"),
             // The node's verdict on a registration travels inside the RPC error rather than as
