@@ -139,6 +139,96 @@ test.describe("public key", () => {
     });
     expect(result.original).toEqual(result.roundtripped);
   });
+
+  test("recoverFrom recovers the signer's public key: Falcon Scheme", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const secretKey = sdk.AuthSecretKey.rpoFalconWithRNG();
+      const message = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
+      const signature = secretKey.sign(message);
+      const recovered = sdk.PublicKey.recoverFrom(message, signature);
+      return {
+        commitmentMatches:
+          recovered.toCommitment().toHex() ===
+          secretKey.publicKey().toCommitment().toHex(),
+        verifies: recovered.verify(message, signature),
+      };
+    });
+    expect(result).toEqual({ commitmentMatches: true, verifies: true });
+  });
+
+  test("recoverFrom recovers the signer's public key: ECDSA Scheme", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const secretKey = sdk.AuthSecretKey.ecdsaWithRNG();
+      const otherSecretKey = sdk.AuthSecretKey.ecdsaWithRNG();
+      const message = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
+      const signature = secretKey.sign(message);
+      const recovered = sdk.PublicKey.recoverFrom(message, signature);
+      return {
+        commitmentMatches:
+          recovered.toCommitment().toHex() ===
+          secretKey.publicKey().toCommitment().toHex(),
+        otherCommitmentDiffers:
+          recovered.toCommitment().toHex() !==
+          otherSecretKey.publicKey().toCommitment().toHex(),
+        verifies: recovered.verify(message, signature),
+      };
+    });
+    expect(result).toEqual({
+      commitmentMatches: true,
+      otherCommitmentDiffers: true,
+      verifies: true,
+    });
+  });
+
+  test("recoverFrom on another word still returns the Falcon key", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const secretKey = sdk.AuthSecretKey.rpoFalconWithRNG();
+      const signed = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
+      const other = new sdk.Word(sdk.u64Array([5, 6, 7, 8]));
+      const signature = secretKey.sign(signed);
+      const recovered = sdk.PublicKey.recoverFrom(other, signature);
+      return {
+        commitmentMatches:
+          recovered.toCommitment().toHex() ===
+          secretKey.publicKey().toCommitment().toHex(),
+        verifyOther: recovered.verify(other, signature),
+        verifySigned: recovered.verify(signed, signature),
+      };
+    });
+    expect(result).toEqual({
+      commitmentMatches: true,
+      verifyOther: false,
+      verifySigned: true,
+    });
+  });
+
+  test("recoverFrom on another word does not return the ECDSA signer", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const secretKey = sdk.AuthSecretKey.ecdsaWithRNG();
+      const signed = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
+      const other = new sdk.Word(sdk.u64Array([5, 6, 7, 8]));
+      const signature = secretKey.sign(signed);
+      try {
+        const recovered = sdk.PublicKey.recoverFrom(other, signature);
+        return {
+          rejected:
+            recovered.toCommitment().toHex() !==
+            secretKey.publicKey().toCommitment().toHex(),
+        };
+      } catch {
+        return { rejected: true };
+      }
+    });
+    expect(result).toEqual({ rejected: true });
+  });
 });
 
 test.describe("signing inputs", () => {

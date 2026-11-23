@@ -2,6 +2,7 @@ import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
 import { coalesceRun, runUnderLock, withSyncLock } from "./syncLock.js";
 import {
+  appendAuthError,
   serializeCallbackError,
   validateCallbackTimeoutMs,
 } from "./callbackBridge.js";
@@ -194,6 +195,7 @@ const READ_METHODS = new Set([
   "listTags",
   "executeProgram",
   "feeFaucetId",
+  "protocolConfig",
   "storeIdentifier",
 ]);
 
@@ -652,11 +654,22 @@ class WebClient {
             // (a string, `{ code: 4001 }`, `null`), so send an explicit failure
             // flag and the cloneable fields the worker needs to rebuild the
             // error, including when causes cycle or properties are unreadable.
-            this.worker.postMessage({
+            const reply = {
               callbackOk: false,
               callbackError: serializeCallbackError(error, callbackType),
               callbackRequestId: requestId,
-            });
+            };
+            try {
+              this.worker.postMessage(reply);
+            } catch {
+              this.worker.postMessage({
+                callbackOk: false,
+                callbackError: {
+                  message: `${callbackType} callback threw an unreadable value`,
+                },
+                callbackRequestId: requestId,
+              });
+            }
           }
           return;
         }
@@ -1394,10 +1407,20 @@ class WebClient {
       try {
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
-          return await wasmWebClient.submitNewTransaction(
-            accountId,
-            transactionRequest
-          );
+          try {
+            return await wasmWebClient.submitNewTransaction(
+              accountId,
+              transactionRequest
+            );
+          } catch (error) {
+            const authError = wasmWebClient.lastAuthError();
+            if (typeof error === "string")
+              throw appendAuthError(error, authError);
+            if (error instanceof Error) {
+              error.message = appendAuthError(error.message, authError);
+            }
+            throw error;
+          }
         }
 
         const wasm = await getWasmOrThrow();
@@ -1527,7 +1550,18 @@ class WebClient {
   async _submitBatchInThread(items) {
     try {
       const wasmWebClient = await this.getWasmWebClient();
-      return await wasmWebClient.submitNewTransactionBatch(items);
+      try {
+        return await wasmWebClient.submitNewTransactionBatch(items);
+      } catch (error) {
+        const authError = wasmWebClient.lastAuthError();
+        if (typeof error === "string") {
+          throw appendAuthError(error, authError);
+        }
+        if (error instanceof Error) {
+          error.message = appendAuthError(error.message, authError);
+        }
+        throw error;
+      }
     } catch (error) {
       console.error(
         "INDEX.JS: Error in submitNewTransactionBatch (in-thread):",
@@ -1542,11 +1576,21 @@ class WebClient {
       try {
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
-          return await wasmWebClient.submitNewTransactionWithProver(
-            accountId,
-            transactionRequest,
-            prover
-          );
+          try {
+            return await wasmWebClient.submitNewTransactionWithProver(
+              accountId,
+              transactionRequest,
+              prover
+            );
+          } catch (error) {
+            const authError = wasmWebClient.lastAuthError();
+            if (typeof error === "string")
+              throw appendAuthError(error, authError);
+            if (error instanceof Error) {
+              error.message = appendAuthError(error.message, authError);
+            }
+            throw error;
+          }
         }
 
         const wasm = await getWasmOrThrow();
@@ -1579,10 +1623,21 @@ class WebClient {
       try {
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
-          return await wasmWebClient.executeTransaction(
-            accountId,
-            transactionRequest
-          );
+          try {
+            return await wasmWebClient.executeTransaction(
+              accountId,
+              transactionRequest
+            );
+          } catch (error) {
+            const authError = wasmWebClient.lastAuthError();
+            if (typeof error === "string") {
+              throw appendAuthError(error, authError);
+            }
+            if (error instanceof Error) {
+              error.message = appendAuthError(error.message, authError);
+            }
+            throw error;
+          }
         }
 
         const wasm = await getWasmOrThrow();
@@ -1618,11 +1673,22 @@ class WebClient {
 
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
-          return await wasmWebClient.executeTransactionAt(
-            accountId,
-            transactionRequest,
-            anchor
-          );
+          try {
+            return await wasmWebClient.executeTransactionAt(
+              accountId,
+              transactionRequest,
+              anchor
+            );
+          } catch (error) {
+            const authError = wasmWebClient.lastAuthError();
+            if (typeof error === "string") {
+              throw appendAuthError(error, authError);
+            }
+            if (error instanceof Error) {
+              error.message = appendAuthError(error.message, authError);
+            }
+            throw error;
+          }
         }
 
         const wasm = await getWasmOrThrow();
