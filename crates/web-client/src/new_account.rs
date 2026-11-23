@@ -1,4 +1,9 @@
+use alloc::format;
+
 use js_export_macro::js_export;
+use miden_client::account::Account as NativeAccount;
+use miden_client::account::component::{FeePolicyManager, NetworkAccount};
+use miden_client::asset::AssetId;
 use miden_client::auth::AuthSecretKey;
 use miden_client::block::BlockNumber;
 use miden_client::keystore::Keystore;
@@ -13,6 +18,40 @@ use crate::platform::{JsErr, from_str_err, js_u64_to_u64, maybe_wrap_send};
 use crate::{WebClient, js_error_with_context};
 
 impl WebClient {
+    /// The chain's fee faucet as `feeFaucetId()` resolves it, or `None` when it is not known yet
+    /// (nothing synced and no creation-time faucet). Storage and protocol-config read failures are
+    /// errors, not `None`.
+    pub(crate) async fn known_fee_faucet_id(&self) -> Result<Option<AccountId>, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+
+        let sync_height = client
+            .get_sync_height()
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to read the sync height"))?;
+        let header = client
+            .get_block_header_by_num(sync_height)
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to read the synced block header"))?;
+        if let Some((header, _)) = header {
+            match client.get_protocol_config(header.protocol_config_commitment()).await {
+                Ok(config) => return Ok(Some(config.fee_asset_id().faucet_id().into())),
+                // Nothing has been synced yet, so no configuration is stored for the header.
+                Err(miden_client::ClientError::StoreError(
+                    miden_client::store::StoreError::ProtocolConfigNotFound(_),
+                )) => {},
+                Err(err) => {
+                    return Err(js_error_with_context(
+                        err,
+                        "failed to read the protocol configuration",
+                    ));
+                },
+            }
+        }
+
+        Ok((*self.fee_faucet.lock().await).map(Into::into))
+    }
+
     /// Syncs state if the client has never been synced (still at genesis block).
     ///
     /// This prevents a slow full-chain scan on the next sync after account creation.
@@ -34,6 +73,45 @@ impl WebClient {
                 let _ = maybe_wrap_send(client.sync_state()).await;
             }
         }
+    }
+
+    /// Rejects a network account whose `FeePolicyManager` fee-asset faucet differs from the
+    /// chain's (`feeFaucetId()`). The node's network-transaction builder silently refuses such
+    /// accounts; catching the mismatch here avoids deploying an account that can never consume
+    /// notes. Non-network accounts and accounts whose fee-asset slot cannot be read are left
+    /// alone. When the chain fee faucet is not known yet (no sync / no creation-time faucet),
+    /// the check is skipped rather than blocking insert.
+    async fn reject_mismatched_network_fee_faucet(
+        &self,
+        account: &NativeAccount,
+    ) -> Result<(), JsErr> {
+        if NetworkAccount::new(account.clone()).is_err() {
+            return Ok(());
+        }
+
+        let Some(chain_fee) = self.known_fee_faucet_id().await? else {
+            return Ok(());
+        };
+        let chain_fee_native: miden_client::account::AccountId = (&chain_fee).into();
+
+        let Ok(fee_asset_word) = account.storage().get_item(FeePolicyManager::fee_asset_id_slot())
+        else {
+            return Ok(());
+        };
+        let Ok(account_fee_faucet) = AssetId::try_from(fee_asset_word).map(|id| id.faucet_id())
+        else {
+            return Ok(());
+        };
+
+        if account_fee_faucet != chain_fee_native {
+            return Err(from_str_err(&format!(
+                "network account fee faucet {account_fee_faucet} does not match the chain's fee \
+                 faucet {chain_fee_native} (client.feeFaucetId()); rebuild the account with \
+                 AccountComponent.createNetworkAuthComponents(..., await client.feeFaucetId())"
+            )));
+        }
+
+        Ok(())
     }
 }
 
@@ -144,6 +222,9 @@ impl WebClient {
 
     /// Inserts an account. It first runs `syncBeforeAccountCreation` unless `skip_pre_sync` is
     /// `true`.
+    ///
+    /// A network account whose fee-asset faucet differs from `feeFaucetId()` is rejected before
+    /// insert: the node would accept the deploy and then never consume notes sent to it.
     #[js_export(js_name = "newAccount")]
     pub async fn new_account(
         &self,
@@ -154,9 +235,11 @@ impl WebClient {
         if skip_pre_sync != Some(true) {
             self.maybe_sync_before_account_creation().await;
         }
+        let native_account: NativeAccount = account.into();
+        self.reject_mismatched_network_fee_faucet(&native_account).await?;
+
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-        let native_account = account.into();
 
         client
             .add_account(&native_account, overwrite)
@@ -170,6 +253,8 @@ impl WebClient {
     /// insertion fails the account is still persisted (same as wallet/faucet),
     /// but callers only need a single await instead of two. It first runs
     /// `syncBeforeAccountCreation` unless `skip_pre_sync` is `true`.
+    ///
+    /// Same network-account fee-faucet check as [`Self::new_account`].
     #[js_export(js_name = "newAccountWithSecretKey")]
     pub async fn new_account_with_secret_key(
         &self,
@@ -180,7 +265,8 @@ impl WebClient {
         if skip_pre_sync != Some(true) {
             self.maybe_sync_before_account_creation().await;
         }
-        let native_account: miden_client::account::Account = account.into();
+        let native_account: NativeAccount = account.into();
+        self.reject_mismatched_network_fee_faucet(&native_account).await?;
         let account_id = native_account.id();
 
         {

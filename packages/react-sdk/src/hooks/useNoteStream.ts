@@ -72,10 +72,10 @@ export function useNoteStream(
   const handledIdsRef = useRef<Set<string>>(new Set());
   const [handledVersion, setHandledVersion] = useState(0);
 
-  // Store amountFilter in a ref so the streamedNotes useMemo doesn't depend
-  // on the function reference (callers typically pass inline lambdas).
-  const amountFilterRef = useRef(options.amountFilter);
-  amountFilterRef.current = options.amountFilter;
+  // amountFilter is applied in its own memo below so an inline lambda (a new
+  // function every render) refilters without rebuilding the notes or churning
+  // the identity of `notes` and `latest`.
+  const amountFilter = options.amountFilter;
 
   // Serialize excludeIds to a stable key so array literals don't defeat memoization.
   // Uses \0 separator (note IDs are hex strings that never contain null bytes).
@@ -124,8 +124,8 @@ export function useNoteStream(
     }
   }, [isReady, lastSyncTime, refetch]);
 
-  // Build StreamedNote array with all filters applied
-  const streamedNotes = useMemo((): StreamedNote[] => {
+  // Build StreamedNote array with every filter except amountFilter applied
+  const candidateNotes = useMemo((): StreamedNote[] => {
     // Force recalculation when handled IDs change
     void handledVersion;
 
@@ -157,10 +157,6 @@ export function useNoteStream(
       // Filter: since timestamp
       if (since !== undefined && note.firstSeenAt < since) continue;
 
-      // Filter: amount (read from ref to avoid unstable function dep)
-      if (amountFilterRef.current && !amountFilterRef.current(note.amount))
-        continue;
-
       result.push(note);
     }
 
@@ -169,6 +165,24 @@ export function useNoteStream(
 
     return result;
   }, [allNotes, noteFirstSeen, excludeIdSet, sender, since, handledVersion]);
+
+  // Apply amountFilter, reusing the previous array when the surviving notes
+  // are unchanged so effects keyed on `notes` or `latest` do not re-run.
+  const streamedNotesRef = useRef<StreamedNote[]>([]);
+  const streamedNotes = useMemo((): StreamedNote[] => {
+    const next = amountFilter
+      ? candidateNotes.filter((note) => amountFilter(note.amount))
+      : candidateNotes;
+    const prev = streamedNotesRef.current;
+    if (
+      prev.length === next.length &&
+      prev.every((note, index) => note === next[index])
+    ) {
+      return prev;
+    }
+    streamedNotesRef.current = next;
+    return next;
+  }, [candidateNotes, amountFilter]);
 
   const latest = useMemo(
     () =>

@@ -753,13 +753,124 @@ describe("useNoteStream", () => {
 
       useMidenStore.getState().setNotes(notes as any, "committed");
 
-      const { result } = renderHook(() =>
-        useNoteStream({ amountFilter: (a) => a >= 100n })
-      );
+      const amountFilter = (a: bigint) => a >= 100n;
+      const { result } = renderHook(() => useNoteStream({ amountFilter }));
 
       await waitFor(() => {
         expect(result.current.notes.length).toBe(2);
       });
+    });
+
+    it("should refilter when amountFilter changes without new note data", async () => {
+      const notes = [
+        createStreamableNote("0xnote1", "0xsender", 50n),
+        createStreamableNote("0xnote2", "0xsender", 150n),
+      ];
+
+      const mockClient = createMockWebClient({
+        getInputNotes: vi.fn().mockResolvedValue(notes),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      useMidenStore.getState().setNotes(notes as any, "committed");
+
+      const { result, rerender } = renderHook(
+        ({ amountFilter }) => useNoteStream({ amountFilter }),
+        { initialProps: { amountFilter: (a: bigint) => a >= 100n } }
+      );
+
+      await waitFor(() => {
+        expect(result.current.notes.map((n) => n.id)).toEqual(["0xnote2"]);
+      });
+
+      rerender({ amountFilter: (a: bigint) => a >= 0n });
+
+      await waitFor(() => {
+        expect(result.current.notes.map((n) => n.id).sort()).toEqual([
+          "0xnote1",
+          "0xnote2",
+        ]);
+      });
+    });
+
+    it("should refilter when amountFilter is removed", async () => {
+      const notes = [
+        createStreamableNote("0xnote1", "0xsender", 50n),
+        createStreamableNote("0xnote2", "0xsender", 150n),
+      ];
+
+      const mockClient = createMockWebClient({
+        getInputNotes: vi.fn().mockResolvedValue(notes),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      useMidenStore.getState().setNotes(notes as any, "committed");
+
+      const { result, rerender } = renderHook(
+        ({ amountFilter }: { amountFilter?: (amount: bigint) => boolean }) =>
+          useNoteStream({ amountFilter }),
+        {
+          initialProps: { amountFilter: (a: bigint) => a >= 100n } as {
+            amountFilter?: (amount: bigint) => boolean;
+          },
+        }
+      );
+
+      await waitFor(() => {
+        expect(result.current.notes.map((n) => n.id)).toEqual(["0xnote2"]);
+      });
+
+      rerender({ amountFilter: undefined });
+
+      await waitFor(() => {
+        expect(result.current.notes.map((n) => n.id).sort()).toEqual([
+          "0xnote1",
+          "0xnote2",
+        ]);
+      });
+    });
+
+    it("should keep notes and latest identity stable across rerenders with an inline amountFilter", async () => {
+      const notes = [
+        createStreamableNote("0xnote1", "0xsender", 50n),
+        createStreamableNote("0xnote2", "0xsender", 150n),
+      ];
+
+      const mockClient = createMockWebClient({
+        getInputNotes: vi.fn().mockResolvedValue(notes),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      useMidenStore.getState().setNotes(notes as any, "committed");
+
+      const { result, rerender } = renderHook(() =>
+        useNoteStream({ amountFilter: (a) => a >= 100n })
+      );
+
+      await waitFor(() => {
+        expect(result.current.notes.map((n) => n.id)).toEqual(["0xnote2"]);
+      });
+
+      const firstNotes = result.current.notes;
+      const firstLatest = result.current.latest;
+
+      rerender();
+      rerender();
+
+      expect(result.current.notes).toBe(firstNotes);
+      expect(result.current.latest).toBe(firstLatest);
     });
 
     it("should return empty when sender is null", async () => {
