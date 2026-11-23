@@ -285,7 +285,8 @@ export declare class MockWasmWebClient extends WasmWebClient {
     serializedMockChain?: Uint8Array,
     serializedMockNoteTransportNode?: Uint8Array,
     seed?: Uint8Array,
-    logLevel?: LogLevel
+    logLevel?: LogLevel,
+    storeName?: string
   ): Promise<MockWasmWebClient>;
 
   proveBlock(): Promise<void>;

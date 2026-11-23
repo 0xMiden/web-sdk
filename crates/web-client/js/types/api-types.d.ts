@@ -1122,6 +1122,13 @@ export interface MockOptions {
   seed?: string | Uint8Array;
   serializedMockChain?: Uint8Array;
   serializedNoteTransport?: Uint8Array;
+  /**
+   * IndexedDB database name for this mock client. Defaults to `mock_client_db`.
+   * Use a distinct name when a second mock client in the same origin must not
+   * share store state with another live mock (otherwise `syncState` can fail
+   * genesis tip validation).
+   */
+  storeName?: string;
 }
 
 // ════════════════════════════════════════════════════════════════

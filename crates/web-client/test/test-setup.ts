@@ -927,8 +927,23 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           return parsed;
         },
 
-        createFreshMockClient: async () => {
-          const freshClient = await window.MockWasmWebClient.createClient();
+        createFreshMockClient: async (storeName) => {
+          // Default: distinct IndexedDB name so this client does not share
+          // mock_client_db with the fixture mock (syncState would then fail
+          // genesis tip validation). Pass `"mock_client_db"` to reopen the
+          // fixture store on purpose (see account_code_dangling). Issue #557.
+          const name =
+            storeName ??
+            `mock_fresh_${Date.now()}_${Math.random()
+              .toString(36)
+              .slice(2, 8)}`;
+          const freshClient = await window.MockWasmWebClient.createClient(
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            name
+          );
           // Disable worker (same as main client) to avoid mock chain
           // serialization bug and reduce memory pressure
           if (freshClient.worker) {

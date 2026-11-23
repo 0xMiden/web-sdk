@@ -90,7 +90,23 @@ const serializeError = (error) => {
 // Global state variables.
 let wasmWebClient = null;
 let wasmSeed = null; // Seed for the WASM WebClient, if needed.
+// IndexedDB name the mock client opened. SYNC/SUBMIT mock paths recreate the
+// wasm client and must reopen the same store as INIT_MOCK.
+let wasmMockStoreName = "mock_client_db";
 let ready = false; // Indicates if the worker is fully initialized.
+
+const createMockClientOn = async (
+  client,
+  seed,
+  serializedMockChain,
+  serializedMockNoteTransportNode
+) =>
+  client.createMockClient(
+    seed,
+    serializedMockChain,
+    serializedMockNoteTransportNode,
+    wasmMockStoreName
+  );
 let messageQueue = []; // Queue for sequential processing.
 let processing = false; // Flag to ensure one message is processed at a time.
 
@@ -361,7 +377,8 @@ methodHandlers[MethodName.SYNC_STATE_MOCK] = async (args) => {
   serializedMockNoteTransportNode = serializedMockNoteTransportNode
     ? new Uint8Array(serializedMockNoteTransportNode)
     : null;
-  await wasmWebClient.createMockClient(
+  await createMockClientOn(
+    wasmWebClient,
     wasmSeed,
     serializedMockChain,
     serializedMockNoteTransportNode
@@ -376,7 +393,8 @@ methodHandlers[MethodName.SYNC_CHAIN_MOCK] = async (args) => {
   serializedMockNoteTransportNode = serializedMockNoteTransportNode
     ? new Uint8Array(serializedMockNoteTransportNode)
     : null;
-  await wasmWebClient.createMockClient(
+  await createMockClientOn(
+    wasmWebClient,
     wasmSeed,
     serializedMockChain,
     serializedMockNoteTransportNode
@@ -391,7 +409,8 @@ methodHandlers[MethodName.SYNC_NOTE_TRANSPORT_MOCK] = async (args) => {
   serializedMockNoteTransportNode = serializedMockNoteTransportNode
     ? new Uint8Array(serializedMockNoteTransportNode)
     : null;
-  await wasmWebClient.createMockClient(
+  await createMockClientOn(
+    wasmWebClient,
     wasmSeed,
     serializedMockChain,
     serializedMockNoteTransportNode
@@ -410,7 +429,8 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_MOCK] = async (args) => {
     : null;
 
   wasmWebClient = new wasm.WebClient();
-  await wasmWebClient.createMockClient(
+  await createMockClientOn(
+    wasmWebClient,
     wasmSeed,
     serializedMockChain,
     serializedMockNoteTransportNode
@@ -445,7 +465,8 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK] = async (
     : null;
 
   wasmWebClient = new wasm.WebClient();
-  await wasmWebClient.createMockClient(
+  await createMockClientOn(
+    wasmWebClient,
     wasmSeed,
     serializedMockChain,
     serializedMockNoteTransportNode
@@ -554,6 +575,7 @@ async function processMessage(event) {
         numThreads,
         serializedMockChain,
         serializedMockNoteTransportNode,
+        storeName,
       ] = args;
       const wasm = await getWasmOrThrow();
 
@@ -573,8 +595,10 @@ async function processMessage(event) {
         await wasm.initThreadPool(numThreads);
       }
 
+      wasmMockStoreName = storeName || "mock_client_db";
       wasmWebClient = new wasm.WebClient();
-      await wasmWebClient.createMockClient(
+      await createMockClientOn(
+        wasmWebClient,
         seed,
         serializedMockChain ? new Uint8Array(serializedMockChain) : undefined,
         serializedMockNoteTransportNode

@@ -328,7 +328,9 @@ export class MidenClient {
     const inner = await MockWebClientClass.createClient(
       options?.serializedMockChain,
       options?.serializedNoteTransport,
-      seed
+      seed,
+      undefined,
+      options?.storeName
     );
 
     const client = new MidenClient(inner, getWasm, null);

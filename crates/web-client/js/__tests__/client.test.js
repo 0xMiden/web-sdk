@@ -1206,6 +1206,37 @@ describe("WebClient factories", () => {
       expect(wasmClient.free).not.toHaveBeenCalled();
     }
   );
+
+  it("passes mock_client_db to createMockClient when storeName is omitted", async () => {
+    const creating = MockWasmWebClient.createClient();
+    StubWorker.instances[0].emit({ ready: true });
+    await creating;
+    expect(fakeWasm.WebClient.latest.createMockClient).toHaveBeenCalledWith(
+      null,
+      null,
+      null,
+      "mock_client_db"
+    );
+  });
+
+  it("passes a custom storeName through to createMockClient", async () => {
+    const creating = MockWasmWebClient.createClient(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "mock_isolated_db"
+    );
+    StubWorker.instances[0].emit({ ready: true });
+    const client = await creating;
+    expect(fakeWasm.WebClient.latest.createMockClient).toHaveBeenCalledWith(
+      null,
+      null,
+      null,
+      "mock_isolated_db"
+    );
+    expect(client.storeName).toBe("mock_isolated_db");
+  });
 });
 
 describe("MidenClient.create", () => {
