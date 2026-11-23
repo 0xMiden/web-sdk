@@ -2011,12 +2011,12 @@ class WebClient {
 }
 
 class MockWebClient extends WebClient {
-  constructor(seed, logLevel) {
+  constructor(seed, logLevel, storeName) {
     super(
       null,
       null,
       seed,
-      MOCK_STORE_NAME,
+      storeName ?? MOCK_STORE_NAME,
       undefined,
       undefined,
       undefined,
@@ -2027,7 +2027,8 @@ class MockWebClient extends WebClient {
     // built its own chain could store that chain's genesis header first.
     // Every later sync against the main chain would then fail validation
     // ("does not carry valid validator signatures"). `createClient` resolves
-    // this once the main-thread chain exists.
+    // this once the main-thread chain exists. Pass a distinct `storeName` when
+    // a second mock client must not share that database with another live mock.
     this.mockChainReady = new Promise((resolve) => {
       this.resolveMockChainReady = resolve;
     });
@@ -2057,6 +2058,7 @@ class MockWebClient extends WebClient {
             numThreads,
             serializedMockChain,
             serializedMockNoteTransportNode,
+            this.storeName,
           ],
         });
       }
@@ -2069,16 +2071,19 @@ class MockWebClient extends WebClient {
    * @param serializedMockChain - Serialized mock chain data (optional). Will use an empty chain if not provided.
    * @param serializedMockNoteTransportNode - Serialized mock note transport node data (optional). Will use a new instance if not provided.
    * @param seed - The seed for the account (optional).
+   * @param logLevel - Optional log level.
+   * @param storeName - Optional IndexedDB name. Defaults to `mock_client_db`. Use a distinct name for a second independent mock in the same origin.
    * @returns A promise that resolves to a MockWebClient.
    */
   static async createClient(
     serializedMockChain,
     serializedMockNoteTransportNode,
     seed,
-    logLevel
+    logLevel,
+    storeName
   ) {
     // Construct the instance (synchronously).
-    const instance = new MockWebClient(seed, logLevel);
+    const instance = new MockWebClient(seed, logLevel, storeName);
 
     try {
       // Set up logging on the main thread before creating the client.
@@ -2092,7 +2097,8 @@ class MockWebClient extends WebClient {
       await wasmWebClient.createMockClient(
         seed ?? null,
         serializedMockChain ?? null,
-        serializedMockNoteTransportNode ?? null
+        serializedMockNoteTransportNode ?? null,
+        instance.storeName
       );
 
       // Hand the main-thread chain to the worker's INIT_MOCK.
@@ -2295,7 +2301,8 @@ class MockWebClient extends WebClient {
           await replacement.createMockClient(
             this.seed,
             newMockChain,
-            newMockNoteTransportNode
+            newMockNoteTransportNode,
+            this.storeName
           );
         } catch (error) {
           try {
@@ -2390,7 +2397,8 @@ class MockWebClient extends WebClient {
           await replacement.createMockClient(
             this.seed,
             newMockChain,
-            newMockNoteTransportNode
+            newMockNoteTransportNode,
+            this.storeName
           );
         } catch (error) {
           try {

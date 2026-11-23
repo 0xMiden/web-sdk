@@ -328,7 +328,11 @@ const client = await MidenClient.createTestnet();
 so a test suite needs no node, no faucet and no block time:
 
 ```typescript
-const client = await MidenClient.createMock({ seed, serializedMockChain });
+const client = await MidenClient.createMock({
+  seed,
+  serializedMockChain,
+  storeName: "mock-app-tests", // optional IndexedDB name (defaults to "mock_client_db")
+});
 await client.proveBlock(); // advance the mock chain by one block
 const dump = await client.serializeMockChain(); // snapshot for restore
 client.usesMockChain(); // boolean - true only for a mock client
@@ -336,7 +340,10 @@ client.usesMockChain(); // boolean - true only for a mock client
 
 `serializedMockChain` restores a previous `serializeMockChain()` dump;
 `serializedNoteTransport` does the same for the mock note-transport node
-(`serializeMockNoteTransportNode()`). `proveBlock`, `serializeMockChain` and
+(`serializeMockNoteTransportNode()`). `storeName` sets the browser IndexedDB
+name (default `"mock_client_db"`): pass a distinct `storeName` when a second
+independent mock runs in the same origin so it does not share store state with
+another live mock. `proveBlock`, `serializeMockChain` and
 `serializeMockNoteTransportNode` throw on a non-mock client.
 
 ### Termination
