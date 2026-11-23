@@ -708,6 +708,16 @@ class WebClient {
         }
       });
 
+      // A script that fails to load or throws uncaught, or a message that
+      // cannot be deserialized, leaves the worker unable to answer; without
+      // these listeners every call waits on it forever.
+      this.worker.addEventListener("error", (event) => {
+        this._failWorker(event?.message || "the worker script failed to run");
+      });
+      this.worker.addEventListener("messageerror", () => {
+        this._failWorker("the worker sent a message that could not be read");
+      });
+
       // Once the worker script has loaded, initialize the worker.
       this.loaded.then(() => this.initializeWorker());
     } else {
@@ -1228,11 +1238,18 @@ class WebClient {
     if (this._terminated) {
       throw new Error("WebClient terminated");
     }
+    if (this._workerFailure) {
+      throw this._workerFailure;
+    }
     await this.ready;
     // terminate() can land while this awaits a settled `ready`; the stopped
     // worker would never answer a request posted now.
     if (this._terminated) {
       throw new Error("WebClient terminated");
+    }
+    // The worker can also fail after `ready` settled.
+    if (this._workerFailure) {
+      throw this._workerFailure;
     }
     // Create a unique request ID.
     const requestId = `${methodName}-${Date.now()}-${Math.random()}`;
@@ -1867,6 +1884,38 @@ class WebClient {
       console.error("INDEX.JS: Error in syncChain:", error);
       throw error;
     }
+  }
+
+  /**
+   * Latches the worker as dead: stops it, rejects `ready` and every pending
+   * request, and makes every later worker call throw the same error until
+   * terminate(). After terminate(), those calls throw "WebClient terminated".
+   * The worker never recovers, so a late message from it is not answered.
+   * @private
+   */
+  _failWorker(reason) {
+    if (this._terminated || this._workerFailure) {
+      return;
+    }
+    const error = new Error(`WebClient worker failed: ${reason}`);
+    console.error(error.message);
+    this._workerFailure = error;
+    this.worker.terminate();
+    this.readyRejecter(error);
+    for (const { reject } of this.pendingRequests.values()) {
+      reject(error);
+    }
+    this.pendingRequests.clear();
+  }
+
+  /**
+   * The error that latched this client's worker as dead, or undefined until
+   * the worker fails. Every later worker call throws this same Error until
+   * terminate(). After terminate(), those calls throw "WebClient terminated".
+   * @returns {Error | undefined}
+   */
+  get workerFailure() {
+    return this._workerFailure;
   }
 
   /**
