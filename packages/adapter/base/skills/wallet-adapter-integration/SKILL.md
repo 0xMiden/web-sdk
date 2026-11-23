@@ -137,8 +137,10 @@ With `WalletProvider` you must select first or `connect()` throws
 `WalletNotSelectedError`.
 
 If `readyState` is neither `Installed` nor `Loadable`, the provider's
-`connect()` clears the stored name, opens `adapter.url` in a new tab (the
-extension's store listing) and throws `WalletNotReadyError`.
+`connect()` clears the stored name (except in single-wallet
+`MidenFiSignerProvider`, which keeps the sole wallet selected), opens
+`adapter.url` in a new tab (the extension's store listing), and throws
+`WalletNotReadyError`.
 
 While `Loadable`, `MidenWalletAdapter.openInBread()` navigates the current tab
 to `getBreadOpenLink()`, which is `BREAD_OPEN_LINK_BASE` with the page URL
@@ -160,9 +162,13 @@ state that selects Bread and calls `openInBread()` from inside the tap;
 opening the modal with a `Loadable` Bread selected connects nothing.
 
 `autoConnect` is off by default. When on, it connects as soon as a stored
-wallet resolves to an `Installed` adapter, and clears the stored name if that
-fails. It never connects a `Loadable` one, which would hand off to its app on
-page load. It never rethrows; the failure reaches you through `onError` only.
+wallet resolves to an `Installed` adapter; `WalletProvider` and multi-wallet
+`MidenFiSignerProvider` clear the stored name if that fails, whereas
+single-wallet `MidenFiSignerProvider` keeps the sole wallet selected in
+`localStorage` and suppresses `autoConnect` retries until `select()` is called
+explicitly (while manual `connect()` still works). It never connects a
+`Loadable` one, which would hand off to its app on page load. It never rethrows;
+the failure reaches you through `onError` only.
 
 Connecting twice is deliberately not a no-op. A second `connect()` re-drives
 the handshake so a dApp whose JS context survived a park and restore gets its
