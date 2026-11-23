@@ -449,7 +449,8 @@ describe("initializeSignerAccount", () => {
       const result = await initializeSignerAccount(mockClient, config);
 
       expect(result).toBe("0xalreadytracked");
-      expect(mockClient.syncState).toHaveBeenCalledTimes(2);
+      // Only the opening sync: a tolerated failure imports nothing to refresh.
+      expect(mockClient.syncState).toHaveBeenCalledTimes(1);
     });
 
     it("tolerates a fresh account (ACCOUNT_NOT_FOUND_ON_CHAIN) so the provider doesn't error", async () => {
@@ -471,7 +472,7 @@ describe("initializeSignerAccount", () => {
 
       expect(result).toBe("0xfreshaccount");
       expect(AccountBuilder).not.toHaveBeenCalled();
-      expect(mockClient.syncState).toHaveBeenCalledTimes(2);
+      expect(mockClient.syncState).toHaveBeenCalledTimes(1);
     });
 
     it("tolerates a private account (ACCOUNT_IS_PRIVATE) without building a new one", async () => {
@@ -492,7 +493,7 @@ describe("initializeSignerAccount", () => {
       expect(result).toBe("0xprivateaccount");
       expect(AccountBuilder).not.toHaveBeenCalled();
       expect(mockClient.newAccount).not.toHaveBeenCalled();
-      expect(mockClient.syncState).toHaveBeenCalledTimes(2);
+      expect(mockClient.syncState).toHaveBeenCalledTimes(1);
     });
 
     it("rethrows errors without a tolerated code in the fast path", async () => {
