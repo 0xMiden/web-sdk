@@ -8,9 +8,21 @@
 
 ## Enumeration Members
 
+### Devnet
+
+> **Devnet**: `"devnet"`
+
+***
+
 ### Localnet
 
 > **Localnet**: `"localnet"`
+
+***
+
+### Mainnet
+
+> **Mainnet**: `"mainnet"`
 
 ***
 
