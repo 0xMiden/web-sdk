@@ -1,13 +1,16 @@
 use alloc::format;
+use core::error::Error;
+use core::future::Future;
 
 use js_export_macro::js_export;
 use miden_client::account::Account as NativeAccount;
 use miden_client::account::component::{FeePolicyManager, NetworkAccount};
 use miden_client::asset::AssetId;
 use miden_client::auth::AuthSecretKey;
-use miden_client::block::BlockNumber;
+use miden_client::block::{BlockHeader, BlockNumber};
 use miden_client::keystore::Keystore;
 use miden_client::protocol_config::ProtocolConfig;
+use miden_client::{Client, ClientError};
 
 use super::models::account::Account;
 use super::models::account_storage_mode::AccountStorageMode;
@@ -15,7 +18,7 @@ use super::models::auth::AuthScheme;
 use super::models::auth_secret_key::AuthSecretKey as WebAuthSecretKey;
 use crate::helpers::{generate_faucet, generate_wallet};
 use crate::models::account_id::AccountId;
-use crate::platform::{JsErr, from_str_err, js_u64_to_u64, maybe_wrap_send};
+use crate::platform::{ClientAuth, JsErr, from_str_err, js_u64_to_u64, maybe_wrap_send};
 use crate::{WebClient, js_error_with_context};
 
 impl WebClient {
@@ -30,20 +33,13 @@ impl WebClient {
     }
 
     /// The protocol configuration the block at the sync height commits to, or `None` when nothing
-    /// has been synced yet so no configuration is stored for it. Storage read failures are errors.
+    /// has been synced yet (see `header_at_sync_height`) so no configuration is stored for it.
+    /// Storage read failures are errors.
     pub(crate) async fn synced_protocol_config(&self) -> Result<Option<ProtocolConfig>, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
 
-        let sync_height = client
-            .get_sync_height()
-            .await
-            .map_err(|err| js_error_with_context(err, "failed to read the sync height"))?;
-        let header = client
-            .get_block_header_by_num(sync_height)
-            .await
-            .map_err(|err| js_error_with_context(err, "failed to read the synced block header"))?;
-        let Some((header, _)) = header else {
+        let Some(header) = header_at_sync_height(client).await? else {
             return Ok(None);
         };
         match client.get_protocol_config(header.protocol_config_commitment()).await {
@@ -310,5 +306,141 @@ impl WebClient {
             .map_err(|err| from_str_err(&err.to_string()))?;
 
         Ok(())
+    }
+}
+
+// Node.js futures must be `Send` for napi. Browser futures are not, so the bound is empty there.
+#[cfg(feature = "nodejs")]
+trait MaybeSend: Send {}
+
+#[cfg(feature = "nodejs")]
+impl<T: Send> MaybeSend for T {}
+
+#[cfg(not(feature = "nodejs"))]
+trait MaybeSend {}
+
+#[cfg(not(feature = "nodejs"))]
+impl<T> MaybeSend for T {}
+
+/// Reads of the sync height and of the value stored at one height.
+trait SyncHeightRead: MaybeSend {
+    type Value: MaybeSend;
+    type Error: Error + MaybeSend + 'static;
+
+    fn height(&mut self) -> impl Future<Output = Result<BlockNumber, Self::Error>> + MaybeSend;
+    fn value_at(
+        &mut self,
+        height: BlockNumber,
+    ) -> impl Future<Output = Result<Option<Self::Value>, Self::Error>> + MaybeSend;
+}
+
+impl SyncHeightRead for Client<ClientAuth> {
+    type Value = BlockHeader;
+    type Error = ClientError;
+
+    fn height(&mut self) -> impl Future<Output = Result<BlockNumber, Self::Error>> + MaybeSend {
+        Client::get_sync_height(self)
+    }
+
+    // `async fn` cannot name the `MaybeSend` bound this method returns.
+    #[allow(clippy::manual_async_fn)]
+    fn value_at(
+        &mut self,
+        height: BlockNumber,
+    ) -> impl Future<Output = Result<Option<Self::Value>, Self::Error>> + MaybeSend {
+        async move {
+            self.get_block_header_by_num(height)
+                .await
+                .map(|found| found.map(|(header, _)| header))
+        }
+    }
+}
+
+/// The value stored at the sync height, or `None` when that height has no header.
+async fn header_at_sync_height<S>(source: &mut S) -> Result<Option<S::Value>, JsErr>
+where
+    S: SyncHeightRead,
+{
+    let height = source
+        .height()
+        .await
+        .map_err(|err| js_error_with_context(err, "failed to read the sync height"))?;
+    source
+        .value_at(height)
+        .await
+        .map_err(|err| js_error_with_context(err, "failed to read the synced block header"))
+}
+
+#[cfg(all(test, feature = "nodejs"))]
+mod header_at_sync_height_tests {
+    use core::future::{Future, ready};
+
+    use miden_client::block::BlockNumber;
+
+    use super::{MaybeSend, SyncHeightRead, header_at_sync_height};
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("height called past the script")]
+    struct PastScript;
+
+    struct Script {
+        heights: &'static [u32],
+        reads: usize,
+        present: Option<u32>,
+        value: &'static str,
+    }
+
+    impl Script {
+        fn new(heights: &'static [u32], present: Option<u32>, value: &'static str) -> Self {
+            Self { heights, reads: 0, present, value }
+        }
+    }
+
+    impl SyncHeightRead for Script {
+        type Value = &'static str;
+        type Error = PastScript;
+
+        fn height(&mut self) -> impl Future<Output = Result<BlockNumber, Self::Error>> + MaybeSend {
+            let result = match self.heights.get(self.reads).copied() {
+                Some(height) => {
+                    self.reads += 1;
+                    Ok(BlockNumber::from(height))
+                },
+                None => Err(PastScript),
+            };
+            ready(result)
+        }
+
+        fn value_at(
+            &mut self,
+            height: BlockNumber,
+        ) -> impl Future<Output = Result<Option<Self::Value>, Self::Error>> + MaybeSend {
+            let value = (self.present == Some(height.as_u32())).then_some(self.value);
+            ready(Ok(value))
+        }
+    }
+
+    #[tokio::test]
+    async fn pruned_header_follows_the_new_sync_height() {
+        let mut source = Script::new(&[4, 9, 9, 12, 12], Some(12), "value-at-12");
+        let value = header_at_sync_height(&mut source).await.expect("scripted height read");
+        assert_eq!(value, Some("value-at-12"));
+        assert_eq!(source.reads, 5);
+    }
+
+    #[tokio::test]
+    async fn unchanged_height_without_a_header_is_unsynced() {
+        let mut source = Script::new(&[4, 4], None, "unused");
+        let value = header_at_sync_height(&mut source).await.expect("scripted height read");
+        assert_eq!(value, None);
+        assert_eq!(source.reads, 2);
+    }
+
+    #[tokio::test]
+    async fn header_present_reads_height_once() {
+        let mut source = Script::new(&[4], Some(4), "value-at-4");
+        let value = header_at_sync_height(&mut source).await.expect("scripted height read");
+        assert_eq!(value, Some("value-at-4"));
+        assert_eq!(source.reads, 1);
     }
 }
