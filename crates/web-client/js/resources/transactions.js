@@ -58,6 +58,17 @@ function rejectUnexpectedAnchor(opts, method, alternative) {
 }
 
 /**
+ * Builds an independent `TransactionProver` with the same configuration, from
+ * its serialized descriptor.
+ *
+ * @param {*} prover - A `TransactionProver` that is not consumed by this call.
+ * @returns {*} A new `TransactionProver`.
+ */
+function copyProver(prover) {
+  return prover.constructor.deserialize(prover.serialize());
+}
+
+/**
  * Prove an executed transaction, resolving the prover exactly the way the
  * one-shot `submit()` pipeline does: the per-call prover if given, else the
  * client's default prover, else the built-in local prover. Shared by
@@ -71,7 +82,11 @@ function rejectUnexpectedAnchor(opts, method, alternative) {
  * @returns {Promise<*>} The proven transaction.
  */
 async function proveResult(inner, defaultProver, result, opts) {
-  const prover = opts?.prover ?? defaultProver;
+  // The WASM `proveTransaction` takes its prover by value, which frees the JS
+  // handle. Hand it a copy of the shared default so the client's own prover
+  // survives to prove the next transaction.
+  const prover =
+    opts?.prover ?? (defaultProver ? copyProver(defaultProver) : defaultProver);
   return prover
     ? await inner.proveTransaction(result, prover)
     : await inner.proveTransaction(result);
