@@ -219,6 +219,8 @@ export const EthAddress = /* @__PURE__ */ _reexport("EthAddress");
 export const ExecutedTransaction = /* @__PURE__ */ _reexport(
   "ExecutedTransaction"
 );
+export const FeeSponsorshipNote =
+  /* @__PURE__ */ _reexport("FeeSponsorshipNote");
 export const Felt = /* @__PURE__ */ _reexport("Felt");
 export const FeltArray = /* @__PURE__ */ _reexport("FeltArray");
 export const FetchedAccount = /* @__PURE__ */ _reexport("FetchedAccount");
