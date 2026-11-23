@@ -558,6 +558,59 @@ describe("MidenProvider — auto-sync + state-change listener", () => {
     });
   });
 
+  // A failed worker stays failed and every later worker call rejects, so a
+  // client it fails during init must surface as initError, never as ready.
+  it.each(["syncState", "getAccounts"] as const)(
+    "reports a worker that fails during the initial %s as an init error",
+    async (failDuring) => {
+      const failure = new Error("WebClient worker failed: boom");
+      let workerFailure: Error | undefined;
+      const stub = {
+        get workerFailure() {
+          return workerFailure;
+        },
+        syncState: vi.fn(async () => {
+          if (failDuring === "syncState") {
+            workerFailure = failure;
+            throw failure;
+          }
+          return { blockNum: () => 100 };
+        }),
+        // A main-thread read: the worker can fail while it is pending without
+        // rejecting anything the provider awaits.
+        getAccounts: vi.fn(async () => {
+          if (failDuring === "getAccounts") {
+            workerFailure = failure;
+          }
+          return [];
+        }),
+        getSyncHeight: vi.fn().mockResolvedValue(100),
+        onStateChanged: vi.fn(() => () => {}),
+        terminate: vi.fn(),
+        free: vi.fn(),
+      };
+      vi.mocked(WebClient.createClient).mockResolvedValueOnce(
+        stub as unknown as WebClient
+      );
+
+      render(
+        <MidenProvider config={{ rpcUrl: "https://rpc.testnet.miden.io" }}>
+          <div>kids</div>
+        </MidenProvider>
+      );
+
+      await waitFor(() => {
+        const { isReady, initError } = useMidenStore.getState();
+        expect(isReady || initError !== null).toBe(true);
+      });
+      const { isReady, client, initError } = useMidenStore.getState();
+      expect(isReady).toBe(false);
+      expect(client).toBeNull();
+      expect(initError).toBe(failure);
+      expect(stub.terminate).toHaveBeenCalledTimes(1);
+    }
+  );
+
   it("swallows errors from getAccounts inside the onStateChanged listener", async () => {
     let registeredCb: (() => Promise<void>) | null = null;
     const stub = {

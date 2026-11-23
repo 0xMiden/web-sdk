@@ -199,7 +199,7 @@ const client = await MidenClient.createTestnet({
 
 ```typescript
 const client = await MidenClient.create({
-  rpcUrl: "https://rpc.testnet.miden.io", // string URL or "testnet"/"devnet"/"localhost"/"local"
+  rpcUrl: "https://rpc.testnet.miden.io", // string URL or "mainnet"/"testnet"/"devnet"/"localhost"/"local"
   feeFaucetId: FEE_FAUCET, // optional - what feeFaucetId() reports before the first sync
   noteTransportUrl: "https://transport.miden.io",
   noteTransportMaxRetries: 3, // optional - in-call retries of a private note send; see below
@@ -328,7 +328,11 @@ const client = await MidenClient.createTestnet();
 so a test suite needs no node, no faucet and no block time:
 
 ```typescript
-const client = await MidenClient.createMock({ seed, serializedMockChain });
+const client = await MidenClient.createMock({
+  seed,
+  serializedMockChain,
+  storeName: "mock-app-tests", // optional IndexedDB name (defaults to "mock_client_db")
+});
 await client.proveBlock(); // advance the mock chain by one block
 const dump = await client.serializeMockChain(); // snapshot for restore
 client.usesMockChain(); // boolean - true only for a mock client
@@ -336,7 +340,10 @@ client.usesMockChain(); // boolean - true only for a mock client
 
 `serializedMockChain` restores a previous `serializeMockChain()` dump;
 `serializedNoteTransport` does the same for the mock note-transport node
-(`serializeMockNoteTransportNode()`). `proveBlock`, `serializeMockChain` and
+(`serializeMockNoteTransportNode()`). `storeName` sets the browser IndexedDB
+name (default `"mock_client_db"`): pass a distinct `storeName` when a second
+independent mock runs in the same origin so it does not share store state with
+another live mock. `proveBlock`, `serializeMockChain` and
 `serializeMockNoteTransportNode` throw on a non-mock client.
 
 ### Termination
@@ -383,7 +390,7 @@ Common patterns:
   side-effect that must not race with a kernel callback (e.g. clearing an
   in-memory unlock token after a wallet "lock")
 
-`autoSync: true` (default for `createTestnet`/`createDevnet`) only triggers a
+`autoSync: true` (default for `createTestnet`/`createDevnet`/`createMainnet`) only triggers a
 single sync at construction time - it is not a polling loop. Use the React
 SDK's `useSyncState` or `MidenProvider` `autoSyncInterval` for periodic sync.
 
