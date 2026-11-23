@@ -44,8 +44,9 @@ await client.sync();
 ```
 
 `create(options)` targets an explicit endpoint; `createTestnet()` and
-`createDevnet()` are preconfigured; `createMock()` backs tests with an in-memory
-chain and no network.
+`createDevnet()` are preconfigured; `createMock(options)` backs tests with an
+in-memory chain and no network (pass a distinct `storeName` when running
+multiple same-origin browser mocks, as omitting it shares `mock_client_db`).
 
 `feeFaucetId` is optional. Since 0.17 the chain's fee asset lives in the
 protocol configuration, which the client receives from the node when it syncs,

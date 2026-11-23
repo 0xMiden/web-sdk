@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkerAction } from "../constants.js";
 
@@ -1376,5 +1377,46 @@ describe("MidenClient disposal", () => {
     expect(client[Symbol.dispose]()).toBeUndefined();
     expect(inner.terminate).toHaveBeenCalledTimes(1);
     expect(inner.waitForIdle).not.toHaveBeenCalled();
+  });
+});
+
+describe("MidenClient.createMock storeName docs", () => {
+  const repo = new URL("../../../../", import.meta.url);
+
+  it("documents storeName isolation and mock_client_db default in consumer guides", () => {
+    const skill = readFileSync(
+      new URL("crates/web-client/skills/web-client-usage/SKILL.md", repo),
+      "utf8"
+    );
+    const mockSection = skill.slice(
+      skill.indexOf("### Testing without a node"),
+      skill.indexOf("### Termination")
+    );
+    const codeEnd = mockSection.indexOf("```\n\n");
+    const mockSnippet = mockSection.slice(0, codeEnd);
+    const mockProse = mockSection.slice(codeEnd);
+    expect(mockSnippet).toContain("storeName:");
+    expect(mockProse).toContain("storeName");
+    expect(mockProse).toContain("mock_client_db");
+
+    const agents = readFileSync(
+      new URL("crates/web-client/AGENTS.md", repo),
+      "utf8"
+    );
+    const createMockSentence = agents.split("\n").slice(45, 52).join("\n");
+    expect(createMockSentence).toContain("createMock");
+    expect(createMockSentence).toContain("storeName");
+    expect(createMockSentence).toContain("mock_client_db");
+
+    const apiTypes = readFileSync(
+      new URL("crates/web-client/js/types/api-types.d.ts", repo),
+      "utf8"
+    );
+    const mockOptions = apiTypes.slice(
+      apiTypes.indexOf("export interface MockOptions"),
+      apiTypes.indexOf("export interface BuildSwapTagOptions")
+    );
+    expect(mockOptions).toContain("storeName?: string");
+    expect(mockOptions).toContain("mock_client_db");
   });
 });
