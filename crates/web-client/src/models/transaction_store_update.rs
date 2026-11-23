@@ -6,11 +6,7 @@ use crate::models::executed_transaction::ExecutedTransaction;
 use crate::models::output_notes::OutputNotes;
 use crate::models::transaction_request::note_details_and_tag::NoteDetailsAndTag;
 use crate::platform::{JsBytes, JsErr};
-use crate::serialization::encode_message;
-use crate::serialization::transaction::{
-    TransactionStoreUpdateMessage,
-    decode_transaction_store_update,
-};
+use crate::serialization::{decode_proto, encode_proto};
 
 /// Represents the changes that need to be applied to the client store as a result of a transaction
 /// execution.
@@ -21,9 +17,12 @@ pub struct TransactionStoreUpdate(NativeTransactionStoreUpdate);
 #[js_export]
 impl TransactionStoreUpdate {
     /// Returns the executed transaction associated with this update.
+    ///
+    /// The update does not hold the transaction inputs, so `txArgs()` and `blockHeader()` of the
+    /// returned transaction throw.
     #[js_export(js_name = "executedTransaction")]
     pub fn executed_transaction(&self) -> ExecutedTransaction {
-        self.0.executed_transaction().into()
+        ExecutedTransaction::new(self.0.transaction().clone(), None)
     }
 
     /// Returns the block height at which the transaction was submitted.
@@ -35,13 +34,13 @@ impl TransactionStoreUpdate {
     /// Returns the output notes created by the transaction.
     #[js_export(js_name = "createdNotes")]
     pub fn created_notes(&self) -> OutputNotes {
-        self.0.executed_transaction().output_notes().into()
+        self.0.transaction().effects().output_notes().into()
     }
 
     /// Returns the absolute account patch applied by the transaction.
     #[js_export(js_name = "accountPatch")]
     pub fn account_patch(&self) -> AccountPatch {
-        self.0.executed_transaction().account_patch().into()
+        self.0.transaction().effects().account_patch().into()
     }
 
     /// Returns notes expected to be created in follow-up executions.
@@ -57,12 +56,12 @@ impl TransactionStoreUpdate {
 
     /// Serializes the update into bytes.
     pub fn serialize(&self) -> JsBytes {
-        encode_message(&TransactionStoreUpdateMessage::from(&self.0))
+        encode_proto(&self.0)
     }
 
     /// Deserializes an update from bytes.
     pub fn deserialize(bytes: JsBytes) -> Result<TransactionStoreUpdate, JsErr> {
-        decode_transaction_store_update(&bytes).map(TransactionStoreUpdate)
+        decode_proto(&bytes).map(TransactionStoreUpdate)
     }
 }
 

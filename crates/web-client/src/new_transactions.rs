@@ -767,7 +767,7 @@ impl WebClient {
         #[cfg(feature = "testing")]
         if prover.is_none() && self.mock_rpc_api.lock().await.is_some() {
             return LocalTransactionProver::default()
-                .prove_dummy(transaction_result.native().executed_transaction().clone())
+                .prove_dummy(executed_transaction_for_dummy_proof(transaction_result))
                 .map(Into::into)
                 .map_err(|err| js_error_with_context(err, "failed to prove transaction"));
         }
@@ -783,12 +783,25 @@ impl WebClient {
             client.prover()
         };
 
-        let executed_transaction = transaction_result.native().executed_transaction().clone();
-        let fut = Box::pin(async move { prover_arc.prove(executed_transaction.into()).await });
-        maybe_wrap_send(fut)
+        let witness = transaction_result.witness().clone();
+        let fut = Box::pin(async move { prover_arc.prove(witness).await });
+        let proven = maybe_wrap_send(fut)
             .await
-            .map(Into::into)
-            .map_err(|err| js_error_with_context(err, "failed to prove transaction"))
+            .map_err(|err| js_error_with_context(err, "failed to prove transaction"))?;
+
+        // A prover is trusted with the witness, but not with choosing which transaction gets
+        // submitted. The submission and the store update use the outcome of the result, so the
+        // proof must be for the same transaction.
+        let expected_id = transaction_result.outcome().id();
+        if proven.id() != expected_id {
+            return Err(from_str_err(&format!(
+                "failed to prove transaction: the prover returned a proof of transaction {} instead \
+                 of {expected_id}",
+                proven.id()
+            )));
+        }
+
+        Ok(proven.into())
     }
 
     #[js_export(js_name = "submitProvenTransaction")]
@@ -801,16 +814,17 @@ impl WebClient {
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
         let native_proven: NativeProvenTransaction = proven_transaction.clone().into();
         client
-            .submit_proven_transaction(native_proven, transaction_result.native())
+            .submit_proven_transaction(native_proven, transaction_result.tx_inputs().clone())
             .await
             .map(|block_number| block_number.as_u32())
             .map_err(|err| js_error_with_context(err, "failed to submit proven transaction"))
     }
 
-    /// Persists a submitted transaction and returns its pre-apply
-    /// [`TransactionStoreUpdate`]. Routes through the high-level
-    /// `Client::apply_transaction` so registered observers (e.g. PSWAP
-    /// tracking) fire.
+    /// Persists a submitted transaction and returns its pre-apply [`TransactionStoreUpdate`].
+    ///
+    /// The update is built from the outcome of the result, so the transaction inputs are not
+    /// needed. `Client::apply_transaction_update` runs the registered observers (e.g. PSWAP
+    /// tracking).
     #[js_export(js_name = "applyTransaction")]
     pub async fn apply_transaction(
         &self,
@@ -822,21 +836,21 @@ impl WebClient {
         let height = BlockNumber::from(submission_height);
 
         // Build the pre-apply update for the JS return value.
-        let fut =
-            Box::pin(client.get_transaction_store_update(transaction_result.native(), height));
+        let fut = Box::pin(client.get_outcome_store_update(
+            transaction_result.outcome().clone(),
+            transaction_result.expected_future_notes().to_vec(),
+            height,
+        ));
         let update = maybe_wrap_send(fut)
             .await
-            .map(TransactionStoreUpdate::from)
             .map_err(|err| js_post_submit_error(err, "failed to build transaction update"))?;
 
-        // High-level apply fires registered observers (e.g. PSWAP tracking);
-        // the low-level `apply_transaction_update` would persist without them.
-        let fut = Box::pin(client.apply_transaction(transaction_result.native(), height));
+        let fut = Box::pin(client.apply_transaction_update(update.clone()));
         maybe_wrap_send(fut)
             .await
             .map_err(|err| js_post_submit_error(err, "failed to apply transaction result"))?;
 
-        Ok(update)
+        Ok(update.into())
     }
 
     /// Builds a request consuming `list_of_notes`, to be executed by `consuming_account_id`.
@@ -1362,4 +1376,47 @@ async fn multisig_auth_args(
         }),
         None => Ok(auth_args),
     }
+}
+
+/// Rebuilds the executed transaction of `result` for `LocalTransactionProver::prove_dummy`, which
+/// takes only an executed transaction.
+///
+/// The dummy prover reads the inputs, the outputs and the account patch. It does not read the cycle
+/// counts, so they are zero. The kernel commits to the account patch that the host builds, so the
+/// commitment of the patch is the account patch commitment of the outputs.
+#[cfg(feature = "testing")]
+fn executed_transaction_for_dummy_proof(
+    result: &TransactionResult,
+) -> miden_protocol::transaction::ExecutedTransaction {
+    use miden_protocol::transaction::{
+        ExecutedTransaction,
+        TransactionMeasurements,
+        TransactionOutputs,
+    };
+
+    let outcome = result.outcome();
+    let effects = outcome.effects();
+    let outputs = TransactionOutputs::new(
+        outcome.final_account().clone(),
+        effects.account_patch().to_commitment(),
+        effects.output_notes().clone(),
+        effects.expiration_block_num(),
+        effects.logs().clone(),
+        effects.code_patch().clone(),
+    );
+    let measurements = TransactionMeasurements {
+        prologue: 0,
+        notes_processing: 0,
+        note_execution: alloc::vec::Vec::new(),
+        tx_script_processing: 0,
+        epilogue: 0,
+        auth_procedure: 0,
+    };
+
+    ExecutedTransaction::new(
+        result.tx_inputs().clone(),
+        outputs,
+        effects.account_patch().clone(),
+        measurements,
+    )
 }
