@@ -164,7 +164,7 @@ This:
 2. Extracts an `ErrorHint` from `ClientError` via `hint_from_error` if available.
 3. Browser path: attaches `help` (the hint) and `code` (from `code_from_error`,
    which maps the few `ClientError` variants JS callers branch on, e.g.
-   `ACCOUNT_NOT_FOUND_ON_CHAIN`, `ACCOUNT_ALREADY_TRACKED`) as properties on the
+   `ACCOUNT_NOT_FOUND_ON_CHAIN`, `ACCOUNT_ALREADY_TRACKED`, `ACCOUNT_IS_PRIVATE`) as properties on the
    JS `Error` via `Reflect::set`.
 4. Node.js path: returns `napi::Error::from_reason(...)` with the help inlined
    into the message. A post-submit failure (`post_submit_code`) is prefixed
@@ -181,6 +181,7 @@ listed):
 |---|---|---|
 | `ACCOUNT_NOT_FOUND_ON_CHAIN` | `code_from_error` (`lib.rs:672-682`) | `ClientError::AccountNotFoundOnChain` |
 | `ACCOUNT_ALREADY_TRACKED` | `code_from_error` | `ClientError::AccountAlreadyTracked` |
+| `ACCOUNT_IS_PRIVATE` | `code_from_error` | `ClientError::AccountIsPrivate` |
 | `TRANSACTION_ALREADY_AUTHORIZED` | `from_str_err_with_code` | `executeForSummary` / `executeForSummaryAt` produced no summary because the transaction was already fully authorized (`new_transactions.rs:611`, `:649`) |
 | `INVALID_CHAIN_ANCHOR` | `from_str_err_with_code` | `ClientError::ChainAnchorError`, routed through `map_anchor_err` (`new_transactions.rs:910`) |
 | `ApplyTransactionAfterSubmitFailed` | `post_submit_code` (via `code_from_error`) and `js_post_submit_error` | The node accepted the transaction or batch but the local store update failed: `ClientError::ApplyTransactionAfterSubmitFailed`, the two `BatchBuilderError::BatchSubmitted*` variants, and every failure inside `applyTransaction`. Never resubmit. The JS resource helpers and `TransactionSubmission.apply()` raise it with `transactionId`, `submissionHeight` and `cause` |

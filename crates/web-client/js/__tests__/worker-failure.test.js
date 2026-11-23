@@ -64,12 +64,14 @@ describe("a worker that fails", () => {
   it("rejects ready and queued calls when the worker script fails to load", async () => {
     const { client, worker } = createClient();
     const call = client.callMethodWithWorker("getAccounts");
+    expect(client.workerFailure).toBeUndefined();
 
     worker.emit("error", { message: "" });
 
     await expect(outcome(client.ready)).resolves.toMatch(/worker failed/i);
     await expect(outcome(call)).resolves.toMatch(/worker failed/i);
     expect(worker.terminate).toHaveBeenCalled();
+    expect(client.workerFailure).toBe(await call.catch((error) => error));
   });
 
   it("rejects an in-flight call and frees the call chain on an uncaught error", async () => {
@@ -122,5 +124,22 @@ describe("a worker that fails", () => {
     await expect(outcome(client.callMethodWithWorker("x"))).resolves.toBe(
       "WebClient terminated"
     );
+    // The late error is not a second failure: nothing stops or reports it.
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it("rejects with WebClient terminated after terminate() and keeps the latched failure", async () => {
+    const { client, worker } = createClient();
+    becomeReady(worker);
+    worker.emit("error", { message: "boom" });
+    const failure = client.workerFailure;
+    expect(failure?.message).toMatch(/worker failed.*boom/i);
+    client.terminate();
+
+    await expect(
+      outcome(client.callMethodWithWorker("getAccounts"))
+    ).resolves.toBe("WebClient terminated");
+    expect(client.workerFailure).toBe(failure);
   });
 });

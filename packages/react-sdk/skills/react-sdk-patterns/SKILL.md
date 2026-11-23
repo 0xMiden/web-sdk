@@ -33,8 +33,8 @@ import { MidenProvider } from "@miden-sdk/react";
 
 <MidenProvider
   config={{
-    rpcUrl: "testnet",          // "devnet" | "testnet" | "localhost" | "local" | custom URL
-    prover: "testnet",          // "local" | "localhost" | "devnet" | "testnet" | URL
+    rpcUrl: "testnet",          // "mainnet" | "devnet" | "testnet" | "localhost" | "local" | custom URL
+    prover: "testnet",          // "local" | "localhost" | "mainnet" | "devnet" | "testnet" | URL
                                 //   | { url, timeoutMs }
                                 //   | { primary, fallback, disableFallback?, onFallback? }
     autoSyncInterval: 15000,    // ms, set to 0 to disable. Default: 15000
@@ -70,6 +70,7 @@ Keep the `config` object's identity stable: define it outside the component, or 
 
 | Network | rpcUrl | Use When |
 |---------|--------|----------|
+| Mainnet | `"mainnet"` | Production, with real funds |
 | Testnet | `"testnet"` | Recommended for new projects - primary development network |
 | Devnet | `"devnet"` | Early-access testing (may lag feature parity with testnet) |
 | Localhost | `"localhost"` | Local node at `http://localhost:57291` |
@@ -184,6 +185,10 @@ const meta = assetMetadata.get(faucetId);
 ```
 
 Pass an array even for a single asset - the hook calls `.filter` on its argument, so a bare string throws a runtime `TypeError`. Metadata is read from the node the provider's client was created against (`client.endpoint()`), so nothing is fetched until the provider is ready.
+
+Metadata reads started before a client replacement or cache reset are discarded.
+A pending read from the old client does not block the current client's request
+for the same asset.
 
 ### useTransactionHistory(options?)
 ```tsx
@@ -610,7 +615,7 @@ import { WalletAdapterNetwork } from "@miden-sdk/miden-wallet-adapter-base";
 </MultiSignerProvider>
 ```
 
-`MidenFiSignerProvider`'s `network` prop is the **`WalletAdapterNetwork` enum** from `@miden-sdk/miden-wallet-adapter-base` (`Devnet | Testnet | Localnet`), not a raw string. It is a TypeScript string enum, so `network="testnet"` does not type-check even though the member's value is `"testnet"`.
+`MidenFiSignerProvider`'s `network` prop is the **`WalletAdapterNetwork` enum** from `@miden-sdk/miden-wallet-adapter-base` (`Mainnet | Devnet | Testnet | Localnet`), not a raw string. It is a TypeScript string enum, so `network="testnet"` does not type-check even though the member's value is `"testnet"`.
 
 ```tsx
 const { signers, activeSigner, connectSigner, disconnectSigner } = useMultiSigner() ?? {};

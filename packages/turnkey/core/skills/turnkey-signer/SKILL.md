@@ -57,7 +57,7 @@ Second argument (`MidenClientOpts & MidenAccountOpts`):
 | Option | Type | Notes |
 |---|---|---|
 | `storageMode` | `AccountStorageMode` | Required. An instance (`AccountStorageMode.public()`), never a string. |
-| `endpoint` | `string` | Becomes `ClientOptions.rpcUrl`, so `"testnet"`, `"devnet"`, `"localhost"` and raw URLs all work. Omitted means the SDK default. |
+| `endpoint` | `string` | Becomes `ClientOptions.rpcUrl`, so `"mainnet"`, `"testnet"`, `"devnet"`, `"localhost"` and raw URLs all work. Omitted means the SDK default. |
 | `noteTransportUrl` | `string` | Becomes `ClientOptions.noteTransportUrl`. |
 | `seed` | `Uint8Array` | Client seed, passed straight through. |
 | `accountSeed` | `string` | UTF-8, truncated to 32 bytes. Defaults to 32 zero bytes. |

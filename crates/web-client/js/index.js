@@ -8,6 +8,7 @@ import {
   withSyncLock,
 } from "./syncLock.js";
 import {
+  appendAuthError,
   serializeCallbackError,
   validateCallbackTimeoutMs,
 } from "./callbackBridge.js";
@@ -200,6 +201,7 @@ const READ_METHODS = new Set([
   "listTags",
   "executeProgram",
   "feeFaucetId",
+  "protocolConfig",
   "storeIdentifier",
 ]);
 
@@ -676,11 +678,22 @@ class WebClient {
             // (a string, `{ code: 4001 }`, `null`), so send an explicit failure
             // flag and the cloneable fields the worker needs to rebuild the
             // error, including when causes cycle or properties are unreadable.
-            this.worker.postMessage({
+            const reply = {
               callbackOk: false,
               callbackError: serializeCallbackError(error, callbackType),
               callbackRequestId: requestId,
-            });
+            };
+            try {
+              this.worker.postMessage(reply);
+            } catch {
+              this.worker.postMessage({
+                callbackOk: false,
+                callbackError: {
+                  message: `${callbackType} callback threw an unreadable value`,
+                },
+                callbackRequestId: requestId,
+              });
+            }
           }
           return;
         }
@@ -1507,10 +1520,20 @@ class WebClient {
       try {
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
-          return await wasmWebClient.submitNewTransaction(
-            accountId,
-            transactionRequest
-          );
+          try {
+            return await wasmWebClient.submitNewTransaction(
+              accountId,
+              transactionRequest
+            );
+          } catch (error) {
+            const authError = wasmWebClient.lastAuthError();
+            if (typeof error === "string")
+              throw appendAuthError(error, authError);
+            if (error instanceof Error) {
+              error.message = appendAuthError(error.message, authError);
+            }
+            throw error;
+          }
         }
 
         const wasm = await getWasmOrThrow();
@@ -1640,7 +1663,18 @@ class WebClient {
   async _submitBatchInThread(items) {
     try {
       const wasmWebClient = await this.getWasmWebClient();
-      return await wasmWebClient.submitNewTransactionBatch(items);
+      try {
+        return await wasmWebClient.submitNewTransactionBatch(items);
+      } catch (error) {
+        const authError = wasmWebClient.lastAuthError();
+        if (typeof error === "string") {
+          throw appendAuthError(error, authError);
+        }
+        if (error instanceof Error) {
+          error.message = appendAuthError(error.message, authError);
+        }
+        throw error;
+      }
     } catch (error) {
       console.error(
         "INDEX.JS: Error in submitNewTransactionBatch (in-thread):",
@@ -1655,11 +1689,21 @@ class WebClient {
       try {
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
-          return await wasmWebClient.submitNewTransactionWithProver(
-            accountId,
-            transactionRequest,
-            prover
-          );
+          try {
+            return await wasmWebClient.submitNewTransactionWithProver(
+              accountId,
+              transactionRequest,
+              prover
+            );
+          } catch (error) {
+            const authError = wasmWebClient.lastAuthError();
+            if (typeof error === "string")
+              throw appendAuthError(error, authError);
+            if (error instanceof Error) {
+              error.message = appendAuthError(error.message, authError);
+            }
+            throw error;
+          }
         }
 
         const wasm = await getWasmOrThrow();
@@ -1692,10 +1736,21 @@ class WebClient {
       try {
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
-          return await wasmWebClient.executeTransaction(
-            accountId,
-            transactionRequest
-          );
+          try {
+            return await wasmWebClient.executeTransaction(
+              accountId,
+              transactionRequest
+            );
+          } catch (error) {
+            const authError = wasmWebClient.lastAuthError();
+            if (typeof error === "string") {
+              throw appendAuthError(error, authError);
+            }
+            if (error instanceof Error) {
+              error.message = appendAuthError(error.message, authError);
+            }
+            throw error;
+          }
         }
 
         const wasm = await getWasmOrThrow();
@@ -1731,11 +1786,22 @@ class WebClient {
 
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
-          return await wasmWebClient.executeTransactionAt(
-            accountId,
-            transactionRequest,
-            anchor
-          );
+          try {
+            return await wasmWebClient.executeTransactionAt(
+              accountId,
+              transactionRequest,
+              anchor
+            );
+          } catch (error) {
+            const authError = wasmWebClient.lastAuthError();
+            if (typeof error === "string") {
+              throw appendAuthError(error, authError);
+            }
+            if (error instanceof Error) {
+              error.message = appendAuthError(error.message, authError);
+            }
+            throw error;
+          }
         }
 
         const wasm = await getWasmOrThrow();
@@ -1918,8 +1984,9 @@ class WebClient {
 
   /**
    * Latches the worker as dead: stops it, rejects `ready` and every pending
-   * request, and makes every later worker call throw the same error. The
-   * worker never recovers, so a late message from it is not answered.
+   * request, and makes every later worker call throw the same error until
+   * terminate(). After terminate(), those calls throw "WebClient terminated".
+   * The worker never recovers, so a late message from it is not answered.
    * @private
    */
   _failWorker(reason) {
@@ -1935,6 +2002,16 @@ class WebClient {
       reject(error);
     }
     this.pendingRequests.clear();
+  }
+
+  /**
+   * The error that latched this client's worker as dead, or undefined until
+   * the worker fails. Every later worker call throws this same Error until
+   * terminate(). After terminate(), those calls throw "WebClient terminated".
+   * @returns {Error | undefined}
+   */
+  get workerFailure() {
+    return this._workerFailure;
   }
 
   /**
@@ -2030,12 +2107,12 @@ class WebClient {
 }
 
 class MockWebClient extends WebClient {
-  constructor(seed, logLevel) {
+  constructor(seed, logLevel, storeName) {
     super(
       null,
       null,
       seed,
-      MOCK_STORE_NAME,
+      storeName ?? MOCK_STORE_NAME,
       undefined,
       undefined,
       undefined,
@@ -2046,7 +2123,8 @@ class MockWebClient extends WebClient {
     // built its own chain could store that chain's genesis header first.
     // Every later sync against the main chain would then fail validation
     // ("does not carry valid validator signatures"). `createClient` resolves
-    // this once the main-thread chain exists.
+    // this once the main-thread chain exists. Pass a distinct `storeName` when
+    // a second mock client must not share that database with another live mock.
     this.mockChainReady = new Promise((resolve) => {
       this.resolveMockChainReady = resolve;
     });
@@ -2076,6 +2154,7 @@ class MockWebClient extends WebClient {
             numThreads,
             serializedMockChain,
             serializedMockNoteTransportNode,
+            this.storeName,
           ],
         });
       }
@@ -2088,16 +2167,19 @@ class MockWebClient extends WebClient {
    * @param serializedMockChain - Serialized mock chain data (optional). Will use an empty chain if not provided.
    * @param serializedMockNoteTransportNode - Serialized mock note transport node data (optional). Will use a new instance if not provided.
    * @param seed - The seed for the account (optional).
+   * @param logLevel - Optional log level.
+   * @param storeName - Optional IndexedDB name. Defaults to `mock_client_db`. Use a distinct name for a second independent mock in the same origin.
    * @returns A promise that resolves to a MockWebClient.
    */
   static async createClient(
     serializedMockChain,
     serializedMockNoteTransportNode,
     seed,
-    logLevel
+    logLevel,
+    storeName
   ) {
     // Construct the instance (synchronously).
-    const instance = new MockWebClient(seed, logLevel);
+    const instance = new MockWebClient(seed, logLevel, storeName);
 
     try {
       // Set up logging on the main thread before creating the client.
@@ -2111,7 +2193,8 @@ class MockWebClient extends WebClient {
       await wasmWebClient.createMockClient(
         seed ?? null,
         serializedMockChain ?? null,
-        serializedMockNoteTransportNode ?? null
+        serializedMockNoteTransportNode ?? null,
+        instance.storeName
       );
 
       // Hand the main-thread chain to the worker's INIT_MOCK.
@@ -2314,7 +2397,8 @@ class MockWebClient extends WebClient {
           await replacement.createMockClient(
             this.seed,
             newMockChain,
-            newMockNoteTransportNode
+            newMockNoteTransportNode,
+            this.storeName
           );
         } catch (error) {
           try {
@@ -2409,7 +2493,8 @@ class MockWebClient extends WebClient {
           await replacement.createMockClient(
             this.seed,
             newMockChain,
-            newMockNoteTransportNode
+            newMockNoteTransportNode,
+            this.storeName
           );
         } catch (error) {
           try {
