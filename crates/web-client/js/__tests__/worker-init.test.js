@@ -177,4 +177,52 @@ describe("worker INIT_MOCK", () => {
     ]);
     expect(syncCall.args[3]).toBe("");
   });
+
+  it("forwards custom and empty storeName across all five worker mock handlers", async () => {
+    for (const storeName of ["mock_isolated_db", ""]) {
+      const initCall = await initMock([
+        undefined,
+        undefined,
+        1,
+        undefined,
+        undefined,
+        storeName,
+      ]);
+      expect(initCall.args[3]).toBe(storeName);
+
+      const invocations = [
+        [MethodName.SYNC_STATE_MOCK, [new Uint8Array([1]).buffer, null]],
+        [MethodName.SYNC_CHAIN_MOCK, [new Uint8Array([1]).buffer, null]],
+        [
+          MethodName.SYNC_NOTE_TRANSPORT_MOCK,
+          [new Uint8Array([1]).buffer, null],
+        ],
+        [
+          MethodName.SUBMIT_NEW_TRANSACTION_MOCK,
+          [
+            "0xabc",
+            new Uint8Array([2]).buffer,
+            new Uint8Array([1]).buffer,
+            null,
+          ],
+        ],
+        [
+          MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK,
+          [
+            "0xabc",
+            new Uint8Array([2]).buffer,
+            new Uint8Array([3]).buffer,
+            new Uint8Array([1]).buffer,
+            null,
+          ],
+        ],
+      ];
+
+      for (const [methodName, args] of invocations) {
+        const call = await callWorkerMethod(methodName, args);
+        expect(call.method).toBe("createMockClient");
+        expect(call.args[3]).toBe(storeName);
+      }
+    }
+  });
 });

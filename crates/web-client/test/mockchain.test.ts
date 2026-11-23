@@ -91,4 +91,34 @@ test.describe("mock chain tests", () => {
     });
     expect(result.synced).toBe(true);
   });
+
+  test("worker-backed mock with distinct storeName can sync beside the fixture", async ({
+    run,
+  }) => {
+    const result = await run(async ({ helpers }) => {
+      const isolatedStore = `mock_worker_${Date.now()}_${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
+      const workerMock = await helpers.createMidenMockClient({
+        storeName: isolatedStore,
+      });
+      try {
+        await workerMock.sync();
+        await workerMock.syncChain();
+        await workerMock.syncNoteTransport();
+        return {
+          synced: true,
+          hadWorker: typeof Worker !== "undefined",
+          isolatedStore,
+          storeIdentifier: await workerMock.storeIdentifier(),
+        };
+      } finally {
+        workerMock.terminate();
+      }
+    });
+    expect(result.synced).toBe(true);
+    if (result.hadWorker) {
+      expect(result.storeIdentifier).toBe(result.isolatedStore);
+    }
+  });
 });
