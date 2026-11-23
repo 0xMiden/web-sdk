@@ -27,8 +27,25 @@ import {
   StorageResult,
   wordToBigInt,
 } from "./storageView.js";
-import { resolveAuthScheme } from "./utils.js";
+import {
+  installAuthSchemeResolution,
+  resolveAuthScheme,
+  wrapAuthGuardedMultisigConfig,
+} from "./utils.js";
+import {
+  AuthGuardedMultisigConfig as WasmAuthGuardedMultisigConfig,
+  AuthScheme as WasmAuthScheme,
+} from "../Cargo.toml";
 export * from "../Cargo.toml";
+
+// The package's `AuthScheme` (below) is the friendly string const and shadows
+// the wasm enum, so these bindings resolve the friendly strings themselves.
+// AccountComponent.createAuthComponentFromCommitment is patched once the wasm
+// module loads (see ensureWasm).
+export const AuthGuardedMultisigConfig = wrapAuthGuardedMultisigConfig(
+  () => WasmAuthGuardedMultisigConfig,
+  () => ({ AuthScheme: WasmAuthScheme })
+);
 
 export {
   FaucetType,
@@ -247,6 +264,11 @@ const ensureWasm = async () => {
         // Install StorageView: account.storage() now returns a developer-friendly
         // wrapper that makes getItem() work correctly for StorageMap slots.
         installStorageView(module);
+        installAuthSchemeResolution(module.AccountComponent, module);
+        if (module.AuthGuardedMultisigConfig) {
+          AuthGuardedMultisigConfig.prototype =
+            module.AuthGuardedMultisigConfig.prototype;
+        }
       }
       return module;
     });
@@ -1446,6 +1468,40 @@ class WebClient {
       const wasm = await getWasmOrThrow();
       assertBatchItems(items, wasm.BatchItem);
       return await this._dispatchBatch(items);
+    }, MethodName.SUBMIT_NEW_TRANSACTION_BATCH);
+  }
+
+  /**
+   * Submits a batch and returns the transactions stored before and after it,
+   * from the one chain slot observed as `submitNewTransactionBatch`.
+   *
+   * Both reads call `TransactionFilter.all()` on the main-thread client. The
+   * filter binding is consumed by value, so each read calls `all()` itself,
+   * and a row that is already committed or discarded is still present.
+   * `_dispatchBatch` is the worker, in-thread, or mock submit and finishes
+   * its store write before the second read.
+   *
+   * This does not call `submitNewTransactionBatch`: that method takes its own
+   * chain slot, and from inside this one the inner call would queue behind
+   * the outer one and deadlock. It does not raise `_withInnerLockDepth`: a
+   * foreign call would then run inline on the WASM client.
+   *
+   * @param {BatchItem[]} items - (account, request) pairs to submit.
+   * @returns {Promise<{ blockNumber: number, before: Array, after: Array }>}
+   */
+  async _submitNewTransactionBatchForWait(items) {
+    return this._serializeWasmCall(async () => {
+      const wasm = await getWasmOrThrow();
+      assertBatchItems(items, wasm.BatchItem);
+      const wasmClient = await this.getWasmWebClient();
+      const before = await wasmClient.getTransactions(
+        wasm.TransactionFilter.all()
+      );
+      const blockNumber = await this._dispatchBatch(items);
+      const after = await wasmClient.getTransactions(
+        wasm.TransactionFilter.all()
+      );
+      return { blockNumber, before, after };
     }, MethodName.SUBMIT_NEW_TRANSACTION_BATCH);
   }
 

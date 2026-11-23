@@ -189,10 +189,12 @@ describe("MidenDatabase migrations", () => {
     const dbV1 = trackDb(new Dexie(name));
     dbV1.version(1).stores(V1_STORES);
     await dbV1.open();
+    // Account-sourced tag: v2 only looks at note-source rows tied to output
+    // notes, and v7 only deletes rows with a sourceNoteId, so this survives.
     await dbV1.table("tags").put({
       tag: "dGFnMQ==",
-      sourceNoteId: "0x" + "aa".repeat(32),
-      sourceAccountId: "",
+      sourceNoteId: "",
+      sourceAccountId: "0xacct",
     });
     dbV1.close();
 
@@ -388,6 +390,85 @@ describe("MidenDatabase migrations", () => {
     ).toEqual(new Uint8Array([2]));
     expect(await mdb.accountAuths.toArray()).toEqual([AUTH_SENTINEL]);
     expect(await mdb.settings.count()).toBe(2);
+  });
+
+  // v10 (#525): prune note-source tags once the note is no longer inclusion-pending (a note that
+  // went expected -> consumed during catch-up never hit the old committed-only sync prune).
+  it("v10 migration prunes note-source tags for notes that are no longer inclusion-pending", async () => {
+    const name = uniqueDbName();
+    const consumedCommitment = "0x" + "dd".repeat(32);
+    const invalidCommitment = "0x" + "cc".repeat(32);
+    const expectedCommitment = "0x" + "ee".repeat(32);
+    const unverifiedCommitment = "0x" + "ff".repeat(32);
+
+    // A store at next's latest version (v9), stamped at or above MIGRATION_BASELINE so the
+    // earlier clear leaves it alone.
+    const dbV9 = trackDb(new Dexie(name));
+    dbV9.version(9).stores(V6_STORES);
+    await dbV9.open();
+    await dbV9.table("settings").put({
+      scope: SETTING_SCOPE_CLIENT,
+      key: CLIENT_VERSION_SETTING_KEY,
+      value: new TextEncoder().encode("0.18.0"),
+    });
+    await dbV9.table("inputNotes").bulkPut([
+      // ConsumedExternal (8) and Invalid (3) are not inclusion-pending.
+      {
+        detailsCommitment: consumedCommitment,
+        noteId: "0xconsumed",
+        stateDiscriminant: 8,
+      },
+      {
+        detailsCommitment: invalidCommitment,
+        noteId: "0xinvalid",
+        stateDiscriminant: 3,
+      },
+      // Expected (0) and Unverified (1) still need their tag.
+      {
+        detailsCommitment: expectedCommitment,
+        noteId: "0xexpected",
+        stateDiscriminant: 0,
+      },
+      {
+        detailsCommitment: unverifiedCommitment,
+        noteId: "0xunverified",
+        stateDiscriminant: 1,
+      },
+    ]);
+    await dbV9.table("tags").bulkPut([
+      {
+        tag: "dGFnQ29uc3VtZWQ=",
+        sourceNoteId: consumedCommitment,
+        sourceAccountId: "",
+      },
+      {
+        tag: "dGFnSW52YWxpZA==",
+        sourceNoteId: invalidCommitment,
+        sourceAccountId: "",
+      },
+      {
+        tag: "dGFnRXhwZWN0ZWQ=",
+        sourceNoteId: expectedCommitment,
+        sourceAccountId: "",
+      },
+      {
+        tag: "dGFnVW52ZXJpZmllZA==",
+        sourceNoteId: unverifiedCommitment,
+        sourceAccountId: "",
+      },
+      { tag: "dGFnQWNjdA==", sourceNoteId: "", sourceAccountId: "0xacct" },
+    ]);
+    dbV9.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.18.0")).toBe(true);
+
+    const remainingTags = (await mdb.tags.toArray()).map((t) => t.tag).sort();
+    expect(remainingTags).toEqual(
+      ["dGFnRXhwZWN0ZWQ=", "dGFnQWNjdA==", "dGFnVW52ZXJpZmllZA=="].sort()
+    );
+    // The notes themselves survive.
+    expect(await mdb.inputNotes.count()).toBe(4);
   });
 });
 
@@ -943,13 +1024,13 @@ describe("a store written by a newer client", () => {
   it("is not confused with a store Dexie patched at this client's own version", async () => {
     const name = uniqueDbName();
     const patched = trackDb(new Dexie(name));
-    patched.version(9).stores({ ...V6_STORES, accountWitnesses: null });
+    patched.version(10).stores({ ...V6_STORES, accountWitnesses: null });
     await patched.open();
     patched.close();
 
     // The missing table makes Dexie patch the store to native version 91.
     expect(await reopen(name, "0.17.4")).toBeDefined();
-    expect(await nativeVersion(name)).toBe(91);
+    expect(await nativeVersion(name)).toBe(101);
   });
 
   it("refuses it when a newer client upgrades the store under an open connection", async () => {

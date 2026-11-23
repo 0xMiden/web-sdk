@@ -785,7 +785,6 @@ const { blockNumber } = await client.transactions.batch({
     { kind: "send", account: alice, to: carol, token: dagToken, amount: 30n, type: "public" },
     { kind: "consume", account: bob, notes: pendingNotes },
   ],
-  // waitForConfirmation is currently broken for batches — see below.
 });
 // The node's chain tip as of submission, not the block the batch commits in.
 console.log(`Batch submitted at chain tip ${blockNumber}`);
@@ -804,7 +803,13 @@ const { blockNumber } = await client.transactions.submitBatch([
 ]);
 ```
 
-The batch primitive returns only a block number. There are no per-tx ids in the result, and the number is the node's chain tip as of submission, not the block the batch commits in. Even were it the commit block, `waitForConfirmation` would confirm only that the client had caught up to it, not that the batch committed. `waitForConfirmation` on a batch does not currently work: its poll calls a sync method that does not exist, so the poll cannot advance the height itself and the call throws `Batch confirmation timed out` unless the client is already at or past that height. Tracked in [#314](https://github.com/0xMiden/web-sdk/issues/314); prefer syncing and checking `client.transactions.list()` yourself. The batch's own effects are already in the local store when the call returns, so what you are waiting for is chain inclusion:
+The batch primitive returns only a block number. There are no per-tx ids in the result, and the number is the node's chain tip as of submission, not the block the batch commits in. The batch's own effects are already in the local store when the call returns, so what is left to wait for is chain inclusion. Pass `waitForConfirmation: true` to have the call resolve only once every transaction of the batch is committed; it rejects if the node discards one, or when `timeout` (default 60 seconds) runs out first:
+
+```typescript
+await client.transactions.submitBatch(items, { waitForConfirmation: true });
+```
+
+To check later instead, sync and read the transactions:
 
 ```typescript
 await client.sync();
@@ -833,8 +838,12 @@ continue to sync before relying on on-chain balances.
 
 For browser stores, `apply` requires the stored account to match the
 transaction's execution input. A mismatch rejects before changing account state
-or transaction history. A submitted transaction may already be on-chain when
-local apply fails; check its status before submitting again.
+or transaction history. A submitted transaction is already accepted by the node when
+local apply fails, so `apply` and the single-transaction `transactions.*` helpers
+(which apply after submitting) reject with `code: "ApplyTransactionAfterSubmitFailed"`,
+`transactionId`, `submissionHeight` and the original error as `cause`. A batch whose
+local update fails after the node accepted it rejects with the same `code` and the
+accepted block in its message, without those fields. Do not submit it again.
 
 To submit a proof produced somewhere that shares nothing with this client (a detached prover), pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
 

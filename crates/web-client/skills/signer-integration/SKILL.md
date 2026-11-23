@@ -262,7 +262,7 @@ new AccountBuilder(seed)
   .withAuthComponent(
     AccountComponent.createAuthComponentFromCommitment(
       commitmentWord,
-      ecdsaAuthScheme  // see the AuthScheme trap below
+      ecdsaAuthScheme  // see the AuthScheme note below
     )
   )
   .storageMode(config.storageMode)
@@ -280,7 +280,7 @@ Note the hard-coded ECDSA-K256/Keccak auth scheme: an external signer's commitme
 as an ECDSA key, not Falcon. The value is the numeric WASM enum, read from the wasm module that the
 package's `getWasmOrThrow()` returns, never from the frozen string const the package exports as
 `AuthScheme` (that const has no `AuthEcdsaK256Keccak` member). If the wasm enum lacks the value,
-initialization throws instead of building an account - see "The `AuthScheme` trap" under Guarded
+initialization throws instead of building an account - see "The `AuthScheme` note" under Guarded
 Multisig below.
 
 **`withAuthComponent` validates nothing.** Its body is `with_component` verbatim
@@ -384,6 +384,7 @@ If the signer backs a guarded multisig account (a set of approvers plus a guardi
 
 ```tsx
 import {
+  AuthScheme,
   createAuthGuardedMultisig,
   AuthGuardedMultisigConfig,
 } from "@miden-sdk/miden-sdk";
@@ -396,7 +397,7 @@ const config = new AuthGuardedMultisigConfig(
   approvers,                       // Word[]
   2,                               // defaultThreshold
   guardian,                        // Word
-  authScheme                       // see the AuthScheme trap below
+  AuthScheme.ECDSA                 // or AuthScheme.Falcon; see the AuthScheme note below
 );
 
 // Optional: tighten the threshold for specific procedures.
@@ -411,19 +412,19 @@ const accountConfig: SignerAccountConfig = {
 };
 ```
 
-**The `AuthScheme` trap.** `@miden-sdk/miden-sdk` exports TWO different things under that
-name, and the one you get from the browser entry is not the enum this constructor wants.
-The package's own `AuthScheme` is a frozen string const, `{ Falcon: "falcon", ECDSA:
-"ecdsa" }`, and it **shadows** the wasm-bindgen enum of the same name. So
-`AuthScheme.AuthRpoFalcon512` evaluates to `undefined`, and the constructor fails when it
-tries to convert it.
-
-On Node the wasm class is re-exported under the non-colliding alias `AuthSchemeNative`, so
-`AuthSchemeNative.AuthRpoFalcon512` works there. The browser entry has no such escape
-hatch, which is why the SDK's own browser test harness restores it by hand
-(`window.AuthScheme = wasm.AuthScheme`). In a browser app, obtain the enum from the wasm
-namespace yourself rather than from the package's named export, and verify the value is
-not `undefined` before passing it.
+**The `AuthScheme` note.** `@miden-sdk/miden-sdk` exports TWO different things under that
+name. The package's own `AuthScheme` is a frozen string const, `{ Falcon: "falcon", ECDSA:
+"ecdsa" }`, and it **shadows** the wasm-bindgen enum of the same name, so
+`AuthScheme.AuthRpoFalcon512` and `AuthScheme.AuthEcdsaK256Keccak` evaluate to `undefined`.
+Pass the string const: `new AuthGuardedMultisigConfig(...)` and
+`AccountComponent.createAuthComponentFromCommitment(commitment, scheme)` resolve
+`AuthScheme.ECDSA` and `AuthScheme.Falcon` to the enum themselves, on both the browser and
+the Node entry. A numeric enum value (`1` for ECDSA, `2` for Falcon, or Node's
+`AuthSchemeNative.AuthEcdsaK256Keccak`) still passes through. A missing scheme throws
+`requires an auth scheme` rather than defaulting to Falcon, so an `undefined` read from the
+wrong `AuthScheme` cannot silently pick the other scheme. SDK versions before this change
+reject the strings with `invalid enum value passed` (browser) or `Failed to convert napi
+value into enum` (Node).
 
 
 **Build it with `createAuthGuardedMultisig`, the supported way to install the standard guarded multisig.** The client recognises an auth component only by its procedure root. If the account's auth procedure matches no standard component, for example MASM that differs from the bundled standard source, the client treats it as having no recognised auth component, declines to attach fee conversion info, and **every transaction from the account fails on a fee-charging chain**. Nothing warns you at account-creation time; the failure arrives later, at the first send.

@@ -60,7 +60,7 @@ use crate::platform::{
     js_u64_to_u64,
     maybe_wrap_send,
 };
-use crate::{WebClient, js_error_with_context};
+use crate::{WebClient, js_error_with_context, js_post_submit_error};
 
 #[js_export]
 impl WebClient {
@@ -864,14 +864,14 @@ impl WebClient {
         let update = maybe_wrap_send(fut)
             .await
             .map(TransactionStoreUpdate::from)
-            .map_err(|err| js_error_with_context(err, "failed to build transaction update"))?;
+            .map_err(|err| js_post_submit_error(err, "failed to build transaction update"))?;
 
         // High-level apply fires registered observers (e.g. PSWAP tracking);
         // the low-level `apply_transaction_update` would persist without them.
         let fut = Box::pin(client.apply_transaction(transaction_result.native(), height));
         maybe_wrap_send(fut)
             .await
-            .map_err(|err| js_error_with_context(err, "failed to apply transaction result"))?;
+            .map_err(|err| js_post_submit_error(err, "failed to apply transaction result"))?;
 
         Ok(update)
     }
