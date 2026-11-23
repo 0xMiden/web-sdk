@@ -474,6 +474,27 @@ describe("initializeSignerAccount", () => {
       expect(mockClient.syncState).toHaveBeenCalledTimes(2);
     });
 
+    it("tolerates a private account (ACCOUNT_IS_PRIVATE) without building a new one", async () => {
+      // A private account's state never reaches the network, so the public
+      // import cannot work by design. The signer ID is still returned so the
+      // provider becomes ready; the account stays untracked locally.
+      mockClient.importAccountById.mockRejectedValueOnce(
+        Object.assign(new Error("opaque wasm failure"), {
+          code: "ACCOUNT_IS_PRIVATE",
+        })
+      );
+      const config = createMockSignerAccountConfig({
+        importAccountId: "0xprivateaccount",
+      });
+
+      const result = await initializeSignerAccount(mockClient, config);
+
+      expect(result).toBe("0xprivateaccount");
+      expect(AccountBuilder).not.toHaveBeenCalled();
+      expect(mockClient.newAccount).not.toHaveBeenCalled();
+      expect(mockClient.syncState).toHaveBeenCalledTimes(2);
+    });
+
     it("rethrows errors without a tolerated code in the fast path", async () => {
       // No `code` — even a message mentioning the network must rethrow, since
       // detection is code-based, not message-based.
