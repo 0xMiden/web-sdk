@@ -595,7 +595,7 @@ async function processMessage(event) {
         await wasm.initThreadPool(numThreads);
       }
 
-      wasmMockStoreName = storeName || "mock_client_db";
+      wasmMockStoreName = storeName ?? "mock_client_db";
       wasmWebClient = new wasm.WebClient();
       await createMockClientOn(
         wasmWebClient,

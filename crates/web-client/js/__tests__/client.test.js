@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { WorkerAction } from "../constants.js";
 
 // `index.js` re-exports the wasm-bindgen surface from `../Cargo.toml`, which
 // the node test environment cannot load, and reaches the wasm module through
@@ -1236,6 +1237,33 @@ describe("WebClient factories", () => {
       "mock_isolated_db"
     );
     expect(client.storeName).toBe("mock_isolated_db");
+  });
+
+  it("preserves empty string storeName across createMockClient and INIT_MOCK", async () => {
+    const creating = MockWasmWebClient.createClient(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ""
+    );
+    const worker = StubWorker.instances[0];
+    worker.emit({ loaded: true });
+    worker.emit({ ready: true });
+    const client = await creating;
+    await flush();
+    expect(fakeWasm.WebClient.latest.createMockClient).toHaveBeenCalledWith(
+      null,
+      null,
+      null,
+      ""
+    );
+    expect(client.storeName).toBe("");
+    expect(client._storeLockId()).toBe("");
+    const initMock = worker.postMessage.mock.calls.find(
+      ([msg]) => msg?.action === WorkerAction.INIT_MOCK
+    )?.[0];
+    expect(initMock?.args[5]).toBe("");
   });
 });
 
