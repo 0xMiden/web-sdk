@@ -216,6 +216,52 @@ test("evmPkToCommitment hashes with Poseidon2 and never Rpo256", async () => {
   }
 });
 
+test("fromTurnkeySig parses hex v values and packs r, s, v into 67 bytes", () => {
+  const { fromTurnkeySig } = loadUtils();
+  const r = "11".repeat(32);
+  const s = "22".repeat(32);
+  const expectedR = new Uint8Array(32).fill(0x11);
+  const expectedS = new Uint8Array(32).fill(0x22);
+
+  for (const [v, expectedV] of [
+    ["1b", 27],
+    ["1c", 28],
+    ["00", 0],
+    ["01", 1],
+    ["0x1b", 27],
+  ]) {
+    const sigBuff = fromTurnkeySig({ r, s, v });
+    assert.strictEqual(sigBuff.length, 67);
+    assert.strictEqual(sigBuff[0], 1);
+    assert.deepEqual(sigBuff.subarray(1, 33), expectedR);
+    assert.deepEqual(sigBuff.subarray(33, 65), expectedS);
+    assert.strictEqual(sigBuff[65], expectedV, `unexpected v byte for "${v}"`);
+    assert.strictEqual(sigBuff[66], 0);
+  }
+});
+
+test("example fromTurnkeySig parses hex v values with radix 16", () => {
+  const filePath = path.resolve(__dirname, "../examples/react/lib/utils.ts");
+  const { fromTurnkeySig } = loadTranspiledTypeScript(filePath, {
+    clsx: { clsx: () => "" },
+    "tailwind-merge": { twMerge: () => "" },
+    "next/dist/shared/lib/router/router": { createKey: () => "" },
+  });
+  const r = "11".repeat(32);
+  const s = "22".repeat(32);
+
+  for (const [v, expectedV] of [
+    ["1b", 27],
+    ["1c", 28],
+    ["00", 0],
+    ["01", 1],
+    ["0x1b", 27],
+  ]) {
+    const sigBuff = fromTurnkeySig({ r, s, v });
+    assert.strictEqual(sigBuff[65], expectedV, `unexpected v byte for "${v}"`);
+  }
+});
+
 for (const callbackTimeoutMs of [0, 120000]) {
   test(`createMidenTurnkeyClient forwards callbackTimeoutMs ${callbackTimeoutMs}`, async () => {
     const createdOptions = [];
