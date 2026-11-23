@@ -199,6 +199,12 @@ function resolveTarget(target, conditions) {
   return undefined;
 }
 
+// Distinct files an exports-map entry serves each consumer condition set.
+export function runtimeTargets(entry) {
+  const sets = [["import"], ["node", "import"]];
+  return [...new Set(sets.map((c) => resolveTarget(entry, c)).filter(Boolean))];
+}
+
 function main() {
   const work = mkdtempSync(join(tmpdir(), "consumer-imports-"));
   const failures = [];
@@ -292,23 +298,28 @@ function main() {
       );
     }
 
-    // Runtime: names exported by the built JS an import-condition consumer loads.
-    // The `node` condition loads a native addon, so it is covered by types only.
+    // Runtime: names exported by the JS an import or Node consumer loads. The
+    // export lists are parsed, so the `node` target never loads its native addon.
     for (const c of checks) {
-      const target = resolveTarget(c.p.exports[c.sub], ["import"]);
-      if (!target) {
+      const entry = c.p.exports[c.sub];
+      if (!resolveTarget(entry, ["import"])) {
         failures.push(`runtime: ${c.spec} has no import target`);
-        continue;
       }
-      const file = join(c.p.dest, target);
-      if (!existsSync(file)) {
-        failures.push(`runtime: ${c.spec} -> ${target} is not in the tarball`);
-        continue;
-      }
-      const have = exportNames(file);
-      for (const n of [...c.values].sort()) {
-        if (!have.has(n)) {
-          failures.push(`runtime: ${c.spec} (${target}) does not export ${n}`);
+      for (const target of runtimeTargets(entry)) {
+        const file = join(c.p.dest, target);
+        if (!existsSync(file)) {
+          failures.push(
+            `runtime: ${c.spec} -> ${target} is not in the tarball`
+          );
+          continue;
+        }
+        const have = exportNames(file);
+        for (const n of [...c.values].sort()) {
+          if (!have.has(n)) {
+            failures.push(
+              `runtime: ${c.spec} (${target}) does not export ${n}`
+            );
+          }
         }
       }
     }

@@ -4,7 +4,11 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { collectImports, exportNames } from "./check-consumer-imports.mjs";
+import {
+  collectImports,
+  exportNames,
+  runtimeTargets,
+} from "./check-consumer-imports.mjs";
 
 function fixture(t, files) {
   const root = mkdtempSync(join(tmpdir(), "consumer-imports-test-"));
@@ -115,4 +119,34 @@ test("collectImports records export names bound by awaited dynamic import()", (t
   ]);
   assert.deepEqual([...got.get("@miden-sdk/miden-sdk/lazy").values], ["Word"]);
   assert.equal(got.has("other-package"), false);
+});
+
+test("runtimeTargets checks the node condition set and the import condition set", () => {
+  assert.deepEqual(
+    runtimeTargets({
+      node: { types: "./dist/st/index.d.ts", default: "./js/node-index.js" },
+      import: { types: "./dist/st/index.d.ts", default: "./dist/st/eager.js" },
+    }),
+    ["./dist/st/eager.js", "./js/node-index.js"]
+  );
+  assert.deepEqual(
+    runtimeTargets({
+      import: { types: "./dist/st/index.d.ts", default: "./dist/st/index.js" },
+    }),
+    ["./dist/st/index.js"]
+  );
+  assert.deepEqual(
+    runtimeTargets({ types: "./dist/index.d.ts", default: "./dist/index.mjs" }),
+    ["./dist/index.mjs"]
+  );
+  assert.deepEqual(
+    runtimeTargets({
+      import: "./dist/st/eager.js",
+      node: "./js/node-index.js",
+    }),
+    ["./dist/st/eager.js"]
+  );
+  assert.deepEqual(runtimeTargets({ node: "./js/node-index.js" }), [
+    "./js/node-index.js",
+  ]);
 });
