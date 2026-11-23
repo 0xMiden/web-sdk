@@ -64,12 +64,14 @@ describe("a worker that fails", () => {
   it("rejects ready and queued calls when the worker script fails to load", async () => {
     const { client, worker } = createClient();
     const call = client.callMethodWithWorker("getAccounts");
+    expect(client.workerFailure).toBeUndefined();
 
     worker.emit("error", { message: "" });
 
     await expect(outcome(client.ready)).resolves.toMatch(/worker failed/i);
     await expect(outcome(call)).resolves.toMatch(/worker failed/i);
     expect(worker.terminate).toHaveBeenCalled();
+    expect(client.workerFailure).toBe(await call.catch((error) => error));
   });
 
   it("rejects an in-flight call and frees the call chain on an uncaught error", async () => {
