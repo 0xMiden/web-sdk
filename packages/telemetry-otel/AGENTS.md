@@ -38,7 +38,8 @@ only once it has finished, so the span is reconstructed: it ends when the
 observation arrived, is backdated by the duration, and has no parent. A broken
 tracer cannot fail the operation; the observer never throws.
 
-The duration runs from when the call's turn on its client's queue starts. A call
+The duration runs from when the call's turn on its client's queue starts (0 for
+a store-locked call that timed out before its turn). A call
 that takes the store lock (the syncs, `importNoteFile`, `fetchPrivateNotes`, and,
 on a store still at genesis only, `syncBeforeAccountCreation` and account
 creation) waits within that time for any other client or tab holding the lock,
