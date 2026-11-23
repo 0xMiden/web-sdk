@@ -16,10 +16,7 @@ impl TransactionStatus {
     }
 
     /// Creates a committed status with block number and timestamp.
-    pub fn committed(
-        block_num: u32,
-        commit_timestamp: JsU64,
-    ) -> Result<TransactionStatus, JsErr> {
+    pub fn committed(block_num: u32, commit_timestamp: JsU64) -> Result<TransactionStatus, JsErr> {
         Ok(TransactionStatus(NativeTransactionStatus::Committed {
             block_number: block_num.into(),
             commit_timestamp: js_u64_to_u64(commit_timestamp)?,
