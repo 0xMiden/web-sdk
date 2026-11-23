@@ -7,11 +7,11 @@ use miden_client::account::AccountId;
 use miden_client::note::{BlockNumber, ToInputNoteCommitments};
 use miden_client::store::StoreError;
 use miden_client::transaction::{
-    ExecutedTransaction,
     LogTopic,
     TransactionDetails,
     TransactionLog,
     TransactionLogs,
+    TransactionOutcome,
     TransactionRecord,
     TransactionScript,
     TransactionStatus,
@@ -66,54 +66,50 @@ pub(crate) struct SerializedTransactionLog {
 
 // ================================================================================================
 
-/// Converts an `ExecutedTransaction` into a pending `TransactionRecord`.
+/// Converts a `TransactionOutcome` into a pending `TransactionRecord`.
 /// `submission_height` is the block number at which the transaction was submitted to the network.
 pub(crate) fn build_transaction_record(
-    executed_transaction: &ExecutedTransaction,
+    transaction: &TransactionOutcome,
     submission_height: BlockNumber,
 ) -> TransactionRecord {
-    let nullifiers: Vec<Word> = executed_transaction
-        .input_notes()
-        .iter()
-        .map(|x| x.nullifier().as_word())
-        .collect();
-
-    let output_notes = executed_transaction.output_notes();
+    let effects = transaction.effects();
+    let nullifiers: Vec<Word> =
+        effects.input_notes().iter().map(|x| x.nullifier().as_word()).collect();
 
     let details = TransactionDetails {
-        account_id: executed_transaction.account_id(),
-        init_account_state: executed_transaction.initial_account().initial_commitment(),
-        final_account_state: executed_transaction.final_account().to_commitment(),
+        account_id: transaction.account_id(),
+        init_account_state: effects.initial_state_commitment(),
+        final_account_state: effects.final_state_commitment(),
         input_note_nullifiers: nullifiers,
-        output_notes: output_notes.clone(),
-        block_num: executed_transaction.block_header().block_num(),
+        output_notes: effects.output_notes().clone(),
+        block_num: effects.ref_block_number(),
         submission_height,
-        expiration_block_num: executed_transaction.expiration_block_num(),
+        expiration_block_num: effects.expiration_block_num(),
         creation_timestamp: crate::current_timestamp_u64(),
     };
 
     TransactionRecord::new(
-        executed_transaction.id(),
+        transaction.id(),
         details,
-        executed_transaction.tx_args().tx_script().cloned(),
+        transaction.tx_script().cloned(),
         TransactionStatus::Pending,
     )
 }
 
-/// Converts an `ExecutedTransaction` into a `TransactionRecord` and inserts it into the store,
-/// with the logs that the transaction emitted.
+/// Converts a `TransactionOutcome` into a `TransactionRecord` and inserts it into the store, with
+/// the logs that the transaction emitted.
 /// `submission_height` is the block number at which the transaction was submitted to the network.
 pub async fn insert_proven_transaction_data(
     db_id: &str,
-    executed_transaction: &ExecutedTransaction,
+    transaction: &TransactionOutcome,
     submission_height: BlockNumber,
 ) -> Result<(), StoreError> {
-    let transaction_record = build_transaction_record(executed_transaction, submission_height);
+    let transaction_record = build_transaction_record(transaction, submission_height);
 
     upsert_transaction_record(db_id, &transaction_record).await?;
 
     let logs =
-        serde_wasm_bindgen::to_value(&serialize_transaction_logs(executed_transaction.logs()))
+        serde_wasm_bindgen::to_value(&serialize_transaction_logs(transaction.effects().logs()))
             .map_err(|err| StoreError::DatabaseError(format!("serialization error: {err}")))?;
     let promise =
         idxdb_insert_transaction_logs(db_id, transaction_record.id.as_word().to_hex(), logs);
