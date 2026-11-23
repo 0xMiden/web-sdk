@@ -99,9 +99,12 @@ const { client, accountId } = await createParaMidenClient(
 `noteTransportUrl` (defaults to the transport of the network `endpoint` names:
 `https://transport.mainnet.miden.io` for mainnet,
 `https://transport.devnet.miden.io` for devnet and `https://transport.miden.io`
-otherwise; `nodeTransportUrl` is
-a deprecated alias), `seed` (client store seed), `accountSeed`, and the required
-`storageMode` (`"public"` or `"private"`). `callbackTimeoutMs` optionally
+for testnet, missing, unknown, custom, proxied, or relative endpoints such as
+`"/rpc.Api"`; `nodeTransportUrl` is a deprecated alias). A proxy or other
+unrecognized endpoint cannot identify its Miden network, so set
+`noteTransportUrl` explicitly when it targets a network other than testnet.
+`seed` (client store seed), `accountSeed`, and the required `storageMode`
+(`"public"` or `"private"`). `callbackTimeoutMs` optionally
 bounds each `sign`, `getKey`, and `insertKey` callback in milliseconds; omitted
 leaves signing unlimited, `0` removes the limit for all three, and a positive
 value sets the limit. Invalid values throw `TypeError` from `MidenClient.create`.

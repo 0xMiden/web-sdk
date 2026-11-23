@@ -124,7 +124,9 @@ const RPC_HOST_NETWORKS: Record<string, "mainnet" | "devnet"> = {
  * The note transport of the network `endpoint` names, used when no
  * `noteTransportUrl` is given. `endpoint` names a network as a `mainnet`,
  * `devnet` or `testnet` shorthand, or as the URL of that network's RPC. Any
- * other endpoint keeps the testnet transport.
+ * other endpoint, including a proxied or relative endpoint such as
+ * `"/rpc.Api"`, keeps the testnet transport. Set `noteTransportUrl` explicitly
+ * when such an endpoint targets another network.
  */
 function defaultNoteTransportUrl(endpoint?: string): string {
   const normalized = endpoint?.trim().toLowerCase();
