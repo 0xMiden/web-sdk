@@ -451,7 +451,11 @@ describe("runUnderLock — bound on waiting for the Web Lock", () => {
 
   it("lets a later caller take the lock once the holder releases", async () => {
     const { release } = installHeldLock();
-    await outcome(runUnderLock("db", async () => "ignored", 20));
+    const first = vi.fn(async () => "ignored");
+    await expect(outcome(runUnderLock("db", first, 20))).resolves.toMatch(
+      /sync lock/i
+    );
+    expect(first).not.toHaveBeenCalled();
 
     release();
     await expect(runUnderLock("db", async () => "ok", 20)).resolves.toBe("ok");
