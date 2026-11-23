@@ -93,6 +93,8 @@ export async function initializeSignerAccount(
       if (!isAlreadyTracked && !isFreshAccount && !isPrivateAccount) {
         throw e;
       }
+      // These three leave tracked state as the opening sync left it.
+      return config.importAccountId;
     }
     await client.syncState();
     return config.importAccountId;
