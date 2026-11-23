@@ -50,7 +50,6 @@ pub mod utils;
 use utils::{
     SerializedTransactionData,
     SerializedTransactionLog,
-    build_transaction_record,
     serialize_transaction_logs,
     serialize_transaction_record,
     transaction_logs_from_idxdb,
@@ -306,7 +305,11 @@ impl IdxdbStore {
         let account_id = transaction.account_id();
 
         // Build transaction record payload via the shared serializer.
-        let record = build_transaction_record(transaction, submission_height);
+        let record = TransactionRecord::from_outcome(
+            transaction,
+            submission_height,
+            crate::current_timestamp_u64(),
+        );
         let transaction_record = serialize_transaction_record(&record);
 
         // Build the payload and advance the forest. Later updates in the batch read the forest, so
