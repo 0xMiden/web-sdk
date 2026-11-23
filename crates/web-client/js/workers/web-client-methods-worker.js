@@ -1,6 +1,6 @@
 import loadWasm from "../../dist/wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "../constants.js";
-import { createCallbackForwarder } from "../callbackBridge.js";
+import { appendAuthError, createCallbackForwarder } from "../callbackBridge.js";
 
 let wasmModule = null;
 
@@ -155,10 +155,22 @@ const methodHandlers = {
     const transactionRequest = wasm.TransactionRequest.deserialize(
       transactionRequestBytes
     );
-    const result = await wasmWebClient.executeTransaction(
-      accountId,
-      transactionRequest
-    );
+    let result;
+    try {
+      result = await wasmWebClient.executeTransaction(
+        accountId,
+        transactionRequest
+      );
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") {
+        throw appendAuthError(error, authError);
+      }
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
+    }
     const serializedResult = result.serialize();
     return serializedResult.buffer;
   },
@@ -180,6 +192,15 @@ const methodHandlers = {
       );
       const serializedResult = result.serialize();
       return serializedResult.buffer;
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") {
+        throw appendAuthError(error, authError);
+      }
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
     } finally {
       // Rebuilt from bytes on every anchored execution and the largest
       // transient here, since it carries a partial blockchain. The binding
@@ -218,10 +239,20 @@ const methodHandlers = {
       transactionRequestBytes
     );
 
-    const result = await wasmWebClient.executeTransaction(
-      accountId,
-      transactionRequest
-    );
+    let result;
+    try {
+      result = await wasmWebClient.executeTransaction(
+        accountId,
+        transactionRequest
+      );
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") throw appendAuthError(error, authError);
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
+    }
 
     const transactionId = result.id().toHex();
 
@@ -258,7 +289,18 @@ const methodHandlers = {
           )
         )
     );
-    return await wasmWebClient.submitNewTransactionBatch(items);
+    try {
+      return await wasmWebClient.submitNewTransactionBatch(items);
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") {
+        throw appendAuthError(error, authError);
+      }
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
+    }
   },
   [MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER]: async (args) => {
     const wasm = await getWasmOrThrow();
@@ -276,10 +318,20 @@ const methodHandlers = {
       ? wasm.TransactionProver.deserialize(proverPayload)
       : undefined;
 
-    const result = await wasmWebClient.executeTransaction(
-      accountId,
-      transactionRequest
-    );
+    let result;
+    try {
+      result = await wasmWebClient.executeTransaction(
+        accountId,
+        transactionRequest
+      );
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") throw appendAuthError(error, authError);
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
+    }
 
     const transactionId = result.id().toHex();
 
