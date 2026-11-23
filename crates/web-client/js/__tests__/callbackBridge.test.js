@@ -1,9 +1,10 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, afterAll } from "vitest";
 vi.mock("../../Cargo.toml", () => ({}));
 import { WasmWebClient } from "../index.js";
-import { CallbackType, WorkerAction } from "../constants.js";
+import { CallbackType, MethodName, WorkerAction } from "../constants.js";
 import {
   DEFAULT_CALLBACK_TIMEOUT_MS,
+  appendAuthError,
   callbackTimeoutFor,
   createCallbackForwarder,
   deserializeCallbackError,
@@ -64,6 +65,10 @@ describe("the production WebClient worker bridge", () => {
       this.messages.push(structuredClone(message));
     }
 
+    terminate() {
+      this.terminated = true;
+    }
+
     async emit(data) {
       return this.listeners.get("message")({ data });
     }
@@ -94,10 +99,301 @@ describe("the production WebClient worker bridge", () => {
     await Promise.resolve();
   }
 
+  async function connectWorker(worker, wasm) {
+    vi.resetModules();
+    const messages = [];
+    const deliveryErrors = [];
+    vi.stubGlobal("__midenWorkerWasm", wasm);
+    vi.stubGlobal("self", {
+      postMessage(message) {
+        messages.push(structuredClone(message));
+        worker.emit(structuredClone(message)).catch((error) => {
+          deliveryErrors.push(error);
+        });
+      },
+    });
+    const record = worker.postMessage.bind(worker);
+    worker.postMessage = (message) => {
+      record(message);
+      self.onmessage({ data: structuredClone(message) });
+    };
+    await import("../workers/web-client-methods-worker.js");
+    await vi.waitFor(() => expect(messages).toContainEqual({ ready: true }));
+    return { messages, deliveryErrors };
+  }
+
+  function settleWithin(promise, timeoutMs = 50) {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(
+        () => resolve({ state: "pending" }),
+        timeoutMs
+      );
+      promise.then(
+        () => {
+          clearTimeout(timeout);
+          resolve({ state: "resolved" });
+        },
+        (error) => {
+          clearTimeout(timeout);
+          resolve({ state: "rejected", error });
+        }
+      );
+    });
+  }
+
+  it("posts a flat failure reply when posting the serialized failure throws", async () => {
+    vi.stubGlobal("Worker", RecordingWorker);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const thrown = new Error("cause 0");
+    let current = thrown;
+    for (let depth = 1; depth <= 12000; depth++) {
+      current.cause = new Error(`cause ${depth}`);
+      current = current.cause;
+    }
+    const { worker } = createClient({ sign: () => Promise.reject(thrown) });
+    const postMessage = worker.postMessage.bind(worker);
+    let failFirstFailureReply = true;
+    worker.postMessage = (message) => {
+      if (message.callbackOk === false && failFirstFailureReply) {
+        failFirstFailureReply = false;
+        throw new RangeError("simulated postMessage clone failure");
+      }
+      postMessage(message);
+    };
+
+    await worker
+      .emit({
+        action: WorkerAction.EXECUTE_CALLBACK,
+        callbackType: CallbackType.SIGN,
+        args: [],
+        requestId: "req-deep",
+      })
+      .catch(() => {});
+
+    expect(worker.messages).toContainEqual({
+      callbackOk: false,
+      callbackError: { message: "sign callback threw an unreadable value" },
+      callbackRequestId: "req-deep",
+    });
+  });
+
+  it("settles a flat failure through the real worker proxy without settling another pending sign", async () => {
+    vi.stubGlobal("Worker", RecordingWorker);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    let releaseSecond;
+    const sign = vi.fn((key) => {
+      if (key === "pk-fail") throw new Error("wallet locked");
+      return new Promise((resolve) => {
+        releaseSecond = resolve;
+      });
+    });
+    let signProxy;
+    class WorkerWebClient {
+      async createClientWithExternalKeystore(...args) {
+        signProxy = args[7];
+      }
+    }
+    const { worker } = createClient({ sign });
+    const { messages, deliveryErrors } = await connectWorker(worker, {
+      WebClient: WorkerWebClient,
+    });
+    const postMessage = worker.postMessage.bind(worker);
+    let failFirstFailureReply = true;
+    worker.postMessage = (message) => {
+      if (message.callbackOk === false && failFirstFailureReply) {
+        failFirstFailureReply = false;
+        throw new RangeError("simulated postMessage clone failure");
+      }
+      postMessage(message);
+    };
+
+    const first = signProxy("pk-fail", "inputs");
+    const firstSettlement = settleWithin(first);
+    const second = signProxy("pk-pending", "inputs");
+    const requests = messages.filter(
+      ({ action }) => action === WorkerAction.EXECUTE_CALLBACK
+    );
+    expect(requests).toHaveLength(2);
+    expect(requests[0].requestId).not.toBe(requests[1].requestId);
+    expect(failFirstFailureReply).toBe(false);
+    expect(await firstSettlement).toMatchObject({
+      state: "rejected",
+      error: { message: "sign callback threw an unreadable value" },
+    });
+    expect(worker.messages).toContainEqual({
+      callbackOk: false,
+      callbackError: { message: "sign callback threw an unreadable value" },
+      callbackRequestId: requests[0].requestId,
+    });
+    expect(await settleWithin(second)).toEqual({ state: "pending" });
+    releaseSecond("signed");
+    expect(await settleWithin(second)).toEqual({ state: "resolved" });
+    await expect(second).resolves.toBe("signed");
+    expect(worker.messages).toContainEqual({
+      callbackOk: true,
+      callbackResult: "signed",
+      callbackRequestId: requests[1].requestId,
+    });
+    expect(sign.mock.calls).toEqual([
+      ["pk-fail", "inputs"],
+      ["pk-pending", "inputs"],
+    ]);
+    expect(deliveryErrors).toEqual([]);
+  });
+
+  it.each([
+    [MethodName.SUBMIT_NEW_TRANSACTION, "proving"],
+    [MethodName.SUBMIT_NEW_TRANSACTION, "submission"],
+    [MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER, "proving"],
+    [MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER, "submission"],
+  ])(
+    "does not append stale auth detail after successful authentication in worker %s at %s",
+    async (methodName, stage) => {
+      vi.stubGlobal("Worker", RecordingWorker);
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const events = [];
+      const sign = vi
+        .fn()
+        .mockImplementationOnce(() => {
+          events.push("sign rejected");
+          throw new Error("wallet locked");
+        })
+        .mockImplementationOnce(() => {
+          events.push("sign resolved");
+          return new Uint8Array([7]);
+        });
+      const authFailure = Object.assign(new Error("authentication failed"), {
+        code: "AUTH",
+        help: "unlock wallet",
+      });
+      const laterFailure = Object.assign(new Error(`${stage} failed`), {
+        code: stage === "proving" ? "PROOF" : "TRANSPORT",
+        help: "retry later",
+      });
+      let native;
+      class WorkerWebClient {
+        constructor() {
+          native = this;
+          this.authError = null;
+        }
+        async createClientWithExternalKeystore(...args) {
+          this.sign = args[7];
+        }
+        lastAuthError() {
+          return this.authError;
+        }
+        async executeTransaction() {
+          try {
+            await this.sign("pk", "inputs");
+          } catch (error) {
+            this.authError = error;
+            throw authFailure;
+          }
+          this.authError = null;
+          events.push("execution succeeded");
+          return { id: () => ({ toHex: () => "tx-id" }) };
+        }
+        async proveTransaction() {
+          events.push("proving");
+          if (stage === "proving") throw laterFailure;
+          return {};
+        }
+        async submitProvenTransaction() {
+          events.push("submission");
+          throw laterFailure;
+        }
+      }
+      const { client, worker } = createClient({ sign });
+      const { messages, deliveryErrors } = await connectWorker(worker, {
+        WebClient: WorkerWebClient,
+        AccountId: { fromHex: (value) => value },
+        TransactionRequest: {
+          deserialize: (value) => {
+            if (value[0] === 255)
+              throw new Error("invalid transaction request");
+            return {};
+          },
+        },
+        TransactionProver: { deserialize: () => ({}) },
+      });
+      const args = ["account", new Uint8Array()];
+      if (methodName === MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER) {
+        args.push(new Uint8Array([1]));
+      }
+
+      await expect(
+        client.callMethodWithWorker(methodName, ...args)
+      ).rejects.toMatchObject({ code: "AUTH", help: "unlock wallet" });
+      expect(native.lastAuthError().message).toBe("wallet locked");
+      await expect(
+        client.callMethodWithWorker(
+          methodName,
+          "account",
+          new Uint8Array([255])
+        )
+      ).rejects.toMatchObject({ message: "invalid transaction request" });
+      expect(native.lastAuthError().message).toBe("wallet locked");
+      expect(events).toEqual(["sign rejected"]);
+      const later = await client
+        .callMethodWithWorker(methodName, ...args)
+        .catch((error) => error);
+      expect(later).toBeInstanceOf(Error);
+      expect(later).toMatchObject({
+        message: `${stage} failed`,
+        code: laterFailure.code,
+        help: "retry later",
+      });
+      expect(later.message).not.toContain("wallet locked");
+      expect(native.lastAuthError()).toBeNull();
+      expect(events).toEqual([
+        "sign rejected",
+        "sign resolved",
+        "execution succeeded",
+        "proving",
+        ...(stage === "submission" ? ["submission"] : []),
+      ]);
+      const requests = messages.filter(
+        ({ action }) => action === WorkerAction.EXECUTE_CALLBACK
+      );
+      expect(requests).toHaveLength(2);
+      expect(requests[0].requestId).not.toBe(requests[1].requestId);
+      for (const [index, callbackOk] of [false, true].entries()) {
+        expect(worker.messages).toContainEqual(
+          expect.objectContaining({
+            callbackRequestId: requests[index].requestId,
+            callbackOk,
+          })
+        );
+      }
+      const calls = worker.messages.filter(
+        ({ action }) => action === WorkerAction.CALL_METHOD
+      );
+      expect(calls).toHaveLength(3);
+      expect(new Set(calls.map(({ requestId }) => requestId)).size).toBe(3);
+      for (const call of calls) {
+        expect(messages).toContainEqual(
+          expect.objectContaining({
+            requestId: call.requestId,
+            methodName,
+            error: expect.any(Object),
+          })
+        );
+      }
+      expect(client.pendingRequests.size).toBe(0);
+      expect(deliveryErrors).toEqual([]);
+    }
+  );
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     RecordingWorker.instances = [];
+  });
+
+  afterAll(() => {
+    delete globalThis.self;
+    delete globalThis.__midenWorkerWasm;
   });
 
   it("posts a successful sign reply from the real handler", async () => {
@@ -119,6 +415,78 @@ describe("the production WebClient worker bridge", () => {
       callbackResult: "signed",
       callbackRequestId: "req-ok",
     });
+  });
+
+  it("settles current and later worker calls when terminated", async () => {
+    vi.stubGlobal("Worker", RecordingWorker);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { client, worker } = createClient();
+    await worker.emit({ ready: true });
+
+    const current = client._serializeWasmCall(
+      () => client.callMethodWithWorker("current"),
+      "current"
+    );
+    await vi.waitFor(() => expect(client.pendingRequests.size).toBe(1));
+    const currentSettlement = settleWithin(current);
+
+    const later = client._serializeWasmCall(
+      () => client.callMethodWithWorker("later"),
+      "later"
+    );
+    const laterSettlement = settleWithin(later);
+    const idleSettlement = settleWithin(client.waitForIdle());
+
+    client.terminate();
+    const afterTermination = settleWithin(
+      client.callMethodWithWorker("after termination")
+    );
+
+    const [currentResult, laterResult, idleResult, afterResult] =
+      await Promise.all([
+        currentSettlement,
+        laterSettlement,
+        idleSettlement,
+        afterTermination,
+      ]);
+
+    for (const [label, result] of [
+      ["current", currentResult],
+      ["later", laterResult],
+      ["after termination", afterResult],
+    ]) {
+      expect(result.state, label).toBe("rejected");
+      expect(result.error).toBeInstanceOf(Error);
+      expect(result.error.message).toMatch(/terminated/i);
+    }
+    expect(idleResult.state).toBe("resolved");
+    expect(client.pendingRequests.size).toBe(0);
+    expect(worker.terminated).toBe(true);
+    expect(
+      worker.messages.some(
+        ({ methodName }) => methodName === "after termination"
+      )
+    ).toBe(false);
+  });
+
+  it("rejects worker calls waiting for initialization when terminated", async () => {
+    vi.stubGlobal("Worker", RecordingWorker);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { client, worker } = createClient();
+    const call = client._serializeWasmCall(
+      () => client.callMethodWithWorker("waiting for ready"),
+      "waiting for ready"
+    );
+    const callSettlement = settleWithin(call);
+
+    client.terminate();
+
+    const result = await callSettlement;
+    expect(result.state).toBe("rejected");
+    expect(result.error).toBeInstanceOf(Error);
+    expect(result.error.message).toMatch(/terminated/i);
+    expect(client.pendingRequests.size).toBe(0);
+    expect(worker.messages).toHaveLength(0);
   });
 
   it("posts a cloneable failure reply from the real handler", async () => {
@@ -396,6 +764,28 @@ describe("a callback that throws", () => {
     expect(() => structuredClone(serialized)).not.toThrow();
   });
 
+  it("keeps a 12000-cause chain cloneable and truncates past 8", () => {
+    const thrown = new Error("cause 0");
+    let current = thrown;
+    for (let depth = 1; depth <= 12000; depth++) {
+      current.cause = new Error(`cause ${depth}`);
+      current = current.cause;
+    }
+
+    const serialized = serializeCallbackError(thrown, "sign");
+
+    expect(() => structuredClone(serialized)).not.toThrow();
+    current = serialized;
+    for (let depth = 0; depth < 8; depth++) {
+      expect(current.message).toBe(`cause ${depth}`);
+      current = current.cause;
+    }
+    expect(current.message).toBe("cause 8");
+    expect(current.cause).toEqual({
+      message: "sign callback threw a cause nested too deeply",
+    });
+  });
+
   it("does not invoke coercion hooks on thrown objects", () => {
     const toJSON = vi.fn(() => {
       throw new Error("json conversion failed");
@@ -591,6 +981,123 @@ describe("callback time limits", () => {
       expect(delay).toBe(2_147_483_647);
     }
   });
+
+  it("binds INIT timeouts and settles worker callback replies", async () => {
+    vi.resetModules();
+    const messages = [];
+    let callbacks;
+
+    class WorkerWebClient {
+      async createClientWithExternalKeystore(
+        _rpcUrl,
+        _noteTransportUrl,
+        _seed,
+        _storeName,
+        _feeFaucetId,
+        getKey,
+        insertKey,
+        sign
+      ) {
+        callbacks = { getKey, insertKey, sign };
+      }
+    }
+
+    globalThis.self = {
+      postMessage(message) {
+        messages.push(structuredClone(message));
+      },
+    };
+    globalThis.__midenWorkerWasm = {
+      WebClient: WorkerWebClient,
+      setupLogging() {},
+    };
+
+    await import("../workers/web-client-methods-worker.js");
+    expect(messages).toContainEqual({ loaded: true });
+
+    globalThis.self.onmessage({
+      data: {
+        action: WorkerAction.INIT,
+        args: [
+          "https://rpc.example",
+          undefined,
+          undefined,
+          "worker-callback-bridge-store",
+          true,
+          true,
+          true,
+          null,
+          1,
+          "0xfee",
+          undefined,
+          undefined,
+          1000,
+        ],
+      },
+    });
+    await vi.waitFor(() => expect(messages).toContainEqual({ ready: true }));
+
+    const successfulReply = callbacks.sign("pk-success", "inputs");
+    const successRequest = messages.findLast(
+      ({ action }) => action === WorkerAction.EXECUTE_CALLBACK
+    );
+    globalThis.self.onmessage({
+      data: {
+        callbackOk: true,
+        callbackResult: "signed",
+        callbackRequestId: successRequest.requestId,
+      },
+    });
+    await expect(successfulReply).resolves.toBe("signed");
+
+    const rejectedReply = callbacks.sign("pk-rejected", "inputs");
+    const rejectedRequest = messages.findLast(
+      ({ action }) => action === WorkerAction.EXECUTE_CALLBACK
+    );
+    globalThis.self.onmessage({
+      data: {
+        callbackOk: false,
+        callbackError: { message: "wallet locked" },
+        callbackRequestId: rejectedRequest.requestId,
+      },
+    });
+    await expect(rejectedReply).rejects.toThrow("wallet locked");
+
+    vi.useFakeTimers();
+    const timeoutRequest = async (callbackType, callback) => {
+      const pending = callback();
+      const request = messages.findLast(
+        (message) =>
+          message.action === WorkerAction.EXECUTE_CALLBACK &&
+          message.callbackType === callbackType
+      );
+      const rejection = expect(pending).rejects.toThrow(
+        new RegExp(`Callback ${callbackType}-.+ timed out after 1000ms`)
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      await rejection;
+      return request;
+    };
+
+    const lateRequest = await timeoutRequest("sign", () =>
+      callbacks.sign("pk-timeout", "inputs")
+    );
+    await timeoutRequest("getKey", () => callbacks.getKey("pk"));
+    await timeoutRequest("insertKey", () => callbacks.insertKey("pk", "key"));
+
+    globalThis.self.onmessage({
+      data: {
+        callbackOk: true,
+        callbackResult: "late",
+        callbackRequestId: lateRequest.requestId,
+      },
+    });
+    expect(
+      messages.some(
+        ({ error }) => error?.message === "Unsupported action: undefined"
+      )
+    ).toBe(false);
+  });
 });
 
 describe("handleReply", () => {
@@ -608,6 +1115,53 @@ describe("handleReply", () => {
       })
     ).toBe(true);
   });
+
+  it.each([
+    ["missing", undefined],
+    ["null", null],
+  ])("rejects a callback with a %s error payload", async (_, callbackError) => {
+    const posted = [];
+    const forwarder = createCallbackForwarder({
+      post: (request) => posted.push(request),
+      timeoutMs: () => undefined,
+    });
+    const pending = forwarder.forward("sign", []);
+    const rejected = pending.catch((error) => error);
+    const reply = {
+      callbackOk: false,
+      callbackRequestId: posted[0].requestId,
+    };
+    if (callbackError !== undefined) reply.callbackError = callbackError;
+
+    expect(forwarder.handleReply(reply)).toBe(true);
+
+    const error = await rejected;
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBeTruthy();
+  });
+
+  it.each([
+    ["empty string", ""],
+    ["null", null],
+  ])(
+    "rejects a legacy reply with a %s callbackError",
+    async (_, callbackError) => {
+      const posted = [];
+      const forwarder = createCallbackForwarder({
+        post: (request) => posted.push(request),
+        timeoutMs: () => undefined,
+      });
+      const pending = forwarder.forward("sign", []);
+
+      expect(
+        forwarder.handleReply({
+          callbackRequestId: posted[0].requestId,
+          callbackError,
+        })
+      ).toBe(true);
+      await expect(pending).rejects.toBeInstanceOf(Error);
+    }
+  );
 
   it("rejects the pending callback when a correlated error reply is malformed", async () => {
     let request;
@@ -653,6 +1207,52 @@ describe("handleReply", () => {
 });
 
 describe("deserializeCallbackError", () => {
+  it("bounds deserialized causes while preserving parent fields", () => {
+    const serialized = {
+      name: "WalletError",
+      message: "cause 0",
+      code: "E_LOCKED",
+      reason: "locked",
+    };
+    let current = serialized;
+    for (let depth = 1; depth <= 12000; depth++) {
+      current.cause = { message: `cause ${depth}` };
+      current = current.cause;
+    }
+
+    const error = deserializeCallbackError(serialized);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toMatchObject({
+      name: "WalletError",
+      message: "cause 0",
+      code: "E_LOCKED",
+      reason: "locked",
+    });
+    current = error;
+    for (let depth = 0; depth < 8; depth++) {
+      expect(current.message).toBe(`cause ${depth}`);
+      current = current.cause;
+    }
+    expect(current.message).toBe("cause 8");
+    expect(current.cause.message).toBe(
+      "callback failed with a cause nested too deeply"
+    );
+    expect(current.cause).not.toHaveProperty("cause");
+  });
+
+  it("preserves short callback cause chains", () => {
+    const error = deserializeCallbackError({
+      message: "outer",
+      cause: { message: "inner" },
+    });
+
+    expect(error.message).toBe("outer");
+    expect(error.cause).toBeInstanceOf(Error);
+    expect(error.cause.message).toBe("inner");
+    expect(error.cause).not.toHaveProperty("cause");
+  });
+
   it("returns a plain Error when only a message was sent", () => {
     const error = deserializeCallbackError({ message: "boom" });
 
@@ -681,5 +1281,344 @@ describe("WebClient.createClient callback timeout", () => {
     ).rejects.toThrow(
       "callbackTimeoutMs must be a non-negative finite number no greater than 2147483647"
     );
+  });
+});
+
+describe("transaction authentication error detail", () => {
+  it.each(["wallet locked", new Error("wallet locked")])(
+    "appends readable callback detail to the native error",
+    (detail) => {
+      expect(appendAuthError("authentication failed", detail)).toBe(
+        "authentication failed: wallet locked"
+      );
+    }
+  );
+
+  it("does not duplicate callback detail already in the error", () => {
+    expect(
+      appendAuthError("authentication failed: wallet locked", "wallet locked")
+    ).toBe("authentication failed: wallet locked");
+  });
+
+  it.each([
+    null,
+    undefined,
+    "",
+    4001,
+    { privateData: "must not leak" },
+    new Error(""),
+  ])("ignores callback values without a readable message", (detail) => {
+    expect(appendAuthError("authentication failed", detail)).toBe(
+      "authentication failed"
+    );
+  });
+
+  it("ignores a callback value whose message getter throws", () => {
+    const detail = Object.defineProperty({}, "message", {
+      get() {
+        throw new Error("must not leak");
+      },
+    });
+    expect(appendAuthError("authentication failed", detail)).toBe(
+      "authentication failed"
+    );
+  });
+});
+
+describe("executeTransaction auth error boundaries", () => {
+  it.each(["wallet locked", new Error("wallet locked")])(
+    "enriches direct errors while preserving the native code and identity",
+    async (detail) => {
+      const error = Object.assign(new Error("authentication failed"), {
+        code: "AUTH",
+      });
+      const wasmWebClient = {
+        executeTransaction: async () => {
+          throw error;
+        },
+        lastAuthError: () => detail,
+      };
+      const client = Object.assign(Object.create(WasmWebClient.prototype), {
+        worker: null,
+        wasmWebClient,
+        getWasmWebClient: async () => wasmWebClient,
+        _withInnerLockDepth: 0,
+        _wasmCallChain: Promise.resolve(),
+      });
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await expect(client.executeTransaction({}, {})).rejects.toBe(error);
+        expect(error.message).toBe("authentication failed: wallet locked");
+        expect(error.code).toBe("AUTH");
+      } finally {
+        log.mockRestore();
+      }
+    }
+  );
+
+  it("enriches worker errors while preserving the native code", async () => {
+    vi.resetModules();
+    const messages = [];
+    class WorkerWebClient {
+      async createClient() {}
+      async executeTransaction() {
+        throw Object.assign(new Error("authentication failed"), {
+          code: "AUTH",
+        });
+      }
+      lastAuthError() {
+        return "wallet locked";
+      }
+    }
+    globalThis.self = {
+      postMessage: (message) => messages.push(structuredClone(message)),
+    };
+    globalThis.__midenWorkerWasm = {
+      WebClient: WorkerWebClient,
+      setupLogging() {},
+      AccountId: { fromHex: (value) => value },
+      TransactionRequest: {
+        deserialize: (value) => {
+          if (value[0] === 255) throw new Error("invalid transaction request");
+          return value;
+        },
+      },
+    };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await import("../workers/web-client-methods-worker.js");
+      globalThis.self.onmessage({
+        data: { action: WorkerAction.INIT, args: [] },
+      });
+      await vi.waitFor(() => expect(messages).toContainEqual({ ready: true }));
+      globalThis.self.onmessage({
+        data: {
+          action: WorkerAction.CALL_METHOD,
+          methodName: "executeTransaction",
+          requestId: "tx-auth",
+          args: ["account", new Uint8Array()],
+        },
+      });
+      await vi.waitFor(() =>
+        expect(
+          messages.find((message) => message.requestId === "tx-auth")
+        ).toMatchObject({
+          error: {
+            message: "authentication failed: wallet locked",
+            code: "AUTH",
+          },
+        })
+      );
+      globalThis.self.onmessage({
+        data: {
+          action: WorkerAction.CALL_METHOD,
+          methodName: "executeTransaction",
+          requestId: "tx-invalid",
+          args: ["account", new Uint8Array([255])],
+        },
+      });
+      await vi.waitFor(() =>
+        expect(
+          messages.find((message) => message.requestId === "tx-invalid")
+        ).toMatchObject({ error: { message: "invalid transaction request" } })
+      );
+    } finally {
+      log.mockRestore();
+      delete globalThis.self;
+      delete globalThis.__midenWorkerWasm;
+    }
+  });
+
+  it.each([
+    ["submitNewTransaction", "proving"],
+    ["submitNewTransaction", "submission"],
+    ["submitNewTransactionWithProver", "proving"],
+    ["submitNewTransactionWithProver", "submission"],
+  ])(
+    "does not append stale auth detail after successful authentication in direct %s at %s",
+    async (method, stage) => {
+      const events = [];
+      const walletError = new Error("wallet locked");
+      const sign = vi
+        .fn()
+        .mockImplementationOnce(() => {
+          events.push("sign rejected");
+          throw walletError;
+        })
+        .mockImplementationOnce(() => {
+          events.push("sign resolved");
+          return new Uint8Array([7]);
+        });
+      const authFailure = Object.assign(new Error("authentication failed"), {
+        code: "AUTH",
+        help: "unlock wallet",
+      });
+      const laterFailure = Object.assign(new Error(`${stage} failed`), {
+        code: stage === "proving" ? "PROOF" : "TRANSPORT",
+        help: "retry later",
+      });
+      let authError = null;
+      const wasmWebClient = {
+        lastAuthError: () => authError,
+        async [method]() {
+          try {
+            await sign("pk", "inputs");
+          } catch (error) {
+            authError = error;
+            throw authFailure;
+          }
+          authError = null;
+          events.push("execution succeeded", "proving");
+          if (stage === "submission") events.push("submission");
+          throw laterFailure;
+        },
+      };
+      const client = Object.assign(Object.create(WasmWebClient.prototype), {
+        worker: null,
+        wasmWebClient,
+        getWasmWebClient: async () => wasmWebClient,
+        _withInnerLockDepth: 0,
+        _wasmCallChain: Promise.resolve(),
+      });
+      const args =
+        method === "submitNewTransaction"
+          ? ["account", {}]
+          : ["account", {}, {}];
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await expect(client[method](...args)).rejects.toBe(authFailure);
+        expect(authFailure.code).toBe("AUTH");
+        expect(authFailure.help).toBe("unlock wallet");
+        expect(wasmWebClient.lastAuthError()).toBe(walletError);
+        await expect(client[method](...args)).rejects.toBe(laterFailure);
+        expect(laterFailure.code).toBe(
+          stage === "proving" ? "PROOF" : "TRANSPORT"
+        );
+        expect(laterFailure.help).toBe("retry later");
+        expect(laterFailure.message).toBe(`${stage} failed`);
+        expect(laterFailure.message).not.toContain("wallet locked");
+        expect(wasmWebClient.lastAuthError()).toBeNull();
+        expect(events).toEqual([
+          "sign rejected",
+          "sign resolved",
+          "execution succeeded",
+          "proving",
+          ...(stage === "submission" ? ["submission"] : []),
+        ]);
+        expect(sign.mock.calls).toEqual([
+          ["pk", "inputs"],
+          ["pk", "inputs"],
+        ]);
+      } finally {
+        log.mockRestore();
+      }
+    }
+  );
+
+  it.each(["submitNewTransaction", "submitNewTransactionWithProver"])(
+    "enriches direct submit errors via %s",
+    async (method) => {
+      const wasmWebClient = {
+        lastAuthError: () => "wallet locked",
+      };
+      const client = Object.assign(Object.create(WasmWebClient.prototype), {
+        worker: null,
+        wasmWebClient,
+        getWasmWebClient: async () => wasmWebClient,
+        _withInnerLockDepth: 0,
+        _wasmCallChain: Promise.resolve(),
+      });
+      const args =
+        method === "submitNewTransaction"
+          ? ["account", {}]
+          : ["account", {}, {}];
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      try {
+        const error = Object.assign(new Error("authentication failed"), {
+          code: "AUTH",
+          help: "unlock wallet",
+        });
+        wasmWebClient[method] = async () => {
+          throw error;
+        };
+
+        await expect(client[method](...args)).rejects.toBe(error);
+        expect(error.code).toBe("AUTH");
+        expect(error.help).toBe("unlock wallet");
+        expect(error.message).toBe("authentication failed: wallet locked");
+        expect(error.message.split("wallet locked")).toHaveLength(2);
+      } finally {
+        log.mockRestore();
+      }
+    }
+  );
+
+  it.each([
+    MethodName.SUBMIT_NEW_TRANSACTION,
+    MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER,
+  ])("enriches worker submit errors via %s", async (methodName) => {
+    vi.resetModules();
+    const messages = [];
+    class WorkerWebClient {
+      async createClient() {}
+      async executeTransaction() {
+        throw Object.assign(new Error("authentication failed"), {
+          code: "AUTH",
+          help: "unlock wallet",
+        });
+      }
+      lastAuthError() {
+        return "wallet locked";
+      }
+    }
+    globalThis.self = {
+      postMessage: (message) => messages.push(structuredClone(message)),
+    };
+    globalThis.__midenWorkerWasm = {
+      WebClient: WorkerWebClient,
+      setupLogging() {},
+      AccountId: { fromHex: (value) => value },
+      TransactionRequest: { deserialize: () => ({}) },
+      TransactionProver: { deserialize: () => ({}) },
+    };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      await import("../workers/web-client-methods-worker.js");
+      globalThis.self.onmessage({
+        data: { action: WorkerAction.INIT, args: [] },
+      });
+      await vi.waitFor(() => expect(messages).toContainEqual({ ready: true }));
+
+      const requestId = `auth-${methodName}`;
+      const args = ["account", new Uint8Array()];
+      if (methodName === MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER) {
+        args.push(new Uint8Array([1]));
+      }
+      globalThis.self.onmessage({
+        data: {
+          action: WorkerAction.CALL_METHOD,
+          methodName,
+          requestId,
+          args,
+        },
+      });
+      await vi.waitFor(() =>
+        expect(
+          messages.find((message) => message.requestId === requestId)
+        ).toBeDefined()
+      );
+      const reply = messages.find((message) => message.requestId === requestId);
+      expect(reply.methodName).toBe(methodName);
+      expect(reply.error.code).toBe("AUTH");
+      expect(reply.error.help).toBe("unlock wallet");
+      expect(reply.error.message).toBe("authentication failed: wallet locked");
+      expect(reply.error.message.split("wallet locked")).toHaveLength(2);
+    } finally {
+      log.mockRestore();
+      delete globalThis.self;
+      delete globalThis.__midenWorkerWasm;
+    }
   });
 });

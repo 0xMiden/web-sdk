@@ -15,6 +15,7 @@ import type {
   TransactionRequestBuilder,
   TransactionResult,
   TransactionStoreUpdate,
+  ProtocolConfig,
   ProvenTransaction,
   TransactionSummary,
   ChainAnchor,
@@ -397,8 +398,9 @@ export type NoteInput = string | NoteId | Note | InputNoteRecord;
 
 /**
  * Create a wallet, faucet, or contract. A faucet sets `type:
- * FaucetType.FungibleFaucet`, a contract passes `components`, and a wallet is
- * the default (neither). Visibility comes from `storage`.
+ * FaucetType.FungibleFaucet`, a contract passes `components` with `auth` as an
+ * `AuthSecretKey` or `"none"` (no key stored), and a wallet is the default
+ * (neither). Visibility comes from `storage`.
  */
 export type CreateAccountOptions =
   | WalletCreateOptions
@@ -426,8 +428,12 @@ export interface FaucetCreateOptions {
 export interface ContractCreateOptions {
   /** Raw 32-byte seed (Uint8Array). Required. */
   seed: Uint8Array;
-  /** Auth secret key. Required. */
-  auth: AuthSecretKey;
+  /**
+   * Auth secret key, or `"none"` to build a NoAuth contract that anyone can
+   * call without a signature (no key is generated or stored). Required: an
+   * omitted `auth` is rejected rather than defaulting to NoAuth.
+   */
+  auth: AuthSecretKey | "none";
   /**
    * Pre-compiled AccountComponent instances. Required for contracts: at least
    * one must export a non-auth (`@account_procedure`) procedure, or
@@ -1125,6 +1131,13 @@ export interface MockOptions {
   seed?: string | Uint8Array;
   serializedMockChain?: Uint8Array;
   serializedNoteTransport?: Uint8Array;
+  /**
+   * IndexedDB database name for this mock client. Defaults to `mock_client_db`.
+   * Use a distinct name when a second mock client in the same origin must not
+   * share store state with another live mock (otherwise `syncState` can fail
+   * genesis tip validation).
+   */
+  storeName?: string;
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1152,7 +1165,12 @@ export interface AccountsResource {
    * value as `type`; use `storage`.
    *
    * @param options - Account creation options. A faucet sets `type`, a
-   * contract passes `components`, and a wallet is the default.
+   * contract passes `components`, and a wallet is the default. A contract also
+   * needs a raw 32-byte `seed` and `auth`. `auth` is an `AuthSecretKey` stored
+   * with the account, or `"none"` for a NoAuth contract that anyone can call
+   * and that stores no key. Omitting `auth` is rejected and does not default
+   * to NoAuth. `"none"` is only valid on a contract; wallet and faucet `auth`
+   * stays `AuthScheme.Falcon` or `AuthScheme.ECDSA`.
    * @throws TypeError naming `FaucetType`, before creating anything, for an
    * unrecognised `type`, for faucet fields (`name`, `symbol`, `decimals`,
    * `maxSupply`) without a faucet type, for `components` on a faucet, and for a
@@ -2100,15 +2118,15 @@ export declare class MidenClient {
    */
   waitForIdle(): Promise<void>;
   /**
-   * Returns the raw JS value that the most recent sign-callback invocation
-   * threw, or `null` if the last sign call succeeded (or no call has
-   * happened yet). Useful for recovering structured metadata (e.g. a
-   * `reason: 'locked'` property) that the kernel-level `auth::request`
-   * diagnostic would otherwise erase.
+   * Returns the latest raw sign callback rejection or readable external `getKey`
+   * failure string. Returns `null` after a successful sign or `getKey` callback,
+   * or when `executeTransaction` starts. Raw sign values preserve structured metadata
+   * such as `reason: 'locked'`. Transaction errors include any missing readable
+   * callback detail on both the direct and worker paths.
    *
    * Meaningful only with `useWorker: false` (the worker shim's keystore
    * lives in the worker WASM instance, so this reads `null` there). On
-   * the Node.js binding it always returns `null` — signing goes through
+   * the Node.js binding it always returns `null` - signing goes through
    * the filesystem keystore, never a JS callback.
    */
   lastAuthError(): unknown;
@@ -2137,6 +2155,17 @@ export declare class MidenClient {
    * the mock chain's own, and rejects when neither is set.
    */
   feeFaucetId(): Promise<AccountId>;
+
+  /**
+   * Returns the protocol configuration of the connected network, including its
+   * fee asset, so a dApp need not hardcode it per network.
+   *
+   * The client receives the configuration from the node when it syncs, so this
+   * rejects until the first sync has stored it. Mock clients are seeded with
+   * their chain's configuration. {@link ProtocolConfig.feeFaucetId} agrees with
+   * {@link MidenClient.feeFaucetId} once synced.
+   */
+  protocolConfig(): Promise<ProtocolConfig>;
 
   /** Returns the identifier of the underlying store (e.g. IndexedDB database name, file path). */
   storeIdentifier(): Promise<string>;

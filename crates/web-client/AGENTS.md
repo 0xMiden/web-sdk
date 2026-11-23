@@ -44,8 +44,9 @@ await client.sync();
 ```
 
 `create(options)` targets an explicit endpoint; `createTestnet()`,
-`createDevnet()` and `createMainnet()` are preconfigured; `createMock()` backs tests with an in-memory
-chain and no network.
+`createDevnet()` and `createMainnet()` are preconfigured; `createMock(options)`
+backs tests with an in-memory chain and no network (pass a distinct `storeName`
+when running multiple same-origin browser mocks, as omitting it shares `mock_client_db`).
 
 `feeFaucetId` is optional. Since 0.17 the chain's fee asset lives in the
 protocol configuration, which the client receives from the node when it syncs,
@@ -53,6 +54,13 @@ so execution never needs the option: it only sets what `client.feeFaucetId()`
 reports before the first sync. Before that sync, a client created without it
 rejects `feeFaucetId()` and asks you to sync first; a mock client reports its
 mock chain's own faucet.
+
+`client.protocolConfig()` returns that configuration as a `ProtocolConfig`: its
+`feeFaucetId()` is the faucet `client.feeFaucetId()` reports after a sync, and
+its `commitment()` is what block headers carry as `protocolConfigCommitment()`.
+It rejects with "the network's protocol configuration is not known yet" until
+the first sync stores the configuration; a mock client is seeded with its
+chain's.
 
 State is split across resources rather than living on the client:
 `accounts`, `transactions`, `notes`, `tags`, `settings`, `keystore`, `compile`
@@ -148,7 +156,13 @@ with it, and free the object wrappers the skills call out individually.
 **Account visibility and faucet kind are separate.** Use native
 `AccountType.Private` / `AccountType.Public` with `AccountBuilder.accountType()`.
 Use `FaucetType.FungibleFaucet` for `accounts.create({ type })`, and `storage`
-for visibility. Older `AccountType.FungibleFaucet` references must migrate to
+for visibility. Pass `components` to `accounts.create` for a contract. A
+contract also needs a raw 32-byte `seed` and `auth`. `auth` is an
+`AuthSecretKey` stored with the account, or `"none"` for a NoAuth contract that
+anyone can call and that stores no key. Omitting `auth` is rejected and does
+not default to NoAuth. `"none"` is only valid on a contract; wallet and faucet
+`auth` stays `AuthScheme.Falcon` or `AuthScheme.ECDSA`. Older
+`AccountType.FungibleFaucet` references must migrate to
 `FaucetType.FungibleFaucet`; `create()` throws a `TypeError` for an unrecognised
 `type` rather than creating a wallet. The legacy `0` / `1` are still faucet
 selectors and equal `AccountType.Private` / `Public`, so never pass a visibility

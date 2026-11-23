@@ -33,6 +33,11 @@ so it cannot be mistaken for an `AccountType` value. Migrate older
 `AccountType.FungibleFaucet` references to `FaucetType.FungibleFaucet`. Neither
 enum has wallet or contract members: omit `type` for a wallet, or pass
 `components` for a contract, and choose visibility with `storage` only.
+A contract also needs a raw 32-byte `seed` and `auth`. `auth` is an
+`AuthSecretKey` stored with the account, or `"none"` for a NoAuth contract that
+anyone can call and that stores no key. Omitting `auth` is rejected and does
+not default to NoAuth. `"none"` is only valid on a contract; wallet and faucet
+`auth` stays `AuthScheme.Falcon` or `AuthScheme.ECDSA`.
 
 `accounts.create()` still reads the legacy selectors `0`, `1` and
 `"NonFungibleFaucet"` as faucet types (`0` fungible; the non-fungible ones are

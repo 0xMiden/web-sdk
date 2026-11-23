@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { WorkerAction } from "../constants.js";
 
 // `index.js` re-exports the wasm-bindgen surface from `../Cargo.toml`, which
 // the node test environment cannot load, and reaches the wasm module through
@@ -223,6 +225,34 @@ describe("MidenClient.endpoint", () => {
 
     expect(() => client.endpoint()).toThrow("Client terminated");
     expect(inner.endpoint).not.toHaveBeenCalled();
+  });
+});
+
+describe("MidenClient.protocolConfig", () => {
+  it("returns what the inner client reads", async () => {
+    const config = { kind: "protocolConfig" };
+    const { client, inner } = makeClient({
+      protocolConfig: vi.fn().mockResolvedValue(config),
+    });
+
+    await expect(client.protocolConfig()).resolves.toBe(config);
+    expect(inner.protocolConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces the inner error when no configuration is stored", async () => {
+    const { client } = makeClient({
+      protocolConfig: vi.fn().mockRejectedValue(new Error("not known yet")),
+    });
+
+    await expect(client.protocolConfig()).rejects.toThrow("not known yet");
+  });
+
+  it("throws once terminated", async () => {
+    const { client, inner } = makeClient({ protocolConfig: vi.fn() });
+    client.terminate();
+
+    await expect(client.protocolConfig()).rejects.toThrow("Client terminated");
+    expect(inner.protocolConfig).not.toHaveBeenCalled();
   });
 });
 
@@ -1178,6 +1208,64 @@ describe("WebClient factories", () => {
       expect(wasmClient.free).not.toHaveBeenCalled();
     }
   );
+
+  it("passes mock_client_db to createMockClient when storeName is omitted", async () => {
+    const creating = MockWasmWebClient.createClient();
+    StubWorker.instances[0].emit({ ready: true });
+    await creating;
+    expect(fakeWasm.WebClient.latest.createMockClient).toHaveBeenCalledWith(
+      null,
+      null,
+      null,
+      "mock_client_db"
+    );
+  });
+
+  it("passes a custom storeName through to createMockClient", async () => {
+    const creating = MockWasmWebClient.createClient(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "mock_isolated_db"
+    );
+    StubWorker.instances[0].emit({ ready: true });
+    const client = await creating;
+    expect(fakeWasm.WebClient.latest.createMockClient).toHaveBeenCalledWith(
+      null,
+      null,
+      null,
+      "mock_isolated_db"
+    );
+    expect(client.storeName).toBe("mock_isolated_db");
+  });
+
+  it("preserves empty string storeName across createMockClient and INIT_MOCK", async () => {
+    const creating = MockWasmWebClient.createClient(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ""
+    );
+    const worker = StubWorker.instances[0];
+    worker.emit({ loaded: true });
+    worker.emit({ ready: true });
+    const client = await creating;
+    await flush();
+    expect(fakeWasm.WebClient.latest.createMockClient).toHaveBeenCalledWith(
+      null,
+      null,
+      null,
+      ""
+    );
+    expect(client.storeName).toBe("");
+    expect(client._storeLockId()).toBe("");
+    const initMock = worker.postMessage.mock.calls.find(
+      ([msg]) => msg?.action === WorkerAction.INIT_MOCK
+    )?.[0];
+    expect(initMock?.args[5]).toBe("");
+  });
 });
 
 describe("MidenClient.create", () => {
@@ -1289,5 +1377,46 @@ describe("MidenClient disposal", () => {
     expect(client[Symbol.dispose]()).toBeUndefined();
     expect(inner.terminate).toHaveBeenCalledTimes(1);
     expect(inner.waitForIdle).not.toHaveBeenCalled();
+  });
+});
+
+describe("MidenClient.createMock storeName docs", () => {
+  const repo = new URL("../../../../", import.meta.url);
+
+  it("documents storeName isolation and mock_client_db default in consumer guides", () => {
+    const skill = readFileSync(
+      new URL("crates/web-client/skills/web-client-usage/SKILL.md", repo),
+      "utf8"
+    );
+    const mockSection = skill.slice(
+      skill.indexOf("### Testing without a node"),
+      skill.indexOf("### Termination")
+    );
+    const codeEnd = mockSection.indexOf("```\n\n");
+    const mockSnippet = mockSection.slice(0, codeEnd);
+    const mockProse = mockSection.slice(codeEnd);
+    expect(mockSnippet).toContain("storeName:");
+    expect(mockProse).toContain("storeName");
+    expect(mockProse).toContain("mock_client_db");
+
+    const agents = readFileSync(
+      new URL("crates/web-client/AGENTS.md", repo),
+      "utf8"
+    );
+    const createMockSentence = agents.split("\n").slice(45, 52).join("\n");
+    expect(createMockSentence).toContain("createMock");
+    expect(createMockSentence).toContain("storeName");
+    expect(createMockSentence).toContain("mock_client_db");
+
+    const apiTypes = readFileSync(
+      new URL("crates/web-client/js/types/api-types.d.ts", repo),
+      "utf8"
+    );
+    const mockOptions = apiTypes.slice(
+      apiTypes.indexOf("export interface MockOptions"),
+      apiTypes.indexOf("export interface BuildSwapTagOptions")
+    );
+    expect(mockOptions).toContain("storeName?: string");
+    expect(mockOptions).toContain("mock_client_db");
   });
 });

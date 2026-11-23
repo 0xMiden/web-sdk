@@ -78,4 +78,47 @@ test.describe("mock chain tests", () => {
     expect(result.mintedNoteRecordDefined).toBe(true);
     expect(result.finalBalance).toEqual("1000");
   });
+
+  // Issue #557: a second mock with its own storeName syncs while the fixture
+  // mock still holds mock_client_db.
+  test("second mock with distinct storeName can syncState beside the fixture", async ({
+    run,
+  }) => {
+    const result = await run(async ({ helpers }) => {
+      const fresh = await helpers.createFreshMockClient();
+      await fresh.syncState();
+      return { synced: true };
+    });
+    expect(result.synced).toBe(true);
+  });
+
+  test("worker-backed mock with distinct storeName can sync beside the fixture", async ({
+    run,
+  }) => {
+    const result = await run(async ({ helpers }) => {
+      const isolatedStore = `mock_worker_${Date.now()}_${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
+      const workerMock = await helpers.createMidenMockClient({
+        storeName: isolatedStore,
+      });
+      try {
+        await workerMock.sync();
+        await workerMock.syncChain();
+        await workerMock.syncNoteTransport();
+        return {
+          synced: true,
+          hadWorker: typeof Worker !== "undefined",
+          isolatedStore,
+          storeIdentifier: await workerMock.storeIdentifier(),
+        };
+      } finally {
+        workerMock.terminate();
+      }
+    });
+    expect(result.synced).toBe(true);
+    if (result.hadWorker) {
+      expect(result.storeIdentifier).toBe(result.isolatedStore);
+    }
+  });
 });

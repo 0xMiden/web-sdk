@@ -273,6 +273,13 @@ protocol configuration, which the client receives from the node when it syncs,
 so execution never needs the option: it only sets what `client.feeFaucetId()`
 reports before the first sync. Snippets below leave it out.
 
+`client.protocolConfig()` returns that configuration as a `ProtocolConfig`: its
+`feeFaucetId()` is the faucet `client.feeFaucetId()` reports after a sync, and
+its `commitment()` is what block headers carry as `protocolConfigCommitment()`.
+It rejects with "the network's protocol configuration is not known yet" until
+the first sync stores the configuration; a mock client is seeded with its
+chain's.
+
 `noteTransportMaxRetries` (0 to 10, default 3) and
 `noteTransportRetryIntervalMs` (0 to 60000, default 250), with a total computed
 backoff `interval * (2^retries - 1)` of at most 120000 ms, set how
@@ -588,6 +595,11 @@ For `client.accounts.create()`, select visibility with `storage: "public"` or
 `"private"`, and create a fungible faucet with `type: FaucetType.FungibleFaucet`.
 Migrate previous `AccountType.FungibleFaucet` uses to `FaucetType.FungibleFaucet`.
 Omit `type` to create a wallet, or pass `components` to create a contract.
+A contract also needs a raw 32-byte `seed` and `auth`. `auth` is an
+`AuthSecretKey` stored with the account, or `"none"` for a NoAuth contract that
+anyone can call and that stores no key. Omitting `auth` is rejected and does
+not default to NoAuth. `"none"` is only valid on a contract; wallet and faucet
+`auth` stays `AuthScheme.Falcon` or `AuthScheme.ECDSA`.
 The legacy selectors `0`, `1` and `"NonFungibleFaucet"` are still read as
 faucet types (non-fungible faucets are not supported yet and are rejected);
 `0` and `1` are also `AccountType.Private` / `AccountType.Public`, so never pass
@@ -1053,9 +1065,10 @@ To create the receiving account, build a **public** account carrying the network
 ```typescript
 // Each allowed note script carries the fee charged to consume it, in the
 // chain's fee asset. Zero is a valid price. The fee faucet must be the chain's
-// own: the node never runs network transactions for an account whose fee asset
-// differs from the chain's protocol configuration, and says nothing to the
-// client - the account's notes are simply never consumed.
+// own, the one `client.protocolConfig()` names: the node never runs network
+// transactions for an account whose fee asset differs from the chain's
+// protocol configuration, and says nothing to the client - the account's notes
+// are simply never consumed.
 const feeFaucetId = await client.feeFaucetId();
 const components = AccountComponent.createNetworkAuthComponents(
   [new NoteScriptFee(myNoteScript.root(), 0n)],
