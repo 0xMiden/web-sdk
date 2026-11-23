@@ -226,6 +226,27 @@ fn make_platform_method(
                     .attrs
                     .push(syn::parse_quote!(#[::wasm_bindgen::prelude::wasm_bindgen(#args)]));
             }
+            // `Vec<js_sys::BigInt>` would type as `bigint[]`; keep a `BigUint64Array` assignable.
+            // wasm-bindgen emits an override as `name: TYPE` without `?:`, so `void` keeps the
+            // optional argument omittable.
+            for arg in &mut method.sig.inputs {
+                let syn::FnArg::Typed(pat_type) = arg else {
+                    continue;
+                };
+                if JsU64Replacer::is_vec_jsu64(&pat_type.ty) {
+                    pat_type.attrs.push(syn::parse_quote!(
+                        #[::wasm_bindgen::prelude::wasm_bindgen(
+                            unchecked_param_type = "BigUint64Array | bigint[]"
+                        )]
+                    ));
+                } else if JsU64Replacer::is_option_vec_jsu64(&pat_type.ty) {
+                    pat_type.attrs.push(syn::parse_quote!(
+                        #[::wasm_bindgen::prelude::wasm_bindgen(
+                            unchecked_param_type = "BigUint64Array | bigint[] | null | void"
+                        )]
+                    ));
+                }
+            }
         },
         Platform::Nodejs => {
             if args.is_empty() {
@@ -237,11 +258,12 @@ fn make_platform_method(
     }
 
     // Replace JsU64 in signature with the platform-specific concrete type.
-    // Browser arguments use `js_sys::BigInt` so the range can be checked (a bare `u64`
-    // argument is silently reduced modulo 2^64 by wasm_bindgen); a `Vec<JsU64>` argument stays
-    // `Vec<u64>` (a `BigUint64Array`, which cannot hold an out-of-range element), and return
-    // values stay `u64`. Node.js uses napi's `BigInt` struct because napi-rs does not implement
-    // `FromNapiValue` for `u64`. All resolve to a JS `BigInt` on the JS side.
+    // Browser arguments use `js_sys::BigInt` so the range can be checked: wasm-bindgen reduces a
+    // bare `u64` argument modulo 2^64, and copies a `Vec<u64>` argument through
+    // `BigUint64Array.set`, which reduces each element the same way. So a `Vec<JsU64>` argument
+    // becomes `Vec<js_sys::BigInt>`, checked element by element. Return values stay `u64`.
+    // Node.js uses napi's `BigInt` struct because napi-rs does not implement `FromNapiValue` for
+    // `u64`. All resolve to a JS `BigInt` on the JS side.
     let (arg_replacement, ret_replacement): (syn::Path, syn::Path) = match platform {
         Platform::Browser => (syn::parse_quote!(::js_sys::BigInt), syn::parse_quote!(u64)),
         Platform::Nodejs => {
@@ -252,10 +274,6 @@ fn make_platform_method(
     let mut replacer = JsU64Replacer {
         replacement: arg_replacement,
         ret_replacement,
-        vec_replacement: match platform {
-            Platform::Browser => Some(syn::parse_quote!(u64)),
-            Platform::Nodejs => None,
-        },
         in_return: false,
     };
     replacer.visit_impl_item_fn_mut(&mut method);
@@ -306,8 +324,6 @@ struct JsU64Replacer {
     replacement: syn::Path,
     /// Replacement for `JsU64` in the return type.
     ret_replacement: syn::Path,
-    /// When set, replacement for the element type of a `Vec<JsU64>` argument.
-    vec_replacement: Option<syn::Path>,
     in_return: bool,
 }
 
@@ -316,20 +332,33 @@ impl JsU64Replacer {
         matches!(ty, syn::Type::Path(tp) if tp.path.is_ident("JsU64"))
     }
 
-    /// Returns the sole type argument of a `Vec<_>` path.
-    fn vec_elem_mut(tp: &mut syn::TypePath) -> Option<&mut syn::Type> {
-        let last = tp.path.segments.last_mut()?;
-        if last.ident != "Vec" {
-            return None;
-        }
-        let syn::PathArguments::AngleBracketed(args) = &mut last.arguments else {
+    /// Sole type argument of a path type whose last segment is `name`.
+    fn sole_type_arg<'a>(ty: &'a syn::Type, name: &str) -> Option<&'a syn::Type> {
+        let syn::Type::Path(tp) = ty else {
             return None;
         };
-        let mut it = args.args.iter_mut();
+        let last = tp.path.segments.last()?;
+        if last.ident != name {
+            return None;
+        }
+        let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+            return None;
+        };
+        let mut it = args.args.iter();
         match (it.next(), it.next()) {
-            (Some(syn::GenericArgument::Type(ty)), None) => Some(ty),
+            (Some(syn::GenericArgument::Type(inner)), None) => Some(inner),
             _ => None,
         }
+    }
+
+    /// `Vec<JsU64>`, before argument replacement rewrites the element.
+    fn is_vec_jsu64(ty: &syn::Type) -> bool {
+        Self::sole_type_arg(ty, "Vec").is_some_and(Self::is_jsu64)
+    }
+
+    /// `Option<Vec<JsU64>>`, before argument replacement rewrites the element.
+    fn is_option_vec_jsu64(ty: &syn::Type) -> bool {
+        Self::sole_type_arg(ty, "Option").is_some_and(Self::is_vec_jsu64)
     }
 }
 
@@ -352,14 +381,8 @@ impl VisitMut for JsU64Replacer {
             } else {
                 self.replacement.clone()
             };
-        } else if !self.in_return
-            && let Some(vec_replacement) = self.vec_replacement.clone()
-            && let Some(inner) = Self::vec_elem_mut(tp)
-            && Self::is_jsu64(inner)
-        {
-            *inner = syn::Type::Path(syn::TypePath { qself: None, path: vec_replacement });
-            return;
         }
+        // Recurse so a `JsU64` nested in `Vec` or `Option` is replaced too.
         syn::visit_mut::visit_type_path_mut(self, tp);
     }
 }
