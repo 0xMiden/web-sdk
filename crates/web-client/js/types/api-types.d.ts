@@ -417,8 +417,12 @@ export interface FaucetCreateOptions {
 export interface ContractCreateOptions {
   /** Raw 32-byte seed (Uint8Array). Required. */
   seed: Uint8Array;
-  /** Auth secret key. Required. */
-  auth: AuthSecretKey;
+  /**
+   * Auth secret key, or `"none"` to build a NoAuth contract that anyone can
+   * call without a signature (no key is generated or stored). Required: an
+   * omitted `auth` is rejected rather than defaulting to NoAuth.
+   */
+  auth: AuthSecretKey | "none";
   /**
    * Pre-compiled AccountComponent instances. Required for contracts: at least
    * one must export a non-auth (`@account_procedure`) procedure, or
