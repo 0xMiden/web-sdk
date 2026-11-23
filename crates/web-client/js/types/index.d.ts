@@ -258,6 +258,11 @@ export declare class WasmWebClient extends WasmWebClientBase {
   syncNoteTransport(): Promise<void>;
   onStateChanged(callback: (event: any) => void): (() => void) | undefined;
   /**
+   * The error that latched this client's worker as dead, or `undefined` until
+   * the worker fails. Every later worker call throws this same Error.
+   */
+  readonly workerFailure: Error | undefined;
+  /**
    * Terminates this WebClient: stops its Web Worker if there is one, and
    * releases the main-realm wasm client and, through it, its IndexedDB store
    * connection, which closes once no other client in this realm holds the

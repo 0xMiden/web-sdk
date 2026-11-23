@@ -1842,6 +1842,15 @@ class WebClient {
   }
 
   /**
+   * The error that latched this client's worker as dead, or undefined until
+   * the worker fails. Every later worker call throws this same Error.
+   * @returns {Error | undefined}
+   */
+  get workerFailure() {
+    return this._workerFailure;
+  }
+
+  /**
    * Terminates this WebClient: stops its Web Worker if there is one, and
    * releases the main-realm wasm client and, through it, its IndexedDB store
    * connection, which closes once no other client in this realm holds the
