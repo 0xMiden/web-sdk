@@ -91,6 +91,7 @@ describe("a worker that fails", () => {
   it("rejects later worker calls at once without posting to the dead worker", async () => {
     const { client, worker } = createClient();
     becomeReady(worker);
+    await new Promise((resolve) => setTimeout(resolve, 0));
     worker.emit("error", { message: "boom" });
     const posted = worker.posted.length;
 
