@@ -235,11 +235,11 @@ impl JsU64Arg for u64 {
 #[cfg(feature = "browser")]
 impl JsU64Arg for js_sys::BigInt {
     fn into_u64(self) -> Result<u64, JsErr> {
-        let wrapped = js_sys::BigInt::as_uint_n(64.0, &self);
-        if wrapped != self {
-            return Err(out_of_u64_range());
+        // `BigInt.asUintN` throws through the wasm frames on a non-BigInt; these checks return.
+        if !self.is_bigint() {
+            return Err(js_sys::TypeError::new("u64 argument must be a BigInt").into());
         }
-        u64::try_from(wrapped).map_err(|_| out_of_u64_range())
+        u64::try_from(self).map_err(|_| out_of_u64_range())
     }
 }
 
