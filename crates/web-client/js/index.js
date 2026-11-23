@@ -1,6 +1,12 @@
 import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
-import { coalesceRun, runUnderLock, withSyncLock } from "./syncLock.js";
+import {
+  coalesceRun,
+  lockWaitError,
+  LOCK_WAIT_TIMEOUT_MS,
+  runUnderLock,
+  withSyncLock,
+} from "./syncLock.js";
 import {
   serializeCallbackError,
   validateCallbackTimeoutMs,
@@ -896,13 +902,16 @@ class WebClient {
    * that has none. The shipped `frontend-pitfalls` skill keeps the consumer
    * copy of this list.
    *
-   * Lock order is always call chain, then store lock: the call takes its
-   * chain slot when it is made, like any other call, and requests the lock
-   * when that slot starts. So call order, `terminate()` and `waitForIdle()`
-   * treat it like any other call, and a lock holder never waits for a
-   * callback of its own instance. A call waiting for another instance's
-   * holder holds this instance's chain meanwhile, and its observation, named
-   * by `opName`, includes that wait.
+   * Lock order is always call chain, then store lock. The budget starts when
+   * the store-locked call is made and covers the chain and then the lock: the
+   * call takes its chain slot when it is made, like any other call, and
+   * requests the lock when that slot starts, with the time still left. A turn
+   * that only skips observes the timeout error. A turn that reaches the lock
+   * still observes the lock wait. So call order, `terminate()` and
+   * `waitForIdle()` treat it like any other call, and a lock holder never
+   * waits for a callback of its own instance. A call waiting for another
+   * instance's holder holds this instance's chain meanwhile, and its
+   * observation, named by `opName`, includes that wait.
    *
    * `syncMethod` lets a call of that sync join this instance's pending run of
    * it, registered when the run's own call was made, but only while no other
@@ -929,12 +938,57 @@ class WebClient {
    */
   _withStoreLock(fn, opName, syncMethod) {
     // `_serializeWasmCall` rejects too, but a joiner never reaches it.
+    // The terminated check arms nothing.
     if (this._terminated && this._withInnerLockDepth === 0) {
       return Promise.reject(new Error("WebClient terminated"));
     }
     const dbId = this._storeLockId();
-    const run = () =>
-      this._serializeWasmCall(() => runUnderLock(dbId, fn), opName);
+    // Both branches call `run`: a store-locked call without `syncMethod`
+    // (importNoteFile, fetchPrivateNotes) or nested in `_withInnerWebClient`,
+    // and `coalesceRun`'s start for a sync. A joiner shares that promise and
+    // gets no timer of its own.
+    const run = () => {
+      const startedAt = Date.now();
+      let timedOut = false;
+      let timeoutError;
+      let resolveCaller = () => {};
+      let rejectCaller = () => {};
+      const caller = new Promise((resolve, reject) => {
+        resolveCaller = resolve;
+        rejectCaller = reject;
+      });
+      const fail = () => {
+        if (!timeoutError) {
+          timeoutError = lockWaitError(dbId, LOCK_WAIT_TIMEOUT_MS);
+        }
+        return timeoutError;
+      };
+      const timer = setTimeout(() => {
+        timedOut = true;
+        rejectCaller(fail());
+      }, LOCK_WAIT_TIMEOUT_MS);
+      const chain = this._serializeWasmCall(() => {
+        const remaining = LOCK_WAIT_TIMEOUT_MS - (Date.now() - startedAt);
+        if (timedOut || remaining <= 0) {
+          clearTimeout(timer);
+          // The chain catch already attached swallows this late throw.
+          throw fail();
+        }
+        clearTimeout(timer);
+        return runUnderLock(dbId, fn, remaining);
+      }, opName);
+      chain.then(
+        (value) => {
+          clearTimeout(timer);
+          resolveCaller(value);
+        },
+        (error) => {
+          clearTimeout(timer);
+          rejectCaller(error);
+        }
+      );
+      return caller;
+    };
     if (!syncMethod || this._withInnerLockDepth > 0) {
       return run();
     }
