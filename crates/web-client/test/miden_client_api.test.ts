@@ -1685,7 +1685,9 @@ nodeTest.describe("MidenClient API - Integration", () => {
         };
       });
 
-      expect(result.beforeSync).toContain("protocol configuration");
+      expect(result.beforeSync).toContain(
+        "the network's protocol configuration is not known yet"
+      );
       expect(result.reported).toBe(result.configured);
     }
   );
