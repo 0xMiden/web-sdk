@@ -72,6 +72,12 @@ impl InputNoteRecord {
         self.0.commitment().map(Into::into)
     }
 
+    /// Returns the commitment to the note's details (recipient + assets), without metadata.
+    #[js_export(js_name = "detailsCommitment")]
+    pub fn details_commitment(&self) -> Word {
+        self.0.details_commitment().as_word().into()
+    }
+
     /// Returns the inclusion proof when the note is authenticated.
     #[js_export(js_name = "inclusionProof")]
     pub fn inclusion_proof(&self) -> Option<NoteInclusionProof> {
