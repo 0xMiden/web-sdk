@@ -328,7 +328,9 @@ export class MidenClient {
     const inner = await MockWebClientClass.createClient(
       options?.serializedMockChain,
       options?.serializedNoteTransport,
-      seed
+      seed,
+      undefined,
+      options?.storeName
     );
 
     const client = new MidenClient(inner, getWasm, null);
@@ -480,6 +482,21 @@ export class MidenClient {
   async feeFaucetId() {
     this.assertNotTerminated();
     return await this.#inner.feeFaucetId();
+  }
+
+  /**
+   * Returns the protocol configuration of the connected network, including its
+   * fee asset, so a dApp need not hardcode it per network.
+   *
+   * The client receives the configuration from the node when it syncs, so this
+   * rejects until the first sync has stored it. Mock clients are seeded with
+   * their chain's configuration.
+   *
+   * @returns {Promise<ProtocolConfig>} The configuration the synced block commits to.
+   */
+  async protocolConfig() {
+    this.assertNotTerminated();
+    return await this.#inner.protocolConfig();
   }
 
   /**

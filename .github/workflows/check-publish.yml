@@ -160,6 +160,14 @@ jobs:
       - name: Run check:publish (build + publint + attw)
         run: MIDEN_FAST_BUILD=true pnpm run check:publish
 
+      # Packs the built web-client and React tarballs and resolves each entry
+      # point from a throwaway consumer: every symbol the workspace imports must
+      # exist in the declarations and the built JS of every entry that serves it.
+      - name: Check published entry points against downstream imports
+        run: |
+          node --test scripts/check-consumer-imports.test.mjs
+          pnpm run check:consumer-imports
+
       - name: Show sccache stats
         if: always()
         run: sccache --show-stats || true

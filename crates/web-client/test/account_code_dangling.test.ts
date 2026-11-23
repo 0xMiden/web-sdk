@@ -39,8 +39,9 @@ test.describe("account code dangling regression", () => {
         request.onerror = () => reject(request.error);
       });
 
-      // Use a fresh client so the read cannot be satisfied by in-memory state.
-      const client2 = await helpers.createFreshMockClient();
+      // Reopen the same IndexedDB (`mock_client_db`) so the cleared code row
+      // is visible, but without the fixture client's in-memory cache.
+      const client2 = await helpers.createFreshMockClient("mock_client_db");
       const errorOf = async (call) => {
         try {
           await call();

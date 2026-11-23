@@ -380,6 +380,12 @@ export function MidenProvider({
           // Set client LAST — this atomically sets isReady=true and
           // isInitializing=false, which enables auto-sync and consumer hooks.
           if (!cancelled) {
+            // A worker that failed during any await above fails the init, even
+            // one that rejected nothing: the account preload runs on the main thread.
+            const workerFailure = webClient.workerFailure;
+            if (workerFailure) {
+              throw workerFailure;
+            }
             if (!signerContext) {
               isInitializedRef.current = true;
             }
