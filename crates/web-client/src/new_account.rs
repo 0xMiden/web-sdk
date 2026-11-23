@@ -7,6 +7,7 @@ use miden_client::asset::AssetId;
 use miden_client::auth::AuthSecretKey;
 use miden_client::block::BlockNumber;
 use miden_client::keystore::Keystore;
+use miden_client::protocol_config::ProtocolConfig;
 
 use super::models::account::Account;
 use super::models::account_storage_mode::AccountStorageMode;
@@ -22,6 +23,15 @@ impl WebClient {
     /// (nothing synced and no creation-time faucet). Storage and protocol-config read failures are
     /// errors, not `None`.
     pub(crate) async fn known_fee_faucet_id(&self) -> Result<Option<AccountId>, JsErr> {
+        if let Some(config) = self.synced_protocol_config().await? {
+            return Ok(Some(config.fee_asset_id().faucet_id().into()));
+        }
+        Ok((*self.fee_faucet.lock().await).map(Into::into))
+    }
+
+    /// The protocol configuration the block at the sync height commits to, or `None` when nothing
+    /// has been synced yet so no configuration is stored for it. Storage read failures are errors.
+    pub(crate) async fn synced_protocol_config(&self) -> Result<Option<ProtocolConfig>, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
 
@@ -33,23 +43,18 @@ impl WebClient {
             .get_block_header_by_num(sync_height)
             .await
             .map_err(|err| js_error_with_context(err, "failed to read the synced block header"))?;
-        if let Some((header, _)) = header {
-            match client.get_protocol_config(header.protocol_config_commitment()).await {
-                Ok(config) => return Ok(Some(config.fee_asset_id().faucet_id().into())),
-                // Nothing has been synced yet, so no configuration is stored for the header.
-                Err(miden_client::ClientError::StoreError(
-                    miden_client::store::StoreError::ProtocolConfigNotFound(_),
-                )) => {},
-                Err(err) => {
-                    return Err(js_error_with_context(
-                        err,
-                        "failed to read the protocol configuration",
-                    ));
-                },
-            }
+        let Some((header, _)) = header else {
+            return Ok(None);
+        };
+        match client.get_protocol_config(header.protocol_config_commitment()).await {
+            Ok(config) => Ok(Some(config)),
+            Err(miden_client::ClientError::StoreError(
+                miden_client::store::StoreError::ProtocolConfigNotFound(_),
+            )) => Ok(None),
+            Err(err) => {
+                Err(js_error_with_context(err, "failed to read the protocol configuration"))
+            },
         }
-
-        Ok((*self.fee_faucet.lock().await).map(Into::into))
     }
 
     /// Syncs state if the client has never been synced (still at genesis block).

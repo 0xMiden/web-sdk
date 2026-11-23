@@ -15,6 +15,7 @@ import type {
   TransactionRequestBuilder,
   TransactionResult,
   TransactionStoreUpdate,
+  ProtocolConfig,
   ProvenTransaction,
   TransactionSummary,
   ChainAnchor,
@@ -2130,6 +2131,17 @@ export declare class MidenClient {
    * the mock chain's own, and rejects when neither is set.
    */
   feeFaucetId(): Promise<AccountId>;
+
+  /**
+   * Returns the protocol configuration of the connected network, including its
+   * fee asset, so a dApp need not hardcode it per network.
+   *
+   * The client receives the configuration from the node when it syncs, so this
+   * rejects until the first sync has stored it. Mock clients are seeded with
+   * their chain's configuration. {@link ProtocolConfig.feeFaucetId} agrees with
+   * {@link MidenClient.feeFaucetId} once synced.
+   */
+  protocolConfig(): Promise<ProtocolConfig>;
 
   /** Returns the identifier of the underlying store (e.g. IndexedDB database name, file path). */
   storeIdentifier(): Promise<string>;
