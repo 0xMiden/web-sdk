@@ -20,6 +20,7 @@ import { validateNoteTransportRetryOptions } from "./utils.js";
 import {
   createP2IDNote,
   createP2IDENote,
+  createFeeSponsorshipNote,
   buildSwapTag,
   buildNetworkNote,
   isStandardPayment,
@@ -67,6 +68,7 @@ export { CompilerResource };
 export {
   createP2IDNote,
   createP2IDENote,
+  createFeeSponsorshipNote,
   buildSwapTag,
   buildNetworkNote,
   isStandardPayment,

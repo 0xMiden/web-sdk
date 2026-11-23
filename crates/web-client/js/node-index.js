@@ -25,6 +25,7 @@ import { CompilerResource } from "./resources/compiler.js";
 import {
   createP2IDNote,
   createP2IDENote,
+  createFeeSponsorshipNote,
   buildSwapTag,
   buildNetworkNote,
   isStandardPayment,
@@ -82,6 +83,7 @@ export { MidenClient };
 export {
   createP2IDNote,
   createP2IDENote,
+  createFeeSponsorshipNote,
   buildSwapTag,
   buildNetworkNote,
   isStandardPayment,

@@ -2372,6 +2372,21 @@ export declare function createP2IDENote(
   options: P2IDEOptions
 ): ReturnType<WasmModule["Note"]["createP2IDENote"]>;
 
+/** Options for {@link createFeeSponsorshipNote}. */
+export interface FeeSponsorshipNoteOptions {
+  from: string | AccountId;
+  to: string | AccountId;
+  featureNoteId: NoteId;
+  asset: FungibleAsset;
+  reclaimer?: string | AccountId;
+  reclaimAfter?: number;
+}
+
+/** Creates a fee-sponsorship note bound to a feature note id. */
+export declare function createFeeSponsorshipNote(
+  options: FeeSponsorshipNoteOptions
+): ReturnType<WasmModule["Note"]["createFeeSponsorshipNote"]>;
+
 /**
  * Builds (without submitting) a Public custom-script note carrying a
  * `NetworkAccountTarget` attachment. Provide exactly one of `recipient` or

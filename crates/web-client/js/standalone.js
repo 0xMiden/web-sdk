@@ -80,6 +80,42 @@ export function createP2IDENote(opts) {
 }
 
 /**
+ * Creates a fee-sponsorship note bound to a feature note.
+ *
+ * @param {object} opts
+ * @param {string|AccountId} opts.from - Sponsor account.
+ * @param {string|AccountId} opts.to - Public target the feature note routes to.
+ * @param {NoteId} opts.featureNoteId - Feature note this sponsorship attaches to.
+ * @param {FungibleAsset} opts.asset - Single fungible fee asset.
+ * @param {string|AccountId} [opts.reclaimer] - Defaults to the sponsor.
+ * @param {number} [opts.reclaimAfter] - Block height enabling reclaim.
+ * @returns {Note}
+ */
+export function createFeeSponsorshipNote(opts) {
+  const wasm = getWasm();
+  if (!opts?.featureNoteId) {
+    throw new Error("createFeeSponsorshipNote requires featureNoteId");
+  }
+  if (!opts?.asset) {
+    throw new Error("createFeeSponsorshipNote requires asset");
+  }
+  const sender = resolveAccountRef(opts.from, wasm);
+  const target = resolveAccountRef(opts.to, wasm);
+  const reclaimer =
+    opts.reclaimer != null
+      ? resolveAccountRef(opts.reclaimer, wasm)
+      : undefined;
+  return wasm.Note.createFeeSponsorshipNote(
+    sender,
+    target,
+    opts.featureNoteId,
+    opts.asset,
+    reclaimer,
+    opts.reclaimAfter
+  );
+}
+
+/**
  * True when the note runs the standard P2ID or P2IDE payment script.
  *
  * @param {ConsumableNoteRecord | InputNoteRecord} record - The note to check.
