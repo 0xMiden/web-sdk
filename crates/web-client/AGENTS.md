@@ -54,6 +54,13 @@ reports before the first sync. Before that sync, a client created without it
 rejects `feeFaucetId()` and asks you to sync first; a mock client reports its
 mock chain's own faucet.
 
+`client.protocolConfig()` returns that configuration as a `ProtocolConfig`: its
+`feeFaucetId()` is the faucet `client.feeFaucetId()` reports after a sync, and
+its `commitment()` is what block headers carry as `protocolConfigCommitment()`.
+It rejects with "the network's protocol configuration is not known yet" until
+the first sync stores the configuration; a mock client is seeded with its
+chain's.
+
 State is split across resources rather than living on the client:
 `accounts`, `transactions`, `notes`, `tags`, `settings`, `keystore`, `compile`
 and `pswap`. Client-level methods cover the lifecycle around them - `sync`,
