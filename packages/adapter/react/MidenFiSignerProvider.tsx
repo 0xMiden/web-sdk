@@ -209,6 +209,10 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
   const isConnecting = useRef(false);
   const isDisconnecting = useRef(false);
   const isUnloading = useRef(false);
+  // The wallet whose autoConnect attempt failed. The single-wallet auto-select
+  // below reselects it right after the failure clears `name`, which would
+  // otherwise start the same attempt again and loop.
+  const autoConnectFailed = useRef<WalletName | null>(null);
 
   // Wrap adapters to conform to the `Wallet` interface
   const [wallets, setWallets] = useState(() =>
@@ -378,7 +382,8 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
       connected ||
       !autoConnect ||
       !adapter ||
-      readyState !== WalletReadyState.Installed
+      readyState !== WalletReadyState.Installed ||
+      autoConnectFailed.current === adapter.name
     )
       return;
 
@@ -392,6 +397,7 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
           allowedPrivateData
         );
       } catch (error: any) {
+        autoConnectFailed.current = adapter.name;
         setName(null);
       } finally {
         setConnecting(false);
@@ -756,6 +762,15 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
     importAccountId,
   ]);
 
+  // An explicit selection lets autoConnect try that wallet again.
+  const select = useCallback(
+    (walletName: WalletName) => {
+      autoConnectFailed.current = null;
+      setName(walletName);
+    },
+    [setName]
+  );
+
   const walletContextValue = useMemo(
     () => ({
       autoConnect,
@@ -766,7 +781,7 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
       connected,
       connecting,
       disconnecting,
-      select: setName,
+      select,
       connect,
       disconnect,
       requestTransaction,
@@ -790,7 +805,7 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
       connected,
       connecting,
       disconnecting,
-      setName,
+      select,
       connect,
       disconnect,
       requestTransaction,

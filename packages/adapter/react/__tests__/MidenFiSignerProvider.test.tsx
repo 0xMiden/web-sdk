@@ -344,6 +344,35 @@ describe("MidenFiSignerProvider", () => {
       expect(mockAdapter.connect).toHaveBeenCalledTimes(1);
     });
 
+    it("autoConnect does not retry a rejected connection", async () => {
+      const onError = vi.fn();
+      const rejection = new Error("User rejected the connection");
+      mockAdapter = createMockAdapter({ readyState: "Installed" });
+      mockAdapter.connect.mockImplementation(async () => {
+        // Park a runaway retry loop so a regression fails the assertion
+        // below instead of timing out the test.
+        if (mockAdapter.connect.mock.calls.length > 5) {
+          return new Promise(() => {});
+        }
+        mockAdapter.emit("error", rejection);
+        throw rejection;
+      });
+      render(
+        <MidenFiSignerProvider autoConnect={true} onError={onError}>
+          <div />
+        </MidenFiSignerProvider>
+      );
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await flushPromises();
+        });
+      }
+
+      expect(mockAdapter.connect).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledWith(rejection);
+    });
+
     it("autoConnect does not connect a Loadable wallet", async () => {
       mockAdapter = createMockAdapter({ readyState: "Loadable" });
       render(
