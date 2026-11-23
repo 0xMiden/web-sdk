@@ -182,4 +182,60 @@ test.describe("u64 argument range", () => {
     expect(result.statusTimestamp).toBe("5");
     expect(result.feeAmount).toBe("7");
   });
+
+  // A plain array is not a BigUint64Array, so the binding must check each element itself.
+  test("a plain-array element outside 0..2^64 throws like a scalar argument", async ({
+    run,
+  }, testInfo) => {
+    const result = await run(async ({ sdk }) => {
+      const attempt = (build) => {
+        try {
+          build();
+          return "no error";
+        } catch (error) {
+          return String(error?.message ?? error);
+        }
+      };
+      const wraps = 2n ** 64n + 5n;
+      const firstValue = (attachment) =>
+        String(attachment.toWords()[0].toU64s()[0]);
+
+      return {
+        wordWraps: attempt(() => new sdk.Word([wraps, 0n, 0n, 0n])),
+        wordNegative: attempt(() => new sdk.Word([-1n, 0n, 0n, 0n])),
+        attachmentWraps: attempt(() => new sdk.NoteAttachment([wraps])),
+        attachmentNegative: attempt(() => new sdk.NoteAttachment([-1n])),
+        wordNumber: attempt(() => new sdk.Word([5, 0n, 0n, 0n])),
+        wordInRange: new sdk.Word([1n, 2n, 3n, 4n]).toU64s()[0].toString(),
+        wordTypedSame:
+          new sdk.Word([1n, 2n, 3n, 4n]).toHex() ===
+          new sdk.Word(sdk.u64Array([1, 2, 3, 4])).toHex(),
+        attachmentEmpty: new sdk.NoteAttachment().numWords(),
+        attachmentNull: new sdk.NoteAttachment(null).numWords(),
+        attachmentUndefined: new sdk.NoteAttachment(undefined).numWords(),
+        attachmentValue: firstValue(new sdk.NoteAttachment([7n])),
+        attachmentTyped: firstValue(new sdk.NoteAttachment(sdk.u64Array([7]))),
+      };
+    });
+
+    for (const key of [
+      "wordWraps",
+      "wordNegative",
+      "attachmentWraps",
+      "attachmentNegative",
+    ]) {
+      expect(result[key], key).toContain("outside the u64 range");
+    }
+    expect(result.wordNumber, "wordNumber").not.toBe("no error");
+    if (testInfo.project.name !== "nodejs") {
+      expect(result.wordNumber, "wordNumber").toContain("must be a BigInt");
+    }
+    expect(result.wordInRange).toBe("1");
+    expect(result.wordTypedSame).toBe(true);
+    expect(result.attachmentEmpty).toBe(1);
+    expect(result.attachmentNull).toBe(1);
+    expect(result.attachmentUndefined).toBe(1);
+    expect(result.attachmentValue).toBe("7");
+    expect(result.attachmentTyped).toBe("7");
+  });
 });
