@@ -445,7 +445,13 @@ export class MidenClient {
    */
   terminate() {
     this.#terminated = true;
-    this.#inner.terminate?.();
+    const defaultProver = this.#defaultProver;
+    this.#defaultProver = null;
+    try {
+      this.#inner.terminate?.();
+    } finally {
+      defaultProver?.free?.();
+    }
   }
 
   /** Terminates the client without waiting for the release; see `terminate()`. */

@@ -1215,6 +1215,31 @@ describe("MidenClient.create", () => {
     expect(inner.terminate).toHaveBeenCalledTimes(1);
   });
 
+  it("frees defaultProver when the first sync fails", async () => {
+    const failure = new Error("sync failed");
+    const defaultProver = { free: vi.fn() };
+    const inner = {
+      syncState: vi.fn().mockRejectedValue(failure),
+      terminate: vi.fn(),
+    };
+    install(inner, {
+      ...makeWasm(),
+      TransactionProver: {
+        newRemoteProver: vi.fn(() => defaultProver),
+      },
+    });
+
+    await expect(
+      MidenClient.create({
+        rpcUrl: "devnet",
+        proverUrl: "https://prover.example",
+        autoSync: true,
+      })
+    ).rejects.toBe(failure);
+    expect(inner.terminate).toHaveBeenCalledTimes(1);
+    expect(defaultProver.free).toHaveBeenCalledTimes(1);
+  });
+
   it("terminates the inner client when the prover URL cannot be resolved", async () => {
     const failure = new Error("invalid prover url");
     const inner = { syncState: vi.fn(), terminate: vi.fn() };
@@ -1289,5 +1314,22 @@ describe("MidenClient disposal", () => {
     expect(client[Symbol.dispose]()).toBeUndefined();
     expect(inner.terminate).toHaveBeenCalledTimes(1);
     expect(inner.waitForIdle).not.toHaveBeenCalled();
+  });
+
+  it("frees defaultProver once and clears it on terminate", () => {
+    const defaultProver = { free: vi.fn() };
+    const inner = { terminate: vi.fn() };
+    const client = new MidenClient(
+      inner,
+      async () => makeWasm(),
+      defaultProver
+    );
+
+    client.terminate();
+    expect(client.defaultProver).toBeNull();
+    expect(defaultProver.free).toHaveBeenCalledTimes(1);
+
+    client.terminate();
+    expect(defaultProver.free).toHaveBeenCalledTimes(1);
   });
 });
