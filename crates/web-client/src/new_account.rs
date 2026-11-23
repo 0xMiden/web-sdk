@@ -356,19 +356,37 @@ impl SyncHeightRead for Client<ClientAuth> {
     }
 }
 
-/// The value stored at the sync height, or `None` when that height has no header.
+/// The value stored at the sync height, or `None` when nothing has been synced.
+///
+/// Another client on the same store can sync between the two reads: it advances the height and
+/// prunes the header the first read named. So a missing header means "not synced" only when a
+/// second read shows the same height; a different height is followed, with no retry cap, since
+/// capping it would report a synced client as unsynced. One `MidenClient` cannot race itself,
+/// because its calls share one call chain.
 async fn header_at_sync_height<S>(source: &mut S) -> Result<Option<S::Value>, JsErr>
 where
     S: SyncHeightRead,
 {
-    let height = source
-        .height()
-        .await
-        .map_err(|err| js_error_with_context(err, "failed to read the sync height"))?;
-    source
-        .value_at(height)
-        .await
-        .map_err(|err| js_error_with_context(err, "failed to read the synced block header"))
+    loop {
+        let height = source
+            .height()
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to read the sync height"))?;
+        let found = source
+            .value_at(height)
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to read the synced block header"))?;
+        if let Some(value) = found {
+            return Ok(Some(value));
+        }
+        let height_now = source
+            .height()
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to read the sync height"))?;
+        if height_now == height {
+            return Ok(None);
+        }
+    }
 }
 
 #[cfg(all(test, feature = "nodejs"))]
