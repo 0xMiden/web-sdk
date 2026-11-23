@@ -415,9 +415,11 @@ describe("runUnderLock — bound on waiting for the Web Lock", () => {
         }
         const entry = run;
         waiters.push(entry);
+        // As in a browser, an abort affects a request only while it waits.
         signal?.addEventListener("abort", () => {
           const at = waiters.indexOf(entry);
-          if (at >= 0) waiters.splice(at, 1);
+          if (at < 0) return;
+          waiters.splice(at, 1);
           reject(signal.reason);
         });
       });
@@ -453,5 +455,158 @@ describe("runUnderLock — bound on waiting for the Web Lock", () => {
 
     release();
     await expect(runUnderLock("db", async () => "ok", 20)).resolves.toBe("ok");
+  });
+
+  it("rejects a fallback waiter behind a holder that never settles, then runs the next call", async () => {
+    const orig = globalThis.navigator;
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {},
+    });
+    try {
+      expect(hasWebLocks()).toBe(false);
+      const dbId = uniqueDb();
+      let releaseHolder;
+      const holderFn = vi.fn(
+        () =>
+          new Promise((resolve) => {
+            releaseHolder = resolve;
+          })
+      );
+      const holder = runUnderLock(dbId, holderFn, 20);
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      expect(holderFn).toHaveBeenCalledTimes(1);
+
+      const waiterFn = vi.fn(async () => "ran");
+      await expect(outcome(runUnderLock(dbId, waiterFn, 20))).resolves.toMatch(
+        /sync lock/i
+      );
+      expect(waiterFn).not.toHaveBeenCalled();
+
+      releaseHolder("held");
+      await expect(holder).resolves.toBe("held");
+      await expect(runUnderLock(dbId, async () => "third", 20)).resolves.toBe(
+        "third"
+      );
+      expect(waiterFn).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(globalThis, "navigator", {
+        configurable: true,
+        value: orig,
+      });
+    }
+  });
+
+  it("rejects a waiter when AbortSignal.timeout is missing", async () => {
+    const timeout = AbortSignal.timeout;
+    AbortSignal.timeout = undefined;
+    try {
+      installHeldLock();
+      const fn = vi.fn(async () => "ran");
+      await expect(outcome(runUnderLock("db", fn, 20))).resolves.toMatch(
+        /sync lock/i
+      );
+      expect(fn).not.toHaveBeenCalled();
+    } finally {
+      AbortSignal.timeout = timeout;
+    }
+  });
+
+  it("rejects a waiter when the aborted request rejects with a fresh AbortError", async () => {
+    const waiters = [];
+    let held = true;
+    const grant = () => {
+      const next = waiters.shift();
+      if (next) next();
+      else held = false;
+    };
+    const request = (_name, { signal }, fn) =>
+      new Promise((resolve, reject) => {
+        const run = () => fn().then(resolve, reject).finally(grant);
+        if (!held) {
+          held = true;
+          run();
+          return;
+        }
+        const entry = run;
+        waiters.push(entry);
+        signal?.addEventListener("abort", () => {
+          const at = waiters.indexOf(entry);
+          if (at < 0) return;
+          waiters.splice(at, 1);
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        });
+      });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { locks: { request } },
+    });
+
+    const fn = vi.fn(async () => "ran");
+    await expect(outcome(runUnderLock("db", fn, 20))).resolves.toMatch(
+      /sync lock/i
+    );
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("rejects a waiter granted only after its wait ran out, without running its work", async () => {
+    // A stand-in that ignores the abort and grants the lock late.
+    let grant;
+    const request = (_name, _options, callback) =>
+      new Promise((resolve, reject) => {
+        grant = () => Promise.resolve().then(callback).then(resolve, reject);
+      });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { locks: { request } },
+    });
+
+    const fn = vi.fn(async () => "ran");
+    const waiter = runUnderLock("db", fn, 20);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    grant();
+    await expect(waiter).rejects.toThrow(/sync lock/i);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("rejects with the error of a lock request that throws", async () => {
+    const failure = new Error("request failed");
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        locks: {
+          request: () => {
+            throw failure;
+          },
+        },
+      },
+    });
+    const fn = vi.fn(async () => "ran");
+    await expect(runUnderLock("db", fn, 20)).rejects.toBe(failure);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("keeps a granted holder running while a waiter times out", async () => {
+    const { release } = installHeldLock();
+    let releaseHolder;
+    const holderFn = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          releaseHolder = resolve;
+        })
+    );
+    const holder = runUnderLock("db", holderFn, 20);
+    release();
+    expect(holderFn).toHaveBeenCalledTimes(1);
+
+    const waiterFn = vi.fn(async () => "ran");
+    await expect(outcome(runUnderLock("db", waiterFn, 20))).resolves.toMatch(
+      /sync lock/i
+    );
+    expect(waiterFn).not.toHaveBeenCalled();
+    expect(holderFn).toHaveBeenCalledTimes(1);
+
+    releaseHolder("held");
+    await expect(holder).resolves.toBe("held");
   });
 });
