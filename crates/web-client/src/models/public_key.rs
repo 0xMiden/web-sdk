@@ -43,8 +43,12 @@ impl PublicKey {
 
     /// Recovers a public key from a signature over a blind message word.
     ///
-    /// Recovery does not authenticate an identity: compare the result's commitment with a
-    /// trusted one before relying on it.
+    /// Recovery does not authenticate the signer. Treat the message as signed by a trusted key
+    /// only when `recovered.toCommitment()` equals a commitment from a trusted source and
+    /// `recovered.verify(message, signature)` returns `true` for this same message and signature.
+    /// Falcon recovery returns the public key embedded in the signature and does not read the
+    /// message, so a valid Falcon signature over a different message recovers the same key and
+    /// only `verify` rejects it.
     #[js_export(js_name = "recoverFrom")]
     pub fn recover_from(message: &Word, signature: &Signature) -> Result<PublicKey, JsErr> {
         let native_message: NativeWord = message.into();
