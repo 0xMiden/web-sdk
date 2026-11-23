@@ -10,8 +10,10 @@
 //! ```
 //!
 //! When a method signature contains [`JsU64`], the macro automatically splits it
-//! into browser (`u64`) and Node.js (`::napi::bindgen_prelude::BigInt`) variants.
-//! Both map to JavaScript `BigInt`, preserving full `u64` precision on both platforms.
+//! into browser (`::js_sys::BigInt` arguments, `u64` returns) and Node.js
+//! (`::napi::bindgen_prelude::BigInt`) variants. Both map to JavaScript `BigInt`, preserving
+//! full `u64` precision on both platforms; pass arguments through `js_u64_to_u64` to reject
+//! values outside `0..2^64`.
 //!
 //! # Expansion example (JsU64 split)
 //!
@@ -21,7 +23,7 @@
 //! #[js_export]
 //! impl Felt {
 //!     #[js_export(constructor)]
-//!     pub fn new(value: JsU64) -> Felt { ... }
+//!     pub fn new(value: JsU64) -> Result<Felt, JsErr> { ... }
 //! }
 //! ```
 //!
@@ -32,14 +34,14 @@
 //! #[::wasm_bindgen::prelude::wasm_bindgen]
 //! impl Felt {
 //!     #[::wasm_bindgen::prelude::wasm_bindgen(constructor)]
-//!     pub fn new(value: u64) -> Felt { ... }
+//!     pub fn new(value: ::js_sys::BigInt) -> Result<Felt, JsErr> { ... }
 //! }
 //!
 //! #[cfg(feature = "nodejs")]
 //! #[::napi_derive::napi]
 //! impl Felt {
 //!     #[::napi_derive::napi(constructor)]
-//!     pub fn new(value: ::napi::bindgen_prelude::BigInt) -> Felt { ... }
+//!     pub fn new(value: ::napi::bindgen_prelude::BigInt) -> Result<Felt, JsErr> { ... }
 //! }
 //! ```
 //!
@@ -235,14 +237,27 @@ fn make_platform_method(
     }
 
     // Replace JsU64 in signature with the platform-specific concrete type.
-    // Browser uses `u64` (maps to BigInt via wasm_bindgen). Node.js uses napi's
-    // `BigInt` struct because napi-rs does not implement `FromNapiValue` for `u64`
-    // Both resolve to a JS `BigInt` on the JS side.
-    let replacement: syn::Path = match platform {
-        Platform::Browser => syn::parse_quote!(u64),
-        Platform::Nodejs => syn::parse_quote!(::napi::bindgen_prelude::BigInt),
+    // Browser arguments use `js_sys::BigInt` so the range can be checked (a bare `u64`
+    // argument is silently reduced modulo 2^64 by wasm_bindgen); a `Vec<JsU64>` argument stays
+    // `Vec<u64>` (a `BigUint64Array`, which cannot hold an out-of-range element), and return
+    // values stay `u64`. Node.js uses napi's `BigInt` struct because napi-rs does not implement
+    // `FromNapiValue` for `u64`. All resolve to a JS `BigInt` on the JS side.
+    let (arg_replacement, ret_replacement): (syn::Path, syn::Path) = match platform {
+        Platform::Browser => (syn::parse_quote!(::js_sys::BigInt), syn::parse_quote!(u64)),
+        Platform::Nodejs => {
+            let big: syn::Path = syn::parse_quote!(::napi::bindgen_prelude::BigInt);
+            (big.clone(), big)
+        },
     };
-    let mut replacer = JsU64Replacer { replacement };
+    let mut replacer = JsU64Replacer {
+        replacement: arg_replacement,
+        ret_replacement,
+        vec_replacement: match platform {
+            Platform::Browser => Some(syn::parse_quote!(u64)),
+            Platform::Nodejs => None,
+        },
+        in_return: false,
+    };
     replacer.visit_impl_item_fn_mut(&mut method);
 
     method
@@ -287,22 +302,63 @@ impl VisitMut for JsU64Detector {
 // ================================================================================================
 
 struct JsU64Replacer {
+    /// Replacement for `JsU64` in argument position.
     replacement: syn::Path,
+    /// Replacement for `JsU64` in the return type.
+    ret_replacement: syn::Path,
+    /// When set, replacement for the element type of a `Vec<JsU64>` argument.
+    vec_replacement: Option<syn::Path>,
+    in_return: bool,
+}
+
+impl JsU64Replacer {
+    fn is_jsu64(ty: &syn::Type) -> bool {
+        matches!(ty, syn::Type::Path(tp) if tp.path.is_ident("JsU64"))
+    }
+
+    /// Returns the sole type argument of a `Vec<_>` path.
+    fn vec_elem_mut(tp: &mut syn::TypePath) -> Option<&mut syn::Type> {
+        let last = tp.path.segments.last_mut()?;
+        if last.ident != "Vec" {
+            return None;
+        }
+        let syn::PathArguments::AngleBracketed(args) = &mut last.arguments else {
+            return None;
+        };
+        let mut it = args.args.iter_mut();
+        match (it.next(), it.next()) {
+            (Some(syn::GenericArgument::Type(ty)), None) => Some(ty),
+            _ => None,
+        }
+    }
 }
 
 impl VisitMut for JsU64Replacer {
     fn visit_impl_item_fn_mut(&mut self, method: &mut ImplItemFn) {
         // Only visit the signature, NOT the body.
+        self.in_return = false;
         for arg in &mut method.sig.inputs {
             self.visit_fn_arg_mut(arg);
         }
+        self.in_return = true;
         self.visit_return_type_mut(&mut method.sig.output);
         // Deliberately skip: self.visit_block_mut(&mut method.block);
     }
 
     fn visit_type_path_mut(&mut self, tp: &mut syn::TypePath) {
         if tp.path.is_ident("JsU64") {
-            tp.path = self.replacement.clone();
+            tp.path = if self.in_return {
+                self.ret_replacement.clone()
+            } else {
+                self.replacement.clone()
+            };
+        } else if !self.in_return
+            && let Some(vec_replacement) = self.vec_replacement.clone()
+            && let Some(inner) = Self::vec_elem_mut(tp)
+            && Self::is_jsu64(inner)
+        {
+            *inner = syn::Type::Path(syn::TypePath { qself: None, path: vec_replacement });
+            return;
         }
         syn::visit_mut::visit_type_path_mut(self, tp);
     }

@@ -210,30 +210,58 @@ impl<T: Send> AsyncCell<T> {
 /// Platform-specific unsigned 64-bit integer type for JS interop.
 ///
 /// Both platforms expose this as a JavaScript `BigInt`. See `js-export-macro` for why
-/// Node.js uses `napi::bindgen_prelude::BigInt` instead of `u64`.
+/// Node.js uses `napi::bindgen_prelude::BigInt` instead of `u64`. For return values the browser
+/// build uses `u64`; for arguments `js-export-macro` swaps in `js_sys::BigInt` so the range can
+/// be checked, since wasm-bindgen reduces a bare `u64` argument modulo 2^64 without error.
 #[cfg(feature = "browser")]
 pub type JsU64 = u64;
 
 #[cfg(feature = "nodejs")]
 pub type JsU64 = napi::bindgen_prelude::BigInt;
 
-/// Converts a [`JsU64`] to `u64`.
+/// A JS-facing unsigned 64-bit argument that can be checked against the `0..2^64` range.
+pub trait JsU64Arg {
+    fn into_u64(self) -> Result<u64, JsErr>;
+}
+
+/// Elements of a `Vec<u64>` argument arrive as a `BigUint64Array` on the browser, which cannot
+/// hold an out-of-range value.
+impl JsU64Arg for u64 {
+    fn into_u64(self) -> Result<u64, JsErr> {
+        Ok(self)
+    }
+}
+
+#[cfg(feature = "browser")]
+impl JsU64Arg for js_sys::BigInt {
+    fn into_u64(self) -> Result<u64, JsErr> {
+        let wrapped = js_sys::BigInt::as_uint_n(64.0, &self);
+        if wrapped != self {
+            return Err(out_of_u64_range());
+        }
+        u64::try_from(wrapped).map_err(|_| out_of_u64_range())
+    }
+}
+
+#[cfg(feature = "nodejs")]
+impl JsU64Arg for napi::bindgen_prelude::BigInt {
+    fn into_u64(self) -> Result<u64, JsErr> {
+        let (signed, value, lossless) = self.get_u64();
+        if signed || !lossless {
+            return Err(out_of_u64_range());
+        }
+        Ok(value)
+    }
+}
+
+fn out_of_u64_range() -> JsErr {
+    from_str_err("BigInt value is outside the u64 range (0..2^64)")
+}
+
+/// Converts a JS `BigInt` argument to `u64`, rejecting values outside `0..2^64` with an error.
 #[inline]
-pub fn js_u64_to_u64(val: JsU64) -> u64 {
-    #[cfg(feature = "browser")]
-    {
-        val
-    }
-    #[cfg(feature = "nodejs")]
-    {
-        let (signed, value, lossless) = val.get_u64();
-        assert!(
-            !signed && lossless,
-            "BigInt value is outside the u64 range (0..2^64); \
-             got signed={signed}, lossless={lossless}"
-        );
-        value
-    }
+pub fn js_u64_to_u64<T: JsU64Arg>(val: T) -> Result<u64, JsErr> {
+    val.into_u64()
 }
 
 /// Converts a `u64` to a [`JsU64`] for return to JS.

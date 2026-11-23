@@ -33,7 +33,10 @@ type aliases and helpers so most code is written once. Key aliases:
   carrying a stable machine-readable `code` (see
   [Error Handling](#error-handling-across-the-boundary)).
 - `JsU64`: `u64` on browser, `napi::bindgen_prelude::BigInt` on nodejs; both
-  surface as a JS `BigInt`. Convert with `js_u64_to_u64` / `u64_to_js_u64`.
+  surface as a JS `BigInt`. `js_export` types a browser argument as `js_sys::BigInt`
+  (and a `Vec<JsU64>` argument as `Vec<u64>`). Convert with `js_u64_to_u64`, which
+  returns a `Result` and rejects values outside `0..2^64` (propagate with `?`), and
+  `u64_to_js_u64`.
 - `JsBytes`: `js_sys::Uint8Array` on browser, `napi::bindgen_prelude::Buffer`
   on nodejs. Convert with `bytes_to_js` / `js_to_bytes` (`js_to_bytes` is
   platform-agnostic; only `bytes_to_js` splits).
@@ -67,7 +70,7 @@ The public API is exposed with the custom `#[js_export]` proc-macro from the
 the dual `wasm_bindgen` (browser) and `napi` (Node.js) annotations from one
 attribute, forwarding `constructor` / `js_name` / `getter`. When a signature
 contains `JsU64`, the macro splits the impl per platform, replacing `JsU64` with
-`u64` (browser) or `BigInt` (nodejs), so `JsU64` is resolved by the macro and
+`js_sys::BigInt` for arguments and `u64` for returns (browser) or `BigInt` (nodejs), so `JsU64` is resolved by the macro and
 does not need to be imported in the annotated module. Raw `#[wasm_bindgen]` is
 reserved for browser-only members (e.g. synchronous getters that cannot be async).
 
