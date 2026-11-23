@@ -44,6 +44,7 @@ export {
   ProposedBatch,
   ProvenBatch,
   ProvenTransaction,
+  ProtocolConfig,
   PswapLineageRecord,
   PswapLineageState,
   RawOutputNote,

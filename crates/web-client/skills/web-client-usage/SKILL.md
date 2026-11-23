@@ -178,6 +178,13 @@ reports before the first sync. Before that sync, a client created without it
 rejects `feeFaucetId()` and asks you to sync first; a mock client reports its
 mock chain's own faucet.
 
+`client.protocolConfig()` returns that configuration as a `ProtocolConfig`: its
+`feeFaucetId()` is the faucet `client.feeFaucetId()` reports after a sync, and
+its `commitment()` is what block headers carry as `protocolConfigCommitment()`.
+It rejects with "the network's protocol configuration is not known yet" until
+the first sync stores the configuration; a mock client is seeded with its
+chain's.
+
 Both accept the same `ClientOptions` for overrides:
 
 ```typescript
@@ -612,9 +619,10 @@ builds exactly the code the Rust client builds:
   builds a network account's auth. Each `new NoteScriptFee(noteScript.root(), amount)`
   pairs an allowlisted note script root with the fee the account charges to
   consume notes running it (zero is valid). `feeFaucetId` must be the chain's
-  own fee faucet, `client.feeFaucetId()`: the node never runs network
-  transactions for an account whose fee asset differs from the chain's protocol
-  configuration, and the client is not told - the notes just sit unconsumed.
+  own fee faucet, `client.feeFaucetId()` (the faucet `client.protocolConfig()`
+  names): the node never runs network transactions for an account whose fee
+  asset differs from the chain's protocol configuration, and the client is not
+  told - the notes just sit unconsumed.
   It returns an **array**; add every element to the builder:
 
   ```typescript
@@ -648,10 +656,11 @@ check, because another registration can consume the code between calls.
 
 Since protocol 0.16 the verification fee is paid inside the account's auth
 procedure, which reads it from the transaction's auth argument. Fees settle in
-the chain's native fee asset at rate 1/1, so there is nothing for a caller to
-convert - `miden-client` builds and commits the conversion info. The one thing
-it will not invent is the salt the commitment is made under, because every
-multisig flavour reuses that salt as its transaction summary's replay guard.
+the chain's native fee asset (the one `client.protocolConfig()` names) at rate
+1/1, so there is nothing for a caller to convert - `miden-client` builds and
+commits the conversion info. The one thing it will not invent is the salt the
+commitment is made under, because every multisig flavour reuses that salt as
+its transaction summary's replay guard.
 
 Every `client.transactions` operation that builds its own request already
 declares a salt. The paths that take a **request from you** do not:

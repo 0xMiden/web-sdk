@@ -4,6 +4,7 @@
 
 ### Enhancements
 
+* [FEATURE][web] `MidenClient.protocolConfig()` and `WebClient.protocolConfig()` return the connected network's `ProtocolConfig`, with `feeFaucetId()` and `commitment()`, so a dApp reads the fee asset from the network instead of a hardcoded table. It rejects until the first sync has stored the configuration; `feeFaucetId()` is unchanged ([#570](https://github.com/0xMiden/web-sdk/issues/570)).
 * [FEATURE][web] `Note.detailsCommitment()`, `OutputNote.detailsCommitment()`, `NoteDetails.detailsCommitment()` and `InputNoteRecord.detailsCommitment()` return the note's details commitment (recipient + assets, without metadata). Wallets can use this for B2AGG exit hashing instead of recomputing the Poseidon2 merge by hand ([#454](https://github.com/0xMiden/web-sdk/issues/454)).
 
 * [FEATURE][web] `accounts.create` accepts `auth: "none"` for a contract, building a NoAuth account with `AccountBuilder.withNoAuthComponent()` and storing no key. A missing `auth` is still an error ([#403](https://github.com/0xMiden/web-sdk/issues/403)).
