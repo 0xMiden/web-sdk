@@ -27,8 +27,9 @@ test("exportNames lists named, aliased, declared and star re-exports", (t) => {
       "const hidden = 1;",
       "export { hidden as renamed };",
     ].join("\n"),
-    "x.js": "export const a = 1; export const b = 2; export const notReexported = 3;",
-    "y.js": 'export const fromStar = 1; export default 1;',
+    "x.js":
+      "export const a = 1; export const b = 2; export const notReexported = 3;",
+    "y.js": "export const fromStar = 1; export default 1;",
   });
   assert.deepEqual(
     [...exportNames(join(root, "entry.js"))].sort(),
@@ -41,10 +42,10 @@ test("exportNames survives a re-export cycle", (t) => {
     "a.js": 'export * from "./b.js"; export const fromA = 1;',
     "b.js": 'export * from "./a.js"; export const fromB = 1;',
   });
-  assert.deepEqual(
-    [...exportNames(join(root, "a.js"))].sort(),
-    ["fromA", "fromB"]
-  );
+  assert.deepEqual([...exportNames(join(root, "a.js"))].sort(), [
+    "fromA",
+    "fromB",
+  ]);
 });
 
 test("collectImports records original names and separates type-only imports", (t) => {
@@ -57,16 +58,17 @@ test("collectImports records original names and separates type-only imports", (t
       'import { unrelated } from "other-package";',
     ].join("\n"),
   });
-  const got = collectImports([join(root, "one.ts")], [
-    "@miden-sdk/miden-sdk",
-    "@miden-sdk/react",
-  ]);
+  const got = collectImports(
+    [join(root, "one.ts")],
+    ["@miden-sdk/miden-sdk", "@miden-sdk/react"]
+  );
   const sdk = got.get("@miden-sdk/miden-sdk");
   assert.deepEqual([...sdk.values].sort(), ["MidenClient", "WasmWebClient"]);
-  assert.deepEqual(
-    [...sdk.types].sort(),
-    ["AccountId", "MidenClient", "WasmWebClient"]
-  );
+  assert.deepEqual([...sdk.types].sort(), [
+    "AccountId",
+    "MidenClient",
+    "WasmWebClient",
+  ]);
   const lazy = got.get("@miden-sdk/miden-sdk/lazy");
   assert.deepEqual([...lazy.values], ["Word"]);
   assert.deepEqual([...lazy.types].sort(), ["Note", "Word"]);
