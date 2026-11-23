@@ -299,8 +299,8 @@ export const ProcedureThreshold =
   /* @__PURE__ */ _reexport("ProcedureThreshold");
 export const Program = /* @__PURE__ */ _reexport("Program");
 export const ProposedBatch = /* @__PURE__ */ _reexport("ProposedBatch");
-export const ProvenBatch = /* @__PURE__ */ _reexport("ProvenBatch");
 export const ProtocolConfig = /* @__PURE__ */ _reexport("ProtocolConfig");
+export const ProvenBatch = /* @__PURE__ */ _reexport("ProvenBatch");
 export const ProvenTransaction = /* @__PURE__ */ _reexport("ProvenTransaction");
 export const PswapLineageRecord =
   /* @__PURE__ */ _reexport("PswapLineageRecord");
