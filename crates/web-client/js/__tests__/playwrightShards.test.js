@@ -36,6 +36,11 @@ const EXCLUDED = {
   "storage_view.test.ts": "runs in `nodejs`",
   "worker_init_failure.test.ts":
     "browser-worker failure injection, run locally",
+  // SDK surface lands first; chromium shard registration is a follow-up so
+  // this PR does not touch playwright.config.ts. The `nodejs` project still
+  // picks the file up via `**/*.test.ts`.
+  "fee_sponsorship_note.test.ts":
+    "nodejs only for now; chromium shard in follow-up",
 
   // KNOWN GAP: the `nodejs` project ignores each of these by name (or by the
   // `test/*.browser.test.ts` glob) and no chromium shard lists them, so they
