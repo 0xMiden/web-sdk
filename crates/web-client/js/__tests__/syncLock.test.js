@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { hasWebLocks, withSyncLock } from "../syncLock.js";
+import {
+  coalesceRun,
+  hasWebLocks,
+  runUnderLock,
+  withSyncLock,
+} from "../syncLock.js";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -336,5 +341,114 @@ describe("withSyncLock — Web-Locks path", () => {
     expect(fn).toHaveBeenCalledTimes(1);
     // Coalesced: only one underlying lock request.
     expect(requested).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── a run that never settles ──────────────────────────────────────────────────
+
+describe("coalesceRun — age bound on joining", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("starts its own run once the registered one is older than maxJoinAgeMs", async () => {
+    vi.useFakeTimers();
+    const registry = new Map();
+    const stuck = new Promise(() => {});
+    const start = vi.fn(() => stuck);
+
+    coalesceRun("db", "syncState", start, registry, undefined, 1000);
+    vi.advanceTimersByTime(999);
+    coalesceRun("db", "syncState", start, registry, undefined, 1000);
+    expect(start).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(2);
+    const fresh = Promise.resolve("fresh");
+    start.mockReturnValueOnce(fresh);
+    const joined = coalesceRun(
+      "db",
+      "syncState",
+      start,
+      registry,
+      undefined,
+      1000
+    );
+    expect(start).toHaveBeenCalledTimes(2);
+    await expect(joined).resolves.toBe("fresh");
+  });
+});
+
+describe("runUnderLock — bound on waiting for the Web Lock", () => {
+  let origNavigator;
+
+  beforeEach(() => {
+    origNavigator = globalThis.navigator;
+  });
+
+  afterEach(() => {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: origNavigator,
+    });
+  });
+
+  // A lock that one holder keeps until released; waiters leave the queue when
+  // their signal aborts, as in a browser.
+  function installHeldLock() {
+    const waiters = [];
+    let held = true;
+    const grant = () => {
+      const next = waiters.shift();
+      if (next) next();
+      else held = false;
+    };
+    const request = (_name, { signal }, fn) =>
+      new Promise((resolve, reject) => {
+        const run = () => fn().then(resolve, reject).finally(grant);
+        if (!held) {
+          held = true;
+          run();
+          return;
+        }
+        const entry = run;
+        waiters.push(entry);
+        signal?.addEventListener("abort", () => {
+          const at = waiters.indexOf(entry);
+          if (at >= 0) waiters.splice(at, 1);
+          reject(signal.reason);
+        });
+      });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { locks: { request } },
+    });
+    return { release: grant };
+  }
+
+  const outcome = (promise) =>
+    Promise.race([
+      promise.then(
+        () => "resolved",
+        (error) => error.message
+      ),
+      new Promise((resolve) => setTimeout(() => resolve("pending"), 200)),
+    ]);
+
+  it("rejects a waiter whose lock never frees, without running its work", async () => {
+    installHeldLock();
+    const fn = vi.fn(async () => "ran");
+
+    await expect(outcome(runUnderLock("db", fn, 20))).resolves.toMatch(
+      /sync lock/i
+    );
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("lets a later caller take the lock once the holder releases", async () => {
+    const { release } = installHeldLock();
+    await outcome(runUnderLock("db", async () => "ignored", 20));
+
+    release();
+    await expect(runUnderLock("db", async () => "ok", 20)).resolves.toBe("ok");
   });
 });
