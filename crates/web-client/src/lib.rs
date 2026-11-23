@@ -940,6 +940,7 @@ fn code_from_error(err: &(dyn Error + 'static)) -> Option<&'static str> {
         return match client_error {
             ClientError::AccountNotFoundOnChain(_) => Some("ACCOUNT_NOT_FOUND_ON_CHAIN"),
             ClientError::AccountAlreadyTracked(_) => Some("ACCOUNT_ALREADY_TRACKED"),
+            ClientError::AccountIsPrivate(_) => Some("ACCOUNT_IS_PRIVATE"),
             ClientError::AccountNotAllowlisted(_) => Some("ACCOUNT_NOT_ALLOWLISTED"),
             ClientError::AccountAlreadyAllowed(_) => Some("ACCOUNT_ALREADY_ALLOWED"),
             // The node's verdict on a registration travels inside the RPC error rather than as

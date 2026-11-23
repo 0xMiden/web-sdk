@@ -239,13 +239,16 @@ The two shipped providers are the best worked examples of this contract: read `p
 external-keystore client. There are two paths.
 
 **Fast path - `importAccountId` is set.** The builder is skipped and `client.importAccountById()`
-runs. It tolerates exactly two machine-readable error codes and rethrows everything else
+runs. It tolerates exactly three machine-readable error codes and rethrows everything else
 (`signerAccount.ts:85-89`):
 
 - `ACCOUNT_NOT_FOUND_ON_CHAIN` - a brand-new account not yet registered on-chain. The dApp still
   renders, but **the account is not tracked locally**, so `useAccount` returns `null` and no
   transaction can be built against it until a later `importAccountById` succeeds. `syncState()`
   only refreshes accounts the store already tracks; it never discovers one by ID.
+- `ACCOUNT_IS_PRIVATE` - the wallet's account is private (Bread's default), so it cannot be imported
+  from the network. Handled like a fresh account: the provider is ready and `signerAccountId` is
+  set, but the account is not tracked locally.
 - `ACCOUNT_ALREADY_TRACKED` - already imported locally; harmless.
 
 **Slow path - build from the commitment** (`signerAccount.ts:105-123`):

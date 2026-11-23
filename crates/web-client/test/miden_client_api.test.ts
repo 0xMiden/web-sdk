@@ -219,6 +219,28 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     }
   );
 
+  mockTest(
+    "accounts.import of a private id reports ACCOUNT_IS_PRIVATE",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const wallet = await client.accounts.create();
+        let code = null;
+        try {
+          await client.accounts.import(wallet.id().toString());
+        } catch (error) {
+          code = error.code ?? null;
+        }
+        return {
+          isPublic: wallet.id().isPublic(),
+          code,
+        };
+      });
+      expect(result.isPublic).toBe(false);
+      expect(result.code).toBe("ACCOUNT_IS_PRIVATE");
+    }
+  );
+
   mockTest("accounts.list returns created accounts", async ({ page }) => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.createMock();
