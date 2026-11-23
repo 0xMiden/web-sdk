@@ -128,4 +128,18 @@ describe("a worker that fails", () => {
     expect(worker.terminate).toHaveBeenCalledTimes(1);
     expect(console.error).not.toHaveBeenCalled();
   });
+
+  it("rejects with WebClient terminated after terminate() and keeps the latched failure", async () => {
+    const { client, worker } = createClient();
+    becomeReady(worker);
+    worker.emit("error", { message: "boom" });
+    const failure = client.workerFailure;
+    expect(failure?.message).toMatch(/worker failed.*boom/i);
+    client.terminate();
+
+    await expect(
+      outcome(client.callMethodWithWorker("getAccounts"))
+    ).resolves.toBe("WebClient terminated");
+    expect(client.workerFailure).toBe(failure);
+  });
 });

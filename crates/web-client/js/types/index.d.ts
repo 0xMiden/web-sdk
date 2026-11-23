@@ -259,7 +259,8 @@ export declare class WasmWebClient extends WasmWebClientBase {
   onStateChanged(callback: (event: any) => void): (() => void) | undefined;
   /**
    * The error that latched this client's worker as dead, or `undefined` until
-   * the worker fails. Every later worker call throws this same Error.
+   * the worker fails. Every later worker call throws this same Error until
+   * terminate(). After terminate(), those calls throw "WebClient terminated".
    */
   readonly workerFailure: Error | undefined;
   /**

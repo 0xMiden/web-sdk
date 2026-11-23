@@ -1822,8 +1822,9 @@ class WebClient {
 
   /**
    * Latches the worker as dead: stops it, rejects `ready` and every pending
-   * request, and makes every later worker call throw the same error. The
-   * worker never recovers, so a late message from it is not answered.
+   * request, and makes every later worker call throw the same error until
+   * terminate(). After terminate(), those calls throw "WebClient terminated".
+   * The worker never recovers, so a late message from it is not answered.
    * @private
    */
   _failWorker(reason) {
@@ -1843,7 +1844,8 @@ class WebClient {
 
   /**
    * The error that latched this client's worker as dead, or undefined until
-   * the worker fails. Every later worker call throws this same Error.
+   * the worker fails. Every later worker call throws this same Error until
+   * terminate(). After terminate(), those calls throw "WebClient terminated".
    * @returns {Error | undefined}
    */
   get workerFailure() {
