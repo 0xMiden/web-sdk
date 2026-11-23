@@ -447,7 +447,8 @@ describe("every observed call site names its operation", () => {
   it("passes an op name from every WebClient call site", () => {
     const sites = serializeCallSites().filter((s) => s.scope === "WebClient");
     expect(sites.length).toBeGreaterThan(0);
-    expect(sites.map((s) => s.argumentCount)).toEqual(sites.map(() => 2));
+    // The op name is the second argument; a store-locked call adds a third.
+    expect(sites.filter((s) => s.argumentCount < 2)).toEqual([]);
   });
 
   it("passes no op name from the MockWebClient call sites", () => {
