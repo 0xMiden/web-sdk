@@ -309,7 +309,10 @@ describe("withSyncLock — Web-Locks path", () => {
 
     expect(result).toBe("ok");
     expect(calls).toEqual([
-      { name: `miden-sync-${dbId}`, opts: { mode: "exclusive" } },
+      {
+        name: `miden-sync-${dbId}`,
+        opts: { mode: "exclusive", signal: expect.any(AbortSignal) },
+      },
     ]);
   });
 

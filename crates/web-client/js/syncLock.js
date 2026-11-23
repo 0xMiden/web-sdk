@@ -15,6 +15,9 @@
  *   It coalesces in a registry of its own client, so a sync joins only a
  *   pending run of the same sync on that client, never another client's, and
  *   only while no other call has been queued on that client since the run
+ * - A run stays joinable for `MAX_JOIN_AGE_MS`, and a call waits for the
+ *   lock for at most `LOCK_WAIT_TIMEOUT_MS`, so one sync that never settles
+ *   cannot capture every later sync or leave its waiters hanging
  */
 
 /**
@@ -28,12 +31,23 @@ export function hasWebLocks() {
   );
 }
 
+// How long a run stays joinable. A caller arriving later starts a run of its
+// own, queued behind the lock, instead of waiting on one that may be stuck.
+export const MAX_JOIN_AGE_MS = 5 * 60 * 1000;
+
+// How long a call waits to be granted the Web Lock before it rejects. Aborting
+// a request affects only a waiter, never a holder.
+export const LOCK_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
+
 // Coalesce map keyed by `${dbId}:${methodId}` -> in-flight promise, used by
 // `withSyncLock`. A WebClient passes `coalesceRun` a map of its own instead.
 const inFlight = new Map();
 
 // The `epoch()` each run registered with one was started in; see `coalesceRun`.
 const startedIn = new WeakMap();
+
+// When each registered run started, for `MAX_JOIN_AGE_MS`.
+const startedAt = new WeakMap();
 
 // Per-dbId promise tail used to serialize cross-method calls when Web Locks
 // are unavailable. Each new task chains onto the current tail so different
@@ -64,10 +78,12 @@ function coalesceKey(dbId, methodId) {
  *
  * @param {string} dbId
  * @param {() => Promise<T>} fn
+ * @param {number} [waitTimeoutMs] - How long to wait for the Web Lock before
+ *   rejecting. Not applied to the in-process fallback.
  * @returns {Promise<T>}
  * @template T
  */
-export function runUnderLock(dbId, fn) {
+export function runUnderLock(dbId, fn, waitTimeoutMs = LOCK_WAIT_TIMEOUT_MS) {
   if (!hasWebLocks()) {
     const prev = fallbackTails.get(dbId) ?? Promise.resolve();
     const next = prev.catch(() => {}).then(fn);
@@ -79,11 +95,20 @@ export function runUnderLock(dbId, fn) {
     });
     return next;
   }
-  return navigator.locks.request(
-    `miden-sync-${dbId}`,
-    { mode: "exclusive" },
-    fn
-  );
+  const options = { mode: "exclusive" };
+  if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) {
+    options.signal = AbortSignal.timeout(waitTimeoutMs);
+  }
+  return navigator.locks
+    .request(`miden-sync-${dbId}`, options, fn)
+    .catch((error) => {
+      if (options.signal?.aborted && error === options.signal.reason) {
+        throw new Error(
+          `Timed out after ${waitTimeoutMs} ms waiting for the sync lock of ${dbId}`
+        );
+      }
+      throw error;
+    });
 }
 
 /**
@@ -103,17 +128,30 @@ export function runUnderLock(dbId, fn) {
  *   Defaults to the module-wide one `withSyncLock` uses.
  * @param {() => number} [epoch] - Moves once a joiner would no longer settle
  *   after every call made before it. Omitted, a run is joinable until it
- *   settles.
+ *   settles or outlives `maxJoinAgeMs`.
+ * @param {number} [maxJoinAgeMs] - A run older than this is not joined.
  * @returns {Promise<T>}
  * @template T
  */
-export function coalesceRun(dbId, methodId, start, registry = inFlight, epoch) {
+export function coalesceRun(
+  dbId,
+  methodId,
+  start,
+  registry = inFlight,
+  epoch,
+  maxJoinAgeMs = MAX_JOIN_AGE_MS
+) {
   const key = coalesceKey(dbId, methodId);
 
   let work = registry.get(key);
-  if (!work || (epoch && startedIn.get(work) !== epoch())) {
+  if (
+    !work ||
+    (epoch && startedIn.get(work) !== epoch()) ||
+    Date.now() - startedAt.get(work) > maxJoinAgeMs
+  ) {
     work = start();
     registry.set(key, work);
+    startedAt.set(work, Date.now());
     if (epoch) startedIn.set(work, epoch());
     // Swallow on the derived promise so a rejection here doesn't surface as
     // an unhandled rejection; the caller still sees the error through `work`.
