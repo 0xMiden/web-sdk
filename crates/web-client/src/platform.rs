@@ -211,8 +211,10 @@ impl<T: Send> AsyncCell<T> {
 ///
 /// Both platforms expose this as a JavaScript `BigInt`. See `js-export-macro` for why
 /// Node.js uses `napi::bindgen_prelude::BigInt` instead of `u64`. For return values the browser
-/// build uses `u64`; for arguments `js-export-macro` swaps in `js_sys::BigInt` so the range can
-/// be checked, since wasm-bindgen reduces a bare `u64` argument modulo 2^64 without error.
+/// build uses `u64`; for arguments, including each element of a `Vec<JsU64>`,
+/// `js-export-macro` swaps in `js_sys::BigInt` so the range can be checked. A bare `u64`
+/// element is what `BigUint64Array.set` reduces, and wasm-bindgen reduces a bare `u64`
+/// argument modulo 2^64 without error.
 #[cfg(feature = "browser")]
 pub type JsU64 = u64;
 
@@ -222,14 +224,6 @@ pub type JsU64 = napi::bindgen_prelude::BigInt;
 /// A JS-facing unsigned 64-bit argument that can be checked against the `0..2^64` range.
 pub trait JsU64Arg {
     fn into_u64(self) -> Result<u64, JsErr>;
-}
-
-/// Elements of a `Vec<u64>` argument arrive as a `BigUint64Array` on the browser, which cannot
-/// hold an out-of-range value.
-impl JsU64Arg for u64 {
-    fn into_u64(self) -> Result<u64, JsErr> {
-        Ok(self)
-    }
 }
 
 #[cfg(feature = "browser")]

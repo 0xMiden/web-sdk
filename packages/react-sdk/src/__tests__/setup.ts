@@ -374,9 +374,17 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     },
     Word: Object.assign(
       class Word {
-        values: BigUint64Array;
-        constructor(values: BigUint64Array) {
-          this.values = values;
+        values: bigint[];
+        constructor(values: ArrayLike<bigint>) {
+          const scanned = Array.from(values, (item) => BigInt(item));
+          for (const value of scanned) {
+            if (value < 0n || value >= 2n ** 64n) {
+              throw new Error(
+                "BigInt value is outside the u64 range (0..2^64)"
+              );
+            }
+          }
+          this.values = scanned;
         }
         toU64s() {
           return Array.from(this.values);

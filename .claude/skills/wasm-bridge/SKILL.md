@@ -34,9 +34,9 @@ type aliases and helpers so most code is written once. Key aliases:
   [Error Handling](#error-handling-across-the-boundary)).
 - `JsU64`: `u64` on browser, `napi::bindgen_prelude::BigInt` on nodejs; both
   surface as a JS `BigInt`. `js_export` types a browser argument as `js_sys::BigInt`
-  (and a `Vec<JsU64>` argument as `Vec<u64>`). Convert with `js_u64_to_u64`, which
-  returns a `Result` and rejects values outside `0..2^64` (propagate with `?`), and
-  `u64_to_js_u64`.
+  (and a `Vec<JsU64>` argument element-wise as `js_sys::BigInt`). Convert with
+  `js_u64_to_u64`, which returns a `Result` and rejects values outside `0..2^64`
+  (propagate with `?`), and `u64_to_js_u64`.
 - `JsBytes`: `js_sys::Uint8Array` on browser, `napi::bindgen_prelude::Buffer`
   on nodejs. Convert with `bytes_to_js` / `js_to_bytes` (`js_to_bytes` is
   platform-agnostic; only `bytes_to_js` splits).
