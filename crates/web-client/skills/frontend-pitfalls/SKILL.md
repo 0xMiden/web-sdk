@@ -119,7 +119,9 @@ which one you are relying on tells you what a second browser tab can still do to
    call takes its place on the layer 1 chain when it is made and requests the lock
    when its turn comes (chain, then lock), so call order, `waitForIdle()` and
    `terminate()` treat it like any other call. While it waits for another client's lock,
-   later calls on its own client wait behind it. A call of a sync joins its client's
+   later calls on its own client wait behind it. Such a call waits at most 10 minutes
+   from when it is made, then rejects with `Timed out after <ms> ms waiting for the sync lock of <store>`
+   and its work never runs. A call of a sync joins its client's
    pending run of the *same* sync only while no other call has been queued on that client
    since the run; after one has, it starts a run of its own behind that call, so it never
    settles ahead of a call made before it. Every other call, the same sync on another
@@ -131,7 +133,8 @@ which one you are relying on tells you what a second browser tab can still do to
    lock the callback holds, and every later call on that client waits behind it. It is
    also any lock whose holder is waiting on such a call, such as `@miden-sdk/react`'s
    `runExclusive`, which `MidenProvider` holds across its init sync, or an application
-   mutex around `_withInnerWebClient`. Every client on the store then stops. With no Web
+   mutex around `_withInnerWebClient`. Every client on the store stalls until the
+   waiting store-locked call's bound runs out and it rejects. With no Web
    Locks API it degrades to an in-process per-database chain. Two writes take no lock:
    the free `importStore` function, which replaces a whole store, so run it only while no
    client uses that store; and the genesis block header `createClient` stores in a store
