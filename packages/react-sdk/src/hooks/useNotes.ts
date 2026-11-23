@@ -1,22 +1,45 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import {
-  captureClientCurrency,
   useMidenStore,
   useNotesStore,
   useConsumableNotesStore,
   useSyncStateStore,
 } from "../store/MidenStore";
-import { isConsumableNow, NoteFilter } from "@miden-sdk/miden-sdk";
+import { captureClientReadGuard } from "../store/clientReadGuard";
+import {
+  isConsumableNow,
+  isStandardPayment,
+  NoteFilter,
+} from "@miden-sdk/miden-sdk";
 import type { NotesFilter, NotesResult, NoteSummary } from "../types";
 import { getNoteSummary } from "../utils/notes";
 import { useAssetMetadata } from "./useAssetMetadata";
 import { parseAccountId } from "../utils/accountParsing";
-import { normalizeAccountId } from "../utils/accountId";
 import { getNoteFilterType } from "../utils/noteFilters";
+
+// Senders are matched by account id, not by display string: the bech32 form
+// carries the network of the provider's client, which a sender filter computed
+// before that client existed would not.
+const accountIdKey = (value: string): string => {
+  let id: ReturnType<typeof parseAccountId> | undefined;
+  try {
+    id = parseAccountId(value);
+    return id.toString();
+  } catch {
+    return value;
+  } finally {
+    (id as { free?: () => void } | undefined)?.free?.();
+  }
+};
 
 /**
  * Hook to list notes.
+ *
+ * `consumableNotes` holds only payments (P2ID and P2IDE notes) consumable now,
+ * the set `notes.listAvailable` returns: another trader's public PSWAP order is
+ * consumable by any account holding the asset it requests, and consuming it
+ * would fill the order from this account's vault.
  *
  * @param options - Optional filter options
  *
@@ -77,13 +100,15 @@ export function useNotes(options?: NotesFilter): NotesResult {
   const { lastSyncTime } = useSyncStateStore();
 
   const [error, setError] = useState<Error | null>(null);
+  const latestRequestRef = useRef(0);
 
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
 
-    const isCurrent = captureClientCurrency(client);
+    const isCurrent = captureClientReadGuard(client);
     if (!isCurrent()) return;
 
+    const request = ++latestRequestRef.current;
     const loadingToken = beginLoadingNotes();
     setError(null);
 
@@ -94,34 +119,38 @@ export function useNotes(options?: NotesFilter): NotesResult {
       const fetchedNotes = await client.getInputNotes(filter);
       if (!isCurrent()) return;
 
-      // Block-locked notes come back from the screener but cannot be consumed
-      // yet, so they are not "consumable" here either - the same rule
-      // notes.listAvailable and transactions.consumeAll apply.
+      // Payments consumable now: the rule notes.listAvailable and
+      // transactions.consumeAll apply. The screener also returns block-locked
+      // notes, and any note a trial consume succeeds for, such as another
+      // trader's public PSWAP order, which consuming would fill from the
+      // account's vault.
       let fetchedConsumable;
       if (accountKey !== "default") {
         const accountIdObj = parseAccountId(accountKey);
         const accountIdHex = accountIdObj.toString();
         const consumable = await client.getConsumableNotes(accountIdObj);
         if (!isCurrent()) return;
-        fetchedConsumable = consumable.filter((record) =>
-          isConsumableNow(record, accountIdHex)
+        fetchedConsumable = consumable.filter(
+          (record) =>
+            isConsumableNow(record, accountIdHex) && isStandardPayment(record)
         );
       } else {
         const consumable = await client.getConsumableNotes();
         if (!isCurrent()) return;
-        fetchedConsumable = consumable.filter((record) =>
-          isConsumableNow(record)
+        fetchedConsumable = consumable.filter(
+          (record) => isConsumableNow(record) && isStandardPayment(record)
         );
       }
 
+      if (!isCurrent()) return;
       // Smart refetch: only update store if note IDs changed (prevents unnecessary re-renders)
       setNotesIfChanged(fetchedNotes, filterKey);
       setConsumableNotesIfChanged(fetchedConsumable, accountKey);
     } catch (err) {
-      if (!isCurrent()) return;
+      if (!isCurrent() || latestRequestRef.current !== request) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      endLoadingNotes(loadingToken);
+      if (isCurrent()) endLoadingNotes(loadingToken);
     }
   }, [
     client,
@@ -169,15 +198,11 @@ export function useNotes(options?: NotesFilter): NotesResult {
     [assetMetadata]
   );
 
-  // Normalize sender once outside the loop to avoid per-note WASM allocations
-  const normalizedSender = useMemo(() => {
-    if (!options?.sender) return null;
-    try {
-      return normalizeAccountId(options.sender);
-    } catch {
-      return options.sender;
-    }
-  }, [options?.sender]);
+  // Resolve the sender once outside the loop to avoid per-note WASM allocations
+  const senderId = useMemo(
+    () => (options?.sender ? accountIdKey(options.sender) : null),
+    [options?.sender]
+  );
 
   // Serialize excludeIds to a stable string key so array literals don't defeat memoization
   const excludeIdsKey = useMemo(() => {
@@ -185,23 +210,19 @@ export function useNotes(options?: NotesFilter): NotesResult {
     return [...options.excludeIds].sort().join("\0");
   }, [options?.excludeIds]);
 
-  // Helper: normalize a sender string with a cache to avoid repeated WASM allocations.
-  // normalizeAccountId calls parseAccountId (WASM) + toBech32 per invocation.
+  // Helper: resolve each sender string once per pass; parseAccountId is a WASM
+  // call per invocation.
   const filterBySender = useCallback(
     (summaries: NoteSummary[], target: string): NoteSummary[] => {
       const cache = new Map<string, string>();
       return summaries.filter((s) => {
         if (!s.sender) return false;
-        let normalized = cache.get(s.sender);
-        if (normalized === undefined) {
-          try {
-            normalized = normalizeAccountId(s.sender);
-          } catch {
-            normalized = s.sender;
-          }
-          cache.set(s.sender, normalized);
+        let id = cache.get(s.sender);
+        if (id === undefined) {
+          id = accountIdKey(s.sender);
+          cache.set(s.sender, id);
         }
-        return normalized === target;
+        return id === target;
       });
     },
     []
@@ -213,8 +234,8 @@ export function useNotes(options?: NotesFilter): NotesResult {
       .map((note) => getNoteSummary(note, getMetadata))
       .filter(Boolean) as NoteSummary[];
 
-    if (normalizedSender) {
-      summaries = filterBySender(summaries, normalizedSender);
+    if (senderId) {
+      summaries = filterBySender(summaries, senderId);
     }
 
     if (excludeIdsKey) {
@@ -223,15 +244,15 @@ export function useNotes(options?: NotesFilter): NotesResult {
     }
 
     return summaries;
-  }, [notes, getMetadata, normalizedSender, excludeIdsKey, filterBySender]);
+  }, [notes, getMetadata, senderId, excludeIdsKey, filterBySender]);
 
   const consumableNoteSummaries = useMemo(() => {
     let summaries = consumableNotes
       .map((note) => getNoteSummary(note, getMetadata))
       .filter(Boolean) as NoteSummary[];
 
-    if (normalizedSender) {
-      summaries = filterBySender(summaries, normalizedSender);
+    if (senderId) {
+      summaries = filterBySender(summaries, senderId);
     }
 
     if (excludeIdsKey) {
@@ -240,13 +261,7 @@ export function useNotes(options?: NotesFilter): NotesResult {
     }
 
     return summaries;
-  }, [
-    consumableNotes,
-    getMetadata,
-    normalizedSender,
-    excludeIdsKey,
-    filterBySender,
-  ]);
+  }, [consumableNotes, getMetadata, senderId, excludeIdsKey, filterBySender]);
 
   return {
     notes,

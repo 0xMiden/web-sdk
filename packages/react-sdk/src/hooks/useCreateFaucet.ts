@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
-import { captureClientCurrency, useMidenStore } from "../store/MidenStore";
+import { useMidenStore } from "../store/MidenStore";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import { AccountStorageMode } from "@miden-sdk/miden-sdk";
 import type { Account } from "@miden-sdk/miden-sdk";
 import type { CreateFaucetOptions } from "../types";
@@ -65,7 +66,7 @@ export function useCreateFaucet(): UseCreateFaucetResult {
         throw new Error("Miden client is not ready");
       }
 
-      const isCurrent = captureClientCurrency(client);
+      const isCurrent = captureClientReadGuard(client);
       if (!isCurrent()) {
         throw new Error("Miden client is not ready");
       }

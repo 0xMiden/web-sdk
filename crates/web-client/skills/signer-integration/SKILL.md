@@ -38,7 +38,7 @@ range is dropped and will not satisfy the peer.
 import { ParaSignerProvider, useParaSigner } from "@miden-sdk/para-react";
 
 <ParaSignerProvider apiKey="your-api-key" environment="PRODUCTION">
-  <MidenProvider config={{ rpcUrl: "testnet" }}>
+  <MidenProvider config={{ rpcUrl: "testnet", callbackTimeoutMs: 120000 }}>
     <App />
   </MidenProvider>
 </ParaSignerProvider>
@@ -70,6 +70,8 @@ import { TurnkeySignerProvider } from "@miden-sdk/turnkey-react";
   ...
 </TurnkeySignerProvider>
 ```
+
+`MidenProvider` accepts `callbackTimeoutMs` in its config to control how long the Web Worker waits for each external keystore callback (`sign`, `getKey` and `insertKey`). Left unset, `sign` waits without a limit so a wallet approval can take as long as needed; `getKey` and `insertKey` keep their 30-second limit. A positive value, such as `120000` for two minutes, applies the same limit to all three callbacks, rounded up to a whole millisecond. `0` removes the limit for all three. A negative, non-finite or non-number value, or one above `2147483647`, throws `TypeError` when the client is created. Callbacks use this timeout only through the Web Worker. Without a timeout, a stalled signer holds its batch or transaction and leaves later worker calls in the queue while its sign request waits indefinitely, so set a finite value if a signer can stall. See the [complete contract](https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts).
 
 `TurnkeySignerProvider` also accepts optional `customComponents` and `importAccountId` props, which it forwards into `accountConfig` (see "Custom Account Components").
 
@@ -219,14 +221,14 @@ Omit both key callbacks for a sign-only service; `MidenProvider` forwards them v
 | `accountType` | no | **`@deprecated` and ignored** - visibility comes solely from `storageMode`. Omit it |
 
 `signCb` is not handed to the client directly. `MidenProvider` keeps the latest callback in a ref
-and passes a wrapper that reads through it, so reconnecting the *same* identity hot-swaps the
-callback via the ref wrapper instead of rebuilding the client. A wrapped call
+and passes a wrapper that reads through it, so reconnecting the *same* identity reuses the client,
+whose wrapper calls the new callback through that ref, instead of rebuilding the client. A wrapped call
 made after disconnect throws `Signer is disconnected. Cannot sign.`
 (`packages/react-sdk/src/context/MidenProvider.tsx:166-212`).
 
-Two hooks additionally hard-block while a signer is mounted but disconnected: `useImportAccount`
-and `useMultiSend` call `assertSignerConnected()` and throw `Signer is disconnected. Reconnect your
-wallet to perform transactions.` (`packages/react-sdk/src/utils/errors.ts:101-107`).
+Three hooks additionally hard-block while a signer is mounted but disconnected: `useImportAccount`,
+`useMultiSend` and `useBatch` call `assertSignerConnected()` and throw `Signer is disconnected.
+Reconnect your wallet to perform transactions.` (`packages/react-sdk/src/utils/errors.ts:102-108`).
 
 The two shipped providers are the best worked examples of this contract: read `packages/para/react/src/ParaSignerProvider.tsx` or `packages/turnkey/react/src/TurnkeySignerProvider.tsx` end to end before writing your own.
 
@@ -424,7 +426,7 @@ namespace yourself rather than from the package's named export, and verify the v
 not `undefined` before passing it.
 
 
-**Do not compile equivalent MASM through `AccountComponent.compile` instead.** Doing so links the standards package *dynamically*, which yields a different `auth_tx` procedure root. `AccountComponentInterface::from_procedures` then cannot classify the account, the client treats it as having no recognised auth component, declines to attach fee conversion info, and **every transaction from the account fails on a fee-charging chain**. Nothing warns you at account-creation time; the failure arrives later, at the first send.
+**Build it with `createAuthGuardedMultisig`, the supported way to install the standard guarded multisig.** The client recognises an auth component only by its procedure root. If the account's auth procedure matches no standard component, for example MASM that differs from the bundled standard source, the client treats it as having no recognised auth component, declines to attach fee conversion info, and **every transaction from the account fails on a fee-charging chain**. Nothing warns you at account-creation time; the failure arrives later, at the first send.
 
 ## Network Accounts and Network Notes
 

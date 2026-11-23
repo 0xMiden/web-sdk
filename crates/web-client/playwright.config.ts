@@ -64,6 +64,9 @@ const ciShardProjects = process.env.CI
           "test/network_transaction.test.ts",
           "test/swap_transactions.test.ts",
           "test/pswap_transactions.test.ts",
+          // The only test that reaches the non-mock batch worker handler
+          // against a real node.
+          "test/batch.browser.test.ts",
         ],
         testIgnore: browserTestIgnore,
       },

@@ -84,6 +84,42 @@ export function isConsumableNow(record, accountIdHex) {
     );
 }
 
+const standardPaymentRoots = new WeakMap();
+
+/**
+ * True when `record`'s note runs the standard P2ID or P2IDE script.
+ *
+ * Consuming such a note only moves its assets into the consuming account, and
+ * the screener reports it consumable only for the account it pays, or for its
+ * sender once a P2IDE note can be reclaimed. Any other script can also spend
+ * from the consumer: anyone holding the requested asset can consume another
+ * trader's public PSWAP order, and doing so fills it from their vault at the
+ * creator's price. A record whose script cannot be read is not a payment.
+ *
+ * @param {ConsumableNoteRecord | InputNoteRecord} record - The note to check.
+ * @param {object} wasm - The WASM module.
+ * @returns {boolean} True for a P2ID or P2IDE note.
+ */
+export function isStandardPaymentNote(record, wasm) {
+  let roots = standardPaymentRoots.get(wasm);
+  if (!roots) {
+    roots = new Set([
+      wasm.NoteScript.p2id().root().toHex(),
+      wasm.NoteScript.p2ide().root().toHex(),
+    ]);
+    standardPaymentRoots.set(wasm, roots);
+  }
+  try {
+    const input =
+      typeof record.inputNoteRecord === "function"
+        ? record.inputNoteRecord()
+        : record;
+    return roots.has(input.details().recipient().script().root().toHex());
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Resolves a NoteVisibility string to a WASM NoteType value.
  *
@@ -240,6 +276,33 @@ export async function hashSeed(seed) {
   throw new TypeError(
     `Invalid seed type: expected string or Uint8Array, got ${typeof seed}`
   );
+}
+
+/**
+ * Check that `items` is an array of `BatchItem`s before a batch is routed.
+ *
+ * Shared by `WebClient` and `MockWebClient`, and applied before the worker
+ * branch, so a given input fails the same way whether or not a worker exists.
+ * In-thread, wasm-bindgen would reject a wrong element itself, but with a
+ * generic "array contains a value of the wrong type" naming no index; on the
+ * worker path the element would fail later, while being serialized.
+ *
+ * @param {unknown} items
+ * @param {Function} BatchItem - The `BatchItem` class of this thread's WASM
+ *   module, the same `instanceof` check wasm-bindgen applies.
+ */
+export function assertBatchItems(items, BatchItem) {
+  if (!Array.isArray(items)) {
+    throw new TypeError("expected an array of BatchItem");
+  }
+
+  // Indexed rather than `.every`, which skips holes: a sparse array would
+  // otherwise pass and reach WASM with `undefined` entries.
+  for (let index = 0; index < items.length; index++) {
+    if (!(items[index] instanceof BatchItem)) {
+      throw new TypeError(`batch item at index ${index} is not a BatchItem`);
+    }
+  }
 }
 
 /**

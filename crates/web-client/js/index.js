@@ -1,7 +1,12 @@
 import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
 import { coalesceRun, runUnderLock, withSyncLock } from "./syncLock.js";
+import {
+  serializeCallbackError,
+  validateCallbackTimeoutMs,
+} from "./callbackBridge.js";
 import { emitObservation, hasObserver, setObserver } from "./observability.js";
+import { assertBatchItems } from "./utils.js";
 import { MidenClient } from "./client.js";
 import { CompilerResource } from "./resources/compiler.js";
 import { validateNoteTransportRetryOptions } from "./utils.js";
@@ -10,6 +15,8 @@ import {
   createP2IDENote,
   buildSwapTag,
   buildNetworkNote,
+  isStandardPayment,
+  domainSeparatedSignCommitment,
   _setWasm as _setStandaloneWasm,
   _setWebClient as _setStandaloneWebClient,
 } from "./standalone.js";
@@ -33,7 +40,14 @@ export {
 export { isConsumableNow } from "./utils.js";
 export { MidenClient };
 export { CompilerResource };
-export { createP2IDNote, createP2IDENote, buildSwapTag, buildNetworkNote };
+export {
+  createP2IDNote,
+  createP2IDENote,
+  buildSwapTag,
+  buildNetworkNote,
+  isStandardPayment,
+  domainSeparatedSignCommitment,
+};
 export { StorageView, StorageResult, wordToBigInt };
 
 // Internal exports — used by integration tests that need direct access to the low-level WebClient proxy.
@@ -83,6 +97,7 @@ export {
 // borrow, so both can still lose the race above — don't add a third.
 const SYNC_METHODS = new Set([
   "buildSwapTag",
+  "endpoint",
   "lastAuthError",
   "proveBlock",
   "serializeMockChain",
@@ -127,7 +142,6 @@ const WRITE_METHODS = new Set([
   "sendPrivateNote",
   "sendPrivateOutputNote",
   "setSetting",
-  "submitNewTransactionBatch",
   "submitProvenTransaction",
   "withFeeAwareAuth",
 ]);
@@ -470,6 +484,9 @@ class WebClient {
    *   60000. Defaults to 250. With the retries, the total computed backoff
    *   `interval * (2^retries - 1)`, an omitted value taken at its default, may
    *   not exceed 120000 ms.
+   * @param {number | undefined} [callbackTimeoutMs] - The `callbackTimeoutMs`
+   *   field of `ClientOptions`: how long the Web Worker waits for each external
+   *   keystore callback. See `callbackTimeoutFor` in `callbackBridge.js`.
    * @throws {TypeError} If either retry option is out of range or their total
    *   backoff exceeds 120000 ms. Checked here, before any worker or WASM call,
    *   so every way of building a client rejects the same values.
@@ -487,7 +504,8 @@ class WebClient {
     observability,
     feeFaucetId,
     noteTransportMaxRetries,
-    noteTransportRetryIntervalMs
+    noteTransportRetryIntervalMs,
+    callbackTimeoutMs
   ) {
     validateNoteTransportRetryOptions(
       noteTransportMaxRetries,
@@ -508,6 +526,7 @@ class WebClient {
     this._feeFaucetId = feeFaucetId;
     this._noteTransportMaxRetries = noteTransportMaxRetries;
     this._noteTransportRetryIntervalMs = noteTransportRetryIntervalMs;
+    this._callbackTimeoutMs = validateCallbackTimeoutMs(callbackTimeoutMs);
     this.useWorker = useWorker !== false;
 
     // Check if Web Workers are available AND the caller didn't opt out via
@@ -602,12 +621,18 @@ class WebClient {
             }
 
             this.worker.postMessage({
+              callbackOk: true,
               callbackResult: result,
               callbackRequestId: requestId,
             });
           } catch (error) {
+            // A callback may throw any value, including one with no `.message`
+            // (a string, `{ code: 4001 }`, `null`), so send an explicit failure
+            // flag and the cloneable fields the worker needs to rebuild the
+            // error, including when causes cycle or properties are unreadable.
             this.worker.postMessage({
-              callbackError: error.message,
+              callbackOk: false,
+              callbackError: serializeCallbackError(error, callbackType),
               callbackRequestId: requestId,
             });
           }
@@ -702,11 +727,12 @@ class WebClient {
    * Concurrent calls are queued and executed one at a time.
    *
    * Wraps both the direct (in-thread) path and the worker-dispatched path.
-   * On the worker path this is redundant with the worker's own message queue,
-   * but harmless (the chain resolves immediately on the main thread once the
-   * worker's postMessage returns). On the direct path it is load-bearing —
-   * without it, concurrent main-thread callers would panic with
-   * "recursive use of an object detected" (wasm-bindgen's internal RefCell).
+   * On the worker path this is redundant with the worker's own message queue
+   * for ordering, but it is not free: the callback resolves only when the
+   * worker posts its response, so the chain slot is held for the entire
+   * round trip and later calls queue behind it. On the direct path it is
+   * load-bearing — without it, concurrent main-thread callers would panic
+   * with "recursive use of an object detected" (wasm-bindgen's RefCell).
    *
    * Re-entrancy: when invoked from inside a `_withInnerWebClient(fn)`
    * callback — detected via `_withInnerLockDepth > 0` — `fn` runs inline
@@ -947,6 +973,7 @@ class WebClient {
         this._feeFaucetId,
         this._noteTransportMaxRetries,
         this._noteTransportRetryIntervalMs,
+        this._callbackTimeoutMs,
       ],
     });
   }
@@ -992,6 +1019,8 @@ class WebClient {
    *   after a transient transport failure; see the constructor.
    * @param {number | undefined} [noteTransportRetryIntervalMs] - Delay before the first such
    *   retry; see the constructor.
+   * @param {number | undefined} [callbackTimeoutMs] - How long to wait for external keystore
+   *   callbacks. Invalid values reject before WASM initialization.
    */
   static async createClient(
     rpcUrl,
@@ -1003,7 +1032,8 @@ class WebClient {
     observability,
     feeFaucetId,
     noteTransportMaxRetries,
-    noteTransportRetryIntervalMs
+    noteTransportRetryIntervalMs,
+    callbackTimeoutMs
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -1019,7 +1049,8 @@ class WebClient {
       observability,
       feeFaucetId,
       noteTransportMaxRetries,
-      noteTransportRetryIntervalMs
+      noteTransportRetryIntervalMs,
+      callbackTimeoutMs
     );
 
     try {
@@ -1080,6 +1111,7 @@ class WebClient {
    *   after a transient transport failure; see the constructor.
    * @param {number | undefined} [noteTransportRetryIntervalMs] - Delay before the first such
    *   retry; see the constructor.
+   * @param {number | undefined} [callbackTimeoutMs] - See the constructor.
    */
   static async createClientWithExternalKeystore(
     rpcUrl,
@@ -1094,7 +1126,8 @@ class WebClient {
     observability,
     feeFaucetId,
     noteTransportMaxRetries,
-    noteTransportRetryIntervalMs
+    noteTransportRetryIntervalMs,
+    callbackTimeoutMs
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -1110,7 +1143,8 @@ class WebClient {
       observability,
       feeFaucetId,
       noteTransportMaxRetries,
-      noteTransportRetryIntervalMs
+      noteTransportRetryIntervalMs,
+      callbackTimeoutMs
     );
 
     try {
@@ -1362,6 +1396,89 @@ class WebClient {
         throw error;
       }
     }, MethodName.SUBMIT_NEW_TRANSACTION);
+  }
+
+  /**
+   * Submits transaction requests, each paired with its executing account, as
+   * one atomic batch.
+   *
+   * Every transaction is executed and proven, and the batch proof produced,
+   * inside a single WASM call, so this is forwarded to the worker to keep the
+   * main thread free for its duration. Without a worker (`useWorker: false`,
+   * or an environment with no `Worker`) it still runs in-thread and blocks.
+   *
+   * The batch is always proven by the client's built-in local prover: the
+   * batch API takes no prover, so `proverUrl` does not apply here as it does
+   * to `submit()`. And a free main thread is not a concurrent client: the call
+   * holds `_serializeWasmCall` throughout, so reads, syncs, and other
+   * forwarded methods still queue behind it. What changes is that the page
+   * keeps painting.
+   *
+   * @param {BatchItem[]} items - (account, request) pairs; the accounts may
+   *   differ from item to item.
+   * @returns {Promise<number>} The node's chain tip as of submission, not the
+   *   block the batch commits in. Sync to learn where it landed.
+   */
+  async submitNewTransactionBatch(items) {
+    return this._serializeWasmCall(async () => {
+      const wasm = await getWasmOrThrow();
+      assertBatchItems(items, wasm.BatchItem);
+      return await this._dispatchBatch(items);
+    }, MethodName.SUBMIT_NEW_TRANSACTION_BATCH);
+  }
+
+  /**
+   * Runs a validated batch in the worker when there is one, else in-thread.
+   * The caller already holds the chain slot, so this must not join the chain
+   * again: the inner call would queue behind the outer one and deadlock.
+   *
+   * @param {BatchItem[]} items - Already validated.
+   * @returns {Promise<number>}
+   */
+  async _dispatchBatch(items) {
+    if (!this.worker) {
+      return this._submitBatchInThread(items);
+    }
+
+    try {
+      // A `BatchItem` is a handle into this thread's WASM memory, so each
+      // one crosses as its parts and the worker rebuilds it.
+      const serializedItems = items.map((item) => [
+        item.accountId().toString(),
+        item.request().serialize(),
+      ]);
+      return await this.callMethodWithWorker(
+        MethodName.SUBMIT_NEW_TRANSACTION_BATCH,
+        serializedItems
+      );
+    } catch (error) {
+      console.error(
+        "INDEX.JS: Error in submitNewTransactionBatch (worker):",
+        error
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Runs a batch on this thread's WASM instance. Shared by the no-worker case
+   * above and by `MockWebClient`, which always takes this path. Like
+   * `_dispatchBatch`, it runs inside the caller's chain slot.
+   *
+   * @param {BatchItem[]} items - Already validated.
+   * @returns {Promise<number>}
+   */
+  async _submitBatchInThread(items) {
+    try {
+      const wasmWebClient = await this.getWasmWebClient();
+      return await wasmWebClient.submitNewTransactionBatch(items);
+    } catch (error) {
+      console.error(
+        "INDEX.JS: Error in submitNewTransactionBatch (in-thread):",
+        error
+      );
+      throw error;
+    }
   }
 
   async submitNewTransactionWithProver(accountId, transactionRequest, prover) {
@@ -1746,10 +1863,9 @@ class MockWebClient extends WebClient {
   }
 
   initializeWorker() {
-    // Pass `numThreads` exactly like the real INIT path: every prove runs
-    // inside the worker's own WASM instance, and rayon's pool is
-    // per-instance — without this, mock-client proving (including the
-    // integration suite) silently runs single-threaded.
+    // Pass `numThreads` exactly like the real INIT path: rayon's pool is
+    // per-instance, so without this any mock proving that reaches the worker
+    // silently runs single-threaded.
     let numThreads = 1;
     try {
       if (
@@ -2028,6 +2144,29 @@ class MockWebClient extends WebClient {
       console.error("INDEX.JS: Error in submitNewTransaction:", error);
       throw error;
     }
+  }
+
+  /**
+   * Mock clients deliberately keep batching on the main thread.
+   *
+   * The mock submit handlers round-trip the mock chain: the serialized chain
+   * travels to the worker and the mutated chain is adopted back. That works
+   * for a submitted transaction, which lands in `pending_transactions` and is
+   * serialized. A submitted *batch* lands in `pending_batches`, which
+   * `MockChain`'s serializer does not write and its deserializer resets to
+   * empty. Shipping the chain back would therefore discard the whole batch
+   * while the shared store had already recorded its per-transaction updates —
+   * the nonce would advance on a chain that never saw the batch.
+   *
+   * Overriding is required rather than merely preferable: inheriting the base
+   * dispatch would forward to the worker, since a mock client has one.
+   *
+   * Note that this keeps the batch out of its own round trip, not out of every
+   * later one — call `proveBlock()` after a mock batch, before submitting
+   * anything else.
+   */
+  async _dispatchBatch(items) {
+    return this._submitBatchInThread(items);
   }
 
   async submitNewTransactionWithProver(accountId, transactionRequest, prover) {

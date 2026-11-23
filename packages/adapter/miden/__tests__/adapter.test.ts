@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, expectTypeOf, vi, beforeEach } from "vitest";
 import {
   EventEmitter,
   WalletNotConnectedError,
@@ -18,7 +18,7 @@ vi.mock("@miden-sdk/miden-sdk", () => ({
 }));
 
 import { Note } from "@miden-sdk/miden-sdk";
-import { MidenWalletAdapter } from "../adapter";
+import { MidenWalletAdapter, type MidenWallet } from "../adapter";
 
 function createMockWallet(overrides: Record<string, any> = {}) {
   return Object.assign(new EventEmitter(), {
@@ -367,6 +367,22 @@ describe("MidenWalletAdapter", () => {
       const { adapter } = await createConnectedAdapter();
       const sig = await adapter.signBytes(new Uint8Array([1, 2]), "word");
       expect(sig).toEqual(new Uint8Array([9, 8, 7]));
+    });
+
+    it("signBytes returns the signature alone when the wallet also returns signedCommitment", async () => {
+      const { adapter, mockWallet } = await createConnectedAdapter();
+      mockWallet.signBytes.mockResolvedValueOnce({
+        signature: new Uint8Array([9, 8, 7]),
+        signedCommitment: new Uint8Array([1, 2, 3]),
+      });
+      const sig = await adapter.signBytes(new Uint8Array([1, 2]), "word");
+      expect(sig).toEqual(new Uint8Array([9, 8, 7]));
+    });
+
+    it("types signedCommitment on the provider's signBytes result", () => {
+      expectTypeOf<
+        Awaited<ReturnType<MidenWallet["signBytes"]>>
+      >().toHaveProperty("signedCommitment");
     });
 
     it("importPrivateNote returns noteId", async () => {

@@ -12,13 +12,15 @@ type AccountPrototype = {
   bech32id?: () => string;
 };
 
-const inferNetworkId = (): NetworkId => {
-  const { rpcUrl } = useMidenStore.getState().config;
-  if (!rpcUrl) {
-    return NetworkId.testnet();
+// The network comes from the endpoint the provider's client was created against.
+// A real client always reports one (testnet when none was configured), so `null`
+// means no client yet, a mock client, or an endpoint naming no known network.
+// Callers then show the raw account id rather than a wrong-network address.
+const resolveNetworkId = (): NetworkId | null => {
+  const url = useMidenStore.getState().client?.endpoint()?.toLowerCase();
+  if (!url) {
+    return null;
   }
-
-  const url = rpcUrl.toLowerCase();
   if (url.includes("devnet") || url.includes("mdev")) {
     return NetworkId.devnet();
   }
@@ -28,23 +30,28 @@ const inferNetworkId = (): NetworkId => {
   if (url.includes("testnet") || url.includes("mtst")) {
     return NetworkId.testnet();
   }
-
-  return NetworkId.testnet();
+  if (url.includes("localhost") || url.includes("127.0.0.1")) {
+    // A local node is a development chain, so it takes the devnet prefix.
+    return NetworkId.devnet();
+  }
+  return null;
 };
 
 const toBech32FromAccountId = (id: AccountId): string => {
+  const networkId = resolveNetworkId();
+  if (!networkId) {
+    return id.toString();
+  }
+
   try {
     const address = Address.fromAccountId(id, "BasicWallet");
-    return address.toBech32(inferNetworkId());
+    return address.toBech32(networkId);
   } catch {
     // Fall through to AccountId conversion or string fallback.
   }
 
   try {
-    const maybeBech32 = id.toBech32?.(
-      inferNetworkId(),
-      AccountInterface.BasicWallet
-    );
+    const maybeBech32 = id.toBech32?.(networkId, AccountInterface.BasicWallet);
     if (typeof maybeBech32 === "string") {
       return maybeBech32;
     }

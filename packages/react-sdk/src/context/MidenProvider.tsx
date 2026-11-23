@@ -9,7 +9,8 @@ import {
   type ReactNode,
 } from "react";
 import { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk";
-import { captureClientCurrency, useMidenStore } from "../store/MidenStore";
+import { useMidenStore } from "../store/MidenStore";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import type { MidenConfig } from "../types";
 import { DEFAULTS } from "../types";
 import { AsyncLock } from "../utils/asyncLock";
@@ -150,11 +151,8 @@ export function MidenProvider({
   const sync = useCallback(async () => {
     if (!client || !isReady) return;
 
-    const isCurrent = captureClientCurrency(client);
-    if (!isCurrent()) return;
-
-    const store = useMidenStore.getState();
-    if (store.sync.isSyncing) return;
+    const isCurrent = captureClientReadGuard(client);
+    if (useMidenStore.getState().sync.isSyncing || !isCurrent()) return;
 
     const syncToken = beginSync();
 
@@ -179,7 +177,7 @@ export function MidenProvider({
         error: error instanceof Error ? error : new Error(String(error)),
       });
     } finally {
-      endSync(syncToken);
+      if (isCurrent()) endSync(syncToken);
     }
   }, [client, isReady, setSyncState, beginSync, endSync]);
 
@@ -237,14 +235,13 @@ export function MidenProvider({
     if (signerIsConnected === true && signerStoreName !== null) {
       const store = useMidenStore.getState();
 
-      // Same identity reconnecting and client already exists
+      // Same identity reconnecting and client already exists: the wrapper the
+      // client was built with reads signCbRef, which the effect above keeps current.
       if (
         store.clientStoreName === signerStoreName &&
         store.client !== null &&
         signerClientRef.current === store.client
       ) {
-        // The client was created with wrappedSignCb, which reads signCbRef
-        // (kept in sync above) on every call, so there's nothing to swap.
         setSignerConnected(true);
         return;
       }
@@ -310,7 +307,8 @@ export function MidenProvider({
               undefined,
               resolvedConfig.feeFaucetId,
               resolvedConfig.noteTransportMaxRetries,
-              resolvedConfig.noteTransportRetryIntervalMs
+              resolvedConfig.noteTransportRetryIntervalMs,
+              resolvedConfig.callbackTimeoutMs
             );
             unowned = webClient;
 
@@ -339,7 +337,8 @@ export function MidenProvider({
               undefined,
               resolvedConfig.feeFaucetId,
               resolvedConfig.noteTransportMaxRetries,
-              resolvedConfig.noteTransportRetryIntervalMs
+              resolvedConfig.noteTransportRetryIntervalMs,
+              resolvedConfig.callbackTimeoutMs
             );
             unowned = webClient;
             if (cancelled) return;
@@ -368,6 +367,7 @@ export function MidenProvider({
           if (!cancelled) {
             try {
               const accounts = await webClient.getAccounts();
+              // The effect's cancelled guard is this preload's stale check.
               if (cancelled) return;
               if (useMidenStore.getState().cacheGeneration === generation) {
                 useMidenStore.getState().setAccounts(accounts);
@@ -462,7 +462,7 @@ export function MidenProvider({
 
     // The WebClient exposes onStateChanged when BroadcastChannel is available.
     const unsubscribe = client.onStateChanged?.(async () => {
-      const isCurrent = captureClientCurrency(client);
+      const isCurrent = captureClientReadGuard(client);
       if (!isCurrent()) return;
       try {
         const accounts = await client.getAccounts();

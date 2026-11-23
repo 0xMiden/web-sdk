@@ -29,6 +29,7 @@ export type MidenErrorCode =
   | "WASM_SYNC_REQUIRED"
   | "SEND_BUSY"
   | "OPERATION_BUSY"
+  | "BATCH_BUSY"
   | "STALE_CLIENT"
   | "PRIVATE_NOTE_DELIVERY_FAILED"
   | "UNKNOWN";

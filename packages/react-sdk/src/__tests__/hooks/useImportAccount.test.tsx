@@ -6,8 +6,8 @@ import { useMidenStore } from "../../store/MidenStore";
 import { AccountFile } from "@miden-sdk/miden-sdk";
 import {
   createMockAccount,
-  createMockAccountFile,
   createMockAccountHeader,
+  createMockAccountFile,
   createMockAccountId,
   createMockWebClient,
 } from "../mocks/miden-sdk";
@@ -35,6 +35,91 @@ beforeEach(() => {
 });
 
 describe("useImportAccount", () => {
+  describe.each(["file", "id", "seed"] as const)("%s publication", (type) => {
+    it.each(["reset", "replace"])(
+      "drops a pending account list after %s and publishes a current import's list",
+      async (change) => {
+        const account = createMockAccount();
+        const staleAccounts = [createMockAccountHeader("0x1000000000000001")];
+        const retainedAccounts = [
+          createMockAccountHeader("0x1000000000000002"),
+        ];
+        const currentAccounts = [createMockAccountHeader("0x1000000000000003")];
+        let resolveAccounts!: (accounts: typeof staleAccounts) => void;
+        const pendingAccounts = new Promise<typeof staleAccounts>((resolve) => {
+          resolveAccounts = resolve;
+        });
+        const getAccounts = vi.fn();
+        if (type === "file") {
+          getAccounts.mockResolvedValueOnce([]);
+        }
+        getAccounts
+          .mockReturnValueOnce(pendingAccounts)
+          .mockResolvedValue(currentAccounts);
+        const previousClient = createMockWebClient({
+          getAccount: vi.fn().mockResolvedValue(account),
+          importPublicAccountFromSeed: vi.fn().mockResolvedValue(account),
+          getAccounts,
+        });
+        const currentClient =
+          change === "reset"
+            ? previousClient
+            : createMockWebClient({
+                getAccount: vi.fn().mockResolvedValue(account),
+                importPublicAccountFromSeed: vi.fn().mockResolvedValue(account),
+                getAccounts: vi.fn().mockResolvedValue(currentAccounts),
+              });
+        const options =
+          type === "file"
+            ? {
+                type,
+                file: createMockAccountFile(account) as unknown as AccountFile,
+              }
+            : type === "id"
+              ? { type, accountId: "0ximported" }
+              : { type, seed: new Uint8Array(32) };
+        useMidenStore.getState().setClient(previousClient as any);
+        mockUseMiden.mockReturnValue({ client: previousClient, isReady: true });
+        const { result, rerender } = renderHook(() => useImportAccount());
+
+        let importing!: ReturnType<typeof result.current.importAccount>;
+        act(() => {
+          importing = result.current.importAccount(options);
+        });
+        await waitFor(() => {
+          expect(getAccounts).toHaveBeenCalledTimes(type === "file" ? 2 : 1);
+        });
+
+        act(() => {
+          if (change === "reset") {
+            useMidenStore.getState().resetInMemoryState();
+          } else {
+            useMidenStore.getState().setClient(currentClient as any);
+          }
+          useMidenStore.getState().setAccounts(retainedAccounts as any);
+          mockUseMiden.mockReturnValue({
+            client: currentClient,
+            isReady: true,
+          });
+          rerender();
+        });
+        await act(async () => {
+          resolveAccounts(staleAccounts);
+          expect(await importing).toBe(account);
+        });
+
+        expect(useMidenStore.getState().accounts).toBe(retainedAccounts);
+        expect(result.current.account).toBeNull();
+        expect(result.current.error).toBeNull();
+        expect(result.current.isImporting).toBe(false);
+
+        await act(async () => {
+          expect(await result.current.importAccount(options)).toBe(account);
+        });
+        expect(useMidenStore.getState().accounts).toBe(currentAccounts);
+      }
+    );
+  });
   it.each(["resolve", "reject"])(
     "keeps the latest call busy when the replaced client's call settles (%s)",
     async (outcome) => {

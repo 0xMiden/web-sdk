@@ -70,6 +70,13 @@ impl WebClient {
         Ok(note.into())
     }
 
+    /// Lists the notes the account can consume.
+    ///
+    /// Consumable means a trial transaction consuming the note with the account
+    /// succeeded at the last sync. It does not mean the note pays the account:
+    /// consuming runs the note's script, which can also spend from the account.
+    /// Check `isStandardPayment(record)` to find P2ID and P2IDE payments, or use
+    /// `notes.listAvailable`.
     #[js_export(js_name = "getConsumableNotes")]
     pub async fn get_consumable_notes(
         &self,

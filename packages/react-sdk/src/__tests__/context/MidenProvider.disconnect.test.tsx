@@ -290,12 +290,19 @@ describe("MidenProvider resilient disconnect handling", () => {
       ).toBe(initialCreateCount);
       expect(useMidenStore.getState().client!.terminate).not.toHaveBeenCalled();
 
-      // Verify the wrapped callback passed to the client invokes the latest signCb (signCb2)
-      const passedSignCb = (
+      // The callback the client was built with now signs through signCb2.
+      const clientSignCb = (
         WebClient.createClientWithExternalKeystore as ReturnType<typeof vi.fn>
-      ).mock.calls[0][6];
-      await passedSignCb(new Uint8Array(32), new Uint8Array(32));
-      expect(signCb2).toHaveBeenCalledTimes(1);
+      ).mock.calls[0][6] as (
+        pubKey: Uint8Array,
+        signingInputs: Uint8Array
+      ) => Promise<Uint8Array>;
+      const pubKey = new Uint8Array([1]);
+      const signingInputs = new Uint8Array([2]);
+      signCb1.mockClear();
+      await clientSignCb(pubKey, signingInputs);
+      expect(signCb2).toHaveBeenCalledWith(pubKey, signingInputs);
+      expect(signCb1).not.toHaveBeenCalled();
     });
 
     it("rebuilds external keystore client when reconnecting signer after local keystore mode", async () => {

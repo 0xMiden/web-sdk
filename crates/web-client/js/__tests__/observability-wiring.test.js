@@ -11,8 +11,24 @@ import { setObserver, __resetObserverForTest } from "../observability.js";
 // below touches WASM.
 vi.mock("../../Cargo.toml", () => ({}));
 
+// The batch tests need `getWasmOrThrow()` to resolve, and a `BatchItem` class
+// for `assertBatchItems` to accept.
+const { BatchItem } = vi.hoisted(() => {
+  class BatchItem {
+    accountId() {
+      return { toString: () => "0xaccount" };
+    }
+    request() {
+      return { serialize: () => new Uint8Array([1]) };
+    }
+  }
+  return { BatchItem };
+});
+vi.mock("../wasm.js", () => ({ default: async () => ({ BatchItem }) }));
+
 import {
   WasmWebClient,
+  MockWasmWebClient,
   __serializeWasmCallForTest as serialize,
   __createClientProxyForTest as createClientProxy,
 } from "../index.js";
@@ -231,6 +247,91 @@ describe("_serializeWasmCall preserves call semantics", () => {
   });
 });
 
+describe("submitNewTransactionBatch joins the chain when called", () => {
+  function makeBatchHost(Client, fields) {
+    return Object.assign(Object.create(Client.prototype), {
+      _withInnerLockDepth: 0,
+      _wasmCallChain: Promise.resolve(),
+      ...fields,
+    });
+  }
+
+  // Each host routes its batch to `call`. The mock has a worker, as a real
+  // mock client does, and must still batch in-thread.
+  const batchHosts = [
+    [
+      "worker client",
+      (call) =>
+        makeBatchHost(WasmWebClient, {
+          worker: {},
+          callMethodWithWorker: call,
+        }),
+    ],
+    [
+      "in-thread client",
+      (call) =>
+        makeBatchHost(WasmWebClient, {
+          worker: null,
+          getWasmWebClient: async () => ({ submitNewTransactionBatch: call }),
+        }),
+    ],
+    [
+      "mock client",
+      (call) =>
+        makeBatchHost(MockWasmWebClient, {
+          worker: {},
+          callMethodWithWorker: async () => {
+            throw new Error("a mock batch must not reach the worker");
+          },
+          getWasmWebClient: async () => ({ submitNewTransactionBatch: call }),
+        }),
+    ],
+  ];
+
+  it.each(batchHosts)(
+    "%s: waitForIdle waits for a batch called in the same tick",
+    async (_, makeHost) => {
+      const gate = deferred();
+      const call = vi.fn(() => gate.promise);
+      const client = makeHost(call);
+
+      const batch = client.submitNewTransactionBatch([new BatchItem()]);
+      let idle = false;
+      const idled = client.waitForIdle().then(() => {
+        idle = true;
+      });
+
+      // Positive control: the batch is in flight before idleness is judged.
+      await vi.waitFor(() => expect(call).toHaveBeenCalledOnce());
+      expect(idle).toBe(false);
+
+      gate.resolve(7);
+      await expect(batch).resolves.toBe(7);
+      await idled;
+      expect(idle).toBe(true);
+    }
+  );
+
+  it.each(batchHosts)(
+    "%s: an invalid items argument is observed as the batch's error",
+    async (_, makeHost) => {
+      const seen = [];
+      setObserver((o) => seen.push(o));
+      const call = vi.fn();
+      const client = makeHost(call);
+
+      const error = await client
+        .submitNewTransactionBatch("not an array")
+        .catch((e) => e);
+      expect(error).toBeInstanceOf(TypeError);
+      expect(call).not.toHaveBeenCalled();
+      expect(seen.map((o) => [o.op, o.outcome])).toEqual([
+        ["submitNewTransactionBatch", "error"],
+      ]);
+    }
+  );
+});
+
 describe("every observed call site names its operation", () => {
   // Reaching the wrapped methods for real needs a WASM-backed client, which
   // the node test environment has not got. Parsing the wrapper instead
@@ -291,6 +392,7 @@ describe("proxy fallthrough observation", () => {
       getAccount: async () => "account",
       // Classified in SYNC_METHODS — bound raw, must stay unobserved.
       usesMockChain: () => false,
+      endpoint: () => "https://rpc.devnet.miden.io",
     };
     return createClientProxy(instance);
   }
@@ -316,5 +418,15 @@ describe("proxy fallthrough observation", () => {
     expect(proxy.usesMockChain()).toBe(false);
     await Promise.resolve();
     expect(seen.map((o) => o.op)).toEqual(["getAccount"]);
+  });
+
+  // `endpoint()` is synchronous by contract: React reads it during render.
+  it("binds endpoint raw so it answers synchronously", async () => {
+    const seen = [];
+    setObserver((o) => seen.push(o));
+
+    expect(makeProxy().endpoint()).toBe("https://rpc.devnet.miden.io");
+    await Promise.resolve();
+    expect(seen).toEqual([]);
   });
 });

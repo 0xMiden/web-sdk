@@ -27,6 +27,8 @@ import {
   createP2IDENote,
   buildSwapTag,
   buildNetworkNote,
+  isStandardPayment,
+  domainSeparatedSignCommitment,
   _setWasm as _setStandaloneWasm,
   _setWebClient as _setStandaloneWebClient,
 } from "./standalone.js";
@@ -77,7 +79,14 @@ export {
 // ── Re-exports ───────────────────────────────────────────────────────
 
 export { MidenClient };
-export { createP2IDNote, createP2IDENote, buildSwapTag, buildNetworkNote };
+export {
+  createP2IDNote,
+  createP2IDENote,
+  buildSwapTag,
+  buildNetworkNote,
+  isStandardPayment,
+  domainSeparatedSignCommitment,
+};
 // Standalone helpers must be re-exported here too: this entry is what the
 // package's "node" condition resolves to, while both entries share one .d.ts.
 export { isConsumableNow } from "./utils.js";
@@ -195,6 +204,7 @@ export const AuthSecretKey = /* @__PURE__ */ _reexport("AuthSecretKey");
 export const BasicFungibleFaucetComponent = /* @__PURE__ */ _reexport(
   "BasicFungibleFaucetComponent"
 );
+export const BatchItem = /* @__PURE__ */ _reexport("BatchItem");
 export const BlockHeader = /* @__PURE__ */ _reexport("BlockHeader");
 export const ChainAnchor = /* @__PURE__ */ _reexport("ChainAnchor");
 export const CodeBuilder = /* @__PURE__ */ _reexport("CodeBuilder");

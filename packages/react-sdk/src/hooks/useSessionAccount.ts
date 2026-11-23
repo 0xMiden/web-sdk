@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
-import { captureClientCurrency, useMidenStore } from "../store/MidenStore";
-import { AccountStorageMode, isConsumableNow } from "@miden-sdk/miden-sdk";
+import { useMidenStore } from "../store/MidenStore";
+import { captureClientReadGuard } from "../store/clientReadGuard";
+import {
+  AccountStorageMode,
+  isConsumableNow,
+  isStandardPayment,
+} from "@miden-sdk/miden-sdk";
 import type { ConsumableNoteRecord } from "@miden-sdk/miden-sdk";
 import type {
   UseSessionAccountOptions,
@@ -137,7 +142,7 @@ export function useSessionAccount(
     }
 
     assertSignerConnected(signerConnected);
-    const isClientCurrent = captureClientCurrency(client);
+    const isClientCurrent = captureClientReadGuard(client);
     const isCurrent = () =>
       mountedRef.current &&
       identityRef.current === identity &&
@@ -313,10 +318,13 @@ async function waitAndConsume(
     const accountIdHex = accountIdObj.toString();
     // One block-locked note would fail the whole consume transaction, and
     // waiting is the right answer for it, so keep only what is consumable now.
+    // Only a payment funds the wallet: any other script, such as another
+    // trader's public PSWAP order, can spend from it when consumed.
     const records = await client.getConsumableNotes(accountIdObj);
     if (!isCurrent()) return;
-    const consumable = records.filter((record) =>
-      isConsumableNow(record, accountIdHex)
+    const consumable = records.filter(
+      (record) =>
+        isConsumableNow(record, accountIdHex) && isStandardPayment(record)
     );
     if (consumable.length > 0) {
       const notes = consumable.map((c) => c.inputNoteRecord().toNote());
@@ -337,7 +345,12 @@ async function waitAndConsume(
       return;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        Math.max(0, Math.min(pollIntervalMs, deadline - Date.now()))
+      )
+    );
     if (!isCurrent()) return;
   }
 

@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import {
-  captureClientCurrency,
   useMidenStore,
   useNotesStore,
   useSyncStateStore,
   useNoteFirstSeenStore,
 } from "../store/MidenStore";
-import { NoteFilter } from "@miden-sdk/miden-sdk";
+import { captureClientReadGuard } from "../store/clientReadGuard";
+import { isStandardPayment, NoteFilter } from "@miden-sdk/miden-sdk";
 import type { InputNoteRecord } from "@miden-sdk/miden-sdk";
 import type {
   StreamedNote,
@@ -27,6 +27,11 @@ import { getNoteFilterType } from "../utils/noteFilters";
  * and dual-track note decoding. Returns `StreamedNote` objects that merge
  * summary data with the underlying record and pre-decode attachments.
  *
+ * A streamed note is any input note in the requested status, not necessarily
+ * a payment. Check `standardPayment` before treating a note as incoming funds
+ * or consuming it: consuming runs the note's script, which can also spend
+ * from the account.
+ *
  * @example
  * ```tsx
  * function IncomingNotes({ opponentId }: { opponentId: string }) {
@@ -42,7 +47,8 @@ import { getNoteFilterType } from "../utils/noteFilters";
  *     }
  *   }, [latest, markHandled]);
  *
- *   return <div>{notes.length} unhandled notes</div>;
+ *   const payments = notes.filter((note) => note.standardPayment);
+ *   return <div>{payments.length} unhandled payments</div>;
  * }
  * ```
  */
@@ -62,6 +68,7 @@ export function useNoteStream(
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const latestRequestRef = useRef(0);
   const handledIdsRef = useRef<Set<string>>(new Set());
   const [handledVersion, setHandledVersion] = useState(0);
 
@@ -84,13 +91,11 @@ export function useNoteStream(
     return new Set(excludeIdsKey.split("\0"));
   }, [excludeIdsKey]);
 
-  const latestRequestRef = useRef(0);
-
   // Fetch notes from client
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
 
-    const isCurrent = captureClientCurrency(client);
+    const isCurrent = captureClientReadGuard(client);
     if (!isCurrent()) return;
 
     const request = ++latestRequestRef.current;
@@ -104,7 +109,7 @@ export function useNoteStream(
       if (!isCurrent()) return;
       setNotesIfChanged(fetched, status);
     } catch (err) {
-      if (!isCurrent()) return;
+      if (!isCurrent() || latestRequestRef.current !== request) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
       // Only a newer fetch can take ownership of this instance's loading flag.
@@ -253,6 +258,7 @@ function buildStreamedNote(
       record,
       firstSeenAt,
       attachment,
+      standardPayment: isStandardPayment(record),
     };
   } catch {
     return null;

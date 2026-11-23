@@ -23,6 +23,11 @@ export function useWaitForCommit(): UseWaitForCommitResult {
         throw new Error("Miden client is not ready");
       }
 
+      // A NaN interval would make every sleep a zero-length timer.
+      const flooredInterval = Math.max(1, options?.intervalMs ?? 1_000);
+      const intervalMs = Number.isNaN(flooredInterval)
+        ? 1_000
+        : flooredInterval;
       // A caller's TransactionId is read once and never handed on: the poll
       // builds its own handle each time, so the caller's stays usable.
       await waitForTransactionCommit(
@@ -30,7 +35,7 @@ export function useWaitForCommit(): UseWaitForCommitResult {
         runExclusiveDirect,
         typeof txId === "string" ? txId : txId.toHex(),
         Math.max(0, options?.timeoutMs ?? 10_000),
-        Math.max(1, options?.intervalMs ?? 1_000)
+        intervalMs
       );
     },
     [client, isReady]

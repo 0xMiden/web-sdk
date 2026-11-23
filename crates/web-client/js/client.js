@@ -11,6 +11,7 @@ import {
   resolveAccountRef,
   validateNoteTransportRetryOptions,
 } from "./utils.js";
+import { validateCallbackTimeoutMs } from "./callbackBridge.js";
 
 /**
  * MidenClient wraps the existing proxy-wrapped WebClient with a resource-based API.
@@ -159,13 +160,15 @@ export class MidenClient {
       );
     }
 
+    validateCallbackTimeoutMs(options?.callbackTimeoutMs);
+
     const seed = options?.seed ? await hashSeed(options.seed) : undefined;
 
     const rpcUrl = resolveRpcUrl(options?.rpcUrl);
     const noteTransportUrl = resolveNoteTransportUrl(options?.noteTransportUrl);
 
-    // `useWorker: false` opts out of the Web Worker shim that wraps every
-    // WASM call. The shim exists to keep the main thread responsive in
+    // `useWorker: false` opts out of the Web Worker shim that wraps WASM
+    // calls. The shim exists to keep the main thread responsive in
     // browser/extension contexts, but it serializes the prover via
     // `TransactionProver.serialize()` — a format that has no encoding for
     // `newCallbackProver(jsFn)` and silently downgrades it to `"local"`.
@@ -188,7 +191,8 @@ export class MidenClient {
         options,
         options?.feeFaucetId,
         options?.noteTransportMaxRetries,
-        options?.noteTransportRetryIntervalMs
+        options?.noteTransportRetryIntervalMs,
+        options?.callbackTimeoutMs
       );
     } else {
       inner = await WebClientClass.createClient(
@@ -417,9 +421,10 @@ export class MidenClient {
    * Meaningful only with `useWorker: false`: under the worker shim the
    * sign callback fires against the worker's WASM keystore, while this
    * accessor reads the main-thread instance — which never signed — so it
-   * returns `null`. Consumers that need this signal (e.g. external
-   * keystores with lock-aware sign callbacks) already require
-   * `useWorker: false` for the callback to be reachable at all.
+   * returns `null`. The callback itself still fires under the worker (it is
+   * proxied back to the main thread); it is only this accessor that cannot
+   * see the error, so consumers who need the signal require
+   * `useWorker: false`.
    *
    * @returns {any} The raw thrown value, or `null`.
    */
@@ -488,6 +493,22 @@ export class MidenClient {
   }
 
   /**
+   * Returns the URL of the node this client was created against, e.g.
+   * `"https://rpc.devnet.miden.io"`. Shorthands are already resolved, and a
+   * client created without `rpcUrl` reports the testnet endpoint it defaulted
+   * to. A mock client talks to no node and returns `undefined`.
+   *
+   * Synchronous: the value is fixed at creation, so it never waits behind an
+   * in-flight call.
+   *
+   * @returns {string | undefined} The node URL, or `undefined` for a mock client.
+   */
+  endpoint() {
+    this.assertNotTerminated();
+    return this.#inner.endpoint();
+  }
+
+  /**
    * Returns a `TransactionRequestBuilder` that already carries the chain's fee
    * conversion info for the account that will execute the request.
    *
@@ -504,7 +525,7 @@ export class MidenClient {
    * auth procedure pays — not the recipient or a note's sender. For an account
    * that is not a multisig the builder comes back untouched, so this is a safe
    * drop-in; a zero base fee is not a second condition, since 0.17 a multisig
-   * resolves its auth args whatever the chain charges. `withAuthArg` and
+   * resolves its auth args whatever the chain charges. `withAuthArgs` and
    * `withFeeConversionSalt` are mutually exclusive: each clears the other, so
    * whichever is called last wins.
    *
@@ -532,7 +553,7 @@ export class MidenClient {
    * height when it built the request; below it execution fails with
    * "requested block N is after transaction reference block M" until it syncs.
    *
-   * Do not call `withFeeConversionSalt` or `withAuthArg` on the builder this
+   * Do not call `withFeeConversionSalt` or `withAuthArgs` on the builder this
    * returns for a multisig: the two setters clear each other, so either one
    * discards the auth args this already set. Pass `feeConversionSalt` here.
    *
