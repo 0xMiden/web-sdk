@@ -100,7 +100,12 @@ export async function initializeSignerAccount(
   // `config.accountType` is intentionally not forwarded to the builder: AccountType
   // is a 2-way storage flag (Private / Public), so visibility is fully determined by
   // `storageMode`. The field is retained on the config for back-compat.
-  const seed = config.accountSeed ?? crypto.getRandomValues(new Uint8Array(32));
+  //
+  // The account ID is derived from the seed, so the default must be fixed:
+  // a random one gives the same signer a different, empty account on every
+  // load and on every new device. 32 zero bytes is the default the Para and
+  // Turnkey core clients already use, so both paths resolve to one account.
+  const seed = config.accountSeed ?? new Uint8Array(32);
 
   // The package's `AuthScheme` export is the friendly string const; the auth
   // component takes the numeric enum, so read it from the wasm module.
