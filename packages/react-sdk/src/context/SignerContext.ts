@@ -64,8 +64,12 @@ export interface SignerAccountConfig {
   /** Storage mode (public or private) */
   storageMode: AccountStorageMode;
   /**
-   * Seed the account ID is derived from. Defaults to 32 zero bytes, so the
-   * same signer key always resolves to the same account.
+   * Seed the account ID is derived from. Defaults to 32 zero bytes, so matching
+   * account-builder configuration resolves to the same account across loads.
+   * This default does not auto-discover or migrate accounts created with prior
+   * random seeds (pass a known registered public account's ID via
+   * `importAccountId` to recover one). Pass an explicit random 32-byte seed
+   * when a throwaway account is desired.
    */
   accountSeed?: Uint8Array;
   /** Optional custom account components to include in the account (e.g. from a compiled .masp package) */
