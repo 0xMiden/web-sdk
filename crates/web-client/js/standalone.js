@@ -83,12 +83,12 @@ export function createP2IDENote(opts) {
  * Creates a fee-sponsorship note bound to a feature note.
  *
  * @param {object} opts
- * @param {string|AccountId} opts.from - Sponsor account.
- * @param {string|AccountId} opts.to - Public target the feature note routes to.
+ * @param {AccountRef} opts.from - Sponsor account.
+ * @param {AccountRef} opts.to - Public target the feature note routes to.
  * @param {NoteId} opts.featureNoteId - Feature note this sponsorship attaches to.
  * @param {FungibleAsset} opts.asset - Single fungible fee asset.
- * @param {string|AccountId} [opts.reclaimer] - Defaults to the sponsor.
- * @param {number} [opts.reclaimAfter] - Block height enabling reclaim.
+ * @param {AccountRef} [opts.reclaimer] - Defaults to the sponsor (`from`); cloned if passed as an `AccountId`.
+ * @param {number} [opts.reclaimAfter] - Optional positive 32-bit integer (`> 0`) block height enabling reclaim.
  * @returns {Note}
  */
 export function createFeeSponsorshipNote(opts) {
@@ -99,19 +99,34 @@ export function createFeeSponsorshipNote(opts) {
   if (!opts?.asset) {
     throw new Error("createFeeSponsorshipNote requires asset");
   }
+  if (
+    opts.reclaimAfter != null &&
+    (!Number.isInteger(opts.reclaimAfter) ||
+      opts.reclaimAfter <= 0 ||
+      opts.reclaimAfter > 0xffffffff)
+  ) {
+    throw new TypeError(
+      "createFeeSponsorshipNote: reclaimAfter must be a positive 32-bit integer"
+    );
+  }
   const sender = resolveAccountRef(opts.from, wasm);
   const target = resolveAccountRef(opts.to, wasm);
-  const reclaimer =
-    opts.reclaimer != null
-      ? resolveAccountRef(opts.reclaimer, wasm)
-      : undefined;
+  let reclaimer;
+  if (opts.reclaimer != null) {
+    const resolvedReclaimer = resolveAccountRef(opts.reclaimer, wasm);
+    reclaimer =
+      typeof opts.reclaimer !== "string" &&
+      typeof opts.reclaimer?.id !== "function"
+        ? wasm.AccountId.fromHex(resolvedReclaimer.toString())
+        : resolvedReclaimer;
+  }
   return wasm.Note.createFeeSponsorshipNote(
     sender,
     target,
     opts.featureNoteId,
     opts.asset,
     reclaimer,
-    opts.reclaimAfter
+    opts.reclaimAfter ?? undefined
   );
 }
 

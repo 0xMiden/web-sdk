@@ -26,7 +26,7 @@ use super::note_recipient::NoteRecipient;
 use super::note_script::NoteScript;
 use super::word::Word;
 use crate::js_error_with_context;
-use crate::platform::{JsBytes, JsErr};
+use crate::platform::{JsBytes, JsErr, from_str_err};
 use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
 
 /// A note bundles public metadata with private details: assets, script, inputs, and a serial number
@@ -186,8 +186,11 @@ impl Note {
     /// Builds a fee-sponsorship note bound to `feature_note_id` and tagged for `target`.
     ///
     /// The note carries exactly one fungible fee asset. `target` must be a public account (network
-    /// note routing). `reclaimer` defaults to `sender` when omitted. `reclaim_height` enables
-    /// reclaim at or after that block when set.
+    /// note routing). `reclaimer` defaults to `sender` when omitted; in browser WASM passing
+    /// `reclaimer` (`Option<AccountId>`) consumes the caller's `AccountId` wrapper even on error
+    /// because `wasm-bindgen` does not support `Option<&T>`. `reclaim_height` must be `> 0` when
+    /// set (`undefined`/`None` disables reclaim, `0` is rejected) and enables reclaim at or after
+    /// that block.
     ///
     /// Binding `feature_note_id` is how sponsorship attaches to a supported feature note
     /// (`BURN`, `CLAIM`, `B2AGG`, …): whoever may consume that feature note may take this
@@ -201,6 +204,12 @@ impl Note {
         reclaimer: Option<AccountId>,
         reclaim_height: Option<u32>,
     ) -> Result<Self, JsErr> {
+        if matches!(reclaim_height, Some(0)) {
+            return Err(from_str_err(
+                "create fee sponsorship note: reclaim_height must be greater than 0",
+            ));
+        }
+
         let native_asset: NativeFungibleAsset = asset.into();
         let native_feature_id: NativeNoteId = feature_note_id.into();
 
