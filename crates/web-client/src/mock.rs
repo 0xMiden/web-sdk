@@ -8,17 +8,17 @@ use miden_client::crypto::eddsa_25519_sha512::KeyExchangeKey;
 use miden_client::protocol_config::ProtocolConfig;
 use miden_client::rpc::encryption::TransactionEncryptionKey;
 use miden_client::store::Store;
+use miden_client::testing::MockChain;
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::{MockNoteTransportApi, MockNoteTransportNode};
-use miden_client::testing::MockChain;
 use miden_client::utils::{Deserializable, RwLock, Serializable};
-use rand::rngs::StdRng;
 use rand::SeedableRng;
+use rand::rngs::StdRng;
 
-use crate::platform::{from_str_err, JsErr};
-use crate::{create_rng, js_error_with_context, WebClient};
+use crate::platform::{JsErr, from_str_err};
+use crate::{WebClient, create_rng, js_error_with_context};
 #[cfg(feature = "browser")]
-use crate::{idxdb_store_init_error, WebKeyStore};
+use crate::{WebKeyStore, idxdb_store_init_error};
 
 #[cfg(feature = "browser")]
 #[js_export]
