@@ -388,8 +388,9 @@ export type NoteInput = string | NoteId | Note | InputNoteRecord;
 
 /**
  * Create a wallet, faucet, or contract. A faucet sets `type:
- * FaucetType.FungibleFaucet`, a contract passes `components`, and a wallet is
- * the default (neither). Visibility comes from `storage`.
+ * FaucetType.FungibleFaucet`, a contract passes `components` with `auth` as an
+ * `AuthSecretKey` or `"none"` (no key stored), and a wallet is the default
+ * (neither). Visibility comes from `storage`.
  */
 export type CreateAccountOptions =
   | WalletCreateOptions
@@ -417,8 +418,12 @@ export interface FaucetCreateOptions {
 export interface ContractCreateOptions {
   /** Raw 32-byte seed (Uint8Array). Required. */
   seed: Uint8Array;
-  /** Auth secret key. Required. */
-  auth: AuthSecretKey;
+  /**
+   * Auth secret key, or `"none"` to build a NoAuth contract that anyone can
+   * call without a signature (no key is generated or stored). Required: an
+   * omitted `auth` is rejected rather than defaulting to NoAuth.
+   */
+  auth: AuthSecretKey | "none";
   /**
    * Pre-compiled AccountComponent instances. Required for contracts: at least
    * one must export a non-auth (`@account_procedure`) procedure, or
@@ -1143,7 +1148,12 @@ export interface AccountsResource {
    * value as `type`; use `storage`.
    *
    * @param options - Account creation options. A faucet sets `type`, a
-   * contract passes `components`, and a wallet is the default.
+   * contract passes `components`, and a wallet is the default. A contract also
+   * needs a raw 32-byte `seed` and `auth`. `auth` is an `AuthSecretKey` stored
+   * with the account, or `"none"` for a NoAuth contract that anyone can call
+   * and that stores no key. Omitting `auth` is rejected and does not default
+   * to NoAuth. `"none"` is only valid on a contract; wallet and faucet `auth`
+   * stays `AuthScheme.Falcon` or `AuthScheme.ECDSA`.
    * @throws TypeError naming `FaucetType`, before creating anything, for an
    * unrecognised `type`, for faucet fields (`name`, `symbol`, `decimals`,
    * `maxSupply`) without a faucet type, for `components` on a faucet, and for a

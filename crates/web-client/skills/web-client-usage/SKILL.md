@@ -476,6 +476,11 @@ faucet missing `symbol`, `decimals` or `maxSupply`. The legacy `0`, `1` and
 Neither enum has wallet or contract members. Omit `type` for a wallet, or pass
 `components` for a contract (the strings `"MutableContract"` / `"ImmutableContract"`
 are also accepted). Use `storage` to select visibility in `accounts.create()`.
+A contract also needs a raw 32-byte `seed` and `auth`. `auth` is an
+`AuthSecretKey` stored with the account, or `"none"` for a NoAuth contract that
+anyone can call and that stores no key. Omitting `auth` is rejected and does
+not default to NoAuth. `"none"` is only valid on a contract; wallet and faucet
+`auth` stays `AuthScheme.Falcon` or `AuthScheme.ECDSA`.
 
 `StorageMode` has only `Public`/`Private`. There is no `StorageMode.Network`
 (accessing it yields `undefined`, which silently resolves to private).
@@ -549,7 +554,11 @@ const faucet = await client.accounts.create({
 });
 
 // Custom contract - selected by passing `components` (NOT by an AccountType
-// member). Requires seed and an AuthSecretKey.
+// member). A contract also needs a raw 32-byte `seed` and `auth`. `auth` is an
+// `AuthSecretKey` stored with the account, or `"none"` for a NoAuth contract
+// that anyone can call and that stores no key. Omitting `auth` is rejected and
+// does not default to NoAuth. `"none"` is only valid on a contract; wallet and
+// faucet `auth` stays `AuthScheme.Falcon` or `AuthScheme.ECDSA`.
 const component = await client.compile.component({
   code: contractMasm,
   slots: [],
@@ -558,6 +567,11 @@ const contract = await client.accounts.create({
   seed: new Uint8Array(32),
   auth: secretKey, // AuthSecretKey, not the AuthScheme enum
   components: [component], // presence of `components` routes to a contract
+});
+const noAuthContract = await client.accounts.create({
+  seed: new Uint8Array(32),
+  auth: "none",
+  components: [component],
 });
 ```
 
@@ -571,7 +585,8 @@ A contract is whatever `accounts.create()` call carries `components` - the
 string forms `type: "MutableContract"` / `"ImmutableContract"` also route to a
 contract, but the canonical selector is `components`, and `components` none of
 which exports a non-auth (`@account_procedure`) procedure is rejected, an empty
-array included. There is **no** `AccountType.MutableContract`;
+array included. `components` selects the contract, and `seed` plus `auth` are
+still required. There is **no** `AccountType.MutableContract`;
 `type: AccountType.MutableContract` is `undefined` and, without `components`,
 would silently create a wallet.
 
