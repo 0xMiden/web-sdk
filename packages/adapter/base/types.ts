@@ -51,6 +51,12 @@ export type InputNoteDetails = {
   noteType: NoteType | undefined;
   nullifier: string;
   state: InputNoteState;
+  /**
+   * True only for a P2ID or P2IDE payment. Absent when the wallet does not
+   * report it. Consuming any other note runs its script and can also spend
+   * from the account, so check this before treating a note as incoming funds.
+   */
+  standardPayment?: boolean;
 };
 
 export type FungibleAssetDetails = {

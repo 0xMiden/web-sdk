@@ -15,8 +15,10 @@ use crate::utils::{deserialize_untrusted_bytes, serialize_to_bytes};
 /// co-signing, capture an anchor alongside the summary and replay execution against it, so the
 /// summary reproduces exactly on a client at a different sync height, provided both parties
 /// agree on the account state. A multisig proposal needs no anchor: its summary binds the block
-/// its auth args name, and a request from `feeAwareTransactionRequestBuilder` executes at the tip
-/// once the client has synced to that block.
+/// its auth args name. A request from `feeAwareTransactionRequestBuilder` declares that bound
+/// block and previews and executes at the tip once the client has synced to it. A
+/// `withFeeAwareAuth` copy declares no bound block: sync before previewing or executing it.
+/// An anchor captured for that copy does not track the bound block.
 ///
 /// The anchor bundles the reference block header with a partial blockchain consistent with it.
 /// Both invariants (chain length matches the header's block number, peaks hash to the header's

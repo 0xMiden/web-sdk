@@ -43,6 +43,14 @@ use crate::models::word::Word;
 use crate::platform::JsErr;
 
 mod note;
+mod nullifier;
+mod submission;
+mod transaction;
+
+#[cfg(all(test, feature = "nodejs"))]
+mod account_tests;
+#[cfg(all(test, feature = "nodejs"))]
+mod tests;
 
 /// RPC Client for interacting with Miden nodes directly.
 #[js_export]
@@ -172,7 +180,14 @@ impl RpcClient {
         Ok(header.into())
     }
 
-    /// Fetches account details for a specific account ID.
+    /// Fetches complete account details for a specific account ID.
+    ///
+    /// Public accounts include all storage map entries and vault assets. When the node's inline
+    /// limits are exceeded, fetches the remaining state through pagination bounded to the original
+    /// account proof's block. A failed page rejects the request without returning a partial
+    /// account. A reconstructed public account is returned only when its commitment equals the
+    /// proof, and a mismatch fails the call and returns no account. Private accounts return
+    /// commitment and block metadata without full account data.
     #[js_export(js_name = "getAccountDetails")]
     pub async fn get_account_details(
         &self,
@@ -180,19 +195,32 @@ impl RpcClient {
     ) -> Result<FetchedAccount, JsErr> {
         let native_id: miden_client::account::AccountId = account_id.into();
 
-        // `get_account_details` returns only `Option<Account>`, without the commitment or block
-        // height. Issue the underlying `get_account` request directly (full storage maps + vault)
-        // so `FetchedAccount` can report the account commitment and last block height.
+        // Keep the proof's commitment and block height for `FetchedAccount`, and resolve any
+        // oversized state at that same block before reconstructing the full account. `from_proof`
+        // enforces that the reconstructed commitment matches the proof.
         let fetch = AccountFetch::new()
             .with_storage(StorageMapFetch::All)
             .with_vault(VaultFetch::Always);
         let request = GetAccountRequest::new(native_id).with_fetch(fetch);
 
-        let (block_num, proof) = self
+        let (block_num, mut proof) = self
             .inner
             .get_account(request)
             .await
             .map_err(|err| js_error_with_context(err, "failed to get account details"))?;
+
+        if let Some(details) = proof.details_mut() {
+            self.inner
+                .resolve_oversize_vault(native_id, block_num, details)
+                .await
+                .map_err(|err| js_error_with_context(err, "failed to fetch account vault"))?;
+            self.inner
+                .resolve_oversize_storage_maps(native_id, block_num, details)
+                .await
+                .map_err(|err| {
+                    js_error_with_context(err, "failed to fetch account storage maps")
+                })?;
+        }
 
         FetchedAccount::from_proof(block_num, proof)
     }
@@ -354,6 +382,9 @@ impl RpcClient {
 
     // TODO: This can be generalized to retrieve multiple nullifiers
     /// Fetches the block height at which a nullifier was committed, if any.
+    ///
+    /// @returns Promise that resolves to the commit height, or `undefined` if no commitment
+    ///   is found for the query, on both browser and Node.js entries.
     #[js_export(js_name = "getNullifierCommitHeight")]
     pub async fn get_nullifier_commit_height(
         &self,
@@ -393,12 +424,33 @@ impl RpcClient {
     /// When the network operator runs a funding service, the node pays the registered account a
     /// public P2ID note and answers once that note is committed, so this call can take a few
     /// blocks.
+    ///
+    /// If the RPC transport has no genesis commitment, fetches block zero from the configured
+    /// endpoint and sets its commitment in the RPC headers before sending the invitation code.
+    /// An already configured commitment is reused. No local store, sync, or encryption-key
+    /// fetch is required. This bootstrap trusts the configured endpoint; it does not
+    /// independently authenticate genesis. A failed genesis fetch or decode leaves the code
+    /// unsent.
     #[js_export(js_name = "registerAccount")]
     pub async fn register_account(
         &self,
         account_id: &AccountId,
         invitation_code: String,
     ) -> Result<(), JsErr> {
+        if self.inner.has_genesis_commitment().is_none() {
+            let (genesis, _) = self
+                .inner
+                .get_block_header_by_number(Some(BlockNumber::GENESIS), false)
+                .await
+                .map_err(|err| {
+                    js_error_with_context(err, "failed to get genesis for account registration")
+                })?;
+            self.inner
+                .set_genesis_commitment(genesis.commitment())
+                .await
+                .map_err(|err| js_error_with_context(err, "failed to configure RPC genesis"))?;
+        }
+
         self.inner
             .register_account(&invitation_code, account_id.into())
             .await
@@ -415,6 +467,20 @@ impl RpcClient {
     pub async fn is_account_allowed(&self, account_id: &AccountId) -> Result<bool, JsErr> {
         self.inner.is_account_allowed(account_id.into()).await.map_err(|err| {
             js_error_with_context(err, "failed to check whether the account is allowed")
+        })
+    }
+
+    /// Returns whether the invitation code can be used to register an account, through the
+    /// `IsInvitationCodeValid` endpoint.
+    ///
+    /// `true` when the node does not enforce an account allowlist, or when the code exists and is
+    /// not registered to an account. Unknown and registered codes answer `false`. An empty code
+    /// is an error when the node enforces the allowlist. The query does not consume the code and
+    /// does not identify the account that holds it.
+    #[js_export(js_name = "isInvitationCodeValid")]
+    pub async fn is_invitation_code_valid(&self, invitation_code: String) -> Result<bool, JsErr> {
+        self.inner.is_invitation_code_valid(&invitation_code).await.map_err(|err| {
+            js_error_with_context(err, "failed to check whether the invitation code is valid")
         })
     }
 }

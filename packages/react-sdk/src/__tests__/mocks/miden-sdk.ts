@@ -1,4 +1,5 @@
 import { vi } from "vitest";
+import { NoteType } from "@miden-sdk/miden-sdk";
 import type {
   AdviceMap,
   BlockHeader,
@@ -81,7 +82,14 @@ export const createMockNote = (id: string = "0xnote1") => ({
   free: vi.fn(),
 });
 
-const createMockOutputNote = (note = createMockNote()) => ({
+// The binding has no `noteType()` on an output note: the type is on its
+// metadata.
+export const createMockOutputNote = (
+  note = createMockNote(),
+  noteType: NoteType = NoteType.Private
+) => ({
+  id: vi.fn(() => note.id()),
+  metadata: vi.fn(() => ({ noteType: vi.fn(() => noteType) })),
   intoFull: vi.fn(() => note),
 });
 
@@ -90,26 +98,39 @@ export const createMockTransactionResult = (
   note = createMockNote()
 ) => ({
   id: vi.fn(() => createMockTransactionId(id)),
-  executedTransaction: vi.fn(() => ({
-    outputNotes: vi.fn(() => ({
-      notes: vi.fn(() => [createMockOutputNote(note)]),
-    })),
-  })),
+  executedTransaction: vi.fn(() => {
+    const outputs = [createMockOutputNote(note)];
+    return {
+      outputNotes: vi.fn(() => ({ notes: vi.fn(() => outputs) })),
+      userOutputNotes: vi.fn(() => outputs),
+    };
+  }),
   serialize: vi.fn(() => new Uint8Array()),
 });
 
 // Mock InputNoteRecord
+// Script roots the `isStandardPayment` mock in `setup.ts` treats as P2ID and
+// P2IDE; any other root stands for a note such as a public PSWAP order.
+const MOCK_P2ID_SCRIPT_ROOT = "0xp2idscript";
+export const MOCK_P2IDE_SCRIPT_ROOT = "0xp2idescript";
+export const MOCK_PSWAP_SCRIPT_ROOT = "0xpswapscript";
+
 export const createMockInputNoteRecord = (
   id: string = "0xnote1",
   consumed: boolean = false,
-  noteOverride?: ReturnType<typeof createMockNote>
+  noteOverride?: ReturnType<typeof createMockNote>,
+  scriptRoot: string = MOCK_P2ID_SCRIPT_ROOT
 ) => {
   const note = noteOverride ?? createMockNote(id);
 
   return {
     id: vi.fn(() => ({ toString: () => id, toHex: () => id })),
     state: vi.fn(() => (consumed ? "consumed" : "committed")),
-    details: vi.fn(() => ({})),
+    details: vi.fn(() => ({
+      recipient: () => ({
+        script: () => ({ root: () => ({ toHex: () => scriptRoot }) }),
+      }),
+    })),
     metadata: vi.fn(() => ({})),
     commitment: vi.fn(() => ({ toString: () => "0xcommitment" })),
     inclusionProof: vi.fn(() => null),
@@ -129,9 +150,12 @@ export const createMockConsumableNoteRecord = (
   // The account the record was screened for; hooks keep only entries matching
   // the account they queried.
   accountIdHex: string = "0x1234567890abcdef",
-  consumableNow: boolean = true
+  consumableNow: boolean = true,
+  scriptRoot: string = MOCK_P2ID_SCRIPT_ROOT
 ) => ({
-  inputNoteRecord: vi.fn(() => createMockInputNoteRecord(noteId)),
+  inputNoteRecord: vi.fn(() =>
+    createMockInputNoteRecord(noteId, false, undefined, scriptRoot)
+  ),
   noteConsumability: vi.fn(() => [
     {
       accountId: vi.fn(() => createMockAccountId(accountIdHex)),
@@ -169,17 +193,28 @@ const createMockWord = (hex: string = "0xword") => ({
 // callers that reach for `.toString()` hit Object.prototype's default and get
 // "[object Object]" (issue #83). Mirror that here so any future hook that
 // regresses to `.toString()` fails the unit tests instead of silently passing.
-export const createMockTransactionId = (id: string = "0xtx123") => ({
-  toString: vi.fn(() => "[object Object]"),
-  toHex: vi.fn(() => id),
-  asElements: vi.fn(() => []),
-  asBytes: vi.fn(() => new Uint8Array()),
-  inner: vi.fn(() => createMockWord(id)),
-  free: vi.fn(),
-  // TS 5.2+ ships [Symbol.dispose] on Disposable WASM bindings; tsc requires
-  // mocks to expose it even if tests never invoke it.
-  [Symbol.dispose]: vi.fn(),
-});
+//
+// `_live` mirrors wasm-bindgen ownership: `TransactionFilter.ids` in setup.ts
+// takes its handles by value and clears it, after which `toHex` throws the way
+// a moved handle does.
+export const createMockTransactionId = (id: string = "0xtx123") => {
+  const handle = {
+    _live: true,
+    toString: vi.fn(() => "[object Object]"),
+    toHex: vi.fn(() => {
+      if (!handle._live) throw new Error("null pointer passed to rust");
+      return id;
+    }),
+    asElements: vi.fn(() => []),
+    asBytes: vi.fn(() => new Uint8Array()),
+    inner: vi.fn(() => createMockWord(id)),
+    free: vi.fn(),
+    // TS 5.2+ ships [Symbol.dispose] on Disposable WASM bindings; tsc requires
+    // mocks to expose it even if tests never invoke it.
+    [Symbol.dispose]: vi.fn(),
+  };
+  return handle;
+};
 
 // Mock TransactionRecord
 const createMockTransactionRecord = (
@@ -203,6 +238,9 @@ export const createMockTransactionRequest = () => ({
   blockNumbers: vi.fn((): number[] => []),
   adviceMap: vi.fn(() => ({}) as unknown as AdviceMap),
   extendAdviceMap: vi.fn(
+    () => createMockTransactionRequest() as unknown as TransactionRequest
+  ),
+  withAuthArgs: vi.fn(
     () => createMockTransactionRequest() as unknown as TransactionRequest
   ),
   serialize: vi.fn(() => new Uint8Array()),
@@ -479,7 +517,17 @@ export const createMockWebClient = (
       }
       return undefined;
     }),
-    sendPrivateOutputNote: vi.fn().mockResolvedValue(undefined),
+    // `Address` crosses by value, so the call moves it: a second relay with
+    // the same address fails the way it does in WASM.
+    sendPrivateOutputNote: vi.fn(async (_noteId: unknown, address: unknown) => {
+      const handle = address as { _live?: boolean } | null;
+      if (handle && typeof handle === "object") {
+        if (handle._live === false) {
+          throw new Error("null pointer passed to rust");
+        }
+        handle._live = false;
+      }
+    }),
     importAccountFile: vi.fn().mockResolvedValue("Imported account"),
     importAccountById: vi.fn().mockResolvedValue(undefined),
     importPublicAccountFromSeed: vi.fn().mockResolvedValue(createMockAccount()),
@@ -500,6 +548,7 @@ export const createMockWebClient = (
     executeProgram: vi.fn().mockResolvedValue(createMockFeltArray()),
 
     // Cleanup
+    terminate: vi.fn(),
     free: vi.fn(),
   };
 
@@ -553,5 +602,6 @@ type MockWebClientType = {
   exportNoteFile: ReturnType<typeof vi.fn>;
   importNoteFile: ReturnType<typeof vi.fn>;
   executeProgram: ReturnType<typeof vi.fn>;
+  terminate: ReturnType<typeof vi.fn>;
   free: ReturnType<typeof vi.fn>;
 };

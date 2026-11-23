@@ -129,7 +129,7 @@ const MockWasmWebClient = {
       norm(serializedMockChain) ?? null,
       norm(serializedMockNoteTransportNode) ?? null
     );
-    return wrapClient(client, "mock");
+    return wrapClient(client, "mock", loadNodeSdk());
   },
 };
 
@@ -162,7 +162,7 @@ export const WasmWebClient = {
       path.join(dir, "keystore"),
       feeFaucetId ?? null
     );
-    return wrapClient(client, storeName);
+    return wrapClient(client, storeName, loadNodeSdk());
   },
 };
 

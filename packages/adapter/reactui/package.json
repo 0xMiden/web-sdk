@@ -18,9 +18,11 @@
   "license": "MIT",
   "scripts": {
     "build": "tsc && pnpm run copy-files",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "clean": "rimraf dist/ node_modules/",
     "copy-files": "copyfiles styles.css dist/",
-    "doc": "typedoc --disableSources --plugin typedoc-plugin-markdown"
+    "doc": "typedoc --disableSources --plugin typedoc-plugin-markdown",
+    "test": "vitest run"
   },
   "dependencies": {
     "@miden-sdk/miden-wallet-adapter-base": "workspace:*",
@@ -30,8 +32,10 @@
   "devDependencies": {
     "@types/react-dom": "^19.0.4",
     "copyfiles": "^2.4.1",
+    "jsdom": "^24.0.0",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "vitest": "^1.0.0"
   },
   "peerDependencies": {
     "@types/react": "^19.0.0",
