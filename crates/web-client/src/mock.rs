@@ -26,7 +26,7 @@ impl WebClient {
     /// Creates a new client with a mock RPC API. Useful for testing purposes and proof-of-concept
     /// applications as it uses a mock chain that simulates the behavior of a real node.
     ///
-    /// `store_name` selects the IndexedDB database. Omit it (or pass `None`) to keep the historical
+    /// `store_name` selects the `IndexedDB` database. Omit it (or pass `None`) to keep the historical
     /// default `"mock_client_db"`. Pass a distinct name when a second mock client must not share
     /// that database with another live mock in the same origin; sharing it with a different mock
     /// chain makes `syncState` fail genesis tip validation.
