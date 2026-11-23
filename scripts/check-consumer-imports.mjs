@@ -103,6 +103,33 @@ export function collectImports(files, packageNames) {
         if (!declTypeOnly && !el.isTypeOnly) entry.values.add(name);
       }
     }
+    // `const { A, B: b } = await import(spec)` needs A and B at runtime too.
+    ts.forEachChild(sf, function visit(node) {
+      if (
+        ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+        node.arguments.length > 0 &&
+        ts.isStringLiteral(node.arguments[0]) &&
+        isOurs(node.arguments[0].text) &&
+        ts.isAwaitExpression(node.parent)
+      ) {
+        let decl = node.parent.parent;
+        while (ts.isParenthesizedExpression(decl)) decl = decl.parent;
+        if (
+          ts.isVariableDeclaration(decl) &&
+          ts.isObjectBindingPattern(decl.name)
+        ) {
+          const entry = slot(node.arguments[0].text);
+          for (const el of decl.name.elements) {
+            const key = el.propertyName ?? el.name;
+            if (el.dotDotDotToken || !ts.isIdentifier(key)) continue;
+            entry.types.add(key.text);
+            entry.values.add(key.text);
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    });
   }
   return wanted;
 }

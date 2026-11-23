@@ -75,3 +75,44 @@ test("collectImports records original names and separates type-only imports", (t
   assert.deepEqual([...got.get("@miden-sdk/react").values], ["useMultiSigner"]);
   assert.equal(got.has("other-package"), false);
 });
+
+test("collectImports records export names bound by awaited dynamic import()", (t) => {
+  const root = fixture(t, {
+    "two.ts": [
+      'import type { AccountId } from "@miden-sdk/miden-sdk";',
+      'export type Mode = import("@miden-sdk/miden-sdk").AccountStorageMode;',
+      "export async function load(spec: string) {",
+      "  const {",
+      "    MidenClient: MidenClientClass,",
+      '  } = await import("@miden-sdk/miden-sdk");',
+      "  const { SigningInputs, AccountBuilder, Poseidon2 } =",
+      '    await import("@miden-sdk/miden-sdk");',
+      '  const { Word } = await import("@miden-sdk/miden-sdk/lazy");',
+      '  const sdk = await import("@miden-sdk/miden-sdk");',
+      "  const { fromSpec } = await import(spec);",
+      '  const { unrelated } = await import("other-package");',
+      "  return [MidenClientClass, SigningInputs, AccountBuilder, Poseidon2, Word, sdk, fromSpec, unrelated];",
+      "}",
+    ].join("\n"),
+  });
+  const got = collectImports(
+    [join(root, "two.ts")],
+    ["@miden-sdk/miden-sdk", "@miden-sdk/react"]
+  );
+  const sdk = got.get("@miden-sdk/miden-sdk");
+  assert.deepEqual([...sdk.values].sort(), [
+    "AccountBuilder",
+    "MidenClient",
+    "Poseidon2",
+    "SigningInputs",
+  ]);
+  assert.deepEqual([...sdk.types].sort(), [
+    "AccountBuilder",
+    "AccountId",
+    "MidenClient",
+    "Poseidon2",
+    "SigningInputs",
+  ]);
+  assert.deepEqual([...got.get("@miden-sdk/miden-sdk/lazy").values], ["Word"]);
+  assert.equal(got.has("other-package"), false);
+});
