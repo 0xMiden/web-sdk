@@ -10,7 +10,7 @@ use miden_protocol::utils::serde::{Deserializable, Serializable, SliceReader};
 use prost::Message;
 
 use crate::js_error_with_context;
-use crate::platform::{JsBytes, JsErr, bytes_to_js, from_str_err};
+use crate::platform::{JsBytes, JsErr, bytes_to_js};
 
 pub mod summary;
 pub mod transaction;
@@ -25,25 +25,6 @@ pub fn decode_proto<T: ProtobufValue>(bytes: &JsBytes) -> Result<T, JsErr> {
     let vec = crate::platform::js_to_bytes(bytes);
     let context = alloc::format!("failed to deserialize {}", core::any::type_name::<T>());
     miden_client_proto::decode(&vec).map_err(|e| js_error_with_context(e, &context))
-}
-
-/// Decodes platform bytes from an untrusted party that hold the protobuf message of `T`, with all
-/// the checks of `T`.
-///
-/// Differs from [`decode_proto`] by rejecting bytes that the message does not use, such as a
-/// suffix or a field that the message does not define. Then a value and the same value with
-/// extra bytes do not decode as equal. The check compares the encoded length of the decoded
-/// message with the input length, so it does not encode the message again. It does not reject
-/// every non-canonical encoding. For example, the same fields in a different order still decode.
-pub fn decode_untrusted_proto<T: ProtobufValue>(bytes: &JsBytes) -> Result<T, JsErr> {
-    let vec = crate::platform::js_to_bytes(bytes);
-    let context = alloc::format!("failed to deserialize {}", core::any::type_name::<T>());
-    let message =
-        T::Message::decode(vec.as_slice()).map_err(|e| js_error_with_context(e, &context))?;
-    if message.encoded_len() != vec.len() {
-        return Err(from_str_err(&alloc::format!("{context}: the message has unused bytes")));
-    }
-    T::from_proto(message).map_err(|e| js_error_with_context(e, &context))
 }
 
 /// Encodes a `miden-objects` protobuf message, the canonical encoding of a protocol value, into the

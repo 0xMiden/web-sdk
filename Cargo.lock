@@ -2387,7 +2387,7 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.18.2"
-source = "git+https://github.com/0xMiden/rust-sdk?rev=39a3f074766e5379275bf6fe9abb5819f155c75e#39a3f074766e5379275bf6fe9abb5819f155c75e"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=6327461abc969f3d41328ca9b34b68fdbe980042#6327461abc969f3d41328ca9b34b68fdbe980042"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2430,7 +2430,7 @@ dependencies = [
 [[package]]
 name = "miden-client-core"
 version = "0.18.2"
-source = "git+https://github.com/0xMiden/rust-sdk?rev=39a3f074766e5379275bf6fe9abb5819f155c75e#39a3f074766e5379275bf6fe9abb5819f155c75e"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=6327461abc969f3d41328ca9b34b68fdbe980042#6327461abc969f3d41328ca9b34b68fdbe980042"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2443,7 +2443,7 @@ dependencies = [
 [[package]]
 name = "miden-client-grpc"
 version = "0.18.2"
-source = "git+https://github.com/0xMiden/rust-sdk?rev=39a3f074766e5379275bf6fe9abb5819f155c75e#39a3f074766e5379275bf6fe9abb5819f155c75e"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=6327461abc969f3d41328ca9b34b68fdbe980042#6327461abc969f3d41328ca9b34b68fdbe980042"
 dependencies = [
  "async-trait",
  "gloo-timers",
@@ -2464,7 +2464,7 @@ dependencies = [
 [[package]]
 name = "miden-client-proto"
 version = "0.18.2"
-source = "git+https://github.com/0xMiden/rust-sdk?rev=39a3f074766e5379275bf6fe9abb5819f155c75e#39a3f074766e5379275bf6fe9abb5819f155c75e"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=6327461abc969f3d41328ca9b34b68fdbe980042#6327461abc969f3d41328ca9b34b68fdbe980042"
 dependencies = [
  "miden-client-core",
  "miden-objects",
@@ -2478,7 +2478,7 @@ dependencies = [
 [[package]]
 name = "miden-client-sqlite-store"
 version = "0.18.2"
-source = "git+https://github.com/0xMiden/rust-sdk?rev=39a3f074766e5379275bf6fe9abb5819f155c75e#39a3f074766e5379275bf6fe9abb5819f155c75e"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=6327461abc969f3d41328ca9b34b68fdbe980042#6327461abc969f3d41328ca9b34b68fdbe980042"
 dependencies = [
  "anyhow",
  "async-trait",
