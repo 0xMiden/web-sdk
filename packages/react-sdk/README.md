@@ -155,6 +155,10 @@ function App() {
         // RPC endpoint (defaults to testnet). You can also use 'mainnet', 'devnet' or 'testnet'.
         rpcUrl: 'devnet',
 
+        // Optional: 'mainnet' | 'testnet' | 'devnet', the address prefix. Wins over the
+        // network inferred from rpcUrl; a custom URL naming no network is mainnet.
+        // network: 'mainnet',
+
         // Optional: the faucet the chain mints its fee asset from, bech32 or hex.
         // The client receives the chain's protocol configuration, which names the
         // fee asset, from the node when it syncs; this only sets what
@@ -747,7 +751,7 @@ The `StreamedNote` type provides:
 ```typescript
 interface StreamedNote {
   id: string;              // Note ID (hex)
-  sender: string;          // Sender account ID (bech32 if the network is known, else hex)
+  sender: string;          // Sender account ID (bech32 for the client's network, hex before a client exists)
   amount: bigint;          // First fungible asset amount (0n if none)
   assets: NoteAsset[];     // All assets on the note
   record: InputNoteRecord; // Underlying record for escape-hatch access
@@ -1754,7 +1758,7 @@ Compare and normalize account IDs across hex and bech32 formats:
 ```typescript
 import { normalizeAccountId, accountIdsEqual } from '@miden-sdk/react';
 
-const bech32 = normalizeAccountId('0x1234...');  // bech32 for the client's network (raw id if unknown)
+const bech32 = normalizeAccountId('0x1234...');  // bech32 for the client's network (raw id before a client exists)
 accountIdsEqual('0x1234...', 'miden1abc...');     // true (format-agnostic)
 ```
 

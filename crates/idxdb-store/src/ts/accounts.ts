@@ -1245,19 +1245,21 @@ export async function pruneAccountHistory(
         // Delete orphaned code: only check roots from the deleted headers,
         // and only if they are not referenced by any remaining header or foreign code.
         if (candidateCodeRoots.size > 0) {
-          const latestHeaders = await db.latestAccountHeaders.toArray();
-          const remainingHistorical =
-            await db.historicalAccountHeaders.toArray();
-          const foreignCodes = await db.foreignAccountCode.toArray();
-
-          const referencedCodeRoots = new Set<string>();
-          for (const h of latestHeaders) referencedCodeRoots.add(h.codeRoot);
-          for (const h of remainingHistorical)
-            referencedCodeRoots.add(h.codeRoot);
-          for (const f of foreignCodes) referencedCodeRoots.add(f.codeRoot);
-
           for (const root of candidateCodeRoots) {
-            if (!referencedCodeRoots.has(root)) {
+            const referenced =
+              (await db.latestAccountHeaders
+                .where("codeRoot")
+                .equals(root)
+                .first()) ||
+              (await db.historicalAccountHeaders
+                .where("codeRoot")
+                .equals(root)
+                .first()) ||
+              (await db.foreignAccountCode
+                .where("codeRoot")
+                .equals(root)
+                .first());
+            if (!referenced) {
               await db.accountCodes.where("root").equals(root).delete();
               totalDeleted += 1;
             }

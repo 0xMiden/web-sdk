@@ -505,6 +505,83 @@ describe("MidenDatabase migrations", () => {
         .keys()
     ).toEqual([[2, "0xnull-a"]]);
   });
+
+  // v12 (#267): index-only, so a v11 store keeps every row and every new index is built over it.
+  it("v12 migration keeps every row and builds the consumer, code root and tag indexes", async () => {
+    const name = uniqueDbName();
+
+    const dbV11 = trackDb(new Dexie(name));
+    dbV11.version(11).stores({
+      ...V6_STORES,
+      inputNotes: `${V6_STORES.inputNotes},[stateDiscriminant+nullifier]`,
+    });
+    await dbV11.open();
+    await dbV11.table("settings").put({
+      scope: SETTING_SCOPE_CLIENT,
+      key: CLIENT_VERSION_SETTING_KEY,
+      value: new TextEncoder().encode("0.18.0"),
+    });
+    await dbV11.table("inputNotes").bulkPut([
+      {
+        detailsCommitment: "0xa",
+        noteId: "0xa",
+        stateDiscriminant: 6,
+        consumerAccountId: "0xacc",
+        consumedBlockHeight: 5,
+        consumedTxOrder: 1,
+      },
+      // Never consumed: it has no consumer, so the index leaves it out.
+      { detailsCommitment: "0xb", noteId: "0xb", stateDiscriminant: 2 },
+    ]);
+    const header = (id: string, codeRoot: string) => ({
+      id,
+      codeRoot,
+      storageRoot: "0xs",
+      vaultRoot: "0xv",
+      nonce: "1",
+      committed: true,
+      accountCommitment: `0xc-${id}`,
+      locked: false,
+    });
+    await dbV11.table("latestAccountHeaders").put(header("0xlatest", "0xroot"));
+    await dbV11
+      .table("historicalAccountHeaders")
+      .put({ ...header("0xhist", "0xroot"), replacedAtNonce: "0" });
+    await dbV11
+      .table("foreignAccountCode")
+      .put({ accountId: "0xforeign", codeRoot: "0xroot" });
+    await dbV11.table("tags").bulkPut([
+      { tag: "t", sourceNoteId: "n", sourceAccountId: "a" },
+      { tag: "t", sourceNoteId: "n", sourceAccountId: "b" },
+    ]);
+    dbV11.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.18.0")).toBe(true);
+
+    expect(await mdb.inputNotes.count()).toBe(2);
+    expect(
+      await mdb.inputNotes
+        .where(
+          "[consumerAccountId+consumedBlockHeight+consumedTxOrder+detailsCommitment]"
+        )
+        .between(["0xacc", Dexie.minKey], ["0xacc", Dexie.maxKey])
+        .primaryKeys()
+    ).toEqual(["0xa"]);
+    for (const table of [
+      mdb.latestAccountHeaders,
+      mdb.historicalAccountHeaders,
+      mdb.foreignAccountCode,
+    ]) {
+      expect(await table.where("codeRoot").equals("0xroot").count()).toBe(1);
+    }
+    expect(
+      await mdb.tags
+        .where({ tag: "t", sourceNoteId: "n", sourceAccountId: "b" })
+        .count()
+    ).toBe(1);
+    expect(await mdb.tags.count()).toBe(2);
+  });
 });
 
 // ============================================================
@@ -1065,8 +1142,8 @@ describe("a store written by a newer client", () => {
 
     // The missing table makes Dexie patch the store to native version 91.
     expect(await reopen(name, "0.17.4")).toBeDefined();
-    // Reopening runs the v11 upgrade, which replaces the patched native version.
-    expect(await nativeVersion(name)).toBe(110);
+    // Reopening runs the v12 upgrade, which replaces the patched native version.
+    expect(await nativeVersion(name)).toBe(120);
   });
 
   it("refuses it when a newer client upgrades the store under an open connection", async () => {
