@@ -6,9 +6,11 @@ use miden_client::vm::AdviceMap as NativeAdviceMap;
 use miden_client::{Felt as NativeFelt, Word as NativeWord};
 use miden_protocol::crypto::SequentialCommit;
 
+use crate::models::account_code::AccountCode;
 use crate::models::advice_map::AdviceMap;
 use crate::models::felt::Felt;
 use crate::models::note::Note;
+use crate::models::note_script::NoteScript;
 use crate::models::word::Word;
 use crate::platform::{JsBytes, JsErr};
 use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
@@ -59,6 +61,24 @@ impl TransactionRequest {
                 Ok(NoteDetailsAndTag::new(note_details.into(), note_tag.into()))
             })
             .collect::<Result<Vec<NoteDetailsAndTag>, _>>()
+    }
+
+    /// Whether execution skips input notes that are no longer consumable instead of failing.
+    #[js_export(js_name = "ignoresInvalidInputNotes")]
+    pub fn ignores_invalid_input_notes(&self) -> bool {
+        self.0.ignore_invalid_input_notes()
+    }
+
+    /// Returns the custom note scripts the network is expected to execute for this request.
+    #[js_export(js_name = "expectedNtxScripts")]
+    pub fn expected_ntx_scripts(&self) -> Vec<NoteScript> {
+        self.0.expected_ntx_scripts().iter().map(Into::into).collect()
+    }
+
+    /// Returns the new account code carried for an account code upgrade, if any.
+    #[js_export(js_name = "accountCodeUpgrade")]
+    pub fn account_code_upgrade(&self) -> Option<AccountCode> {
+        self.0.account_code_upgrade().map(|upgrade| upgrade.code().into())
     }
 
     /// Returns the transaction script argument if present.

@@ -13,6 +13,7 @@ use miden_client::note::{
     BlockNumber,
     Note as NativeNote,
     NoteAssets as NativeNoteAssets,
+    NoteScript as NativeNoteScript,
     PswapNote,
 };
 #[cfg(feature = "testing")]
@@ -41,8 +42,9 @@ use crate::models::chain_anchor::ChainAnchor;
 use crate::models::eth_address::EthAddress;
 use crate::models::felt::Felt;
 use crate::models::foreign_account::ForeignAccount;
-use crate::models::miden_arrays::{FeltArray, ForeignAccountArray};
+use crate::models::miden_arrays::{FeltArray, ForeignAccountArray, NoteScriptArray};
 use crate::models::note::Note;
+use crate::models::note_script::NoteScript;
 use crate::models::proven_transaction::ProvenTransaction;
 use crate::models::provers::TransactionProver;
 use crate::models::transaction_id::TransactionId;
@@ -193,6 +195,35 @@ impl WebClient {
             })?;
 
         Ok(b2agg_transaction_request.into())
+    }
+
+    /// Builds a transaction request that registers custom note scripts in the node's script
+    /// registry, so a network account can later run them.
+    ///
+    /// The request emits one public note per script, with no assets and no storage. Submit it from
+    /// `sender_account_id` before the network transaction that needs the scripts.
+    #[js_export(js_name = "newRegisterNoteScriptsTransactionRequest")]
+    pub async fn new_register_note_scripts_transaction_request(
+        &self,
+        sender_account_id: &AccountId,
+        scripts: &NoteScriptArray,
+    ) -> Result<TransactionRequest, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| {
+            from_str_err("Client not initialized while generating transaction request")
+        })?;
+
+        let items: Vec<NoteScript> = scripts.into();
+        let native_scripts: Vec<NativeNoteScript> = items.into_iter().map(Into::into).collect();
+
+        let builder = fee_aware_builder(client, sender_account_id.into()).await?;
+        let request = builder
+            .build_register_note_scripts(sender_account_id.into(), native_scripts, client.rng())
+            .map_err(|err| {
+                js_error_with_context(err, "failed to create register note scripts request")
+            })?;
+
+        Ok(request.into())
     }
 
     #[js_export(js_name = "newSwapTransactionRequest")]

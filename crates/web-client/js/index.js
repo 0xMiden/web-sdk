@@ -97,7 +97,7 @@ export {
 //
 //   - An entry that awaits while holding the borrow can be polled concurrently
 //     with any other call and panics with `already borrowed: BorrowMutError`.
-//     The methods that read the store while holding the borrow — the eight
+//     The methods that read the store while holding the borrow — the nine
 //     request constructors, `feeAwareTransactionRequestBuilder` and
 //     `withFeeAwareAuth`, which read the chain's fee parameters, and
 //     `buildPswapCancelByOrder`, which reads the order's lineage — are write
@@ -156,6 +156,7 @@ const WRITE_METHODS = new Set([
   "newPswapCancelTransactionRequest",
   "newPswapConsumeTransactionRequest",
   "newPswapCreateTransactionRequest",
+  "newRegisterNoteScriptsTransactionRequest",
   "newSendTransactionRequest",
   "newSwapTransactionRequest",
   "pruneAccountHistory",
