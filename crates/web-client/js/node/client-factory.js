@@ -73,18 +73,25 @@ export function createWasmWebClient(rawSdk, options) {
         noteTransportMaxRetries,
         noteTransportRetryIntervalMs
       );
-      const dir = options?.dataDir
-        ? path.join(options.dataDir, storeName || "default")
-        : storeName
-          ? defaultDataDir(storeName)
-          : createTempDir("client");
+      // `storeIdentifier()` is the open store's SQLite path: reopen that file.
+      const dbPath =
+        storeName && path.isAbsolute(storeName) && storeName.endsWith(".db")
+          ? storeName
+          : undefined;
+      const dir = dbPath
+        ? path.dirname(dbPath)
+        : options?.dataDir
+          ? path.resolve(options.dataDir, storeName || "default")
+          : storeName
+            ? defaultDataDir(storeName)
+            : createTempDir("client");
 
       const client = new rawSdk.WebClient();
       await client.createClient(
         rpcUrl ?? null,
         noteTransportUrl ?? null,
         normBytes(seed) ?? null,
-        path.join(dir, `${storeName || "store"}.db`),
+        dbPath ?? path.join(dir, `${storeName || "store"}.db`),
         path.join(dir, "keystore"),
         feeFaucetId ?? null,
         noteTransportMaxRetries ?? null,
