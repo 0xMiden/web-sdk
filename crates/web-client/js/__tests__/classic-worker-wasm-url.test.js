@@ -13,6 +13,8 @@ vi.mock("../wasm.js", () => ({
     __wasm_url: RESOLVED_WASM_URL,
     __initPath: moduleOrPath ?? RESOLVED_WASM_URL,
   }),
+  // Production resolveWasmUrl stringifies Cargo `__wasm_url` (often a URL
+  // object) so WebKit Worker.postMessage can clone it (#286).
   resolveWasmUrl: async () => RESOLVED_WASM_URL,
 }));
 
@@ -91,5 +93,14 @@ describe("classic worker WASM URL (#286)", () => {
       userAgent: CHROME_UA,
     });
     expect(init.args[13]).toBeUndefined();
+  });
+
+  it("posts a string WASM URL that survives structuredClone (WebKit)", async () => {
+    const init = await captureInit({
+      workerMode: "classic",
+      userAgent: SAFARI_UA,
+    });
+    expect(typeof init.args[13]).toBe("string");
+    expect(() => structuredClone(init)).not.toThrow();
   });
 });

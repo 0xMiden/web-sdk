@@ -27,19 +27,37 @@ async function loadWasm(moduleOrPath) {
 }
 
 /**
- * Resolve the emitted WASM asset URL on the current thread.
+ * Resolve the emitted WASM asset URL on the current thread as a string.
  *
  * Must run where `import.meta.url` is still bundler-traceable (main thread /
- * module worker), not inside the classic worker IIFE.
+ * module worker), not inside the classic worker IIFE. Returns a string so the
+ * value survives `Worker.postMessage` structured clone on WebKit — a `URL`
+ * object from the Cargo glue throws "The object can not be cloned" there (#286).
  *
- * @returns {Promise<URL | string | undefined>}
+ * @returns {Promise<string | undefined>}
  */
 async function resolveWasmUrl() {
   if (import.meta.env && import.meta.env.SSR) {
     return undefined;
   }
   const wasmModule = await import("../Cargo.toml");
-  return wasmModule.__wasm_url;
+  return wasmUrlToPostable(wasmModule.__wasm_url);
+}
+
+/**
+ * Coerce a Cargo-glue `__wasm_url` (`URL` or string) into a postMessage-safe
+ * string for classic-worker INIT.
+ *
+ * @param {URL | string | undefined | null} value
+ * @returns {string | undefined}
+ */
+function wasmUrlToPostable(value) {
+  if (value == null) return undefined;
+  if (typeof value === "string") return value;
+  if (typeof value === "object" && typeof value.href === "string") {
+    return value.href;
+  }
+  return String(value);
 }
 
 export { resolveWasmUrl };
