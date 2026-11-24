@@ -55,6 +55,10 @@ const fakeNative = vi.hoisted(() => {
       received.push(notes);
       return this;
     }
+    withExpectedNtxScripts(scripts) {
+      received.push(scripts);
+      return this;
+    }
   }
   class NoteStorage {
     constructor(felts) {
@@ -97,6 +101,10 @@ const fakeNative = vi.hoisted(() => {
     }
     async executeProgram() {
       return ["x", "y"];
+    }
+    async newRegisterNoteScriptsTransactionRequest(_sender, scripts) {
+      received.push(scripts);
+      return "request";
     }
   }
   const AuthScheme = Object.defineProperties(
