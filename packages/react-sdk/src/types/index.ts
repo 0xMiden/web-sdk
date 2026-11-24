@@ -9,6 +9,7 @@ import type {
   AccountFile,
   InputNoteRecord,
   ConsumableNoteRecord,
+  NoteConsumability,
   TransactionFilter,
   TransactionId,
   TransactionRecord,
@@ -43,6 +44,7 @@ export type {
   AccountFile,
   InputNoteRecord,
   ConsumableNoteRecord,
+  NoteConsumability,
   TransactionFilter,
   TransactionId,
   TransactionRecord,
@@ -293,6 +295,33 @@ export interface NotesResult {
   consumableNotes: ConsumableNoteRecord[];
   noteSummaries: NoteSummary[];
   consumableNoteSummaries: NoteSummary[];
+  isLoading: boolean;
+  error: Error | null;
+  refetch: () => Promise<void>;
+}
+
+/**
+ * Whether a note can be consumed, from the screener's result: now, once the
+ * chain reaches `blockHeight`, or never. `never` also covers an empty result,
+ * which the screener returns when no screened account can consume the note
+ * under the current conditions. A client tracking no accounts screens nothing,
+ * so its status stays null.
+ */
+export type NoteConsumabilityStatus =
+  | { kind: "immediately" }
+  | { kind: "afterBlock"; blockHeight: number }
+  | { kind: "never" };
+
+export interface NoteConsumabilityOptions {
+  /** Screen for this account only; omit to screen every tracked account. */
+  accountId?: AccountRef;
+}
+
+export interface NoteConsumabilityResult {
+  /** The note's status; null until it has been screened, or without a note. */
+  status: NoteConsumabilityStatus | null;
+  /** The screener's entries, one per account that can consume the note. */
+  consumability: NoteConsumability[] | null;
   isLoading: boolean;
   error: Error | null;
   refetch: () => Promise<void>;
