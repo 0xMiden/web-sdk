@@ -326,6 +326,7 @@ const wasmOptArgs = [
   // memory without revisiting this assumption. Without this flag the MT
   // binary keeps ~8MB of zeroed-out MASP debug bytes.
   "--zero-filled-memory",
+  ...(isMt && !devMode ? ["--merge-similar-functions"] : []),
 ];
 
 // MT-only cargo args. For the MT build we additionally need:
