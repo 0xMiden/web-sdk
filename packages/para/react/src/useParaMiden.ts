@@ -12,7 +12,14 @@ import {
 
 /**
  * React hook that converts Para React SDK context into a ready-to-use MidenClient.
- * Spawns the client once a Para session with at least one EVM wallet is active.
+ * Spawns the client once a Para session with at least one EVM wallet is active,
+ * and terminates it on logout, on an EVM wallet change, on a client config change
+ * (`nodeUrl`, `storageMode`, the `opts` fields, `showSigningModal`, or whether
+ * `customSignConfirmStep` is set), and on unmount. A new reference for `para`,
+ * the wallets, `opts`, or `customSignConfirmStep` with the same values does not
+ * rebuild the client; the latest `customSignConfirmStep` is always the one called.
+ * Setups run one at a time: a superseded setup finishes and its client is
+ * terminated before the next one starts.
  *
  * Returns:
  * - client: MidenClient instance backed by the active Para session (or null while loading)
@@ -34,10 +41,7 @@ export function useParaMiden(
 ) {
   const para = useClient();
   const { isConnected, embedded } = useAccount();
-  const clientRef = useRef<MidenClient | null>(null);
-  // Which EVM wallets the client in clientRef was built for, so a logout or a
-  // different Para user does not keep using the previous user's client.
-  const clientWalletKeyRef = useRef<string>("");
+  const [client, setClient] = useState<MidenClient | null>(null);
   const [accountId, setAccountId] = useState<string>("");
   const [error, setError] = useState<string>("");
 
@@ -50,44 +54,61 @@ export function useParaMiden(
     [evmWallets]
   );
 
-  useEffect(() => {
-    let cancelled = false;
+  // Latest values, read when a setup starts, so a new reference with the same
+  // contents does not restart setup.
+  const paraRef = useRef(para);
+  paraRef.current = para;
+  const evmWalletsRef = useRef(evmWallets);
+  evmWalletsRef.current = evmWallets;
+  const optsRef = useRef(opts);
+  optsRef.current = opts;
+  const customSignConfirmStepRef = useRef(customSignConfirmStep);
+  customSignConfirmStepRef.current = customSignConfirmStep;
+  // The previous setup, so the next one starts only after it has settled and
+  // terminated any client it built after being superseded.
+  const setupRef = useRef<Promise<void>>(Promise.resolve());
 
-    const dropClient = () => {
-      clientRef.current?.terminate();
-      clientRef.current = null;
-      clientWalletKeyRef.current = "";
-      setAccountId("");
-      setError("");
-    };
+  const hasPara = Boolean(para);
+  const hasWallets = Boolean(embedded.wallets?.length);
+  const hasCustomSignConfirmStep = Boolean(customSignConfirmStep);
+  const { accountSeed, noteTransportUrl, nodeTransportUrl, seed } = opts;
+
+  useEffect(() => {
+    setClient(null);
+    setAccountId("");
+    setError("");
+
+    if (!isConnected || !hasPara || !hasWallets) {
+      return;
+    }
+
+    let cancelled = false;
+    let createdClient: MidenClient | null = null;
+
+    const confirmStep: CustomSignConfirmStep | undefined =
+      hasCustomSignConfirmStep
+        ? async (txSummaryJson) =>
+            customSignConfirmStepRef.current?.(txSummaryJson)
+        : undefined;
 
     async function setupClient() {
-      if (!isConnected || !para || !embedded.wallets?.length) {
-        if (clientRef.current) {
-          dropClient();
-        }
+      const currentPara = paraRef.current;
+      if (cancelled || !currentPara) {
         return;
-      }
-
-      if (clientRef.current) {
-        if (clientWalletKeyRef.current === walletKey) {
-          return;
-        }
-        dropClient();
       }
 
       try {
         const { client: midenParaClient, accountId: aId } =
           await createParaMidenClient(
-            para,
-            evmWallets as Wallet[],
+            currentPara,
+            evmWalletsRef.current as Wallet[],
             {
-              ...opts,
+              ...optsRef.current,
               endpoint: nodeUrl,
               storageMode,
             },
             showSigningModal,
-            customSignConfirmStep
+            confirmStep
           );
 
         if (cancelled) {
@@ -96,10 +117,9 @@ export function useParaMiden(
           return;
         }
 
-        clientRef.current = midenParaClient;
-        clientWalletKeyRef.current = walletKey;
+        createdClient = midenParaClient;
+        setClient(midenParaClient);
         setAccountId(aId);
-        setError("");
       } catch (err) {
         if (cancelled) {
           return;
@@ -108,23 +128,30 @@ export function useParaMiden(
       }
     }
 
-    setupClient();
+    setupRef.current = setupRef.current.then(setupClient);
 
     return () => {
       cancelled = true;
+      createdClient?.terminate();
+      createdClient = null;
     };
   }, [
     isConnected,
-    evmWallets,
+    hasPara,
+    hasWallets,
     walletKey,
-    para,
     nodeUrl,
+    storageMode,
+    accountSeed,
+    noteTransportUrl,
+    nodeTransportUrl,
+    seed,
     showSigningModal,
-    customSignConfirmStep,
+    hasCustomSignConfirmStep,
   ]);
 
   return {
-    client: clientRef.current,
+    client,
     accountId,
     error,
     para,
