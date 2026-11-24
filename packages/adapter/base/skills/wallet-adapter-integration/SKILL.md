@@ -315,7 +315,8 @@ emit the wallet's raw error rather than a `WalletError` subclass, so an
   `requestPrivateNotes` and `requestStorage` answer from the wallet's store and
   only within the permission you connected with. `requestStorage` needs the
   `Storage` grant, rejects with `WalletNotConnectedError` when disconnected and
-  with `WalletStorageUnsupportedError` when the wallet lacks it. If you need chain state your app controls,
+  with `WalletStorageUnsupportedError` when the wallet lacks it. The React hooks
+  do not forward it yet; call it on the adapter instance. If you need chain state your app controls,
   sync your own client instead.
 
 The two are not exclusive: a `CustomTransaction` carries a serialized
