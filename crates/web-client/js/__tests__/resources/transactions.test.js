@@ -882,11 +882,24 @@ describe("TransactionsResource", () => {
         expect(wasm.FungibleAsset).not.toHaveBeenCalled();
       });
 
-      it("accepts a bigint above 2^53 - 1", async () => {
-        const { resource } = makeResource();
-        await expect(
-          calls[name](resource, 9007199254740993n)
-        ).resolves.toBeDefined();
+      it("forwards a bigint above 2^53 - 1 exactly", async () => {
+        const { resource, inner, wasm } = makeResource();
+        await calls[name](resource, 9007199254740993n);
+        const forwarded = {
+          "swap offer": () => inner.newSwapTransactionRequest.mock.calls[0][2],
+          "swap request": () =>
+            inner.newSwapTransactionRequest.mock.calls[0][4],
+          "pswapCreate offer": () =>
+            inner.newPswapCreateTransactionRequest.mock.calls[0][2],
+          "pswapCreate request": () =>
+            inner.newPswapCreateTransactionRequest.mock.calls[0][4],
+          "pswapConsume fillAmount": () =>
+            inner.newPswapConsumeTransactionRequest.mock.calls[0][2],
+          "pswapConsume noteFillAmount": () =>
+            inner.newPswapConsumeTransactionRequest.mock.calls[0][3],
+          "createNetworkNote asset": () => wasm.FungibleAsset.mock.calls[0][1],
+        }[name]();
+        expect(forwarded).toBe(9007199254740993n);
       });
     });
   });

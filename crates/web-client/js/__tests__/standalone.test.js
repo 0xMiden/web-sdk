@@ -686,11 +686,13 @@ describe("createFeeSponsorshipNote docs", () => {
 
 describe("number amounts", () => {
   let wasm;
+  let swapTagMock;
 
   beforeEach(() => {
     wasm = makeWasm();
     _setWasm(wasm);
-    _setWebClient({ buildSwapTag: vi.fn().mockReturnValue("swapTag") });
+    swapTagMock = vi.fn().mockReturnValue("swapTag");
+    _setWebClient({ buildSwapTag: swapTagMock });
   });
 
   afterEach(() => {
@@ -712,7 +714,9 @@ describe("number amounts", () => {
   });
 
   it("buildSwapTag forwards a bigint above 2^53 - 1 exactly", () => {
-    expect(swap(9007199254740993n, 1n)).toBe("swapTag");
+    expect(swap(9007199254740993n, 9007199254740995n)).toBe("swapTag");
+    expect(swapTagMock.mock.calls[0][2]).toBe(9007199254740993n);
+    expect(swapTagMock.mock.calls[0][4]).toBe(9007199254740995n);
   });
 
   it("createP2IDNote rejects an unsafe asset number before building it", () => {

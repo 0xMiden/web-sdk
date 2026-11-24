@@ -424,6 +424,7 @@ export interface FaucetCreateOptions {
   name?: string;
   symbol: string;
   decimals: number;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   maxSupply: number | bigint;
   storage?: StorageMode;
   auth?: AuthSchemeType;
