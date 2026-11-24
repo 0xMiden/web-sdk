@@ -810,6 +810,54 @@ describe("TransactionsResource", () => {
       ).rejects.toThrow(/destinationRecipient/);
       expect(inner.newXReserveBurnTransactionRequest).not.toHaveBeenCalled();
     });
+
+    it.each([
+      ["above 2^53 - 1", Number.MAX_SAFE_INTEGER + 2],
+      ["fractional", 1.5],
+      ["NaN", NaN],
+    ])(
+      "rejects a number amount that is %s before any WASM call",
+      async (_label, amount) => {
+        const { resource, inner, wasm } = makeResource();
+        await expect(
+          resource.withdrawUsdcx({
+            account: "0xsender",
+            token: "0xfaucet",
+            amount,
+            destinationDomain: 6,
+            destinationRecipient: RECIPIENT,
+          })
+        ).rejects.toThrow(/amount/);
+        expect(wasm.AccountId.fromHex).not.toHaveBeenCalled();
+        expect(inner.newXReserveBurnTransactionRequest).not.toHaveBeenCalled();
+      }
+    );
+
+    it("forwards a bigint amount above 2^53 - 1 exactly", async () => {
+      const { resource, inner } = makeResource();
+      await resource.withdrawUsdcx({
+        account: "0xsender",
+        token: "0xfaucet",
+        amount: 9007199254740993n,
+        destinationDomain: 6,
+        destinationRecipient: RECIPIENT,
+      });
+      expect(inner.newXReserveBurnTransactionRequest.mock.calls[0][2]).toBe(
+        9007199254740993n
+      );
+    });
+
+    it("documents a destinationRecipient the validator accepts", () => {
+      const skill = readFileSync(
+        new URL("../../../skills/web-client-usage/SKILL.md", import.meta.url),
+        "utf8"
+      );
+      const documented = skill.match(
+        /withdrawUsdcx\(\{[^}]*?destinationRecipient: ([^,\n]+),/s
+      )?.[1];
+      expect(documented).toBeDefined();
+      expect(documented).toMatch(/^"0x[0-9a-fA-F]{64}"$/);
+    });
   });
 
   describe("consume", () => {
