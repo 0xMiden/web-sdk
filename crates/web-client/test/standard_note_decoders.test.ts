@@ -1,47 +1,48 @@
 // @ts-nocheck
 import { test, expect } from "./test-setup";
 
-async function fixtures(client, sdk) {
-  await client.syncState();
-  const sender = await client.newWallet(
-    sdk.AccountStorageMode.public(),
-    sdk.AuthScheme.AuthRpoFalcon512
-  );
-  const target = await client.newWallet(
-    sdk.AccountStorageMode.public(),
-    sdk.AuthScheme.AuthRpoFalcon512
-  );
-  const newFaucet = (symbol) =>
-    client.newFaucet(
-      sdk.AccountStorageMode.public(),
-      false,
-      symbol,
-      symbol,
-      8,
-      sdk.u64(1_000_000),
-      sdk.AuthScheme.AuthRpoFalcon512
-    );
-  const faucetA = await newFaucet("AAA");
-  const faucetB = await newFaucet("BBB");
-  const assets = () =>
-    new sdk.NoteAssets([new sdk.FungibleAsset(faucetA.id(), sdk.u64(7))]);
-  return { sender, target, faucetA, faucetB, assets };
-}
-
-function errorOf(fn) {
-  try {
-    fn();
-    return null;
-  } catch (err) {
-    return String(err?.message ?? err);
-  }
-}
-
 test.describe("standard note decoders", () => {
   test("P2idNote.tryFromNote decodes the target and rejects other notes", async ({
     run,
   }) => {
     const result = await run(async ({ client, sdk }) => {
+      // `run` serializes this callback into the browser page, so helpers live inside it.
+      async function fixtures(client, sdk) {
+        await client.syncState();
+        const sender = await client.newWallet(
+          sdk.AccountStorageMode.public(),
+          sdk.AuthScheme.AuthRpoFalcon512
+        );
+        const target = await client.newWallet(
+          sdk.AccountStorageMode.public(),
+          sdk.AuthScheme.AuthRpoFalcon512
+        );
+        const newFaucet = (symbol) =>
+          client.newFaucet(
+            sdk.AccountStorageMode.public(),
+            false,
+            symbol,
+            symbol,
+            8,
+            sdk.u64(1_000_000),
+            sdk.AuthScheme.AuthRpoFalcon512
+          );
+        const faucetA = await newFaucet("AAA");
+        const faucetB = await newFaucet("BBB");
+        const assets = () =>
+          new sdk.NoteAssets([new sdk.FungibleAsset(faucetA.id(), sdk.u64(7))]);
+        return { sender, target, faucetA, faucetB, assets };
+      }
+
+      function errorOf(fn) {
+        try {
+          fn();
+          return null;
+        } catch (err) {
+          return String(err?.message ?? err);
+        }
+      }
+
       const { sender, target, faucetA, assets } = await fixtures(client, sdk);
       const note = sdk.Note.createP2IDNote(
         sender.id(),
@@ -107,6 +108,43 @@ test.describe("standard note decoders", () => {
     run,
   }) => {
     const result = await run(async ({ client, sdk }) => {
+      // `run` serializes this callback into the browser page, so helpers live inside it.
+      async function fixtures(client, sdk) {
+        await client.syncState();
+        const sender = await client.newWallet(
+          sdk.AccountStorageMode.public(),
+          sdk.AuthScheme.AuthRpoFalcon512
+        );
+        const target = await client.newWallet(
+          sdk.AccountStorageMode.public(),
+          sdk.AuthScheme.AuthRpoFalcon512
+        );
+        const newFaucet = (symbol) =>
+          client.newFaucet(
+            sdk.AccountStorageMode.public(),
+            false,
+            symbol,
+            symbol,
+            8,
+            sdk.u64(1_000_000),
+            sdk.AuthScheme.AuthRpoFalcon512
+          );
+        const faucetA = await newFaucet("AAA");
+        const faucetB = await newFaucet("BBB");
+        const assets = () =>
+          new sdk.NoteAssets([new sdk.FungibleAsset(faucetA.id(), sdk.u64(7))]);
+        return { sender, target, faucetA, faucetB, assets };
+      }
+
+      function errorOf(fn) {
+        try {
+          fn();
+          return null;
+        } catch (err) {
+          return String(err?.message ?? err);
+        }
+      }
+
       const { sender, target, assets } = await fixtures(client, sdk);
       const reclaimable = sdk.Note.createP2IDENote(
         sender.id(),
@@ -174,6 +212,43 @@ test.describe("standard note decoders", () => {
     run,
   }) => {
     const result = await run(async ({ client, sdk }) => {
+      // `run` serializes this callback into the browser page, so helpers live inside it.
+      async function fixtures(client, sdk) {
+        await client.syncState();
+        const sender = await client.newWallet(
+          sdk.AccountStorageMode.public(),
+          sdk.AuthScheme.AuthRpoFalcon512
+        );
+        const target = await client.newWallet(
+          sdk.AccountStorageMode.public(),
+          sdk.AuthScheme.AuthRpoFalcon512
+        );
+        const newFaucet = (symbol) =>
+          client.newFaucet(
+            sdk.AccountStorageMode.public(),
+            false,
+            symbol,
+            symbol,
+            8,
+            sdk.u64(1_000_000),
+            sdk.AuthScheme.AuthRpoFalcon512
+          );
+        const faucetA = await newFaucet("AAA");
+        const faucetB = await newFaucet("BBB");
+        const assets = () =>
+          new sdk.NoteAssets([new sdk.FungibleAsset(faucetA.id(), sdk.u64(7))]);
+        return { sender, target, faucetA, faucetB, assets };
+      }
+
+      function errorOf(fn) {
+        try {
+          fn();
+          return null;
+        } catch (err) {
+          return String(err?.message ?? err);
+        }
+      }
+
       const { sender, target, faucetA, faucetB, assets } = await fixtures(
         client,
         sdk
