@@ -872,12 +872,18 @@ describe("getUnspentInputNoteNullifiers", () => {
       stateDiscriminant: STATE_COMMITTED,
       nullifier: "0xnull-committed",
     });
-    const whereSpy = vi.spyOn(getDatabase(dbId).inputNotes, "where");
+    const notes = getDatabase(dbId).inputNotes;
+    const whereSpy = vi.spyOn(notes, "where");
+    const collection = Object.getPrototypeOf(notes.toCollection());
+    const keysSpy = vi.spyOn(collection, "keys");
+    const toArraySpy = vi.spyOn(collection, "toArray");
 
     expect(await getUnspentInputNoteNullifiers(dbId)).toEqual([
       "0xnull-committed",
     ]);
     expect(whereSpy).toHaveBeenCalledWith("[stateDiscriminant+nullifier]");
+    expect(keysSpy).toHaveBeenCalledTimes(1);
+    expect(toArraySpy).not.toHaveBeenCalled();
   });
 
   it("returns empty array when no unspent notes", async () => {
