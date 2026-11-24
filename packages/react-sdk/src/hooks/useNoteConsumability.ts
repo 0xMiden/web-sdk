@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Note, NoteConsumability } from "@miden-sdk/miden-sdk";
+import type {
+  Note,
+  NoteConsumability,
+  WasmWebClient as WebClient,
+} from "@miden-sdk/miden-sdk";
 import { useMiden } from "../context/MidenProvider";
 import { useSyncStateStore } from "../store/MidenStore";
 import { captureClientReadGuard } from "../store/clientReadGuard";
@@ -19,6 +23,8 @@ import { getNoteConsumabilityStatus } from "../utils/noteConsumability";
  * `useNotes().consumableNotes`, which holds payments consumable now: a note
  * reported `immediately` here may be another trader's PSWAP order, which
  * consuming would fill from the account's vault.
+ *
+ * `status` stays null when the client tracks no account to screen.
  *
  * @param note - The note to screen; pass null or undefined to screen nothing.
  * @param options - Optional account to screen for; it must be in the client's
@@ -55,8 +61,10 @@ export function useNoteConsumability(
   const noteRef = useRef(note);
   noteRef.current = note;
   const latestRequestRef = useRef(0);
+  // The producing client is stored: a replacement client must not show it.
   const [result, setResult] = useState<{
     key: string;
+    client: WebClient;
     entries: NoteConsumability[];
   } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -82,8 +90,13 @@ export function useNoteConsumability(
               current,
               parseAccountId(accountKey)
             );
+      // An empty unfiltered screen is not `never` when no account was screened.
+      const screened =
+        accountKey != null ||
+        entries.length > 0 ||
+        (await client.getAccounts()).length > 0;
       if (!isCurrent() || latestRequestRef.current !== request) return;
-      setResult({ key, entries });
+      setResult(screened ? { key, client, entries } : null);
     } catch (err) {
       if (!isCurrent() || latestRequestRef.current !== request) return;
       setError(err instanceof Error ? err : new Error(String(err)));
@@ -96,7 +109,10 @@ export function useNoteConsumability(
     refetch();
   }, [refetch, lastSyncTime]);
 
-  const entries = result && result.key === key ? result.entries : null;
+  const entries =
+    result && result.key === key && result.client === client
+      ? result.entries
+      : null;
   const status = useMemo(
     () => (entries ? getNoteConsumabilityStatus(entries) : null),
     [entries]

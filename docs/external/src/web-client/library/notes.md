@@ -195,8 +195,8 @@ not import the note. The low-level `WebClient` exposes the same screen as
 In `@miden-sdk/react`, `useNoteConsumability(note, { accountId? })` runs this
 screen, again after each sync, and reduces it to a `status` of
 `{ kind: "immediately" }`, `{ kind: "afterBlock", blockHeight }` or
-`{ kind: "never" }`. An empty screen is `never`, including when the client
-tracks no accounts. It only presents the result: `useNotes().consumableNotes`
+`{ kind: "never" }`. An empty screen of tracked accounts is `never`; when the
+client tracks no accounts, `status` stays `null`. It only presents the result: `useNotes().consumableNotes`
 still offers payments consumable now and nothing else.
 
 See also [Transactions](./transactions.md) for `consumeAll`'s fee handling.

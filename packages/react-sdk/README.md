@@ -706,8 +706,9 @@ function NotesList() {
 Show whether a note can be consumed: now, after a block height, or never. The
 hook screens the note, imported or not, with the screener sync uses, and
 screens it again after each sync. Pass `accountId` to screen for one account;
-omit it to screen every tracked account. An empty screen reads as `never`,
-which is also what a client tracking no accounts reports.
+omit it to screen every tracked account. An empty screen of
+tracked accounts reads as `never`; with no tracked account, `status` stays
+`null` because nothing was screened.
 
 ```tsx
 import { useNoteConsumability } from '@miden-sdk/react';

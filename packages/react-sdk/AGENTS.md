@@ -722,7 +722,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | `useAccounts()` | `accounts` (`wallets` mirrors it, `faucets` is always `[]`; both deprecated) | List local accounts. `error` is always `null` |
 | `useAccount(id)` | `account`, `assets`, `getBalance(faucetId)` | Account details + balances |
 | `useNotes(filter?)` | `notes`, `consumableNotes`, `noteSummaries`, `consumableNoteSummaries` | Input notes + UI summaries |
-| `useNoteConsumability(note, { accountId? })` | `status` (`immediately`, `afterBlock` with `blockHeight`, or `never`), `consumability` | Screen a note, imported or not; an empty screen is `never`. Presentation only: claim from `useNotes().consumableNotes` |
+| `useNoteConsumability(note, { accountId? })` | `status` (`immediately`, `afterBlock` with `blockHeight`, or `never`), `consumability` | Screen a note, imported or not; an empty screen of tracked accounts is `never`; with none tracked, `status` stays null. Presentation only: claim from `useNotes().consumableNotes` |
 | `useNoteStream(filter?)` | streaming variant of `useNotes` | Auto-updates as notes arrive. Each `StreamedNote` has `standardPayment` (true only for P2ID/P2IDE); check it before treating a note as funds or consuming it |
 | `useSyncState()` | `syncHeight`, `isSyncing`, `lastSyncTime`, `sync()` | Sync status + manual trigger |
 | `useSyncControl()` | `pauseSync()`, `resumeSync()`, `isPaused` | Pause/resume the auto-sync timer |

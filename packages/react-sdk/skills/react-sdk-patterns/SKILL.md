@@ -156,7 +156,7 @@ const { noteSummaries, consumableNoteSummaries } = useNotes({ excludeIds: ["0xno
 const { status, consumability, isLoading, error, refetch } = useNoteConsumability(note, { accountId });
 // status - null until screened, then
 //   { kind: "immediately" } | { kind: "afterBlock", blockHeight } | { kind: "never" }
-// An empty screen is "never" (also when the client tracks no accounts).
+// An empty screen of tracked accounts is "never"; with no tracked account, status stays null.
 // Re-screens after each sync; keyed on note.id(), so a rebuilt Note object does not re-screen.
 // Presentation only: claim from useNotes().consumableNotes, never from status === "immediately",
 // which also matches another trader's PSWAP order.

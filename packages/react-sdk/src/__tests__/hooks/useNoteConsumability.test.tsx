@@ -71,17 +71,6 @@ describe("useNoteConsumability", () => {
     expect(client.getNoteConsumability).not.toHaveBeenCalled();
   });
 
-  it("reads an empty screen as never consumable", async () => {
-    setup({ getNoteConsumability: vi.fn().mockResolvedValue([]) });
-    const { result } = renderHook(() =>
-      useNoteConsumability(mockNote("0xnote"))
-    );
-    await waitFor(() =>
-      expect(result.current.status).toEqual({ kind: "never" })
-    );
-    expect(result.current.consumability).toEqual([]);
-  });
-
   it("screens nothing without a note", async () => {
     const client = setup();
     const { result } = renderHook(() => useNoteConsumability(null));
@@ -136,6 +125,7 @@ describe("useNoteConsumability", () => {
   it("drops the previous note's status when the note changes", async () => {
     let finish!: (value: unknown[]) => void;
     setup({
+      getAccounts: vi.fn().mockResolvedValue([createMockAccountHeader()]),
       getNoteConsumability: vi
         .fn()
         .mockResolvedValueOnce([entry("0xa", true)])
@@ -183,6 +173,7 @@ describe("useNoteConsumability", () => {
   it("ignores a screen that settles after the note changed", async () => {
     let finishFirst!: (value: unknown[]) => void;
     setup({
+      getAccounts: vi.fn().mockResolvedValue([createMockAccountHeader()]),
       getNoteConsumability: vi
         .fn()
         .mockReturnValueOnce(

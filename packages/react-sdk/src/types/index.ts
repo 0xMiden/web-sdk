@@ -302,7 +302,8 @@ export interface NotesResult {
  * Whether a note can be consumed, from the screener's result: now, once the
  * chain reaches `blockHeight`, or never. `never` also covers an empty result,
  * which the screener returns when no screened account can consume the note
- * under the current conditions, or when the client tracks no accounts.
+ * under the current conditions. A client tracking no accounts screens nothing,
+ * so its status stays null.
  */
 export type NoteConsumabilityStatus =
   | { kind: "immediately" }
