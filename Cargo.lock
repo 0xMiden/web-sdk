@@ -2389,7 +2389,7 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.18.0"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=next#37444d5b6389ba8dd62564b0e501529a24f78a21"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=37444d5b6389ba8dd62564b0e501529a24f78a21#37444d5b6389ba8dd62564b0e501529a24f78a21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2432,7 +2432,7 @@ dependencies = [
 [[package]]
 name = "miden-client-core"
 version = "0.18.0"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=next#37444d5b6389ba8dd62564b0e501529a24f78a21"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=37444d5b6389ba8dd62564b0e501529a24f78a21#37444d5b6389ba8dd62564b0e501529a24f78a21"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2445,7 +2445,7 @@ dependencies = [
 [[package]]
 name = "miden-client-grpc"
 version = "0.18.0"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=next#37444d5b6389ba8dd62564b0e501529a24f78a21"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=37444d5b6389ba8dd62564b0e501529a24f78a21#37444d5b6389ba8dd62564b0e501529a24f78a21"
 dependencies = [
  "async-trait",
  "gloo-timers",
@@ -2466,7 +2466,7 @@ dependencies = [
 [[package]]
 name = "miden-client-proto"
 version = "0.18.0"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=next#37444d5b6389ba8dd62564b0e501529a24f78a21"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=37444d5b6389ba8dd62564b0e501529a24f78a21#37444d5b6389ba8dd62564b0e501529a24f78a21"
 dependencies = [
  "miden-client-core",
  "miden-objects",
@@ -2480,7 +2480,7 @@ dependencies = [
 [[package]]
 name = "miden-client-sqlite-store"
 version = "0.18.0"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=next#37444d5b6389ba8dd62564b0e501529a24f78a21"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=37444d5b6389ba8dd62564b0e501529a24f78a21#37444d5b6389ba8dd62564b0e501529a24f78a21"
 dependencies = [
  "anyhow",
  "async-trait",
