@@ -659,7 +659,7 @@ add a new init path, plumb `numThreads` through it too.
 
 ### `_withInnerWebClient(fn)` - the `@internal` escape hatch
 
-`MidenClient._withInnerWebClient(fn)` (`js/client.js:102-116`) runs `fn` with
+`MidenClient._withInnerWebClient(fn)` (`js/client.js`) runs `fn` with
 exclusive access to the proxied JS `WebClient`, so `fn` can reach lower-level
 methods the resource surface does not expose (`executeTransaction`,
 `proveTransaction[WithProver]`, `submitProvenTransaction`, `applyTransaction`,
@@ -670,22 +670,19 @@ contexts - an MV3 extension that executes in its service worker, proves in a
 pool, then submits and applies back in the SW.
 
 The callback runs inside `_serializeWasmCall`, so the WASM borrow is held for
-the duration of `fn` and concurrent SDK calls queue behind it. While `fn` runs,
-the underlying client's `_withInnerLockDepth` counter is bumped so that
-`_serializeWasmCall` invocations made **by** `fn` (or by any proxy-dispatched
-method it calls) run **inline** instead of enqueuing behind the outer slot -
-which is itself awaiting `fn`. Without the counter that is a textbook
-re-entrant-lock deadlock.
-
-> **Safety contract.** Callers MUST hold their own external mutex preventing
-> concurrent access to the same client instance during `fn`. The chain still
-> serializes against external callers - they queue behind the outer slot - but
-> if an external task runs during one of `fn`'s awaits and calls into the SDK,
-> it sees `_withInnerLockDepth > 0` and runs **inline**, racing wasm-bindgen's
-> borrow check. The method is `@internal` and the proxied client's shape is not
-> part of the documented public API, so pin the SDK version if you depend on it.
-> (The consumer-facing statement of this contract lives in the shipped
-> `web-client-usage` skill; the mechanism lives here.)
+the duration of `fn` and concurrent SDK calls queue behind it, including calls
+an unrelated task makes during one of `fn`'s awaits, except the raw-bound
+`SYNC_METHODS` accessors and the `keystore` getter, which never queue. `fn` receives a trusted
+handle (`createTrustedHandle` in `index.js`): a proxy over the client proxy
+whose methods run with the handle as `this`, so `_serializeWasmCall` and
+`_withStoreLock` see the handle's private `TRUSTED_CALLS` marker and run
+**inline** only for calls made through it, and for the calls those methods
+make on `this`. Queueing them would deadlock behind the slot that is awaiting
+`fn`. After `fn` settles the marker reads false, so a kept handle queues like
+the client. A call inside `fn` through any other reference to the client
+queues behind `fn` and deadlocks. Calls through the handle run inline, so
+`fn` must await them one at a time. (The consumer-facing statement lives in the
+shipped `web-client-usage` skill; the mechanism lives here.)
 
 ### Adding a method
 

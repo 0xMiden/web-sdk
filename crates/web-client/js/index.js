@@ -380,18 +380,45 @@ function observationSensitive(enabled, error) {
   };
 }
 
+// Marks the trusted handle `_withInnerWebClient` passes its callback: a call
+// whose receiver reads it as true runs inline in that callback's chain slot.
+const TRUSTED_CALLS = Symbol("trustedWasmCalls");
+
+/**
+ * A view of `client` for `_withInnerWebClient`. Every method reached through it
+ * runs with the view as `this`, so only calls made through the view, and the
+ * calls those make on `this`, skip the queue. After `release()` a kept view
+ * queues like the client itself.
+ * @internal
+ */
+function createTrustedHandle(client) {
+  let active = true;
+  const handle = new Proxy(client, {
+    get(target, prop, receiver) {
+      return prop === TRUSTED_CALLS
+        ? active
+        : Reflect.get(target, prop, receiver);
+    },
+  });
+  return { handle, release: () => (active = false) };
+}
+
 function createClientProxy(instance) {
   return new Proxy(instance, {
     get(target, prop, receiver) {
+      // Only a trusted handle answers true; it intercepts the read itself.
+      if (prop === TRUSTED_CALLS) {
+        return false;
+      }
       if (prop in target) {
         return Reflect.get(target, prop, receiver);
       }
       const live = target.wasmWebClient;
-      // After terminate() only a read nested in an in-flight
-      // `_withInnerWebClient` keeps the live route, as in `_serializeWasmCall`:
-      // it belongs to work that was already queued when terminate() ran.
+      // After terminate() only a read through an in-flight
+      // `_withInnerWebClient` handle keeps the live route, as in
+      // `_serializeWasmCall`: it belongs to work queued before terminate() ran.
       const liveRoute =
-        live && (!target._terminated || target._withInnerLockDepth > 0);
+        live && (!target._terminated || receiver[TRUSTED_CALLS] === true);
       if (liveRoute && prop in live) {
         const value = live[prop];
         if (typeof value === "function") {
@@ -411,7 +438,7 @@ function createClientProxy(instance) {
             };
           }
           return (...args) =>
-            target._serializeWasmCall(
+            receiver._serializeWasmCall(
               () => value.apply(target.wasmWebClient, args),
               prop
             );
@@ -776,11 +803,6 @@ class WebClient {
     // would panic with "recursive use of an object detected" due to
     // wasm-bindgen's internal RefCell.
     this._wasmCallChain = Promise.resolve();
-    // Depth counter for `_withInnerWebClient` re-entrancy. While > 0,
-    // `_serializeWasmCall` runs its callback inline instead of queueing
-    // it on the chain — see the comment on `_serializeWasmCall` for the
-    // safety contract.
-    this._withInnerLockDepth = 0;
     // This client's in-flight coalesced syncs; see `_withStoreLock`.
     this._syncRuns = new Map();
     // Top-level calls queued on `_wasmCallChain` so far. A coalesced sync run
@@ -813,19 +835,11 @@ class WebClient {
    * load-bearing — without it, concurrent main-thread callers would panic
    * with "recursive use of an object detected" (wasm-bindgen's RefCell).
    *
-   * Re-entrancy: when invoked from inside a `_withInnerWebClient(fn)`
-   * callback — detected via `_withInnerLockDepth > 0` — `fn` runs inline
-   * (no chain enqueue). The outer `_withInnerWebClient` invocation
-   * already holds the chain via its own wrapping `_serializeWasmCall`,
-   * so enqueueing the inner call would deadlock (the inner queues
-   * behind the outer; the outer awaits the inner). The inline run is
-   * safe because the chain still serializes against external callers
-   * — they queue behind the outer call's chain slot, which only resolves
-   * after `fn` (including all inline re-entries) settles. Callers of
-   * `_withInnerWebClient` MUST hold an external mutex preventing
-   * concurrent access via other code paths on this same instance during
-   * the callback; without that, an external task running between two
-   * awaits inside `fn` would race wasm-bindgen's borrow check.
+   * Re-entrancy: a call made through the trusted handle an in-flight
+   * `_withInnerWebClient(fn)` passes `fn` (see `createTrustedHandle`) runs
+   * inline. The outer call already holds the chain slot, so queueing the
+   * inner call would deadlock. Every other caller, including one that runs
+   * during an await inside `fn`, queues behind that slot.
    *
    * Observability: when `opName` is supplied and a consumer has registered an
    * observer, one observation (name, outcome, duration) is emitted after the
@@ -849,9 +863,10 @@ class WebClient {
    * @returns {Promise<any>} The result of fn.
    */
   _serializeWasmCall(fn, opName, gate) {
-    // A call nested in an in-flight `_withInnerWebClient` still runs inline:
-    // it belongs to work that was already queued when terminate() ran.
-    if (this._terminated && this._withInnerLockDepth === 0) {
+    // A call through an in-flight `_withInnerWebClient` handle still runs
+    // inline: it belongs to work that was already queued when terminate() ran.
+    const trusted = this[TRUSTED_CALLS] === true;
+    if (this._terminated && !trusted) {
       return Promise.reject(new Error("WebClient terminated"));
     }
     // Opt-in twice over: with no op name or nobody listening, `fn` is
@@ -894,7 +909,7 @@ class WebClient {
         }
       : fn;
 
-    if (this._withInnerLockDepth > 0) {
+    if (trusted) {
       return Promise.resolve().then(wrapped);
     }
     this._queuedCalls += 1;
@@ -970,8 +985,8 @@ class WebClient {
    * joins the run, but runs its own, serialized with it by the store lock.
    * Without `syncMethod` every call runs its own `fn`.
    *
-   * Nested in `_withInnerWebClient`, the call runs inline like any nested call
-   * and requests the lock itself. It never joins a coalesced run, which may
+   * Made through a `_withInnerWebClient` handle, the call runs inline like any
+   * call through it and requests the lock itself. It never joins a coalesced run, which may
    * be queued behind the callback.
    *
    * @param {() => Promise<any>} fn - The WASM work.
@@ -983,7 +998,7 @@ class WebClient {
   _withStoreLock(fn, opName, syncMethod) {
     // `_serializeWasmCall` rejects too, but a joiner never reaches it.
     // The terminated check arms nothing.
-    if (this._terminated && this._withInnerLockDepth === 0) {
+    if (this._terminated && this[TRUSTED_CALLS] !== true) {
       return Promise.reject(new Error("WebClient terminated"));
     }
     const dbId = this._storeLockId();
@@ -1054,7 +1069,7 @@ class WebClient {
       );
       return caller;
     };
-    if (!syncMethod || this._withInnerLockDepth > 0) {
+    if (!syncMethod || this[TRUSTED_CALLS] === true) {
       return run();
     }
     return coalesceRun(
@@ -1615,8 +1630,7 @@ class WebClient {
    *
    * This does not call `submitNewTransactionBatch`: that method takes its own
    * chain slot, and from inside this one the inner call would queue behind
-   * the outer one and deadlock. It does not raise `_withInnerLockDepth`: a
-   * foreign call would then run inline on the WASM client.
+   * the outer one and deadlock.
    *
    * @param {BatchItem[]} items - (account, request) pairs to submit.
    * @returns {Promise<{ blockNumber: number, before: Array, after: Array }>}
@@ -2558,6 +2572,7 @@ function copyWebClientStatics(WasmWebClient) {
 MidenClient._WasmWebClient = WebClient;
 MidenClient._MockWasmWebClient = MockWebClient;
 MidenClient._getWasmOrThrow = getWasmOrThrow;
+MidenClient._createTrustedHandle = createTrustedHandle;
 _setStandaloneWebClient(WebClient);
 
 /**
@@ -2568,7 +2583,6 @@ _setStandaloneWebClient(WebClient);
  */
 export function __serializeWasmCallForTest(fn, opName, observabilityConfig) {
   const host = {
-    _withInnerLockDepth: 0,
     _wasmCallChain: Promise.resolve(),
     _queuedCalls: 0,
     _observeSensitive: observabilityConfig?.observeSensitive === true,
