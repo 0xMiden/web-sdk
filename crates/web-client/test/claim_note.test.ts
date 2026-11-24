@@ -145,6 +145,17 @@ function claimNoteProbe(vector, scale) {
         .storage()
         .items()
         .map((felt) => felt.asInt().toString()),
+      remainderStorage: sdk.Note.createClaimNote(
+        proof(),
+        leaf((BigInt(v.amount) + 1n).toString()),
+        scale,
+        bridge.id(),
+        sender.id()
+      )
+        .recipient()
+        .storage()
+        .items()
+        .map((felt) => felt.asInt().toString()),
       scaleTooLargeError: errorOf(create(v.amount, 19)),
       overflowError: errorOf(create(v.amount, 0)),
       aboveMaxError: errorOf(create(v.amount, 1)),
@@ -178,6 +189,15 @@ test.describe("Note.createClaimNote", () => {
       expect(result.attachmentCount).toBe(1);
       expect(result.targetMatches).toBe(true);
       expect(result.storage).toEqual(expectedStorage(vector, "10000000000"));
+
+      // One base unit over a multiple of 10^scale floors to the same amount.
+      const withRemainder = {
+        ...vector,
+        amount: String(BigInt(vector.amount) + 1n),
+      };
+      expect(result.remainderStorage).toEqual(
+        expectedStorage(withRemainder, "10000000000")
+      );
 
       expect(result.scaleTooLargeError).toMatch(/scaling factor too large/);
       expect(result.overflowError).toMatch(/doesn't fit in u64/);

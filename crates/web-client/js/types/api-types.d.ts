@@ -387,7 +387,7 @@ export type AccountRef = string | Account | AccountHeader | AccountId;
 export interface Asset {
   /** Token identifier (faucet account ID). */
   token: AccountRef;
-  /** Auto-converted to bigint internally. */
+  /** Auto-converted to bigint internally. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
 }
 
@@ -920,7 +920,7 @@ export interface PswapConsumeOptions extends TransactionOptions {
   account: AccountRef;
   /** PSWAP note to consume — accepts a note id (hex), `NoteId`, `InputNoteRecord`, or `Note`. */
   note: NoteInput;
-  /** Requested-asset amount the consumer supplies from its own vault; a partial amount emits a remainder PSWAP note. */
+  /** Requested-asset amount the consumer supplies from its own vault; a partial amount emits a remainder PSWAP note. A `number` must be a safe integer. */
   fillAmount: number | bigint;
   /** Requested-asset amount supplied by other in-flight notes in the same tx. Defaults to `0`; leave unset normally. */
   noteFillAmount?: number | bigint;

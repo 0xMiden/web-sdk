@@ -4,6 +4,7 @@ import {
   resolveAccountRef,
   resolveNoteType,
   resolveTransactionIdHex,
+  toAmount,
 } from "../utils.js";
 
 /** Preview operations that build their own request, and so cannot be anchored. */
@@ -75,16 +76,6 @@ async function proveResult(inner, defaultProver, result, opts) {
   return prover
     ? await inner.proveTransaction(result, prover)
     : await inner.proveTransaction(result);
-}
-
-// BigInt() rounds an unsafe number silently, so reject one before any WASM call.
-function toAmount(amount, method) {
-  if (typeof amount === "number" && !Number.isSafeInteger(amount)) {
-    throw new Error(
-      `${method}: amount must be a safe integer when given as a number; pass a bigint above 2^53 - 1`
-    );
-  }
-  return BigInt(amount);
 }
 
 /**
@@ -230,7 +221,7 @@ export class TransactionsResource {
             (a) =>
               new wasm.FungibleAsset(
                 resolveAccountRef(a.token, wasm),
-                BigInt(a.amount)
+                toAmount(a.amount, "createNetworkNote")
               )
           )
         )
@@ -1336,9 +1327,9 @@ export class TransactionsResource {
     const request = await this.#inner.newSwapTransactionRequest(
       accountId,
       offeredFaucetId,
-      BigInt(opts.offer.amount),
+      toAmount(opts.offer.amount, "swap"),
       requestedFaucetId,
-      BigInt(opts.request.amount),
+      toAmount(opts.request.amount, "swap"),
       noteType,
       paybackNoteType
     );
@@ -1358,9 +1349,9 @@ export class TransactionsResource {
     const request = await this.#inner.newPswapCreateTransactionRequest(
       accountId,
       offeredFaucetId,
-      BigInt(opts.offer.amount),
+      toAmount(opts.offer.amount, "pswapCreate"),
       requestedFaucetId,
-      BigInt(opts.request.amount),
+      toAmount(opts.request.amount, "pswapCreate"),
       noteType,
       paybackNoteType
     );
@@ -1375,8 +1366,8 @@ export class TransactionsResource {
     const request = await this.#inner.newPswapConsumeTransactionRequest(
       note,
       accountId,
-      BigInt(opts.fillAmount),
-      BigInt(noteFillAmount)
+      toAmount(opts.fillAmount, "pswapConsume"),
+      toAmount(noteFillAmount, "pswapConsume")
     );
     return { accountId, request };
   }

@@ -473,3 +473,13 @@ function checkRetryOption(name, value, cap) {
     );
   }
 }
+
+// BigInt() rounds an unsafe number silently, so reject one before any WASM call.
+export function toAmount(amount, method) {
+  if (typeof amount === "number" && !Number.isSafeInteger(amount)) {
+    throw new Error(
+      `${method}: amount must be a safe integer when given as a number; pass a bigint above 2^53 - 1`
+    );
+  }
+  return BigInt(amount);
+}
