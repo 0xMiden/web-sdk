@@ -404,6 +404,7 @@ export const NODE_ARRAY_TYPES = Object.freeze([
   "AccountIdArray",
   "FeltArray",
   "ForeignAccountArray",
+  "InnerNodeInfoArray",
   "NoteAndArgsArray",
   "NoteArray",
   "NoteDetailsAndTagArray",
