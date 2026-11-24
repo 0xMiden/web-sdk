@@ -1,8 +1,7 @@
 use js_export_macro::js_export;
-use miden_client::Felt;
-use miden_client::Word as NativeWord;
 use miden_client::asset::Asset as NativeAsset;
 use miden_client::note::{MintNote as NativeMintNote, Note as NativeNote};
+use miden_client::{Felt, Word as NativeWord};
 
 use super::account_id::AccountId;
 use super::asset::VaultAsset;

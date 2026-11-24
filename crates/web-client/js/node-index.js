@@ -207,8 +207,8 @@ export const BasicFungibleFaucetComponent = /* @__PURE__ */ _reexport(
   "BasicFungibleFaucetComponent"
 );
 export const BatchItem = /* @__PURE__ */ _reexport("BatchItem");
-export const BurnNote = /* @__PURE__ */ _reexport("BurnNote");
 export const BlockHeader = /* @__PURE__ */ _reexport("BlockHeader");
+export const BurnNote = /* @__PURE__ */ _reexport("BurnNote");
 export const ChainAnchor = /* @__PURE__ */ _reexport("ChainAnchor");
 export const CodeBuilder = /* @__PURE__ */ _reexport("CodeBuilder");
 export const CommittedNote = /* @__PURE__ */ _reexport("CommittedNote");

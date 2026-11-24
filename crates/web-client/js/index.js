@@ -208,6 +208,8 @@ const READ_METHODS = new Set([
   "executeProgram",
   "feeFaucetId",
   "protocolConfig",
+  "screenNote",
+  "screenNoteForAccount",
   "storeIdentifier",
   "trackedAccountWitnesses",
 ]);
