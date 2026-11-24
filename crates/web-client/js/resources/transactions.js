@@ -77,6 +77,16 @@ async function proveResult(inner, defaultProver, result, opts) {
     : await inner.proveTransaction(result);
 }
 
+// BigInt() rounds an unsafe number silently, so reject one before any WASM call.
+function toAmount(amount, method) {
+  if (typeof amount === "number" && !Number.isSafeInteger(amount)) {
+    throw new Error(
+      `${method}: amount must be a safe integer when given as a number; pass a bigint above 2^53 - 1`
+    );
+  }
+  return BigInt(amount);
+}
+
 /**
  * Wraps a failed local apply that follows an accepted submit. A bare apply
  * error looks like a pre-submit failure and invites a double-spend retry.
@@ -138,6 +148,7 @@ export class TransactionsResource {
         );
       }
 
+      const amount = toAmount(opts.amount, "send");
       const senderId = resolveAccountRef(opts.account, wasm);
       const receiverId = resolveAccountRef(opts.to, wasm);
       const faucetId = resolveAccountRef(opts.token, wasm);
@@ -146,9 +157,7 @@ export class TransactionsResource {
       const note = wasm.Note.createP2IDNote(
         senderId,
         receiverId,
-        new wasm.NoteAssets([
-          new wasm.FungibleAsset(faucetId, BigInt(opts.amount)),
-        ]),
+        new wasm.NoteAssets([new wasm.FungibleAsset(faucetId, amount)]),
         noteType,
         new wasm.NoteAttachment()
       );
@@ -1188,11 +1197,11 @@ export class TransactionsResource {
   // ── Shared request builders ──
 
   async #buildSendRequest(opts, wasm) {
+    const amount = toAmount(opts.amount, "send");
     const accountId = resolveAccountRef(opts.account, wasm);
     const targetId = resolveAccountRef(opts.to, wasm);
     const faucetId = resolveAccountRef(opts.token, wasm);
     const noteType = resolveNoteType(opts.type, wasm);
-    const amount = BigInt(opts.amount);
 
     const request = await this.#inner.newSendTransactionRequest(
       accountId,
@@ -1207,10 +1216,10 @@ export class TransactionsResource {
   }
 
   async #buildMintRequest(opts, wasm) {
+    const amount = toAmount(opts.amount, "mint");
     const accountId = resolveAccountRef(opts.account, wasm);
     const targetId = resolveAccountRef(opts.to, wasm);
     const noteType = resolveNoteType(opts.type, wasm);
-    const amount = BigInt(opts.amount);
 
     // WASM signature: newMintTransactionRequest(target, faucet, noteType, amount)
     const request = await this.#inner.newMintTransactionRequest(
@@ -1223,10 +1232,10 @@ export class TransactionsResource {
   }
 
   async #buildB2AggRequest(opts, wasm) {
+    const amount = toAmount(opts.amount, "bridge");
     const accountId = resolveAccountRef(opts.account, wasm);
     const bridgeAccountId = resolveAccountRef(opts.bridgeAccount, wasm);
     const faucetId = resolveAccountRef(opts.token, wasm);
-    const amount = BigInt(opts.amount);
     const destinationAddress = wasm.EthAddress.fromHex(opts.destinationAddress);
 
     const request = await this.#inner.newB2AggTransactionRequest(
@@ -1241,11 +1250,7 @@ export class TransactionsResource {
   }
 
   async #buildXReserveBurnRequest(opts, wasm) {
-    if (typeof opts.amount === "number" && !Number.isSafeInteger(opts.amount)) {
-      throw new Error(
-        "withdrawUsdcx: amount must be a safe integer when given as a number; pass a bigint above 2^53 - 1"
-      );
-    }
+    const amount = toAmount(opts.amount, "withdrawUsdcx");
     const recipientHex = opts.destinationRecipient;
     if (
       typeof recipientHex !== "string" ||
@@ -1265,7 +1270,7 @@ export class TransactionsResource {
     const request = await this.#inner.newXReserveBurnTransactionRequest(
       accountId,
       faucetId,
-      BigInt(opts.amount),
+      amount,
       opts.destinationDomain,
       recipient
     );

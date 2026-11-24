@@ -578,6 +578,7 @@ export interface SendOptionsDefault extends TransactionOptions {
   account: AccountRef;
   to: AccountRef;
   token: AccountRef;
+  /** Amount to send. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   type?: NoteVisibility;
   returnNote?: false;
@@ -591,6 +592,7 @@ export interface SendOptionsReturnNote extends TransactionOptions {
   account: AccountRef;
   to: AccountRef;
   token: AccountRef;
+  /** Amount to send. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   type?: NoteVisibility;
   returnNote: true;
@@ -658,7 +660,7 @@ export interface MintOptions extends TransactionOptions {
   account: AccountRef;
   /** Recipient account. */
   to: AccountRef;
-  /** Amount to mint. */
+  /** Amount to mint. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   /** Note visibility. Defaults to "public". */
   type?: NoteVisibility;
@@ -671,7 +673,7 @@ export interface BridgeOptions extends TransactionOptions {
   bridgeAccount: AccountRef;
   /** Faucet / token ID of the fungible asset to bridge. */
   token: AccountRef;
-  /** Amount of the asset to bridge. */
+  /** Amount of the asset to bridge. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   /** AggLayer-assigned network ID of the destination chain. */
   destinationNetwork: number;
