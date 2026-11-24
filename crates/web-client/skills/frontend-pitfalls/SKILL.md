@@ -226,9 +226,9 @@ Both hex and bech32 formats work in all hooks. Prefer hex for constants, bech32 
 
 **Gotcha: the HRP is inferred from the endpoint URL, not from the chain.** `bech32id()` (and `toBech32AccountId()`) read `client.endpoint()` from the provider's client, the URL of the node it was created against, lowercase it, and look for substrings in this order: `devnet` or `mdev` -> devnet, `mainnet` -> mainnet, `testnet` or `mtst` -> testnet, `localhost` or `127.0.0.1` -> devnet. An unset `rpcUrl` is not a gap here: the client defaulted to testnet and reports that endpoint.
 
-**Anything matching none of them renders the hex ID**, and so does every call made before `MidenProvider` has a client. `MidenConfig.rpcUrl` resolves only the shorthands `"mainnet"`, `"testnet"`, `"devnet"` and `"localhost"` / `"local"` to concrete URLs and passes any other value through verbatim, so a private or self-hosted RPC endpoint whose hostname names no network shows hex IDs where you might expect bech32.
+**Anything matching none of them is mainnet (`mm`)**, and every call made before `MidenProvider` has a client renders the hex ID. `MidenConfig.rpcUrl` resolves only the shorthands `"mainnet"`, `"testnet"`, `"devnet"` and `"localhost"` / `"local"` to concrete URLs and passes any other value through verbatim, so a private or self-hosted RPC endpoint whose hostname names no network formats mainnet (`mm`) addresses; set `MidenConfig.network` when that host is not mainnet.
 
-If you run a custom network, do not rely on `bech32id()` producing bech32 - key off hex, and render bech32 yourself with `AccountId.toBech32(networkId, ...)` where you control the network mapping.
+If you run a custom network, set `MidenConfig.network` or render bech32 yourself with `AccountId.toBech32(networkId, ...)` where you control the network mapping. An unnamed host is mainnet, not hex.
 
 The three real HRPs are `mtst` (testnet), `mdev` (devnet) and `mm` (mainnet); a custom
 network supplies its own through `NetworkId::custom`. **There is no `miden1` prefix** -
@@ -527,7 +527,7 @@ Verify: `crates/web-client/js/eager.js`.
 | FP2 | Sequences are not atomic | HIGH | Forwarded async calls serialize themselves (raw-bound `SYNC_METHODS` do not); wrap multi-call sequences in `runExclusive()` |
 | FP3 | COOP/COEP | HIGH | Default ST build needs no headers; required ONLY for the `/mt` build |
 | FP4 | BigInt | HIGH | Hooks and the high-level `MidenClient` coerce `number`; strict `bigint` only at the low-level request constructors |
-| FP5 | Bech32 mismatch | HIGH | Match network in rpcUrl and addresses; the HRP is inferred from `client.endpoint()`, and an unrecognised endpoint renders hex |
+| FP5 | Bech32 mismatch | HIGH | Match network in rpcUrl and addresses; the HRP is inferred from `client.endpoint()`, and an unrecognised endpoint is mainnet (`mm`) |
 | FP6 | Auto-sync | MEDIUM | Default 15000ms; prefer `useSyncControl()` over `autoSyncInterval: 0` |
 | FP7 | IndexedDB loss | HIGH | Upgrading from a pre-0.17.0 SDK clears the store once and its export cannot be imported; a newer SDK's store and export are refused |
 | FP8 | Vite config | MEDIUM | `midenVitePlugin()` has four options; bare call is right for ST, `crossOriginIsolation: true` only for `/mt` |

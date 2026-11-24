@@ -675,7 +675,7 @@ formatAssetAmount(1000000n, 8)       // "0.01"
 parseAssetAmount("0.01", 8)           // 1000000n
 const summary = getNoteSummary(note); // { id, assets, sender } | null
 formatNoteSummary(summary);           // "1.5 TEST from mtst1..."
-toBech32AccountId("0x1234...");       // "mtst1..." on testnet; the hex ID when the network is unknown
+toBech32AccountId("0x1234...");       // "mtst1..." on testnet; "mm1..." when the endpoint names no network
 ```
 
 `getNoteSummary(note, getAssetMetadata?)` takes a `ConsumableNoteRecord | InputNoteRecord` and returns `NoteSummary | null` - **`null`** when the note's id is missing or anything in the read throws, i.e. for a note whose id or metadata is not ready yet. Guard before formatting.
