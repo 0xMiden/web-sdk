@@ -15,6 +15,7 @@ import {
   getUnspentInputNoteNullifiers,
   getNoteScript,
 } from "./notes.js";
+import { uint8ArrayToBase64 } from "./utils.js";
 
 // Unique DB names to avoid collisions between tests.
 let dbCounter = 0;
@@ -872,21 +873,24 @@ describe("getUnspentInputNoteNullifiers", () => {
 // ================================================================================================
 
 describe("getNoteScript", () => {
-  it("returns undefined when script not found", async () => {
+  it("returns null when script not found", async () => {
     const dbId = await openTestDb();
     const result = await getNoteScript(dbId, "nonexistent-root");
-    expect(result).toBeUndefined();
+    expect(result).toBeNull();
   });
 
-  it("returns the script record when found", async () => {
+  it("returns the shape the Rust store deserializes when found", async () => {
     const dbId = await openTestDb();
     const scriptRoot = "my-script";
     const scriptBytes = new Uint8Array([7, 8, 9]);
     await upsertNoteScript(dbId, scriptRoot, scriptBytes);
     const result = await getNoteScript(dbId, scriptRoot);
     expect(result).toBeDefined();
-    expect(result!.scriptRoot).toBe(scriptRoot);
-    expect(result!.serializedNoteScript).toEqual(scriptBytes);
+    // `NoteScriptIdxdbObject` on the Rust side expects `noteScriptRoot` and a base64 string.
+    expect(result).toEqual({
+      noteScriptRoot: scriptRoot,
+      serializedNoteScript: uint8ArrayToBase64(scriptBytes),
+    });
   });
 });
 
@@ -901,7 +905,9 @@ describe("upsertNoteScript", () => {
     await upsertNoteScript(dbId, scriptRoot, new Uint8Array([1, 2, 3]));
     await upsertNoteScript(dbId, scriptRoot, new Uint8Array([4, 5, 6]));
     const result = await getNoteScript(dbId, scriptRoot);
-    expect(result!.serializedNoteScript).toEqual(new Uint8Array([4, 5, 6]));
+    expect(result!.serializedNoteScript).toBe(
+      uint8ArrayToBase64(new Uint8Array([4, 5, 6]))
+    );
   });
 });
 
@@ -930,7 +936,7 @@ describe("getOutputNotes", () => {
     );
 
     const stored = await getNoteScript(dbId, "0xscriptroot");
-    expect(stored!.serializedNoteScript).toEqual(script);
+    expect(stored!.serializedNoteScript).toBe(uint8ArrayToBase64(script));
 
     const result = await getOutputNotesFromIds(dbId, ["out-script"]);
     expect(result![0].serializedNoteScript).toBe("BwgJ");
