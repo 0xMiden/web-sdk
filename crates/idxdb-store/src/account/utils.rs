@@ -31,7 +31,7 @@ use crate::account::js_bindings::idxdb_insert_account_address;
 use crate::account::models::{AccountRecordIdxdbObject, AddressIdxdbObject};
 use crate::sync::JsAccountUpdate;
 
-/// Writes code, storage, vault, header and address in one IndexedDB transaction.
+/// Writes code, storage, vault, header and address in one `IndexedDB` transaction.
 pub async fn insert_account(
     db_id: &str,
     account: &Account,
