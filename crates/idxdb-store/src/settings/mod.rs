@@ -8,6 +8,7 @@ use miden_client::rpc::RpcLimits;
 use miden_client::rpc::encryption::TransactionEncryptionKey;
 use miden_client::store::StoreError;
 use miden_client_proto::{ProtobufValue, decode_unchecked, encode};
+use miden_protocol::utils::serde::{BudgetedReader, ByteReader, Deserializable, SliceReader};
 
 mod js_bindings;
 mod models;
@@ -73,13 +74,18 @@ impl IdxdbStore {
         &self,
         key: String,
     ) -> Result<Option<T>, StoreError> {
-        let promise = idxdb_get_client_config(self.db_id(), key);
-        let value: Option<SettingValueIdxdbObject> =
-            await_js(promise, "failed to get client config value from idxdb").await?;
-        let Some(value) = value else {
+        let Some(value) = self.get_client_setting_bytes(key).await? else {
             return Ok(None);
         };
         Ok(Some(decode_unchecked(&value.value)?))
+    }
+
+    async fn get_client_setting_bytes(
+        &self,
+        key: String,
+    ) -> Result<Option<SettingValueIdxdbObject>, StoreError> {
+        let promise = idxdb_get_client_config(self.db_id(), key);
+        await_js(promise, "failed to get client config value from idxdb").await
     }
 
     /// Writes a client value as a protobuf message.
@@ -115,7 +121,27 @@ impl IdxdbStore {
         &self,
         commitment: Word,
     ) -> Result<Option<ProtocolConfig>, StoreError> {
-        self.get_client_setting(protocol_config_key(commitment)).await
+        let Some(value) = self.get_client_setting_bytes(protocol_config_key(commitment)).await?
+        else {
+            return Ok(None);
+        };
+        let bytes = &value.value;
+        let protobuf_error = match decode_unchecked::<ProtocolConfig>(bytes) {
+            Ok(config) if config.to_commitment() == commitment => return Ok(Some(config)),
+            Ok(_) => StoreError::ProtocolConfigCommitmentMismatch(commitment),
+            Err(error) => error.into(),
+        };
+
+        // IndexedDB upgrades and backup restores can retain the native encoding.
+        let mut reader = BudgetedReader::new(SliceReader::new(bytes), bytes.len());
+        if let Ok(config) = ProtocolConfig::read_from(&mut reader)
+            && !reader.has_more_bytes()
+            && config.to_commitment() == commitment
+        {
+            return Ok(Some(config));
+        }
+
+        Err(protobuf_error)
     }
 
     pub(crate) async fn insert_protocol_config(
