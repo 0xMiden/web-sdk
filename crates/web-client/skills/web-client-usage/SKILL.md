@@ -205,6 +205,7 @@ const client = await MidenClient.create({
   noteTransportMaxRetries: 3, // optional - in-call retries of a private note send; see below
   noteTransportRetryIntervalMs: 250, // optional - delay before the first retry, in ms
   storeName: "my-store",
+  exclusive: false, // optional - true refuses a store another live client has open; see below
   seed: new Uint8Array(32), // optional - string or Uint8Array; see below
   proverUrl: "testnet", // optional - sets a default prover
   autoSync: true, // optional - call sync() after init
@@ -225,6 +226,12 @@ const client = await MidenClient.create({
 ```
 
 If `rpcUrl` is omitted, `create()` delegates to `createTestnet()`.
+
+Keep one live client per store: two clients on the same store do not
+coordinate. Opening a store another live client in the realm has open warns
+(`console.warn`, naming the owner as `client #N`); with `exclusive: true` the
+open throws an error naming the owner instead, and while an exclusive client
+lives every other open of its store throws. `terminate()` releases the store.
 
 `client.endpoint()` returns the resolved node URL synchronously, e.g.
 `"https://rpc.testnet.miden.io"` when `rpcUrl` was omitted; a `createMock()`

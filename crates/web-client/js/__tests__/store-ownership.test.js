@@ -3,11 +3,17 @@ import os from "os";
 import path from "path";
 
 const fakeWasm = vi.hoisted(() => {
+  // Every open, browser or Node.js, rejects with this when a test sets it.
+  const failOpen = async () => {
+    if (wasm.openFailure) throw wasm.openFailure;
+  };
   const wasm = {
+    openFailure: null,
+    failOpen,
     WebClient: class {
       constructor() {
-        this.createClient = async () => {};
-        this.createClientWithExternalKeystore = async () => {};
+        this.createClient = failOpen;
+        this.createClientWithExternalKeystore = failOpen;
         this.free = () => {};
       }
     },
@@ -63,11 +69,11 @@ const browser = {
     ),
 };
 
-// The Node.js factory over a native client that records nothing.
+// The Node.js factory over a native client that opens nothing.
 const nodeFactory = createWasmWebClient(
   {
     WebClient: class {
-      async createClient() {}
+      createClient = fakeWasm.failOpen;
     },
   },
   { dataDir: path.join(os.tmpdir(), "miden-store-ownership-test") }
@@ -95,6 +101,7 @@ beforeEach(() => {
   warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 afterEach(() => {
+  fakeWasm.openFailure = null;
   vi.restoreAllMocks();
 });
 
@@ -110,7 +117,7 @@ for (const [name, factory] of [
       expect(warn).not.toHaveBeenCalled();
       const second = await factory(store);
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0][0]).toContain(`"${store}"`);
+      expect(warn.mock.calls[0][0]).toContain(store);
       expect(warn.mock.calls[0][0]).toContain("client #1");
       first.terminate();
       second.terminate();
@@ -120,7 +127,7 @@ for (const [name, factory] of [
       const store = uniqueStore();
       const first = await factory(store);
       await expect(factory(store, true)).rejects.toThrow(
-        new RegExp(`"${store}".*client #1`)
+        new RegExp(`${store}.*client #1`)
       );
       first.terminate();
       // The refused open holds no claim: the store is free again.
@@ -133,7 +140,7 @@ for (const [name, factory] of [
       const store = uniqueStore();
       const owner = await factory(store, true);
       await expect(factory(store)).rejects.toThrow(
-        new RegExp(`"${store}".*client #1`)
+        new RegExp(`${store}.*client #1`)
       );
       owner.terminate();
     });
@@ -148,6 +155,15 @@ for (const [name, factory] of [
       expect(warn).not.toHaveBeenCalled();
       second.terminate();
       third.terminate();
+    });
+
+    it("holds no claim after an open that failed", async () => {
+      const store = uniqueStore();
+      fakeWasm.openFailure = new Error("node unreachable");
+      await expect(factory(store, true)).rejects.toThrow("node unreachable");
+      fakeWasm.openFailure = null;
+      (await factory(store, true)).terminate();
+      expect(warn).not.toHaveBeenCalled();
     });
 
     it("leaves a client on another store alone", async () => {
@@ -172,7 +188,7 @@ describe("MidenClient.create", () => {
     const store = uniqueStore();
     const owner = await create(store, true);
     await expect(create(store)).rejects.toThrow(
-      new RegExp(`"${store}".*client #1`)
+      new RegExp(`${store}.*client #1`)
     );
     owner.terminate();
     const next = await create(store);

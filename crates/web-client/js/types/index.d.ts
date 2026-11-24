@@ -204,7 +204,8 @@ export declare class WasmWebClient extends WasmWebClientBase {
     feeFaucetId?: string,
     noteTransportMaxRetries?: number,
     noteTransportRetryIntervalMs?: number,
-    callbackTimeoutMs?: number
+    callbackTimeoutMs?: number,
+    exclusive?: boolean
   ): Promise<WasmWebClient>;
 
   static createClientWithExternalKeystore(
@@ -221,7 +222,8 @@ export declare class WasmWebClient extends WasmWebClientBase {
     feeFaucetId?: string,
     noteTransportMaxRetries?: number,
     noteTransportRetryIntervalMs?: number,
-    callbackTimeoutMs?: number
+    callbackTimeoutMs?: number,
+    exclusive?: boolean
   ): Promise<WasmWebClient>;
 
   // The wrapper resolves a friendly scheme to the wasm enum and passes a

@@ -1285,9 +1285,19 @@ const client = await MidenClient.create({
 
 A batch signs while it is built, so one failed or timed out `sign` fails the whole batch.
 
+### One Client per Store
+
+Two live clients on one store do not coordinate with each other. Opening a store that another live client in the same realm has open (the same IndexedDB database in the browser, the same SQLite file on Node.js) logs a `console.warn` naming that client, `client #N` in the order clients opened the store. Pass `exclusive: true` to refuse instead: the open throws an error naming the owner, and while an exclusive client lives every other open of its store throws too.
+
+```typescript
+const owner = await MidenClient.create({ rpcUrl: "testnet", storeName: "app", exclusive: true });
+await MidenClient.create({ rpcUrl: "testnet", storeName: "app" }); // throws: Store "app" is already open in client #1 ...
+owner.terminate(); // releases the store; the next open succeeds without a warning
+```
+
 ### Cleanup
 
-When you're finished using a MidenClient instance, call `terminate()`. In the browser it stops the client's Web Worker if there is one, and releases its main-realm wasm client and, through it, its IndexedDB connection once the calls already queued or running have settled. On the Node.js binding it releases nothing.
+When you're finished using a MidenClient instance, call `terminate()`. In the browser it stops the client's Web Worker if there is one, and releases its main-realm wasm client and, through it, its IndexedDB connection once the calls already queued or running have settled. On the Node.js binding it releases only the store's ownership claim (see [One Client per Store](#one-client-per-store)).
 
 ```typescript
 client.terminate();
