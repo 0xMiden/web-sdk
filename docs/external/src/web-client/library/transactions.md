@@ -269,7 +269,7 @@ const leaf = new ClaimLeafData(
 const note = Note.createClaimNote(proof, leaf, 10, bridgeAccountId, senderId);
 ```
 
-A scale above 18, or a scaled amount above the maximum fungible amount, throws. Submit the note as an own output note of a transaction, for example through `feeAwareTransactionRequestBuilder(sender)` and `withOwnOutputNotes`.
+A scale above 18, or a scaled amount above the maximum fungible amount, throws. Submit the note as an own output note of a transaction, for example through `feeAwareTransactionRequestBuilder(sender)` and `withOwnOutputNotes`. It is a network note targeting the bridge account, so the transaction must also declare that account with `withForeignAccounts`, as for any network note.
 
 ## Withdrawing USDCx (Circle xReserve)
 
