@@ -161,6 +161,59 @@ describe("useNoteConsumability", () => {
     expect(result.current.isLoading).toBe(false);
   });
 
+  it("accepts an AccountId object", async () => {
+    const client = setup({
+      getNoteConsumabilityForAccount: vi
+        .fn()
+        .mockResolvedValue([entry("0xaccount123", true)]),
+    });
+    const accountId = { toString: () => "0xaccount123" } as never;
+    const { result } = renderHook(() =>
+      useNoteConsumability(mockNote("0xnote"), { accountId })
+    );
+    await waitFor(() =>
+      expect(result.current.status).toEqual({ kind: "immediately" })
+    );
+    expect(
+      client.getNoteConsumabilityForAccount.mock.calls[0][1].toString()
+    ).toBe("0xaccount123");
+  });
+
+  it("ignores a screen that settles after the note changed", async () => {
+    let finishFirst!: (value: unknown[]) => void;
+    setup({
+      getNoteConsumability: vi
+        .fn()
+        .mockReturnValueOnce(
+          new Promise((resolve) => {
+            finishFirst = resolve;
+          })
+        )
+        .mockResolvedValue([]),
+    });
+    const { result, rerender } = renderHook(
+      ({ note }) => useNoteConsumability(note),
+      { initialProps: { note: mockNote("0xfirst") } }
+    );
+    rerender({ note: mockNote("0xsecond") });
+    await waitFor(() =>
+      expect(result.current.status).toEqual({ kind: "never" })
+    );
+    await act(async () => {
+      finishFirst([entry("0xa", true)]);
+    });
+    expect(result.current.status).toEqual({ kind: "never" });
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it("wraps a non-Error rejection", async () => {
+    setup({ getNoteConsumability: vi.fn().mockRejectedValue("nope") });
+    const { result } = renderHook(() =>
+      useNoteConsumability(mockNote("0xnote"))
+    );
+    await waitFor(() => expect(result.current.error?.message).toBe("nope"));
+  });
+
   it("reports a screening error", async () => {
     setup({
       getNoteConsumability: vi.fn().mockRejectedValue(new Error("boom")),

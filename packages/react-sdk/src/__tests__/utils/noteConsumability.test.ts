@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { getNoteConsumabilityStatus } from "../../utils/noteConsumability";
-import { createMockNoteConsumability as entry } from "../mocks/miden-sdk";
+import { createMockNoteConsumability } from "../mocks/miden-sdk";
+
+const entry = (...args: Parameters<typeof createMockNoteConsumability>) =>
+  createMockNoteConsumability(...args) as never;
 
 describe("getNoteConsumabilityStatus", () => {
   it("reads an empty result as never consumable", () => {

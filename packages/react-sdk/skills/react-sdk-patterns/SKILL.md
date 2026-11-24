@@ -151,6 +151,18 @@ const { noteSummaries, consumableNoteSummaries } = useNotes({ sender: "0x..." })
 const { noteSummaries, consumableNoteSummaries } = useNotes({ excludeIds: ["0xnote1", "0xnote2"] });
 ```
 
+### useNoteConsumability(note, options?)
+```tsx
+const { status, consumability, isLoading, error, refetch } = useNoteConsumability(note, { accountId });
+// status - null until screened, then
+//   { kind: "immediately" } | { kind: "afterBlock", blockHeight } | { kind: "never" }
+// An empty screen is "never" (also when the client tracks no accounts).
+// Re-screens after each sync; keyed on note.id(), so a rebuilt Note object does not re-screen.
+// Presentation only: claim from useNotes().consumableNotes, never from status === "immediately",
+// which also matches another trader's PSWAP order.
+// getNoteConsumabilityStatus(record.noteConsumability(), accountIdHex?) gives the same status for a record.
+```
+
 ### useNoteStream(options?)
 ```tsx
 const { notes, latest, markHandled, markAllHandled, snapshot, isLoading, error } = useNoteStream();
