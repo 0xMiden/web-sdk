@@ -141,7 +141,13 @@ export async function getNoteScript(dbId, scriptRoot) {
             .where("scriptRoot")
             .equals(scriptRoot)
             .first();
-        return noteScript;
+        if (!noteScript) {
+            return null;
+        }
+        return {
+            noteScriptRoot: noteScript.scriptRoot,
+            serializedNoteScript: uint8ArrayToBase64(noteScript.serializedNoteScript),
+        };
     }
     catch (err) {
         logWebStoreError(err, "Failed to get note script from root");
