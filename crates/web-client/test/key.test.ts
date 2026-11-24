@@ -321,23 +321,14 @@ test.describe("signing inputs", () => {
     expect(result.isValid).toBe(true);
     expect(result.isValidOther).toBe(false);
   });
-  test("domainSeparatedSignCommitment matches the published tag and vectors", async ({
+  test("domainSeparatedSignCommitment matches the published vectors", async ({
     run,
   }) => {
     const result = await run(async ({ sdk }) => {
       const b64 = (s: string) =>
         Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
       const hex = (w: any) => w.toHex();
-      const tag = sdk.Poseidon2.hashElements(
-        new sdk.FeltArray(
-          Array.from(
-            new TextEncoder().encode("miden-wallet/sign-bytes/v1"),
-            (b) => new sdk.Felt(BigInt(b))
-          )
-        )
-      );
       return {
-        tag: Array.from(tag.toU64s() as BigUint64Array, (v) => v.toString(16)),
         word: hex(
           sdk.domainSeparatedSignCommitment(
             b64("AQAAAAAAAAACAAAAAAAAAAMAAAAAAAAABAAAAAAAAAA="),
@@ -358,18 +349,12 @@ test.describe("signing inputs", () => {
         ),
       };
     });
-    expect(result.tag).toEqual([
-      "38a8bcdddf30cacf",
-      "240d1b8455bc2c58",
-      "18162f6af29602dd",
-      "5385955edcd341a4",
-    ]);
     const wordVector =
-      "0x110a1b1c3b8cc8a4e0ed9acebb00996abdb93e7228280e2547edbdf9c268bee9";
+      "0x4bd9dfb6469ea54bcc66f4eaa255305561d0b6749b6ab80d5760969b5bd59e57";
     expect(result.word).toBe(wordVector);
     expect(result.blind).toBe(wordVector);
     expect(result.arbitrary).toBe(
-      "0x8d7fafd3929b6cb5b0375bf0a5ab4f17b1a1948baefea1bb8067807021571d57"
+      "0x9a5dcb2f7119b5020c904fd8a65a2e138a145ecda5ebd149d7dd0c4e2561f12d"
     );
   });
 
@@ -379,16 +364,15 @@ test.describe("signing inputs", () => {
     const result = await run(async ({ sdk }) => {
       const secretKey = sdk.AuthSecretKey.ecdsaWithRNG();
       const word = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
-      const tag = sdk.Poseidon2.hashElements(
-        new sdk.FeltArray(
-          Array.from(
-            new TextEncoder().encode("miden-wallet/sign-bytes/v1"),
-            (b) => new sdk.Felt(BigInt(b))
-          )
-        )
-      );
+      // The wallet's domain tag, the Poseidon2 hash of "miden-wallet/sign-bytes/v1".
+      const tag = [
+        0x38a8bcdddf30cacfn,
+        0x240d1b8455bc2c58n,
+        0x18162f6af29602ddn,
+        0x5385955edcd341a4n,
+      ].map((v) => new sdk.Felt(v));
       const signature = secretKey.signData(
-        sdk.SigningInputs.newArbitrary([...tag.toFelts(), ...word.toFelts()])
+        sdk.SigningInputs.newArbitrary([...tag, ...word.toFelts()])
       );
       const publicKey = secretKey.publicKey();
       const domain = sdk.domainSeparatedSignCommitment(

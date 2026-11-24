@@ -230,7 +230,7 @@ impl AccountComponent {
 
         let auth_scheme = match native_secret_key {
             NativeSecretKey::EcdsaK256Keccak(_) => AuthScheme::AuthEcdsaK256Keccak,
-            NativeSecretKey::Falcon512Poseidon2(_) => AuthScheme::AuthRpoFalcon512,
+            NativeSecretKey::Falcon512Eidos(_) => AuthScheme::AuthRpoFalcon512,
             // This is because the definition of NativeSecretKey has the
             // '#[non_exhaustive]' attribute, without this catch-all clause,
             // this is a compiler error.
@@ -392,7 +392,7 @@ impl AccountComponent {
     ) -> AccountComponent {
         match auth_scheme {
             AuthScheme::AuthRpoFalcon512 => {
-                let approver = Approver::new(commitment, NativeAuthSchemeId::Falcon512Poseidon2);
+                let approver = Approver::new(commitment, NativeAuthSchemeId::Falcon512Eidos);
                 let auth = NativeSingleSig::new(approver);
                 AccountComponent(auth.into())
             },

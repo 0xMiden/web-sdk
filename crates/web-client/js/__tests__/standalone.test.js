@@ -475,10 +475,16 @@ describe("isStandardPayment", () => {
 
 // ── domainSeparatedSignCommitment ─────────────────────────────────────────────
 
-const TAG_U64S = [11n, 22n, 33n, 44n];
+// The Poseidon2 hash of "miden-wallet/sign-bytes/v1", the wallet's domain tag.
+const TAG_U64S = [
+  0x38a8bcdddf30cacfn,
+  0x240d1b8455bc2c58n,
+  0x18162f6af29602ddn,
+  0x5385955edcd341a4n,
+];
 
 function makeSignWasm({ variant, blind, arbitrary, summary } = {}) {
-  const calls = { hashed: [], arbitrary: [] };
+  const calls = { arbitrary: [] };
   class Felt {
     constructor(v) {
       this.v = BigInt(v);
@@ -504,12 +510,6 @@ function makeSignWasm({ variant, blind, arbitrary, summary } = {}) {
   const wasm = {
     Felt,
     FeltArray,
-    Poseidon2: {
-      hashElements: vi.fn((arr) => {
-        calls.hashed.push(arr.items.map((f) => f.v));
-        return wordOf(TAG_U64S);
-      }),
-    },
     Word: { deserialize: vi.fn(() => wordOf([1n, 2n, 3n, 4n])) },
     SigningInputsType: { TransactionSummary: 0, Arbitrary: 1, Blind: 2 },
     SigningInputs: {
@@ -533,13 +533,10 @@ describe("domainSeparatedSignCommitment", () => {
     _setWasm(null);
   });
 
-  it("hashes the tag then the word for kind word", () => {
+  it("commits to the tag then the word for kind word", () => {
     const { wasm, calls } = makeSignWasm();
     _setWasm(wasm);
     const out = domainSeparatedSignCommitment(new Uint8Array([1]), "word");
-    expect(calls.hashed[0]).toEqual(
-      [..."miden-wallet/sign-bytes/v1"].map((c) => BigInt(c.charCodeAt(0)))
-    );
     expect(calls.arbitrary[0]).toEqual([...TAG_U64S, 1n, 2n, 3n, 4n]);
     expect(out).toEqual({ committed: calls.arbitrary[0] });
   });

@@ -175,7 +175,7 @@ exactly 33 bytes or is not a point on secp256k1.
 
 It recovers `y` from the parity byte, splits `x` and then `y` into eight 32-bit
 limbs each in little-endian limb order, and hashes the 16 field elements with
-Poseidon2. That is the preimage the protocol commits to.
+Eidos. That is the preimage the protocol commits to.
 
 **This changed.** A pre-0.16 release of this integration hashed nine field
 elements packed straight from the compressed encoding, with no decompression.

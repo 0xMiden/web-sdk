@@ -144,12 +144,12 @@ export const transactionAccounts = [
   "0x6ccbb3931bbb21910bb3018972d56d",
 ];
 
-// Poseidon2 transaction IDs for zero initial state, final state [1|2, 0, 0, 0],
+// Eidos transaction IDs for zero initial state, final state [1|2, 0, 0, 0],
 // empty input/output notes, and zero logs and code patch commitments. The Rust
 // decoder verifies these header IDs.
 export const transactionIds = [
-  "0xc7452d5d7458dd1e6e777655007c1373707788b6f72376e94ccbb3135655a18d",
-  "0x4a30eca70a1f7dbe1be832eed10333c2c83c643b20d05c1a66dda6b719095005",
+  "0xc61107f159b3743247b0e6913fbaba11737c1b263778d972e7aa5e649915f00d",
+  "0x2f2c3ba414a0897bceea9d831af23e1be8ce2744543ca141716415350fc34058",
 ];
 
 export function transactionAccount(hex: string): Buffer {

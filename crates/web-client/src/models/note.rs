@@ -22,7 +22,7 @@ use miden_client::usdcx::xreserve::encoding::{
 };
 use miden_client::{Felt as NativeFelt, Word as NativeWord};
 use miden_objects::proto;
-use miden_protocol::crypto::rand::RandomCoin;
+use miden_protocol::crypto::rand::EidosRandomCoin;
 use rand::RngExt;
 
 use super::NoteType;
@@ -258,9 +258,9 @@ impl Note {
         destination_address: &EthAddress,
     ) -> Result<Self, JsErr> {
         let coin_seed: [u64; 4] = rand::random();
-        // `B2AggNote::create` needs a `FeltRng`, and `RandomCoin` is the protocol type that
-        // implements it. A seed value at or beyond the field modulus has negligible probability.
-        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
+        // `B2AggNote::create` needs a random number generator, and `EidosRandomCoin` is the
+        // protocol one. A seed value at or beyond the field modulus has negligible probability.
+        let mut rng = EidosRandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
 
         let native_assets: NativeNoteAssets = assets.into();
 
@@ -294,7 +294,7 @@ impl Note {
         let amount = AssetAmount::new(js_u64_to_u64(amount)?)
             .map_err(|err| js_error_with_context(err, "create xreserve burn note"))?;
         let coin_seed: [u64; 4] = rand::random();
-        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
+        let mut rng = EidosRandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
 
         let native_note =
             XReserveBurnNote::create(sender.into(), faucet_id.into(), amount, items, &mut rng)
@@ -328,7 +328,7 @@ impl Note {
             miden_claim_amount,
         };
         let coin_seed: [u64; 4] = rand::random();
-        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
+        let mut rng = EidosRandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
 
         let native_note =
             ClaimNote::create(storage, bridge_account.into(), sender.into(), &mut rng)

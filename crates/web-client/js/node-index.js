@@ -220,6 +220,7 @@ export const CommittedNote = /* @__PURE__ */ _reexport("CommittedNote");
 export const ConsumableNoteRecord = /* @__PURE__ */ _reexport(
   "ConsumableNoteRecord"
 );
+export const Eidos = /* @__PURE__ */ _reexport("Eidos");
 export const Endpoint = /* @__PURE__ */ _reexport("Endpoint");
 export const EstimatedMaxFee = /* @__PURE__ */ _reexport("EstimatedMaxFee");
 export const EthAddress = /* @__PURE__ */ _reexport("EthAddress");
@@ -316,7 +317,6 @@ export const P2idNote = /* @__PURE__ */ _reexport("P2idNote");
 export const P2ideNote = /* @__PURE__ */ _reexport("P2ideNote");
 export const Package = /* @__PURE__ */ _reexport("Package");
 export const PartialNote = /* @__PURE__ */ _reexport("PartialNote");
-export const Poseidon2 = /* @__PURE__ */ _reexport("Poseidon2");
 export const ProcedureThreshold =
   /* @__PURE__ */ _reexport("ProcedureThreshold");
 export const Program = /* @__PURE__ */ _reexport("Program");
@@ -337,7 +337,6 @@ export const RpcStatusInfo = /* @__PURE__ */ _reexport("RpcStatusInfo");
 export const RpcTransactionRecord = /* @__PURE__ */ _reexport(
   "RpcTransactionRecord"
 );
-export const Rpo256 = /* @__PURE__ */ _reexport("Rpo256");
 export const Signature = /* @__PURE__ */ _reexport("Signature");
 export const SigningInputs = /* @__PURE__ */ _reexport("SigningInputs");
 export const SigningInputsType = /* @__PURE__ */ _reexport("SigningInputsType");

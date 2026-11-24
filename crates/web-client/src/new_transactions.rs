@@ -8,7 +8,6 @@ use miden_client::account::standards::auth::{FeeConversionInfo, MultisigAuthArgs
 use miden_client::account::{AccountComponentInterfaceExt, AccountId as NativeAccountId};
 use miden_client::agglayer::B2AggNote;
 use miden_client::asset::{AssetAmount, FungibleAsset};
-use miden_client::crypto::FeltRng;
 use miden_client::note::{
     BlockNumber,
     Note as NativeNote,
@@ -33,6 +32,7 @@ use miden_client::transaction::{
 };
 use miden_client::usdcx::note::xreserve_burn::XReserveBurnNote;
 use miden_client::{Client, ClientError, Word as NativeWord};
+use rand::RngExt;
 #[cfg(feature = "browser")]
 use wasm_bindgen::JsValue;
 
@@ -1344,7 +1344,7 @@ async fn multisig_auth_args(
     // did not.
     let salt = match overrides.salt {
         Some(salt) => salt,
-        None => client.rng().draw_word(),
+        None => client.rng().random(),
     };
 
     let auth_args = MultisigAuthArgs::new(bound_block_num, salt)

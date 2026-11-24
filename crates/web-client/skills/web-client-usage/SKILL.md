@@ -483,7 +483,7 @@ AccountType.Public; // 1
 // accounts.create({ type }) selects a faucet:
 FaucetType.FungibleFaucet; // "FungibleFaucet"
 
-AuthScheme.Falcon; // default - Falcon-512 over Poseidon2
+AuthScheme.Falcon; // default - Falcon-512 over Eidos
 AuthScheme.ECDSA; // EcdsaK256Keccak
 
 StorageMode.Public;
@@ -493,7 +493,7 @@ StorageMode.Private;
 Use `NoteVisibility` strings with the high-level resource APIs - `NoteType` is a
 separate enum exported for the low-level WASM APIs and is easy to confuse with
 `NoteVisibility`, so do not pass it where a `NoteVisibility` is expected. Use
-`AuthScheme.Falcon` for the Poseidon2-based Falcon-512 scheme.
+`AuthScheme.Falcon` for the Eidos-based Falcon-512 scheme.
 
 `AccountType.Private` / `AccountType.Public` select visibility in
 `AccountBuilder.accountType()`. `FaucetType.FungibleFaucet` selects a fungible
@@ -879,7 +879,7 @@ returned request and summary. The `multi-party-signing` skill has the flow.
 
 To set auth args you build yourself on a finished request, for example for a
 custom auth procedure, use `request.withAuthArgs(preimage)`. It sets the auth
-argument to the Poseidon2 hash of `preimage`, puts `preimage` in the advice map
+argument to the Eidos hash of `preimage`, puts `preimage` in the advice map
 under it, and replaces an existing auth argument and a declared salt without a
 check. In the browser build it consumes the `Felt`s it is given: read what you
 need from them first and pass fresh ones to another call, because a spent
@@ -1279,7 +1279,7 @@ await client.submitNewTransaction(sender, register);
 
 `buildAccountCodeUpgrade(code)` finalizes a request that upgrades the executing account to `code`. The account needs the `UpgradeManager` component with `AuthControlled` authority, and `code` must keep the storage layout. It replaces any custom script and script argument, and fails when own output notes or an expiration delta are set. `withAccountCodeUpgrade(code)` only places the code in the advice map, and `request.accountCodeUpgrade()` returns it.
 
-`extendMerkleStore(nodes)` adds Merkle tree nodes to the store the transaction executes with, so its scripts can read Merkle paths through them. Each `InnerNodeInfo(value, left, right)` is stored as given: `value` must be the Poseidon2 merge of `left` and `right`, and it is not checked. `request.merkleStoreInnerNodes()` returns the added nodes, without the empty-subtree nodes every store starts with.
+`extendMerkleStore(nodes)` adds Merkle tree nodes to the store the transaction executes with, so its scripts can read Merkle paths through them. Each `InnerNodeInfo(value, left, right)` is stored as given: `value` must be the Eidos merge of `left` and `right`, and it is not checked. `request.merkleStoreInnerNodes()` returns the added nodes, without the empty-subtree nodes every store starts with.
 
 ```typescript
 const nodes = new InnerNodeInfoArray([new InnerNodeInfo(value, left, right)]);
@@ -1908,9 +1908,9 @@ while (true) {
     share the WASM client. Wrap concurrent flows with `client.waitForIdle()`
     or rely on the React SDK's `runExclusive`, and release each reader in a
     `finally` (`try { ... } finally { reader.free?.() }`).
-16. **Assuming `TransactionProver.newLocalProver()` is cheap.** It now produces
-    Poseidon2 proofs, matching the client's default prover, and is roughly
-    1.6-2.6x slower than the old Blake3 default.
+16. **Assuming `TransactionProver.newLocalProver()` is cheap.** It proves on
+    this device with Eidos, the only proof hash the transaction verifier
+    accepts, and proving is the slowest step of a transaction.
 17. **Reusing a `TransactionProver` across `prove()` calls.** It is consumed by
     the first call; the second silently falls back to the built-in local prover
     instead of erroring. Build or clone a fresh one per call.

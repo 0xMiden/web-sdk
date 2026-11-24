@@ -153,7 +153,7 @@ Use it as-is. Hand-rolling the hash or the serialization is how "invalid
 signature" bugs start.
 
 The account's auth component commits to the EVM key through
-`evmPkToCommitment`, which hashes the affine point as Poseidon2 over 16 field
+`evmPkToCommitment`, which hashes the affine point as Eidos over 16 field
 elements: the x coordinate then the y coordinate, each as eight 32-bit limbs,
 least significant limb first.
 

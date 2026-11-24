@@ -42,7 +42,7 @@ impl Signature {
         // The encoding needs the public key of the signer. A Falcon signature carries it and an
         // ECDSA signature yields it together with the message.
         let signer: PublicKeyCommitment = match &self.0 {
-            NativeSignature::Falcon512Poseidon2(signature) => {
+            NativeSignature::Falcon512Eidos(signature) => {
                 signature.public_key().to_commitment().into()
             },
             NativeSignature::EcdsaK256Keccak(signature) => {

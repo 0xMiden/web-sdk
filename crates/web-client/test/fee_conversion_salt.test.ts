@@ -702,7 +702,7 @@ test.describe("fee conversion salt", () => {
         authArgLastSalt: authArgLast.feeConversionSalt()?.toHex() ?? null,
         authArgLastAuthArg: authArgLast.authArg()?.toHex() ?? null,
         expectedSalt: salt.toHex(),
-        expectedAuthArg: sdk.Poseidon2.hashElements(authArgs()).toHex(),
+        expectedAuthArg: sdk.Eidos.hashElements(authArgs()).toHex(),
       };
     });
 
@@ -726,7 +726,7 @@ test.describe("fee conversion salt", () => {
         .build();
 
       const authArg = request.authArg();
-      const expected = sdk.Poseidon2.hashElements(
+      const expected = sdk.Eidos.hashElements(
         new sdk.FeltArray(values.map((v) => new sdk.Felt(v)))
       );
       const preimage = authArg ? request.adviceMap().get(authArg) : undefined;

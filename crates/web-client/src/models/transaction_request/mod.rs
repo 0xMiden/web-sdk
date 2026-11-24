@@ -175,7 +175,7 @@ impl TransactionRequest {
     ///
     /// This mirrors `TransactionRequest::with_auth_args` of miden-client. Use it for auth
     /// components that load their auth args from the advice map, for example a multisig. The
-    /// commitment is the Poseidon2 hash of `preimage`, the same commitment that `SequentialCommit`
+    /// commitment is the Eidos hash of `preimage`, the same commitment that `SequentialCommit`
     /// computes, so the auth arg and its advice-map entry always agree.
     ///
     /// The new auth args replace the previous auth arg and the declared fee conversion salt. An

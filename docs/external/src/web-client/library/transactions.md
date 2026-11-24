@@ -309,7 +309,7 @@ await client.submitNewTransaction(sender, register);
 
 `buildAccountCodeUpgrade(code)` finalizes a request that upgrades the executing account to `code`. The account needs the `UpgradeManager` component with `AuthControlled` authority, and `code` must keep the storage layout. It replaces any custom script and script argument, and fails when own output notes or an expiration delta are set. `withAccountCodeUpgrade(code)` only places the code in the advice map, and `request.accountCodeUpgrade()` returns it.
 
-`extendMerkleStore(nodes)` adds Merkle tree nodes to the store the transaction executes with, so its scripts can read Merkle paths through them. Each `InnerNodeInfo(value, left, right)` is stored as given: `value` must be the Poseidon2 merge of `left` and `right`, and it is not checked. `request.merkleStoreInnerNodes()` returns the added nodes, without the empty-subtree nodes every store starts with.
+`extendMerkleStore(nodes)` adds Merkle tree nodes to the store the transaction executes with, so its scripts can read Merkle paths through them. Each `InnerNodeInfo(value, left, right)` is stored as given: `value` must be the Eidos merge of `left` and `right`, and it is not checked. `request.merkleStoreInnerNodes()` returns the added nodes, without the empty-subtree nodes every store starts with.
 
 ```typescript
 const nodes = new InnerNodeInfoArray([new InnerNodeInfo(value, left, right)]);
@@ -462,7 +462,7 @@ For a multisig it refuses a request that already has an auth argument, with the 
 const request = finishedRequest.withAuthArgs(preimage);
 ```
 
-It returns a copy whose auth argument is the Poseidon2 hash of `preimage`, with `preimage` in the advice map under that hash, so the auth argument and its preimage always agree. It replaces an existing auth argument and a declared fee conversion salt without a check, and every other field stays the same.
+It returns a copy whose auth argument is the Eidos hash of `preimage`, with `preimage` in the advice map under that hash, so the auth argument and its preimage always agree. It replaces an existing auth argument and a declared fee conversion salt without a check, and every other field stays the same.
 
 The `Felt`s in `preimage` are consumed by the call in the browser build: they are moved across the WASM boundary, so read what you need from them before the call and pass fresh ones to another call. A spent `Felt` fails with `null pointer passed to rust`.
 

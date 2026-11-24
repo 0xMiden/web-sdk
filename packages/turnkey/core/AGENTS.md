@@ -58,7 +58,7 @@ truncated to 32 bytes, defaulting to 32 zero bytes. Changing it, or changing
 anything after the first 32 bytes, silently moves the user to a different
 account.
 
-**The commitment changed in 0.16.** The Poseidon2 preimage is now the
+**The commitment changed in 0.16.** The preimage is now the
 decompressed `x` and `y` coordinates as sixteen 32-bit limbs; a pre-0.16 release
 hashed nine field elements packed from the compressed key. The same Turnkey key
 derives a different account than it used to, and nothing migrates the old one.

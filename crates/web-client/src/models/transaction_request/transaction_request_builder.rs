@@ -314,7 +314,7 @@ impl TransactionRequestBuilder {
     }
 }
 
-/// Auth args given as raw felts, committed with the default Poseidon2 hash.
+/// Auth args given as raw felts, committed with the protocol's Eidos hash.
 struct AuthArgs(Vec<NativeFelt>);
 
 impl SequentialCommit for AuthArgs {

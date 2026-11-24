@@ -513,6 +513,7 @@ Verify: `crates/web-client/js/eager.js`.
 ## Removed or Changed in 0.19 (check these first when upgrading from 0.18)
 
 - The SDK runs protocol 1.0 and works only with a node of the matching version.
+- The protocol hashes with Eidos. `Rpo256` and `Poseidon2` are removed: compute auth arguments, note arguments and public key commitments with `Eidos.hashElements`.
 - The first open clears the IndexedDB store an earlier SDK wrote, secret keys included, and `importStore` refuses a dump an earlier SDK exported. See FP7.
 - Bytes an earlier SDK serialized do not deserialize. `serialize()` / `deserialize()` use protobuf messages for `Account`, `Note`, `NoteScript`, `AccountPatch`, `AccountStoragePatch`, `AccountVaultPatch`, `TransactionRequest`, `SyncSummary`, `ProvenTransaction`, `TransactionSummary`, `SigningInputs`, `TransactionResult` and `TransactionStoreUpdate`, and so do the mock chain and mock note transport bytes. A wallet or external signer (Para, Turnkey) must decode with the same SDK version as the dApp: `SigningInputs` from a 0.18 dApp do not decode in 0.19.
 - `TransactionProver.newCallbackProver(jsFn)` and the native `miden-mobile-prover` receive the protobuf message of a `TransactionWitness` and return the protobuf message of a `ProvenTransaction`. Rebuild a native prover from 0.19.
