@@ -29,4 +29,27 @@ describe("the Node.js factory given the store identifier of an open store", () =
       expect(calls[0][4]).toBe(path.join(path.dirname(dbPath), "keystore"));
     }
   });
+
+  it("reopens the store a client created under a relative dataDir", async () => {
+    const options = { dataDir: "relative-store-root" };
+    const first = rawSdk();
+    await createWasmWebClient(first.sdk, options).createClient(
+      "rpc",
+      null,
+      undefined,
+      "wallet"
+    );
+    const created = first.calls[0][3];
+    expect(path.isAbsolute(created)).toBe(true);
+
+    const second = rawSdk();
+    await createWasmWebClient(second.sdk, options).createClient(
+      "rpc",
+      null,
+      undefined,
+      created
+    );
+    expect(second.calls[0][3]).toBe(created);
+    expect(second.calls[0][4]).toBe(first.calls[0][4]);
+  });
 });
