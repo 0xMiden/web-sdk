@@ -9,6 +9,7 @@ import type {
   AccountCode,
   AssetVault,
   Word,
+  StorageMapWitness,
   Felt,
   TransactionId,
   TransactionRequest,
@@ -1279,6 +1280,46 @@ export interface AccountsResource {
    * @param input - Account reference, file, or seed-based import options.
    */
   import(input: ImportAccountInput): Promise<Account>;
+  /**
+   * Start watching a public on-chain account by ID, without subscribing to its
+   * note tag. Sync keeps the account's commitment, nonce and storage current,
+   * but notes addressed to it are not pulled.
+   *
+   * @param accountId - The public account to watch.
+   */
+  importWatched(accountId: AccountRef): Promise<Account>;
+  /**
+   * Keep the account's witness up to date on every sync, so transactions that
+   * use it as a foreign account resolve the witness locally. The first sync
+   * after this call fetches it. Resolves to `true` if the account was not
+   * tracked before.
+   *
+   * @param accountId - The account whose witness to track.
+   */
+  trackWitness(accountId: AccountRef): Promise<boolean>;
+  /**
+   * Stop tracking the account's witness and drop the cached one. Resolves to
+   * `true` if the account was tracked.
+   *
+   * @param accountId - The account to stop tracking.
+   */
+  untrackWitness(accountId: AccountRef): Promise<boolean>;
+  /**
+   * List the accounts whose witness is tracked.
+   */
+  trackedWitnesses(): Promise<AccountId[]>;
+  /**
+   * Read the stored witness for a key of a storage map slot.
+   *
+   * @param accountId - The account that owns the slot.
+   * @param slotName - The name of the storage map slot.
+   * @param key - The map key.
+   */
+  getStorageMapWitness(
+    accountId: AccountRef,
+    slotName: string,
+    key: Word
+  ): Promise<StorageMapWitness>;
   /**
    * Export an account to an {@link AccountFile} for backup or transfer.
    *

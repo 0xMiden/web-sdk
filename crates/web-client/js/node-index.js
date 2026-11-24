@@ -331,6 +331,7 @@ export const StorageMapSlotPatch = /* @__PURE__ */ _reexport(
   "StorageMapSlotPatch"
 );
 export const StorageMapUpdate = /* @__PURE__ */ _reexport("StorageMapUpdate");
+export const StorageMapWitness = /* @__PURE__ */ _reexport("StorageMapWitness");
 export const StoragePatchOperation = /* @__PURE__ */ _reexport(
   "StoragePatchOperation"
 );

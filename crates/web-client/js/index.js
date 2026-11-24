@@ -150,6 +150,7 @@ const WRITE_METHODS = new Set([
   "importAccountById",
   "importAccountFile",
   "importNoteFile",
+  "importWatchedAccountById",
   "insertAccountAddress",
   "newAccount",
   "newB2AggTransactionRequest",
@@ -170,6 +171,8 @@ const WRITE_METHODS = new Set([
   "sendPrivateOutputNote",
   "setSetting",
   "submitProvenTransaction",
+  "trackAccountWitness",
+  "untrackAccountWitness",
   "withFeeAwareAuth",
 ]);
 
@@ -206,6 +209,7 @@ const READ_METHODS = new Set([
   "feeFaucetId",
   "protocolConfig",
   "storeIdentifier",
+  "trackedAccountWitnesses",
 ]);
 
 const MOCK_STORE_NAME = "mock_client_db";

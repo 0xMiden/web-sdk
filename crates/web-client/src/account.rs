@@ -18,6 +18,54 @@ use crate::{WebClient, js_error_with_context};
 
 #[js_export]
 impl WebClient {
+    /// Starts watching an on-chain account without subscribing to its note tag.
+    ///
+    /// Sync keeps the account's commitment, nonce and storage current but pulls none of the
+    /// notes addressed to it.
+    #[js_export(js_name = "importWatchedAccountById")]
+    pub async fn import_watched_account_by_id(&self, account_id: &AccountId) -> Result<(), JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        client
+            .import_watched_account_by_id(account_id.into())
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to import watched account"))
+    }
+
+    /// Keeps the account's witness up to date on every sync. Returns `true` if it was not
+    /// tracked before.
+    #[js_export(js_name = "trackAccountWitness")]
+    pub async fn track_account_witness(&self, account_id: &AccountId) -> Result<bool, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        client
+            .track_account_witness(account_id.into())
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to track account witness"))
+    }
+
+    /// Stops tracking the account's witness. Returns `true` if it was tracked.
+    #[js_export(js_name = "untrackAccountWitness")]
+    pub async fn untrack_account_witness(&self, account_id: &AccountId) -> Result<bool, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        client
+            .untrack_account_witness(account_id.into())
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to untrack account witness"))
+    }
+
+    /// Returns the IDs of the accounts whose witness is tracked.
+    #[js_export(js_name = "trackedAccountWitnesses")]
+    pub async fn tracked_account_witnesses(&self) -> Result<Vec<AccountId>, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let ids = client.tracked_account_witnesses().await.map_err(|err| {
+            js_error_with_context(err, "failed to list tracked account witnesses")
+        })?;
+        Ok(ids.into_iter().map(Into::into).collect())
+    }
+
     #[js_export(js_name = "getAccounts")]
     pub async fn get_accounts(&self) -> Result<Vec<AccountHeader>, JsErr> {
         let mut guard = self.get_mut_inner().await;
