@@ -92,7 +92,7 @@ export function createNoteAttachment(
     while (bigints.length < 4) {
       bigints.push(0n);
     }
-    const word = new Word(BigUint64Array.from(bigints));
+    const word = new Word(bigints);
     return NoteAttachment.fromWord(scheme, word);
   }
 
@@ -101,7 +101,7 @@ export function createNoteAttachment(
   }
   const words: Word[] = [];
   for (let i = 0; i < bigints.length; i += 4) {
-    words.push(new Word(BigUint64Array.from(bigints.slice(i, i + 4))));
+    words.push(new Word(bigints.slice(i, i + 4)));
   }
   return NoteAttachment.fromWords(scheme, words);
 }
@@ -119,6 +119,6 @@ export function createNoteAttachment(
  */
 export function emptyAttachment(): NoteAttachment {
   const scheme = NoteAttachmentScheme.none();
-  const word = new Word(BigUint64Array.from([0n, 0n, 0n, 0n]));
+  const word = new Word([0n, 0n, 0n, 0n]);
   return NoteAttachment.fromWord(scheme, word);
 }

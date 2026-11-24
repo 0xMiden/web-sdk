@@ -159,7 +159,7 @@ impl WebClient {
         }
         let keystore = self.get_keystore().await?;
 
-        let max_supply = js_u64_to_u64(max_supply);
+        let max_supply = js_u64_to_u64(max_supply)?;
         let (new_account, key_pair) = generate_faucet(
             storage_mode,
             token_name,

@@ -25,7 +25,7 @@ impl FungibleAsset {
     /// Creates a fungible asset for the given faucet and amount.
     #[js_export(constructor)]
     pub fn new(faucet_id: &AccountId, amount: JsU64) -> Result<FungibleAsset, JsErr> {
-        FungibleAsset::new_inner(faucet_id, js_u64_to_u64(amount))
+        FungibleAsset::new_inner(faucet_id, js_u64_to_u64(amount)?)
     }
 
     /// Reconstructs a fungible asset from its vault entry — the `(key, value)`
@@ -56,7 +56,7 @@ impl FungibleAsset {
     /// `2^63 - 2^31`.
     #[js_export(js_name = "fromVaultKey")]
     pub fn from_vault_key(key: &Word, amount: JsU64) -> Result<FungibleAsset, JsErr> {
-        let amount = AssetAmount::new(js_u64_to_u64(amount))
+        let amount = AssetAmount::new(js_u64_to_u64(amount)?)
             .map_err(|e| from_str_err(&format!("Failed to create FungibleAsset: {e}")))?;
         // Value-word layout mirrors native `FungibleAsset::to_value_word`
         // ([amount, 0, 0, 0]); keep the two in lockstep if that layout changes.
