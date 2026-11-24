@@ -104,12 +104,39 @@ describe("useClaimAggLayerDeposit", () => {
     expect(String(client.submitNewTransaction.mock.calls[0][0])).toBe(
       "0xsender"
     );
+    // The built request, not the builder, is what gets submitted.
+    expect(client.submitNewTransaction.mock.calls[0][1]).toBe(
+      builder.build.mock.results[0].value
+    );
 
     expect(out.txId).toBe("0xclaimtx");
     expect(out.note.id().toString()).toBe("0xclaimnote");
     expect(result.current.result).toBe(out);
     expect(result.current.stage).toBe("complete");
     expect(mockSync).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes through the provided runExclusive", async () => {
+    const runExclusive = vi.fn(async (fn: () => Promise<unknown>) => fn());
+    const client = createMockWebClient({
+      submitNewTransaction: vi
+        .fn()
+        .mockResolvedValue(createMockTransactionId("0xclaimtx")),
+    });
+    mockUseMiden.mockReturnValue({
+      client,
+      isReady: true,
+      sync: vi.fn(),
+      runExclusive,
+    });
+    const { result } = renderHook(() => useClaimAggLayerDeposit());
+
+    await act(async () => {
+      await result.current.claimAggLayerDeposit(claimOptions);
+    });
+
+    expect(runExclusive).toHaveBeenCalledTimes(1);
+    expect(client.submitNewTransaction).toHaveBeenCalledTimes(1);
   });
 
   it("submits with the configured prover and skips the sync on request", async () => {
