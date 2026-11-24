@@ -727,6 +727,7 @@ export type BatchOperation =
       account: AccountRef;
       to: AccountRef;
       token: AccountRef;
+      /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
       amount: number | bigint;
       type?: NoteVisibility;
       reclaimAfter?: number;
@@ -736,6 +737,7 @@ export type BatchOperation =
       kind: "mint";
       account: AccountRef;
       to: AccountRef;
+      /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
       amount: number | bigint;
       type?: NoteVisibility;
     }
@@ -923,7 +925,7 @@ export interface PswapConsumeOptions extends TransactionOptions {
   note: NoteInput;
   /** Requested-asset amount the consumer supplies from its own vault; a partial amount emits a remainder PSWAP note. A `number` must be a safe integer. */
   fillAmount: number | bigint;
-  /** Requested-asset amount supplied by other in-flight notes in the same tx. Defaults to `0`; leave unset normally. */
+  /** Requested-asset amount supplied by other in-flight notes in the same tx. Defaults to `0`; leave unset normally. A `number` must be a safe integer. */
   noteFillAmount?: number | bigint;
 }
 
@@ -977,6 +979,7 @@ export interface PreviewSendOptions {
   account: AccountRef;
   to: AccountRef;
   token: AccountRef;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   type?: NoteVisibility;
   reclaimAfter?: number;
@@ -987,6 +990,7 @@ export interface PreviewMintOptions {
   operation: "mint";
   account: AccountRef;
   to: AccountRef;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   type?: NoteVisibility;
 }
@@ -996,6 +1000,7 @@ export interface PreviewBridgeOptions {
   account: AccountRef;
   bridgeAccount: AccountRef;
   token: AccountRef;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   destinationNetwork: number;
   destinationAddress: string;
@@ -1029,7 +1034,9 @@ export interface PreviewPswapConsumeOptions {
   operation: "pswapConsume";
   account: AccountRef;
   note: NoteInput;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   fillAmount: number | bigint;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   noteFillAmount?: number | bigint;
 }
 
