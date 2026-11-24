@@ -250,3 +250,21 @@ describe("the agent guide", () => {
     expect(guide).toContain("console.warn");
   });
 });
+
+describe("the Node.js terminate documentation", () => {
+  it("says terminate releases the store's ownership claim", () => {
+    for (const file of [
+      "../client.js",
+      "../types/api-types.d.ts",
+      "../../skills/web-client-usage/SKILL.md",
+    ]) {
+      const text = fs.readFileSync(new URL(file, import.meta.url), "utf8");
+      expect(text).not.toMatch(/releases\s+nothing/);
+    }
+    const types = fs.readFileSync(
+      new URL("../types/index.d.ts", import.meta.url),
+      "utf8"
+    );
+    expect(types).not.toMatch(/terminate\(\) is a no-op/);
+  });
+});

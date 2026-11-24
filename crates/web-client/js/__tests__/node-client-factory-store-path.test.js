@@ -106,3 +106,28 @@ describe("the Node.js factory claiming a store", () => {
     }
   });
 });
+
+describe("the Node.js factory given a path through a symlink and `..`", () => {
+  it("opens the file the operating system resolves, not the lexical one", async () => {
+    const root = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "miden-dotdot-"))
+    );
+    const target = path.join(root, "a", "sub");
+    fs.mkdirSync(target, { recursive: true });
+    fs.symlinkSync(target, path.join(root, "link"));
+    try {
+      const { sdk, calls } = rawSdk();
+      const client = await createWasmWebClient(sdk).createClient(
+        "rpc",
+        null,
+        undefined,
+        `${root}/link/../store.db`
+      );
+      // link/.. is a/, not root: the symlink resolves before `..` applies.
+      expect(calls[0][3]).toBe(path.join(root, "a", "store.db"));
+      client.terminate();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
