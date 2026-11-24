@@ -530,14 +530,19 @@ jobs:
       # No fallback exists for this one — a missing head dist means no benchmark
       # at all — so the cap is here to make the failure legible and leave the
       # summary step time to run, not to degrade to something lesser.
-      - name: Build head MT dist (full release profile)
+      - name: Build the exact SDK and check both release WASM variants
         timeout-minutes: 30
         shell: bash
         run: |
           set -euo pipefail
-          pnpm --filter @miden-sdk/miden-sdk run build-rust-client-js
-          pnpm --filter @miden-sdk/miden-sdk run build-mt
-          mv crates/web-client/dist/mt "$RUNNER_TEMP/dist-head"
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF_NAME" = ci/479-wasm-release
+          sdk_sha=4d76543d3c7409f109865fdf2474a2cfd058ed02
+          git diff --exit-code "$sdk_sha" -- . ':(exclude).github/workflows/bench.yml'
+          mkdir -p "$RUNNER_TEMP/report"
+          printf '%s\n' "$sdk_sha" | tee "$RUNNER_TEMP/report/sdk-sha.txt"
+          pnpm --filter @miden-sdk/miden-sdk run build
+          ./scripts/verify-wasm-size.sh | tee "$RUNNER_TEMP/report/release-wasm.txt"
 
       # Capped because it sits between the head build and the benchmark, so a
       # slow or hanging browser download ate the benchmark's window directly and
@@ -555,7 +560,11 @@ jobs:
       # that never binds. Sized to leave the summary and upload steps room, and
       # kept in sync with BENCH_BUDGET_MINUTES below, which the producer uses to
       # clamp its own deadlines so the in-page diagnostic wins the race.
+      - name: Smoke-test the exact optimized MT artifact
+        run: pnpm --filter @miden-sdk/miden-sdk exec node scripts/verify-release-mt.mjs
+
       - name: Run benchmark
+        if: github.event_name != 'workflow_dispatch'
         # Both the runner's cap and the producer's clamp come from one number.
         # They were two literals nine lines apart with nothing checking them, and
         # drift in one direction is silent AND regressive: lowering the cap
