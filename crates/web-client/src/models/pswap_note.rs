@@ -8,7 +8,7 @@ use super::note_tag::NoteTag;
 use super::note_type::NoteType;
 use super::word::Word;
 use crate::js_error_with_context;
-use crate::platform::{JsErr, JsU64, from_str_err, u64_to_js_u64};
+use crate::platform::{JsErr, from_str_err, u64_to_js_u64};
 
 /// Decoded view of a standard PSWAP (partial-fill swap) note: offers its single fungible asset
 /// for at least the requested asset, fillable in parts, with each fill paid back to the creator.
