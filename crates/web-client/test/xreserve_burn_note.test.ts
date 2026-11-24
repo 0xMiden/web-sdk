@@ -77,7 +77,7 @@ test.describe("Note.createXReserveBurnNote", () => {
         attachmentCount: attachments.length,
         withdrawalWords: attachments[1]
           .toWords()
-          .map((word) => word.toU64s().map(String)),
+          .map((word) => Array.from(word.toU64s(), String)),
         shortRecipientError,
       };
     });
