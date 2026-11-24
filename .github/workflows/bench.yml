@@ -535,9 +535,51 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF_NAME" = ci/479-wasm-size-ab
+          git diff --exit-code c50ba2dfdf0076bad2b44f8c3e81128fdad1158d -- . ':(exclude).github/workflows/bench.yml'
+          export WASM_AB_REAL="${WASM_OPT_BIN:?install-binaryen did not export WASM_OPT_BIN}"
+          export WASM_AB_OUTPUT="$RUNNER_TEMP/wasm-ab.wasm"
+          mkdir -p "$RUNNER_TEMP/report"
+          export WASM_AB_REPORT="$RUNNER_TEMP/report/wasm-optimizer.txt"
+          cat > "$RUNNER_TEMP/wasm-ab" <<'BASH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          args=("$@")
+          output_index=
+          for ((i=0; i<${#args[@]}; i++)); do
+            if [[ "${args[i]}" == --output ]]; then
+              output_index=$((i + 1))
+              break
+            fi
+          done
+          if [[ -z "$output_index" ]]; then
+            exec "$WASM_AB_REAL" "$@"
+          fi
+          control=${args[output_index]}
+          {
+            "$WASM_AB_REAL" --version
+            printf 'control argument: %q\n' "$@"
+            sha256sum "$1"
+          } | tee "$WASM_AB_REPORT"
+          "$WASM_AB_REAL" "$@"
+          args[output_index]=$WASM_AB_OUTPUT
+          "$WASM_AB_REAL" "${args[@]}" --merge-similar-functions
+          {
+            wc -c "$control" "$WASM_AB_OUTPUT"
+            sha256sum "$control" "$WASM_AB_OUTPUT"
+          } | tee -a "$WASM_AB_REPORT"
+          BASH
+          chmod +x "$RUNNER_TEMP/wasm-ab"
           pnpm --filter @miden-sdk/miden-sdk run build-rust-client-js
-          pnpm --filter @miden-sdk/miden-sdk run build-mt
-          mv crates/web-client/dist/mt "$RUNNER_TEMP/dist-head"
+          WASM_OPT_BIN="$RUNNER_TEMP/wasm-ab" pnpm --filter @miden-sdk/miden-sdk run build-mt
+          dist=crates/web-client/dist/mt
+          test -s "$WASM_AB_OUTPUT"
+          cmp "$dist/assets/miden_client_web.wasm" "$dist/workers/assets/miden_client_web.wasm"
+          cp -R "$dist" "$RUNNER_TEMP/dist-base"
+          cp "$WASM_AB_OUTPUT" "$dist/assets/miden_client_web.wasm"
+          cp "$WASM_AB_OUTPUT" "$dist/workers/assets/miden_client_web.wasm"
+          ./scripts/verify-wasm-size.sh "$dist"
 
       # Capped because it sits between the head build and the benchmark, so a
       # slow or hanging browser download ate the benchmark's window directly and
@@ -545,6 +587,11 @@ jobs:
       - name: Install Chromium for Playwright
         timeout-minutes: 10
         run: pnpm --filter @miden-sdk/miden-sdk run test:install:ci
+
+      - name: Smoke-test the alternative and stage it for comparison
+        run: |
+          pnpm --filter @miden-sdk/miden-sdk exec node scripts/verify-release-mt.mjs
+          mv crates/web-client/dist/mt "$RUNNER_TEMP/dist-head"
 
       # The bench script ALWAYS comes from HEAD and is pointed at two dist
       # dirs. Checking out the base copy of the script would mean the PR that
