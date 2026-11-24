@@ -221,6 +221,15 @@ impl WebClient {
 
 #[js_export]
 impl WebClient {
+    #[cfg(feature = "browser")]
+    #[js_export(js_name = "serializeLegacyMockProtocolConfig")]
+    pub async fn serialize_legacy_mock_protocol_config(&self) -> Result<Vec<u8>, JsErr> {
+        let guard = self.mock_rpc_api.lock().await;
+        guard.as_ref().map(|api| api.protocol_config().to_bytes()).ok_or_else(|| {
+            from_str_err("Mock chain is not initialized. Create a mock client first.")
+        })
+    }
+
     /// Returns the inner serialized mock chain if it exists.
     #[js_export(js_name = "serializeMockChain")]
     pub async fn serialize_mock_chain(&self) -> Result<Vec<u8>, JsErr> {
