@@ -192,7 +192,7 @@ export async function upsertInputNote(dbId, detailsCommitment, noteId, assets, a
         return doWork(tx);
     return db.dexie.transaction("rw", db.inputNotes, db.notesScripts, doWork);
 }
-const INPUT_NOTE_CONSUMPTION_INDEX = "[consumedBlockHeight+consumedTxOrder+detailsCommitment]";
+const INPUT_NOTE_CONSUMPTION_INDEX = "[consumerAccountId+consumedBlockHeight+consumedTxOrder+detailsCommitment]";
 // Returns a one-element array so the caller's shape is uniform with the other readers. The
 // cursor is compared as an index key rather than looked up, so it still resolves the right
 // position once its own note is deleted.
@@ -202,26 +202,26 @@ export async function getInputNoteAfter(dbId, states, consumerAccountId, blockSt
         const hasCursor = cursorBlockHeight != null &&
             cursorTxOrder != null &&
             cursorDetailsCommitment != null;
-        // With a cursor, `blockStart` is left to the predicate below: the cursor is the tighter
-        // lower bound, and emitting both abandons the row-value seek.
-        const ordered = hasCursor
-            ? db.inputNotes
+        // The consumer leads the index, so every read is one consumer's slice. With a cursor,
+        // `blockStart` is left to the predicate below: the cursor is the tighter lower bound.
+        const lower = hasCursor
+            ? [
+                consumerAccountId,
+                cursorBlockHeight,
+                cursorTxOrder,
+                cursorDetailsCommitment,
+            ]
+            : [consumerAccountId, blockStart ?? Dexie.minKey];
+        const upper = blockEnd != null
+            ? [consumerAccountId, blockEnd, Dexie.maxKey]
+            : [consumerAccountId, Dexie.maxKey];
+        const note = await db.inputNotes
                 .where(INPUT_NOTE_CONSUMPTION_INDEX)
-                .above([cursorBlockHeight, cursorTxOrder, cursorDetailsCommitment])
-            : blockStart != null
-                ? db.inputNotes
-                    .where(INPUT_NOTE_CONSUMPTION_INDEX)
-                    .aboveOrEqual([blockStart])
-                : db.inputNotes.orderBy(INPUT_NOTE_CONSUMPTION_INDEX);
-        const note = await ordered
+            .between(lower, upper, !hasCursor, true)
             .filter((n) => {
             if (states.length > 0 && !states.includes(n.stateDiscriminant))
                 return false;
-            if (n.consumerAccountId !== consumerAccountId)
-                return false;
             if (blockStart != null && n.consumedBlockHeight < blockStart)
-                return false;
-            if (blockEnd != null && n.consumedBlockHeight > blockEnd)
                 return false;
             return true;
         })

@@ -26,7 +26,7 @@ import {
   pruneAccountHistory,
   undoAccountStates,
 } from "./accounts.js";
-import { uniqueDbName } from "./test-utils.js";
+import { recordReads, uniqueDbName } from "./test-utils.js";
 
 // Track opened DB IDs for per-test cleanup.
 const openDbIds: string[] = [];
@@ -1088,6 +1088,68 @@ describe("pruneAccountHistory", () => {
     // NEW_CODE should still be there (referenced by latest header)
     const newCodeRecord = await db.accountCodes.get(NEW_CODE);
     expect(newCodeRecord).toBeDefined();
+  });
+
+  it("keeps code a latest, remaining historical or foreign header references, without scanning those tables", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+
+    const header = (replacedAtNonce: string, codeRoot: string) => ({
+      id: ACC,
+      replacedAtNonce,
+      codeRoot,
+      storageRoot: STORAGE_ROOT,
+      vaultRoot: VAULT_ROOT,
+      nonce: "0",
+      committed: false,
+      accountSeed: undefined,
+      accountCommitment: `0xc-${replacedAtNonce}`,
+      locked: false,
+    });
+    for (const root of ["0xorphan", "0xhistorical", "0xforeign", "0xlatest"]) {
+      await upsertAccountCode(dbId, root, new Uint8Array([1]));
+    }
+    // Pruning up to nonce 4 deletes the first four headers; three of their roots have another holder.
+    await db.historicalAccountHeaders.bulkPut([
+      header("1", "0xorphan"),
+      header("2", "0xhistorical"),
+      header("3", "0xforeign"),
+      header("4", "0xlatest"),
+      header("5", "0xhistorical"),
+    ]);
+    await db.foreignAccountCode.put({
+      accountId: "0xforeign1",
+      codeRoot: "0xforeign",
+    });
+    await db.latestAccountHeaders.put({
+      ...header("", "0xlatest"),
+      accountCommitment: "0xclatest",
+    });
+
+    const recorder = recordReads();
+    try {
+      await pruneAccountHistory(dbId, ACC, "4");
+    } finally {
+      recorder.stop();
+    }
+
+    expect(await db.accountCodes.toCollection().primaryKeys()).toEqual([
+      "0xforeign",
+      "0xhistorical",
+      "0xlatest",
+    ]);
+    for (const store of [
+      "latestAccountHeaders",
+      "historicalAccountHeaders",
+      "foreignAccountCode",
+    ]) {
+      expect(
+        recorder.reads.filter((r) => r.store === store && !r.ranged)
+      ).toEqual([]);
+      expect(
+        recorder.reads.some((r) => r.store === store && r.index === "codeRoot")
+      ).toBe(true);
+    }
   });
 });
 
