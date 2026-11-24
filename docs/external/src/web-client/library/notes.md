@@ -187,8 +187,9 @@ for (const entry of mine) {
 
 The screener leaves out accounts that can never consume the note, and accounts
 that cannot consume it under the current conditions, so an empty array means
-no screened account can consume it now: read it as never consumable. Screening
-does not import the note. The low-level `WebClient` exposes the same screen as
+no screened account can consume it now. It is also empty when the client
+tracks no accounts, so do not read it as never consumable. Screening does
+not import the note. The low-level `WebClient` exposes the same screen as
 `getNoteConsumability(note)` and `getNoteConsumabilityForAccount(note, accountId)`.
 
 See also [Transactions](./transactions.md) for `consumeAll`'s fee handling.

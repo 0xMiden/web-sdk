@@ -1859,7 +1859,8 @@ export interface NotesResource {
    * note now, after a block, or with authorization. The screener drops
    * accounts that can never consume the note, and accounts that cannot
    * consume it under the current conditions, so an empty array means no
-   * screened account can consume it now; read it as never consumable.
+   * screened account can consume it now. It is also empty when the client
+   * tracks no accounts, so it does not mean never consumable.
    *
    * @param note - The note to screen.
    * @param options - Optional account to screen against; it must be in the
