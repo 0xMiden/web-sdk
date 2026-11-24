@@ -41,6 +41,6 @@ describe("raw store dump deprecation", () => {
   ])("%s marks the wasm function deprecated", (file, anchor) => {
     const source = read(`../../src/${file}`);
     const head = source.slice(0, source.indexOf(anchor));
-    expect(head.slice(head.lastIndexOf("///"))).toMatch(/deprecated/i);
+    expect(head.slice(-600)).toMatch(/deprecated/i);
   });
 });

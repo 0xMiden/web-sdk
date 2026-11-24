@@ -16,6 +16,9 @@ export interface UseExportStoreResult {
 /**
  * Hook to export the IndexedDB store for backup/restore.
  *
+ * @deprecated Create the client with the right `storeName` and manage store instances, or export
+ * only the state you need through the typed APIs (`useExportNote`).
+ *
  * @example
  * ```tsx
  * function BackupButton() {

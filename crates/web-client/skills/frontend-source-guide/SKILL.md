@@ -169,7 +169,7 @@ Platform-native binaries consumed through `optionalDependencies`, and the native
 | Network note | `src/hooks/useCreateNetworkNote.ts` | NetworkAccountTarget, createNetworkAuthComponents |
 | Many recipients, one transaction | `src/hooks/useMultiSend.ts` | feeAwareTransactionRequestBuilder |
 | Atomic batch of transactions across accounts | `src/hooks/useBatch.ts` | `BatchItem`, `submitNewTransactionBatch`, the `BATCH_BUSY` guard |
-| Store export / import | `src/hooks/useExportStore.ts`, `useImportStore.ts` | Backup and restore |
+| Store export / import | `src/hooks/useExportStore.ts`, `useImportStore.ts` | Backup and restore (deprecated: manage store instances with `storeName`) |
 | Live note feed | `src/hooks/useNoteStream.ts`, `useSyncControl.ts` | Subscription and sync gating |
 | Prover selection and fallback | `src/utils/prover.ts` | `resolveTransactionProver`, `proveWithFallback` - what a `ProverTarget` / `ProverConfig` resolves to |
 | Structured error handling | `src/utils/errors.ts` | `MidenError`, `MidenErrorCode`, `CodedError`, `WasmErrorCode` - the codes FP17 says to branch on |

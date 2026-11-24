@@ -95,7 +95,7 @@ The package exports 37 hooks from `src/hooks/`, plus the context accessors `useM
 | `useCompile()` | compile | `{ component, txScript, noteScript, isReady }` |
 | `useExecuteProgram()` | read-only view call | the action is named **`execute`**, not `executeProgram`: `execute({ accountId, script, adviceInputs?, foreignAccounts?, skipSync? })` returns `{ stack: bigint[] }` |
 | `useSyncControl()` | control | `{ pauseSync, resumeSync, isPaused }`. Use this instead of `autoSyncInterval: 0` when you need to stop auto-sync after mount; manual `useSyncState().sync()` still works while paused |
-| `useExportStore()` / `useImportStore()` | store portability | `isExporting` / `isImporting` |
+| `useExportStore()` / `useImportStore()` | store portability (deprecated: manage store instances with `storeName`, or use the note and account hooks) | `isExporting` / `isImporting` |
 | `useExportNote()` / `useImportNote()` | note portability | `exportNote(noteId)` returns `Uint8Array`; `importNote(bytes)` returns the note id |
 | `MultiSignerProvider` / `SignerSlot` / `useMultiSigner` | signer | see "Signer Integration" |
 
