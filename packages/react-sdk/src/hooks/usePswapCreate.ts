@@ -9,6 +9,7 @@ import { DEFAULTS } from "../types";
 import { parseAccountId } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
 import { getNoteType } from "../utils/noteFilters";
+import { toAmount } from "../utils/amounts";
 
 export interface UsePswapCreateResult {
   /** Create a partial-swap (PSWAP) note */
@@ -68,8 +69,8 @@ export function usePswapCreate(): UsePswapCreateResult {
         throw new Error("Miden client is not ready");
       }
 
-      const offeredAmount = BigInt(options.offeredAmount);
-      const requestedAmount = BigInt(options.requestedAmount);
+      const offeredAmount = toAmount(options.offeredAmount, "pswapCreate");
+      const requestedAmount = toAmount(options.requestedAmount, "pswapCreate");
       if (offeredAmount <= 0n) {
         throw new Error("offeredAmount must be greater than 0");
       }
