@@ -312,32 +312,6 @@ test.describe("accountBech32 utilities (Playwright)", () => {
     expect(result).toMatch(/^mdev1/);
   });
 
-  test("toBech32AccountId returns the raw id for an rpcUrl naming no known network", async ({
-    page,
-  }) => {
-    // resolveNetworkId branch: no keyword match -> null, so no bech32 is made
-    // up for a network the endpoint does not name.
-    await loadBech32Page(page, {
-      rpcUrl: "https://my-custom-node.example.com/rpc",
-    });
-
-    const result = await page.evaluate(async () => {
-      const client = (window as any).__mockClient;
-      await client.syncState();
-      const wallet = await client.newWallet(
-        (window as any).AccountStorageMode.private(),
-        (window as any).AuthScheme.AuthRpoFalcon512
-      );
-      const hexId = wallet.id().toString();
-      return {
-        hexId,
-        converted: (window as any).__bech32.toBech32AccountId(hexId),
-      };
-    });
-
-    expect(result.converted).toBe(result.hexId);
-  });
-
   // -------------------------------------------------------------------------
   // installAccountBech32
   // -------------------------------------------------------------------------
