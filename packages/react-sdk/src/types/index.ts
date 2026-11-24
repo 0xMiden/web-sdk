@@ -27,6 +27,8 @@ import type {
   NoteVisibility,
   NoteExecutionHint,
   NoteRecipient,
+  ClaimProofData,
+  ClaimLeafData,
   NoteScript,
   StorageMode,
   PswapLineageRecord,
@@ -577,6 +579,22 @@ export interface WithdrawUsdcxOptions {
   /** Destination recipient in Circle's 32-byte form, 0x-prefixed hex (64 hex digits); an EVM address is left-padded with zeros */
   destinationRecipient: string;
   /** Skip auto-sync after withdrawing. Default: false */
+  skipSync?: boolean;
+}
+
+// AggLayer claim options (inbound deposit)
+export interface ClaimAggLayerDepositOptions {
+  /** Account that creates the CLAIM note (the sender) */
+  from: AccountRef;
+  /** Bridge account that consumes the note and mints the deposit; it must be public */
+  bridgeAccount: AccountRef;
+  /** Proof data from the AggLayer `claimAsset` call */
+  proof: ClaimProofData;
+  /** Deposit leaf from the AggLayer `claimAsset` call */
+  leaf: ClaimLeafData;
+  /** The faucet's decimal scale, an integer from 0 to 18; the Miden amount is `floor(leaf amount / 10^scale)` */
+  scale: number;
+  /** Skip auto-sync after claiming. Default: false */
   skipSync?: boolean;
 }
 

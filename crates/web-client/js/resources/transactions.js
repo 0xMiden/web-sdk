@@ -409,6 +409,63 @@ export class TransactionsResource {
     return { txId, result };
   }
 
+  /**
+   * Claims an inbound AggLayer deposit by emitting the public CLAIM note that
+   * `bridgeAccount` consumes to mint it. The note is built with
+   * `Note.createClaimNote` and submitted as an own output note of `account`.
+   */
+  async claimAggLayerDeposit(opts) {
+    rejectUnexpectedAnchor(opts, "claimAggLayerDeposit", "submit()");
+    this.#client.assertNotTerminated();
+    // wasm-bindgen truncates or wraps a non-integer into the `u32` parameter.
+    const scale = opts.scale;
+    if (!Number.isInteger(scale) || scale < 0 || scale > 18) {
+      throw new Error(
+        "claimAggLayerDeposit: scale must be an integer from 0 to 18"
+      );
+    }
+    const wasm = await this.#getWasm();
+    const senderId = resolveAccountRef(opts.account, wasm);
+    const bridgeId = resolveAccountRef(opts.bridgeAccount, wasm);
+
+    const note = wasm.Note.createClaimNote(
+      opts.proof,
+      opts.leaf,
+      scale,
+      bridgeId,
+      senderId
+    );
+    const ownOutputs = new wasm.NoteArray();
+    ownOutputs.push(note);
+    // A CLAIM note targets the bridge, so it is priced against the bridge like
+    // any network note; see createNetworkNote.
+    const bridgeAccounts = new wasm.ForeignAccountArray();
+    bridgeAccounts.push(
+      wasm.ForeignAccount.public(
+        bridgeId,
+        new wasm.AccountStorageRequirements()
+      )
+    );
+    const builder =
+      await this.#inner.feeAwareTransactionRequestBuilder(senderId);
+    const request = builder
+      .withOwnOutputNotes(ownOutputs)
+      .withForeignAccounts(bridgeAccounts)
+      .build();
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      senderId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, note, result };
+  }
+
   async consume(opts) {
     rejectUnexpectedAnchor(opts, "consume", "submit()");
     this.#client.assertNotTerminated();
