@@ -55,12 +55,6 @@ impl InputNoteRecord {
         self.0.details().into()
     }
 
-    /// Returns the metadata-independent commitment of the note details.
-    #[js_export(js_name = "detailsCommitment")]
-    pub fn details_commitment(&self) -> String {
-        self.0.details_commitment().to_hex()
-    }
-
     /// Exports an unspent note for recovery with its stored scan hint or inclusion proof.
     /// Returns `None` when the record cannot supply either.
     #[js_export(js_name = "recoveryNoteFile")]

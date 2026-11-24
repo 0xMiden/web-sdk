@@ -1719,8 +1719,10 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
               timeout,
               before: before.length,
               retained,
-              page: page.map((record) => record.detailsCommitment()),
-              lookup: lookup.map((record) => record.detailsCommitment()),
+              page: page.map((record) => record.detailsCommitment().toHex()),
+              lookup: lookup.map((record) =>
+                record.detailsCommitment().toHex()
+              ),
             };
           } finally {
             client?.terminate();

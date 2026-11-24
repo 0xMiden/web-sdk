@@ -1848,7 +1848,8 @@ export interface NotesResource {
 
   /**
    * Browser-only scan of at most 256 input notes in details commitment order.
-   * Use the last record's detailsCommitment() as the exclusive next cursor.
+   * Use the last record's detailsCommitment().toHex() as the exclusive next
+   * cursor.
    * Each page reflects the store at the time of its own read.
    */
   listPage(options: { after?: string; limit: number }): Promise<InputNoteRecord[]>;
