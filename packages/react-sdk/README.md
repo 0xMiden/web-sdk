@@ -1112,8 +1112,8 @@ function MintForm() {
 
 Every transaction hook takes an amount as a `bigint` or a `number`. A `number`
 must be a safe integer: anything else (`2 ** 53`, `1.5`, `NaN`) throws
-`<method>: amount must be a safe integer when given as a number` before any
-WASM call, so pass a `bigint` above `2 ** 53 - 1`.
+`<method>: amount must be a safe integer when given as a number` before the
+amount reaches a transaction builder, so pass a `bigint` above `2 ** 53 - 1`.
 
 #### `useWithdrawUsdcx()`
 
