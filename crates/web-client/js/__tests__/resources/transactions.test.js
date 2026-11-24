@@ -1041,15 +1041,24 @@ describe("TransactionsResource", () => {
 
     it("waits for confirmation when waitForConfirmation=true", async () => {
       const { resource } = makeResource();
-      const waitFor = vi
-        .spyOn(resource, "waitFor")
-        .mockResolvedValue(undefined);
+      let confirmed = false;
+      const waitFor = vi.spyOn(resource, "waitFor").mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(() => {
+              confirmed = true;
+              resolve();
+            }, 0)
+          )
+      );
       const result = await resource.claimAggLayerDeposit(
         claimOpts({ waitForConfirmation: true, timeout: 5000 })
       );
       expect(waitFor).toHaveBeenCalledWith(result.txId.toHex(), {
         timeout: 5000,
       });
+      // A call that does not await the confirmation resolves first.
+      expect(confirmed).toBe(true);
     });
 
     it.each([
