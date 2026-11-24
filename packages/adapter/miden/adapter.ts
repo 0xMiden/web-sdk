@@ -154,10 +154,12 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
       return;
     }
 
-    this._address = wallet.address;
+    const address = wallet.address;
+    this._address = address;
     this._publicKey = wallet.publicKey ?? null;
-    this.emit("accountChange", this._address, this._publicKey);
-    this.emit("connect", this._address);
+    this.emit("accountChange", address, this._publicKey);
+    // A listener may have disconnected synchronously; emit is not reentrant-safe.
+    if (this._wallet === wallet) this.emit("connect", address);
   };
   private _readyState: WalletReadyState =
     typeof window === "undefined" || typeof document === "undefined"
