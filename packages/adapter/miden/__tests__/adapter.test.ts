@@ -165,6 +165,10 @@ describe("MidenWalletAdapter", () => {
         name: "createAccount",
         call: (a) => a.createAccount(),
       },
+      {
+        name: "requestStorage",
+        call: (a) => a.requestStorage({ slotName: "miden::slot" }),
+      },
     ];
 
     for (const { name, call } of methods) {
@@ -800,6 +804,28 @@ describe("MidenWalletAdapter", () => {
       expect(adapter.supportsStorageReads).toBe(false);
       await expect(adapter.requestStorage(request)).rejects.toThrow(
         WalletStorageUnsupportedError
+      );
+    });
+
+    it("reports an unsupported wallet before checking the grant", async () => {
+      const { adapter } = await connectWith(AllowedPrivateData.Assets, {
+        requestStorage: undefined,
+      });
+      await expect(adapter.requestStorage(request)).rejects.toThrow(
+        WalletStorageUnsupportedError
+      );
+    });
+
+    it("replaces the grant when connecting again without disconnecting", async () => {
+      const { adapter } = await connectWith(AllowedPrivateData.Storage);
+      await adapter.connect(
+        PrivateDataPermission.UponRequest,
+        WalletAdapterNetwork.Testnet,
+        AllowedPrivateData.Assets
+      );
+      expect(adapter.supportsStorageReads).toBe(false);
+      await expect(adapter.requestStorage(request)).rejects.toThrow(
+        WalletPrivateDataPermissionError
       );
     });
 
