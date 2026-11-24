@@ -65,39 +65,15 @@ extern "C" {
     // INSERTS
     // --------------------------------------------------------------------------------------------
 
-    #[wasm_bindgen(js_name = upsertAccountCode)]
-    pub fn idxdb_upsert_account_code(
+    #[wasm_bindgen(js_name = insertAccount)]
+    pub fn idxdb_insert_account(
         db_id: &str,
+        account_id: String,
         code_root: String,
         code: Vec<u8>,
-    ) -> js_sys::Promise;
-
-    #[wasm_bindgen(js_name = upsertAccountStorage)]
-    pub fn idxdb_upsert_account_storage(
-        db_id: &str,
-        account_id: String,
         storage_slots: Vec<JsStorageSlot>,
-    ) -> js_sys::Promise;
-
-    #[wasm_bindgen(js_name = upsertStorageMapEntries)]
-    pub fn idxdb_upsert_storage_map_entries(
-        db_id: &str,
-        account_id: String,
-        entries: Vec<JsStorageMapEntry>,
-    ) -> js_sys::Promise;
-
-    #[wasm_bindgen(js_name = upsertVaultAssets)]
-    pub fn idxdb_upsert_vault_assets(
-        db_id: &str,
-        account_id: String,
-        assets: Vec<JsVaultAsset>,
-    ) -> js_sys::Promise;
-
-    #[wasm_bindgen(js_name = upsertAccountRecord)]
-    pub fn idxdb_upsert_account_record(
-        db_id: &str,
-        id: String,
-        code_root: String,
+        storage_map_entries: Vec<JsStorageMapEntry>,
+        vault_assets: Vec<JsVaultAsset>,
         storage_root: String,
         vault_root: String,
         nonce: String,
@@ -105,6 +81,7 @@ extern "C" {
         commitment: String,
         account_seed: Option<Vec<u8>>,
         watched: bool,
+        address: Vec<u8>,
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = insertAccountAddress)]

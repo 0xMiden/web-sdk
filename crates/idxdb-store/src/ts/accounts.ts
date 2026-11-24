@@ -300,21 +300,23 @@ export async function upsertAccountStorage(
 ) {
   try {
     const db = getDatabase(dbId);
-    await db.latestAccountStorages
-      .where("accountId")
-      .equals(accountId)
-      .delete();
+    await db.dexie.transaction("rw", db.latestAccountStorages, async () => {
+      await db.latestAccountStorages
+        .where("accountId")
+        .equals(accountId)
+        .delete();
 
-    if (storageSlots.length === 0) return;
+      if (storageSlots.length === 0) return;
 
-    const latestEntries = storageSlots.map((slot) => ({
-      accountId,
-      slotName: slot.slotName,
-      slotValue: slot.slotValue,
-      slotType: slot.slotType,
-    }));
+      const latestEntries = storageSlots.map((slot) => ({
+        accountId,
+        slotName: slot.slotName,
+        slotValue: slot.slotValue,
+        slotType: slot.slotType,
+      }));
 
-    await db.latestAccountStorages.bulkPut(latestEntries);
+      await db.latestAccountStorages.bulkPut(latestEntries);
+    });
   } catch (error) {
     logWebStoreError(error, `Error inserting storage slots`);
   }
@@ -328,21 +330,23 @@ export async function upsertStorageMapEntries(
   try {
     const db = getDatabase(dbId);
 
-    await db.latestStorageMapEntries
-      .where("accountId")
-      .equals(accountId)
-      .delete();
+    await db.dexie.transaction("rw", db.latestStorageMapEntries, async () => {
+      await db.latestStorageMapEntries
+        .where("accountId")
+        .equals(accountId)
+        .delete();
 
-    if (entries.length === 0) return;
+      if (entries.length === 0) return;
 
-    const latestEntries = entries.map((entry) => ({
-      accountId,
-      slotName: entry.slotName,
-      key: entry.key,
-      value: entry.value,
-    }));
+      const latestEntries = entries.map((entry) => ({
+        accountId,
+        slotName: entry.slotName,
+        key: entry.key,
+        value: entry.value,
+      }));
 
-    await db.latestStorageMapEntries.bulkPut(latestEntries);
+      await db.latestStorageMapEntries.bulkPut(latestEntries);
+    });
   } catch (error) {
     logWebStoreError(error, `Error inserting storage map entries`);
   }
@@ -356,17 +360,22 @@ export async function upsertVaultAssets(
   try {
     const db = getDatabase(dbId);
 
-    await db.latestAccountAssets.where("accountId").equals(accountId).delete();
+    await db.dexie.transaction("rw", db.latestAccountAssets, async () => {
+      await db.latestAccountAssets
+        .where("accountId")
+        .equals(accountId)
+        .delete();
 
-    if (assets.length === 0) return;
+      if (assets.length === 0) return;
 
-    const latestEntries = assets.map((asset) => ({
-      accountId,
-      vaultKey: asset.vaultKey,
-      asset: asset.asset,
-    }));
+      const latestEntries = assets.map((asset) => ({
+        accountId,
+        vaultKey: asset.vaultKey,
+        asset: asset.asset,
+      }));
 
-    await db.latestAccountAssets.bulkPut(latestEntries);
+      await db.latestAccountAssets.bulkPut(latestEntries);
+    });
   } catch (error: unknown) {
     logWebStoreError(error, `Error inserting assets`);
   }
@@ -995,23 +1004,38 @@ export async function insertAccount(
   watched: boolean,
   address: Uint8Array
 ) {
-  await upsertAccountCode(dbId, codeRoot, code);
-  await upsertAccountStorage(dbId, accountId, storageSlots);
-  await upsertStorageMapEntries(dbId, accountId, storageMapEntries);
-  await upsertVaultAssets(dbId, accountId, vaultAssets);
-  await upsertAccountRecord(
-    dbId,
-    accountId,
-    codeRoot,
-    storageRoot,
-    vaultRoot,
-    nonce,
-    committed,
-    commitment,
-    accountSeed,
-    watched
+  const db = getDatabase(dbId);
+  // The helpers below join this transaction, so any failed write rolls back all of them.
+  await db.dexie.transaction(
+    "rw",
+    [
+      db.accountCodes,
+      db.latestAccountStorages,
+      db.latestStorageMapEntries,
+      db.latestAccountAssets,
+      db.latestAccountHeaders,
+      db.addresses,
+    ],
+    async () => {
+      await upsertAccountCode(dbId, codeRoot, code);
+      await upsertAccountStorage(dbId, accountId, storageSlots);
+      await upsertStorageMapEntries(dbId, accountId, storageMapEntries);
+      await upsertVaultAssets(dbId, accountId, vaultAssets);
+      await upsertAccountRecord(
+        dbId,
+        accountId,
+        codeRoot,
+        storageRoot,
+        vaultRoot,
+        nonce,
+        committed,
+        commitment,
+        accountSeed,
+        watched
+      );
+      await insertAccountAddress(dbId, accountId, address);
+    }
   );
-  await insertAccountAddress(dbId, accountId, address);
 }
 
 export async function insertAccountAddress(
@@ -1068,14 +1092,14 @@ export async function upsertForeignAccountCode(
 ) {
   try {
     const db = getDatabase(dbId);
-    await upsertAccountCode(dbId, codeRoot, code);
-
-    const data = {
-      accountId,
-      codeRoot,
-    };
-
-    await db.foreignAccountCode.put(data);
+    await db.dexie.transaction(
+      "rw",
+      [db.accountCodes, db.foreignAccountCode],
+      async () => {
+        await upsertAccountCode(dbId, codeRoot, code);
+        await db.foreignAccountCode.put({ accountId, codeRoot });
+      }
+    );
   } catch (error) {
     logWebStoreError(
       error,
@@ -1134,15 +1158,21 @@ export async function getForeignAccountCode(
 export async function lockAccount(dbId: string, accountId: string) {
   try {
     const db = getDatabase(dbId);
-    await db.latestAccountHeaders
-      .where("id")
-      .equals(accountId)
-      .modify({ locked: true });
-    // Also lock historical rows so that undo/rebuild preserves the lock.
-    await db.historicalAccountHeaders
-      .where("id")
-      .equals(accountId)
-      .modify({ locked: true });
+    await db.dexie.transaction(
+      "rw",
+      [db.latestAccountHeaders, db.historicalAccountHeaders],
+      async () => {
+        await db.latestAccountHeaders
+          .where("id")
+          .equals(accountId)
+          .modify({ locked: true });
+        // Also lock historical rows so that undo/rebuild preserves the lock.
+        await db.historicalAccountHeaders
+          .where("id")
+          .equals(accountId)
+          .modify({ locked: true });
+      }
+    );
   } catch (error) {
     logWebStoreError(error, `Error locking account: ${accountId}`);
   }

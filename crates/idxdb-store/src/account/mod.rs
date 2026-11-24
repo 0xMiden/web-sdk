@@ -87,12 +87,9 @@ pub(crate) mod utils;
 use utils::{
     apply_account_patch,
     apply_full_account_state,
+    insert_account,
     parse_account_record_idxdb_object,
     patch_code_bytes,
-    upsert_account_asset_vault,
-    upsert_account_code,
-    upsert_account_record,
-    upsert_account_storage,
 };
 
 impl IdxdbStore {
@@ -490,34 +487,10 @@ impl IdxdbStore {
         initial_address: Address,
         client_account_type: ClientAccountType,
     ) -> Result<(), StoreError> {
-        upsert_account_code(self.db_id(), account.code()).await.map_err(|js_error| {
-            StoreError::DatabaseError(format!("failed to insert account code: {js_error:?}"))
-        })?;
-
-        upsert_account_storage(self.db_id(), &account.id(), account.storage())
+        insert_account(self.db_id(), account, initial_address, client_account_type)
             .await
             .map_err(|js_error| {
-                StoreError::DatabaseError(format!("failed to insert account storage:{js_error:?}"))
-            })?;
-
-        upsert_account_asset_vault(self.db_id(), &account.id(), account.vault())
-            .await
-            .map_err(|js_error| {
-                StoreError::DatabaseError(format!("failed to insert account vault:{js_error:?}"))
-            })?;
-
-        upsert_account_record(self.db_id(), account, client_account_type)
-            .await
-            .map_err(|js_error| {
-                StoreError::DatabaseError(format!("failed to insert account record: {js_error:?}"))
-            })?;
-
-        insert_account_address(self.db_id(), &account.id(), initial_address)
-            .await
-            .map_err(|js_error| {
-                StoreError::DatabaseError(format!(
-                    "failed to insert account addresses: {js_error:?}",
-                ))
+                StoreError::DatabaseError(format!("failed to insert account: {js_error:?}"))
             })?;
 
         self.smt_forest.write().rebuild_account(account)?;
