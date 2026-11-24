@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "fs";
 import os from "os";
 import path from "path";
 
@@ -28,6 +29,7 @@ vi.mock("../wasm.js", () => ({ default: async () => fakeWasm }));
 import { MidenClient } from "../client.js";
 import { WasmWebClient } from "../index.js";
 import { createWasmWebClient } from "../node/client-factory.js";
+import { claimStore } from "../utils.js";
 
 let storeCounter = 0;
 const uniqueStore = () => `store-ownership-${++storeCounter}-${Date.now()}`;
@@ -166,6 +168,30 @@ for (const [name, factory] of [
       expect(warn).not.toHaveBeenCalled();
     });
 
+    it("numbers clients afresh once every client of the store is terminated", async () => {
+      const store = uniqueStore();
+      (await factory(store)).terminate();
+      const owner = await factory(store, true);
+      await expect(factory(store)).rejects.toThrow(
+        new RegExp(`${store}.*client #1 of that store`)
+      );
+      owner.terminate();
+    });
+
+    it("keeps numbering while any client of the store is live", async () => {
+      const store = uniqueStore();
+      const a = await factory(store);
+      const b = await factory(store);
+      a.terminate();
+      const c = await factory(store);
+      b.terminate();
+      await expect(factory(store, true)).rejects.toThrow(
+        new RegExp(`${store}.*client #3 of that store`)
+      );
+      c.terminate();
+      expect(warn).toHaveBeenCalledTimes(2);
+    });
+
     it("leaves a client on another store alone", async () => {
       const a = await factory(uniqueStore(), true);
       const b = await factory(uniqueStore(), true);
@@ -196,5 +222,31 @@ describe("MidenClient.create", () => {
     await next[Symbol.asyncDispose]();
     (await create(store)).terminate();
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe("the store registry", () => {
+  it("is shared by every copy of the module, as the ST and MT builds are", async () => {
+    const store = uniqueStore();
+    const release = claimStore(store, true);
+    try {
+      vi.resetModules();
+      const copy = await import("../utils.js");
+      expect(copy.claimStore).not.toBe(claimStore);
+      expect(() => copy.claimStore(store)).toThrow("holds it exclusively");
+    } finally {
+      release();
+    }
+  });
+});
+
+describe("the agent guide", () => {
+  it("states how exclusive store ownership behaves", () => {
+    const guide = fs.readFileSync(
+      new URL("../../AGENTS.md", import.meta.url),
+      "utf8"
+    );
+    expect(guide).toContain("exclusive: true");
+    expect(guide).toContain("console.warn");
   });
 });
