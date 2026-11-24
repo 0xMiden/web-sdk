@@ -36,7 +36,7 @@ use super::note_recipient::NoteRecipient;
 use super::note_script::NoteScript;
 use super::word::Word;
 use crate::js_error_with_context;
-use crate::platform::{JsBytes, JsErr, JsU64, from_str_err, js_u64_to_u64};
+use crate::platform::{JsBytes, JsErr, from_str_err, js_u64_to_u64};
 use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
 
 /// A note bundles public metadata with private details: assets, script, inputs, and a serial number
@@ -273,8 +273,8 @@ impl Note {
         Ok(native_note.into())
     }
 
-    /// Builds the public xReserve burn note that withdraws `amount` USDCx issued by `faucet_id` to
-    /// `destination_recipient` (32 bytes) on the Circle `destination_domain`.
+    /// Builds the public xReserve burn note that withdraws `amount` `USDCx` issued by `faucet_id`
+    /// to `destination_recipient` (32 bytes) on the Circle `destination_domain`.
     ///
     /// The note carries the fixed `BURN` tag Circle's attester discovers it by and is consumed by
     /// the faucet, which must be a public account.

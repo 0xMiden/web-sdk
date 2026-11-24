@@ -198,7 +198,7 @@ impl WebClient {
         Ok(b2agg_transaction_request.into())
     }
 
-    /// Builds a transaction request that withdraws USDCx through Circle xReserve.
+    /// Builds a transaction request that withdraws `USDCx` through Circle xReserve.
     ///
     /// The request emits a single public xReserve burn note holding `amount` units of the
     /// `faucet_id` asset. The faucet consumes and burns it, and Circle releases USDC to
