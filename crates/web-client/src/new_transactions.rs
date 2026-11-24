@@ -201,7 +201,8 @@ impl WebClient {
     /// registry, so a network account can later run them.
     ///
     /// The request emits one public note per script, with no assets and no storage. Submit it from
-    /// `sender_account_id` before the network transaction that needs the scripts.
+    /// `sender_account_id` before the network transaction that needs the scripts: the submit
+    /// methods never register the scripts a request declares through `withExpectedNtxScripts`.
     #[js_export(js_name = "newRegisterNoteScriptsTransactionRequest")]
     pub async fn new_register_note_scripts_transaction_request(
         &self,
@@ -431,7 +432,9 @@ impl WebClient {
     /// Executes a transaction specified by the request against the specified account,
     /// proves it, submits it to the network, and updates the local database.
     ///
-    /// Uses the prover configured for this client.
+    /// Uses the prover configured for this client. It submits exactly this request: scripts the
+    /// request declares through `withExpectedNtxScripts` are not registered here, so submit
+    /// `newRegisterNoteScriptsTransactionRequest` first.
     ///
     /// If the transaction utilizes foreign account data, there is a chance that the client doesn't
     /// have the required block header in the local database. In these scenarios, a sync to
@@ -457,6 +460,9 @@ impl WebClient {
 
     /// Executes a transaction specified by the request against the specified account, proves it
     /// with the user provided prover, submits it to the network, and updates the local database.
+    /// It submits exactly this request: scripts the request declares through
+    /// `withExpectedNtxScripts` are not registered here, so submit
+    /// `newRegisterNoteScriptsTransactionRequest` first.
     ///
     /// If the transaction utilizes foreign account data, there is a chance that the client doesn't
     /// have the required block header in the local database. In these scenarios, a sync to the
@@ -486,6 +492,9 @@ impl WebClient {
     /// individually and as a batch, submits the batch to the network, and atomically applies
     /// the per-tx updates to the local store. Returns the node's chain tip as of submission, not
     /// the block the batch commits in, which only a later sync reveals.
+    ///
+    /// Like the single submit, it registers no script a request declares through
+    /// `withExpectedNtxScripts`.
     ///
     /// Every proof is produced inside the batch primitive by the client's built-in local prover.
     /// Unlike `submitNewTransactionWithProver`, this takes no prover, so a JS-side `proverUrl` or

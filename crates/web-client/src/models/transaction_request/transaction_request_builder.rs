@@ -241,15 +241,19 @@ impl TransactionRequestBuilder {
 
     /// Makes execution skip input notes that are no longer consumable instead of failing. The
     /// skipped notes are dropped without an error, so the transaction consumes only the rest.
+    /// Execution screens at most 20 input notes this way and fails with `invalid input note count`
+    /// above that, so split a larger batch across requests.
     #[js_export(js_name = "ignoreInvalidInputNotes")]
     pub fn ignore_invalid_input_notes(&mut self) -> Self {
         self.builder = self.builder.clone().ignore_invalid_input_notes();
         self.clone()
     }
 
-    /// Declares custom note scripts the network executes for this request. Before the transaction
-    /// runs, the client registers any script the node does not know yet through a separate
-    /// transaction. Standard scripts are ignored.
+    /// Declares the note scripts the network executes for this request, and the request carries
+    /// them through serialization. The web client submits exactly the request it is given, so it
+    /// registers nothing: submit `newRegisterNoteScriptsTransactionRequest` from the same sender
+    /// first for every custom script the node does not know yet. The node resolves standard
+    /// scripts itself, so they need no registration.
     #[js_export(js_name = "withExpectedNtxScripts")]
     pub fn with_expected_ntx_scripts(&mut self, scripts: NoteScriptArray) -> Self {
         let items: Vec<NoteScript> = scripts.into();

@@ -1360,6 +1360,9 @@ export class TransactionsResource {
     return input;
   }
 
+  // Submits exactly `request`: scripts it declares through withExpectedNtxScripts
+  // are not registered here (the native submit does, this pipeline does not), so
+  // a caller submits newRegisterNoteScriptsTransactionRequest first.
   async #submitOrSubmitWithProver(accountId, request, perCallProver, anchor) {
     const result = anchor
       ? await this.#inner.executeTransactionAt(accountId, request, anchor)

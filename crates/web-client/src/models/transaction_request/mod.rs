@@ -64,12 +64,15 @@ impl TransactionRequest {
     }
 
     /// Whether execution skips input notes that are no longer consumable instead of failing.
+    /// Skipping screens at most 20 input notes and fails with `invalid input note count` above
+    /// that.
     #[js_export(js_name = "ignoresInvalidInputNotes")]
     pub fn ignores_invalid_input_notes(&self) -> bool {
         self.0.ignore_invalid_input_notes()
     }
 
-    /// Returns the custom note scripts the network is expected to execute for this request.
+    /// Returns the note scripts declared for the network to execute, standard scripts included.
+    /// Only registration ignores the standard ones.
     #[js_export(js_name = "expectedNtxScripts")]
     pub fn expected_ntx_scripts(&self) -> Vec<NoteScript> {
         self.0.expected_ntx_scripts().iter().map(Into::into).collect()
