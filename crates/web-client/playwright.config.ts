@@ -132,6 +132,7 @@ const ciShardProjects = process.env.CI
           "test/fee_conversion_salt.test.ts",
           "test/direct_call_serialization.test.ts",
           "test/with_inner_web_client_reentrancy.test.ts",
+          "test/transaction_request_builders.test.ts",
         ],
         testIgnore: browserTestIgnore,
       },

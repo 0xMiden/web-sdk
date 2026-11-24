@@ -42,3 +42,9 @@ impl From<&NativeAccountCode> for AccountCode {
         AccountCode(native_account_code.clone())
     }
 }
+
+impl From<&AccountCode> for NativeAccountCode {
+    fn from(account_code: &AccountCode) -> Self {
+        account_code.0.clone()
+    }
+}
