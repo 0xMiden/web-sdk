@@ -868,3 +868,27 @@ test.describe("fee conversion salt", () => {
     expect(result.hasAuthArg).toBe(false);
   });
 });
+
+test.describe("TransactionRequest.equals", () => {
+  test("compares structure, not serialized bytes", async ({ run }) => {
+    const result = await run(async ({ sdk }) => {
+      const salt = (n) => new sdk.Word(sdk.u64Array([n, 2, 3, 4]));
+      const build = (n) =>
+        new sdk.TransactionRequestBuilder()
+          .withFeeConversionSalt(salt(n))
+          .build();
+
+      const request = build(1);
+      const copy = sdk.TransactionRequest.deserialize(request.serialize());
+      return {
+        sameBuild: request.equals(build(1)),
+        roundTrip: request.equals(copy),
+        otherSalt: request.equals(build(9)),
+      };
+    });
+
+    expect(result.sameBuild).toBe(true);
+    expect(result.roundTrip).toBe(true);
+    expect(result.otherSalt).toBe(false);
+  });
+});
