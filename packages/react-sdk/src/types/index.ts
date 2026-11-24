@@ -372,7 +372,7 @@ export interface CreateFaucetOptions {
   authScheme?: AuthScheme | number;
 }
 
-// Account import options
+/** For ID and seed imports, sync after the public account is created and before importing it. */
 export type ImportAccountOptions =
   | {
       type: "file";

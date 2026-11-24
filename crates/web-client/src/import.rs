@@ -41,6 +41,8 @@ impl WebClient {
         Ok(format!("Imported account with ID: {account_id}"))
     }
 
+    /// Derives a public account's ID and imports its state at the client's sync height.
+    /// Sync after the account is created and before importing it.
     #[js_export(js_name = "importPublicAccountFromSeed")]
     pub async fn import_public_account_from_seed(
         &self,

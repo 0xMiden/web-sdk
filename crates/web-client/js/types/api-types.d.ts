@@ -507,6 +507,8 @@ export interface AccountDetails {
  * - `AccountRef` (string, AccountId, Account, AccountHeader) — Import a public account by ID (fetches state from the network).
  * - `{ file: AccountFile }` — Import from a previously exported account file (works for both public and private accounts).
  * - `{ seed, auth? }` — Reconstruct a **public** account from its init seed. **Does not work for private accounts** — use the account file workflow instead.
+ *
+ * For ID and seed imports, sync after the public account is created so its state is available at the client's sync height.
  */
 export type ImportAccountInput =
   | AccountRef
