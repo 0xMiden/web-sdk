@@ -13,6 +13,10 @@ const mockUseMiden = useMiden as ReturnType<typeof vi.fn>;
 
 const RECIPIENT = "0x" + "00".repeat(12) + "dead".padStart(40, "0");
 
+// A domain outside u32 would wrap to a different Circle domain in wasm.
+const DOMAIN_ERROR =
+  /destinationDomain must be an integer from 0 to 4294967295/;
+
 const withdrawOptions = {
   from: "0xsender",
   faucetId: "0xusdcx",
@@ -129,6 +133,10 @@ describe("useWithdrawUsdcx", () => {
       { destinationRecipient: "ab".repeat(32) },
       /destinationRecipient must be a 0x-prefixed 32-byte hex string/,
     ],
+    ["a NaN domain", { destinationDomain: NaN }, DOMAIN_ERROR],
+    ["a fractional domain", { destinationDomain: 1.5 }, DOMAIN_ERROR],
+    ["a negative domain", { destinationDomain: -1 }, DOMAIN_ERROR],
+    ["a domain above u32", { destinationDomain: 2 ** 32 }, DOMAIN_ERROR],
   ])("rejects %s before building", async (_name, override, message) => {
     const client = createMockWebClient();
     mockUseMiden.mockReturnValue({ client, isReady: true, sync: vi.fn() });
