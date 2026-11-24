@@ -763,6 +763,62 @@ describe("TransactionsResource", () => {
     });
   });
 
+  describe("number amounts", () => {
+    const calls = {
+      send: (resource, amount) =>
+        resource.send({ account: "0xa", to: "0xb", token: "0xf", amount }),
+      "send with returnNote": (resource, amount) =>
+        resource.send({
+          account: "0xa",
+          to: "0xb",
+          token: "0xf",
+          amount,
+          returnNote: true,
+        }),
+      mint: (resource, amount) =>
+        resource.mint({ account: "0xf", to: "0xb", amount }),
+      bridge: (resource, amount) =>
+        resource.bridge({
+          account: "0xa",
+          bridgeAccount: "0xbridge",
+          token: "0xf",
+          amount,
+          destinationNetwork: 1,
+          destinationAddress: "0x000000000000000000000000000000000000dEaD",
+        }),
+    };
+
+    describe.each(Object.keys(calls))("%s", (method) => {
+      it.each([
+        ["above 2^53 - 1", Number.MAX_SAFE_INTEGER + 2],
+        ["fractional", 1.5],
+        ["NaN", NaN],
+      ])(
+        "rejects a number that is %s before any WASM call",
+        async (_l, amount) => {
+          const { resource, wasm } = makeResource();
+          await expect(calls[method](resource, amount)).rejects.toThrow(
+            /amount must be a safe integer/
+          );
+          expect(wasm.AccountId.fromHex).not.toHaveBeenCalled();
+          expect(wasm.FungibleAsset).not.toHaveBeenCalled();
+        }
+      );
+
+      it("forwards a bigint above 2^53 - 1 exactly", async () => {
+        const { resource, inner, wasm } = makeResource();
+        await calls[method](resource, 9007199254740993n);
+        const forwarded = {
+          send: () => inner.newSendTransactionRequest.mock.calls[0][4],
+          "send with returnNote": () => wasm.FungibleAsset.mock.calls[0][1],
+          mint: () => inner.newMintTransactionRequest.mock.calls[0][3],
+          bridge: () => inner.newB2AggTransactionRequest.mock.calls[0][3],
+        }[method]();
+        expect(forwarded).toBe(9007199254740993n);
+      });
+    });
+  });
+
   describe("withdrawUsdcx", () => {
     const RECIPIENT =
       "0x1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30";
