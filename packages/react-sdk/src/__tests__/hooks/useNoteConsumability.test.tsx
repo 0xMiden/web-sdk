@@ -6,6 +6,7 @@ import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
 import {
   createMockWebClient,
+  createMockAccountHeader,
   createMockConsumableNoteRecord,
   createMockNoteConsumability as entry,
   MOCK_PSWAP_SCRIPT_ROOT,
@@ -204,6 +205,107 @@ describe("useNoteConsumability", () => {
     });
     expect(result.current.status).toEqual({ kind: "never" });
     expect(result.current.isLoading).toBe(false);
+  });
+
+  it("leaves an unfiltered empty screen unscreened when no account is tracked", async () => {
+    const client = setup({
+      getNoteConsumability: vi.fn().mockResolvedValue([]),
+    });
+    const { result } = renderHook(() =>
+      useNoteConsumability(mockNote("0xnote"))
+    );
+    await waitFor(() => expect(client.getAccounts).toHaveBeenCalled());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.status).toBeNull();
+    expect(result.current.consumability).toBeNull();
+    expect(result.current.error).toBeNull();
+  });
+
+  it("reads an unfiltered empty screen as never when an account is tracked", async () => {
+    setup({
+      getNoteConsumability: vi.fn().mockResolvedValue([]),
+      getAccounts: vi.fn().mockResolvedValue([createMockAccountHeader()]),
+    });
+    const { result } = renderHook(() =>
+      useNoteConsumability(mockNote("0xnote"))
+    );
+    await waitFor(() =>
+      expect(result.current.status).toEqual({ kind: "never" })
+    );
+    expect(result.current.consumability).toEqual([]);
+  });
+
+  it("reads a filtered empty screen as never without listing accounts", async () => {
+    const client = setup({
+      getNoteConsumabilityForAccount: vi.fn().mockResolvedValue([]),
+    });
+    const { result } = renderHook(() =>
+      useNoteConsumability(mockNote("0xnote"), { accountId: "0xaccount123" })
+    );
+    await waitFor(() =>
+      expect(result.current.status).toEqual({ kind: "never" })
+    );
+    expect(client.getAccounts).not.toHaveBeenCalled();
+  });
+
+  it("clears a stored screen when a later unfiltered screen is empty and no account is tracked", async () => {
+    setup({
+      getNoteConsumability: vi
+        .fn()
+        .mockResolvedValueOnce([entry("0xa", true)])
+        .mockResolvedValue([]),
+    });
+    const { result } = renderHook(() =>
+      useNoteConsumability(mockNote("0xnote"))
+    );
+    await waitFor(() =>
+      expect(result.current.status).toEqual({ kind: "immediately" })
+    );
+    act(() => {
+      useMidenStore.getState().setSyncState({ lastSyncTime: Date.now() });
+    });
+    await waitFor(() => expect(result.current.status).toBeNull());
+    expect(result.current.consumability).toBeNull();
+  });
+
+  it("drops a stored screen when the client that produced it is replaced", async () => {
+    setup({
+      getNoteConsumability: vi.fn().mockResolvedValue([entry("0xa", true)]),
+    });
+    const note = mockNote("0xnote");
+    const { result, rerender } = renderHook(() => useNoteConsumability(note));
+    await waitFor(() =>
+      expect(result.current.status).toEqual({ kind: "immediately" })
+    );
+    let finish!: (value: unknown[]) => void;
+    const next = createMockWebClient({
+      getNoteConsumability: vi.fn().mockReturnValue(
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+      ),
+    });
+    mockUseMiden.mockReturnValue({ client: next, isReady: true });
+    act(() => {
+      useMidenStore.getState().setClient(next as never);
+    });
+    rerender();
+    expect(result.current.status).toBeNull();
+    expect(result.current.consumability).toBeNull();
+    await act(async () => {
+      finish([entry("0xa", false, 50)]);
+    });
+    expect(result.current.status).toEqual({
+      kind: "afterBlock",
+      blockHeight: 50,
+    });
+    mockUseMiden.mockReturnValue({ client: null, isReady: false });
+    act(() => {
+      useMidenStore.getState().setClient(null);
+    });
+    rerender();
+    expect(result.current.status).toBeNull();
+    expect(result.current.consumability).toBeNull();
   });
 
   it("wraps a non-Error rejection", async () => {
