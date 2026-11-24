@@ -2,6 +2,7 @@ import {
   isStandardPaymentNote,
   resolveAccountRef,
   resolveNoteType,
+  toAmount,
 } from "./utils.js";
 
 const SIGN_BYTES_DOMAIN_TAG = "miden-wallet/sign-bytes/v1";
@@ -160,9 +161,9 @@ export function buildSwapTag(opts) {
   return _WebClient.buildSwapTag(
     noteType,
     offeredFaucetId,
-    BigInt(opts.offer.amount),
+    toAmount(opts.offer.amount, "buildSwapTag"),
     requestedFaucetId,
-    BigInt(opts.request.amount)
+    toAmount(opts.request.amount, "buildSwapTag")
   );
 }
 
@@ -170,7 +171,7 @@ function fungibleAssetsFrom(assets, wasm) {
   const assetArray = Array.isArray(assets) ? assets : [assets];
   return assetArray.map((asset) => {
     const faucetId = resolveAccountRef(asset.token, wasm);
-    return new wasm.FungibleAsset(faucetId, BigInt(asset.amount));
+    return new wasm.FungibleAsset(faucetId, toAmount(asset.amount, "asset"));
   });
 }
 

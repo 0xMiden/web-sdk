@@ -3,6 +3,7 @@ import {
   resolveStorageMode,
   resolveAuthScheme,
   hashSeed,
+  toAmount,
 } from "../utils.js";
 
 // Legacy numeric 0/1 and "NonFungibleFaucet" are still accepted; non-fungible
@@ -77,7 +78,7 @@ export class AccountsResource {
         opts.name ?? opts.symbol,
         opts.symbol,
         opts.decimals,
-        BigInt(opts.maxSupply),
+        toAmount(opts.maxSupply, "create maxSupply"),
         authScheme
       );
     }

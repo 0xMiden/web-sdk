@@ -763,6 +763,147 @@ describe("TransactionsResource", () => {
     });
   });
 
+  describe("number amounts", () => {
+    const calls = {
+      send: (resource, amount) =>
+        resource.send({ account: "0xa", to: "0xb", token: "0xf", amount }),
+      "send with returnNote": (resource, amount) =>
+        resource.send({
+          account: "0xa",
+          to: "0xb",
+          token: "0xf",
+          amount,
+          returnNote: true,
+        }),
+      mint: (resource, amount) =>
+        resource.mint({ account: "0xf", to: "0xb", amount }),
+      bridge: (resource, amount) =>
+        resource.bridge({
+          account: "0xa",
+          bridgeAccount: "0xbridge",
+          token: "0xf",
+          amount,
+          destinationNetwork: 1,
+          destinationAddress: "0x000000000000000000000000000000000000dEaD",
+        }),
+    };
+
+    describe.each(Object.keys(calls))("%s", (method) => {
+      it.each([
+        ["above 2^53 - 1", Number.MAX_SAFE_INTEGER + 2],
+        ["fractional", 1.5],
+        ["NaN", NaN],
+      ])(
+        "rejects a number that is %s before any WASM call",
+        async (_l, amount) => {
+          const { resource, wasm } = makeResource();
+          await expect(calls[method](resource, amount)).rejects.toThrow(
+            /amount must be a safe integer/
+          );
+          expect(wasm.AccountId.fromHex).not.toHaveBeenCalled();
+          expect(wasm.FungibleAsset).not.toHaveBeenCalled();
+        }
+      );
+
+      it("forwards a bigint above 2^53 - 1 exactly", async () => {
+        const { resource, inner, wasm } = makeResource();
+        await calls[method](resource, 9007199254740993n);
+        const forwarded = {
+          send: () => inner.newSendTransactionRequest.mock.calls[0][4],
+          "send with returnNote": () => wasm.FungibleAsset.mock.calls[0][1],
+          mint: () => inner.newMintTransactionRequest.mock.calls[0][3],
+          bridge: () => inner.newB2AggTransactionRequest.mock.calls[0][3],
+        }[method]();
+        expect(forwarded).toBe(9007199254740993n);
+      });
+    });
+  });
+
+  describe("number amounts on swap, pswap and network notes", () => {
+    const pswapNote = { note: "0xpswapNote", account: "0xaccHex" };
+    const calls = {
+      "swap offer": (r, amount) =>
+        r.swap({
+          account: "0xaccHex",
+          offer: { token: "0xo", amount },
+          request: { token: "0xw", amount: 5n },
+          type: "public",
+        }),
+      "swap request": (r, amount) =>
+        r.swap({
+          account: "0xaccHex",
+          offer: { token: "0xo", amount: 5n },
+          request: { token: "0xw", amount },
+          type: "public",
+        }),
+      "pswapCreate offer": (r, amount) =>
+        r.pswapCreate({
+          account: "0xaccHex",
+          offer: { token: "0xo", amount },
+          request: { token: "0xw", amount: 5n },
+          type: "public",
+        }),
+      "pswapCreate request": (r, amount) =>
+        r.pswapCreate({
+          account: "0xaccHex",
+          offer: { token: "0xo", amount: 5n },
+          request: { token: "0xw", amount },
+          type: "public",
+        }),
+      "pswapConsume fillAmount": (r, amount) =>
+        r.pswapConsume({ ...pswapNote, fillAmount: amount }),
+      "pswapConsume noteFillAmount": (r, amount) =>
+        r.pswapConsume({
+          ...pswapNote,
+          fillAmount: 1n,
+          noteFillAmount: amount,
+        }),
+      "createNetworkNote asset": (r, amount) =>
+        r.createNetworkNote({
+          account: "0xsender",
+          target: "0xtarget",
+          script: "myScript",
+          assets: { token: "0xf", amount },
+        }),
+    };
+
+    describe.each(Object.keys(calls))("%s", (name) => {
+      it.each([
+        ["above 2^53 - 1", Number.MAX_SAFE_INTEGER + 2],
+        ["fractional", 1.5],
+      ])("rejects a number that is %s", async (_l, amount) => {
+        const { resource, inner, wasm } = makeResource();
+        await expect(calls[name](resource, amount)).rejects.toThrow(
+          /amount must be a safe integer/
+        );
+        expect(inner.newSwapTransactionRequest).not.toHaveBeenCalled();
+        expect(inner.newPswapCreateTransactionRequest).not.toHaveBeenCalled();
+        expect(inner.newPswapConsumeTransactionRequest).not.toHaveBeenCalled();
+        expect(wasm.FungibleAsset).not.toHaveBeenCalled();
+      });
+
+      it("forwards a bigint above 2^53 - 1 exactly", async () => {
+        const { resource, inner, wasm } = makeResource();
+        await calls[name](resource, 9007199254740993n);
+        const forwarded = {
+          "swap offer": () => inner.newSwapTransactionRequest.mock.calls[0][2],
+          "swap request": () =>
+            inner.newSwapTransactionRequest.mock.calls[0][4],
+          "pswapCreate offer": () =>
+            inner.newPswapCreateTransactionRequest.mock.calls[0][2],
+          "pswapCreate request": () =>
+            inner.newPswapCreateTransactionRequest.mock.calls[0][4],
+          "pswapConsume fillAmount": () =>
+            inner.newPswapConsumeTransactionRequest.mock.calls[0][2],
+          "pswapConsume noteFillAmount": () =>
+            inner.newPswapConsumeTransactionRequest.mock.calls[0][3],
+          "createNetworkNote asset": () => wasm.FungibleAsset.mock.calls[0][1],
+        }[name]();
+        expect(forwarded).toBe(9007199254740993n);
+      });
+    });
+  });
+
   describe("withdrawUsdcx", () => {
     const RECIPIENT =
       "0x1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30";

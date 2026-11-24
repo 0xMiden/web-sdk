@@ -5,7 +5,7 @@ declare module "@miden-sdk/miden-sdk" {
     /**
      * Returns the bech32-encoded account id for the network of the provider's
      * client, or the raw account id when that network cannot be confirmed (no
-     * client yet, a mock client, or an endpoint naming no known network).
+     * client yet or a mock client). An endpoint naming no known network is mainnet.
      */
     bech32id(): string;
   }

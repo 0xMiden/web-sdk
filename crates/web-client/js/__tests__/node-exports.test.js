@@ -67,6 +67,9 @@ const fakeNative = vi.hoisted(() => {
       return null;
     }
   }
+  class PswapNote {}
+  class BurnNote {}
+  class MintNote {}
   class TransactionRequestBuilder {
     withOwnOutputNotes(notes) {
       received.push(notes);
@@ -143,6 +146,9 @@ const fakeNative = vi.hoisted(() => {
     FeeSponsorshipNote,
     P2ideNote,
     SwapNote,
+    PswapNote,
+    BurnNote,
+    MintNote,
     TransactionRequestBuilder,
     NoteStorage,
     SigningInputs,
@@ -165,6 +171,9 @@ vi.mock("../node/loader.js", () => ({
     FeeSponsorshipNote: fakeNative.FeeSponsorshipNote,
     P2ideNote: fakeNative.P2ideNote,
     SwapNote: fakeNative.SwapNote,
+    PswapNote: fakeNative.PswapNote,
+    BurnNote: fakeNative.BurnNote,
+    MintNote: fakeNative.MintNote,
     TransactionRequestBuilder: fakeNative.TransactionRequestBuilder,
     NoteStorage: fakeNative.NoteStorage,
     SigningInputs: fakeNative.SigningInputs,
@@ -333,6 +342,18 @@ describe("Node napi boundary", () => {
     const swap = new nodeIndex.SwapNote();
     expect(swap.paybackTarget()).toBeUndefined();
     expect(swap.paybackRecipient()).toBeUndefined();
+  });
+
+  it("exports the PswapNote and BurnNote decoders", () => {
+    expect(nodeIndex.PswapNote).toBeTypeOf("function");
+    expect(nodeIndex.PswapNote.name).toBe("PswapNote");
+    expect(nodeIndex.BurnNote).toBeTypeOf("function");
+    expect(nodeIndex.BurnNote.name).toBe("BurnNote");
+  });
+
+  it("exports the MintNote decoder", () => {
+    expect(nodeIndex.MintNote).toBeTypeOf("function");
+    expect(nodeIndex.MintNote.name).toBe("MintNote");
   });
 
   it("keeps the NoteScript.p2id and p2ide aliases", () => {

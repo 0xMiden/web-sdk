@@ -1,5 +1,5 @@
 use js_export_macro::js_export;
-use miden_client::agglayer::B2AggNote;
+use miden_client::agglayer::{B2AggNote, ClaimNote, ClaimNoteStorage};
 use miden_client::asset::{
     Asset as NativeAsset,
     AssetAmount,
@@ -27,6 +27,7 @@ use rand::RngExt;
 
 use super::NoteType;
 use super::account_id::AccountId;
+use super::claim_note::{ClaimLeafData, ClaimProofData};
 use super::eth_address::EthAddress;
 use super::fungible_asset::FungibleAsset;
 use super::note_assets::NoteAssets;
@@ -298,6 +299,40 @@ impl Note {
         let native_note =
             XReserveBurnNote::create(sender.into(), faucet_id.into(), amount, items, &mut rng)
                 .map_err(|err| js_error_with_context(err, "create xreserve burn note"))?;
+
+        Ok(native_note.into())
+    }
+
+    /// Builds the public CLAIM note that asks `bridge_account` to mint an inbound `AggLayer`
+    /// deposit.
+    ///
+    /// The Miden amount is the leaf's amount scaled down by `scale` (the faucet's decimal
+    /// scale), `floor(amount / 10^scale)`, which is the value the bridge verifies. Returns an
+    /// error if `scale` exceeds 18 or the scaled amount exceeds the maximum fungible amount.
+    #[js_export(js_name = "createClaimNote")]
+    pub fn create_claim_note(
+        proof: &ClaimProofData,
+        leaf: &ClaimLeafData,
+        scale: u32,
+        bridge_account: &AccountId,
+        sender: &AccountId,
+    ) -> Result<Self, JsErr> {
+        let leaf_data = leaf.as_native().clone();
+        let miden_claim_amount = leaf_data
+            .amount
+            .scale_to_asset_amount(scale)
+            .map_err(|err| js_error_with_context(err, "create claim note"))?;
+        let storage = ClaimNoteStorage {
+            proof_data: proof.as_native().clone(),
+            leaf_data,
+            miden_claim_amount,
+        };
+        let coin_seed: [u64; 4] = rand::random();
+        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
+
+        let native_note =
+            ClaimNote::create(storage, bridge_account.into(), sender.into(), &mut rng)
+                .map_err(|err| js_error_with_context(err, "create claim note"))?;
 
         Ok(native_note.into())
     }

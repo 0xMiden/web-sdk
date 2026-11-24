@@ -63,6 +63,16 @@ export class NotesResource {
     return await this.#inner.getConsumableNotes(accountId);
   }
 
+  async screen(note, opts) {
+    this.#client.assertNotTerminated();
+    if (opts?.account == null) {
+      return await this.#inner.getNoteConsumability(note);
+    }
+    const wasm = await this.#getWasm();
+    const accountId = resolveAccountRef(opts.account, wasm);
+    return await this.#inner.getNoteConsumabilityForAccount(note, accountId);
+  }
+
   async import(noteFile) {
     this.#client.assertNotTerminated();
     return await this.#inner.importNoteFile(noteFile);

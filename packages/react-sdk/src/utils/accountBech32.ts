@@ -7,34 +7,22 @@ import {
 } from "@miden-sdk/miden-sdk";
 import { useMidenStore } from "../store/MidenStore";
 import { parseAccountId } from "./accountParsing";
+import { resolveNetworkName } from "./network";
 
 type AccountPrototype = {
   bech32id?: () => string;
 };
 
-// The network comes from the endpoint the provider's client was created against.
-// A real client always reports one (testnet when none was configured), so `null`
-// means no client yet, a mock client, or an endpoint naming no known network.
-// Callers then show the raw account id rather than a wrong-network address.
+// `config.network` wins; else the endpoint of the provider's client names the
+// network, and an endpoint naming none is mainnet. `null` means no client yet or
+// a mock client; callers then show the raw account id rather than a guess.
 const resolveNetworkId = (): NetworkId | null => {
-  const url = useMidenStore.getState().client?.endpoint()?.toLowerCase();
-  if (!url) {
+  const { client, config } = useMidenStore.getState();
+  const name = resolveNetworkName(client?.endpoint(), config.network);
+  if (!name) {
     return null;
   }
-  if (url.includes("devnet") || url.includes("mdev")) {
-    return NetworkId.devnet();
-  }
-  if (url.includes("mainnet")) {
-    return NetworkId.mainnet();
-  }
-  if (url.includes("testnet") || url.includes("mtst")) {
-    return NetworkId.testnet();
-  }
-  if (url.includes("localhost") || url.includes("127.0.0.1")) {
-    // A local node is a development chain, so it takes the devnet prefix.
-    return NetworkId.devnet();
-  }
-  return null;
+  return NetworkId[name]();
 };
 
 const toBech32FromAccountId = (id: AccountId): string => {

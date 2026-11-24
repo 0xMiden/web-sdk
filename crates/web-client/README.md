@@ -771,6 +771,70 @@ Each decoder also exposes `sender()`, `serialNumber()`, `noteType()` and
 (`not a P2ID note`), when its storage does not decode, or, for `SwapNote`, when
 it does not carry exactly one asset.
 
+`PswapNote` and `BurnNote` decode a partial-fill swap order and a burn the same
+way:
+
+```typescript
+import { BurnNote, NoteScript, PswapNote } from "@miden-sdk/miden-sdk";
+
+if (root === NoteScript.pswap().root().toHex()) {
+  const pswap = PswapNote.tryFromNote(note);
+  pswap.offeredAsset(); // FungibleAsset on offer
+  pswap.requestedAsset(); // FungibleAsset asked for the whole offer
+  pswap.minFillStep(); // smallest fill, 0 when unbounded
+  pswap.creatorAccountId(); // receives every payback
+  pswap.orderId(); // decimal string, as PswapLineageRecord.orderId()
+  pswap.parentDepth(); // 0 for the original order, +1 per remainder
+} else if (root === NoteScript.burn().root().toHex()) {
+  const burn = BurnNote.tryFromNote(note);
+  burn.asset(); // what the faucet burns
+  burn.faucetId(); // the faucet that consumes the note
+}
+```
+
+A BURN note whose storage does not hold exactly the asset it carries is
+rejected, as the BURN script rejects it at consume time. A PSWAP note with more than one
+attachment is rejected too.
+
+`MintNote` decodes a MINT note, which asks a network faucet to mint an asset
+into a new note:
+
+```typescript
+import { MintNote, NoteScript } from "@miden-sdk/miden-sdk";
+
+if (root === NoteScript.mint().root().toHex()) {
+  const mint = MintNote.tryFromNote(note);
+  mint.asset(); // what the faucet mints
+  mint.faucetId(); // the faucet that consumes the note
+  mint.tag(); // tag of the minted note
+  mint.recipientDigest(); // private minted note: its recipient, else undefined
+  mint.recipientScriptRoot(); // public minted note: its script root,
+  mint.recipientSerialNumber(); // serial number
+  mint.recipientStorage(); // and storage, else undefined
+}
+```
+
+To screen a note before importing it, pass it to `client.notes.screen`. Each
+entry is a `NoteConsumability`, as `ConsumableNoteRecord.noteConsumability()`
+lists them:
+
+```typescript
+const all = await client.notes.screen(note); // every tracked account
+const mine = await client.notes.screen(note, { account: wallet });
+for (const entry of mine) {
+  const status = entry.consumptionStatus();
+  status.isConsumableNow(); // consumable at the last synced block
+  status.consumableAfterBlock(); // unlock height when locked, else undefined
+}
+```
+
+The screener leaves out accounts that can never consume the note, and accounts
+that cannot consume it under the current conditions, so an empty array means
+no screened account can consume it now. It is also empty when the client
+tracks no accounts, so do not read it as never consumable. Screening does
+not import the note. The low-level `WebClient` exposes the same screen as
+`getNoteConsumability(note)` and `getNoteConsumabilityForAccount(note, accountId)`.
+
 ### Check Balance
 
 ```typescript
@@ -1126,6 +1190,31 @@ await client.transactions.bridge({
 
 The 20-byte destination is also available as an `EthAddress` (`EthAddress.fromHex("0x…")`) for the lower-level builders `Note.createB2AggNote(...)` and `client.newB2AggTransactionRequest(...)`.
 
+### Claim an inbound AggLayer deposit
+
+`Note.createClaimNote(...)` builds the public CLAIM note that asks the AggLayer bridge to mint an inbound deposit. The proof and leaf come from the AggLayer `claimAsset` data; the Miden amount is derived from the leaf's uint256 amount and the faucet's decimal scale, `floor(amount / 10^scale)`, which is what the bridge verifies.
+
+```typescript
+const proof = new ClaimProofData(
+  smtProofLocalExitRoot, // 32 hex nodes
+  smtProofRollupExitRoot, // 32 hex nodes
+  globalIndex,
+  mainnetExitRoot,
+  rollupExitRoot
+);
+const leaf = new ClaimLeafData(
+  originNetwork,
+  EthAddress.fromHex(originTokenAddress),
+  destinationNetwork,
+  EthAddress.fromHex(destinationAddress),
+  "100000000000000000000", // uint256 amount as a decimal string
+  metadataHash
+);
+const note = Note.createClaimNote(proof, leaf, 10, bridgeAccountId, senderId);
+```
+
+A scale above 18, or a scaled amount above the maximum fungible amount, throws. Submit the note as an own output note of a transaction, for example through `feeAwareTransactionRequestBuilder(sender)` and `withOwnOutputNotes`. It is a network note targeting the bridge account, so the transaction must also declare that account with `withForeignAccounts`, as for any network note.
+
 ### Withdraw USDCx (Circle xReserve)
 
 `client.transactions.withdrawUsdcx(...)` emits a single public burn note with the fixed `BURN` tag. The USDCx faucet (a public account) consumes and burns it, and Circle releases USDC to the recipient on the destination domain.
@@ -1285,9 +1374,19 @@ const client = await MidenClient.create({
 
 A batch signs while it is built, so one failed or timed out `sign` fails the whole batch.
 
+### One Client per Store
+
+Two live clients on one store do not coordinate with each other. Opening a store that another live client in the same realm has open (the same IndexedDB database in the browser, the same SQLite file on Node.js) logs a `console.warn` naming that client, `client #N` in the order clients opened the store. Pass `exclusive: true` to refuse instead: the open throws an error naming the owner, and while an exclusive client lives every other open of its store throws too.
+
+```typescript
+const owner = await MidenClient.create({ rpcUrl: "testnet", storeName: "app", exclusive: true });
+await MidenClient.create({ rpcUrl: "testnet", storeName: "app" }); // throws: Store "app" is already open in client #1 ...
+owner.terminate(); // releases the store; the next open succeeds without a warning
+```
+
 ### Cleanup
 
-When you're finished using a MidenClient instance, call `terminate()`. In the browser it stops the client's Web Worker if there is one, and releases its main-realm wasm client and, through it, its IndexedDB connection once the calls already queued or running have settled. On the Node.js binding it releases nothing.
+When you're finished using a MidenClient instance, call `terminate()`. In the browser it stops the client's Web Worker if there is one, and releases its main-realm wasm client and, through it, its IndexedDB connection once the calls already queued or running have settled. On the Node.js binding it releases only the store's ownership claim (see [One Client per Store](#one-client-per-store)).
 
 ```typescript
 client.terminate();
