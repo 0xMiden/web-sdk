@@ -87,3 +87,28 @@ describe("Node Option getters", () => {
     expect(new Endpoint({ port: null }).port).toBeNull();
   });
 });
+
+describe("Node Note statics", () => {
+  it("passes Uint8Array bytes to a Vec<u8> static as a plain Array", () => {
+    const createXReserveBurnNote = vi.fn();
+    const deserialize = vi.fn();
+    class Note {}
+    Note.createXReserveBurnNote = createXReserveBurnNote;
+    Note.deserialize = deserialize;
+    const sdk = createSdkWrapper({ Note });
+    const bytes = new Uint8Array([1, 2, 3]);
+
+    sdk.Note.createXReserveBurnNote("sender", "faucet", 5n, 6, bytes);
+    expect(createXReserveBurnNote).toHaveBeenCalledWith(
+      "sender",
+      "faucet",
+      5n,
+      6,
+      [1, 2, 3]
+    );
+
+    // deserialize takes JsBytes, which needs the view itself.
+    sdk.Note.deserialize(bytes);
+    expect(deserialize).toHaveBeenCalledWith(bytes);
+  });
+});

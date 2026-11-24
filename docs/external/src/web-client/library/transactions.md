@@ -246,6 +246,22 @@ await client.submitNewTransaction(sender, register);
 
 `buildAccountCodeUpgrade(code)` finalizes a request that upgrades the executing account to `code`. The account needs the `UpgradeManager` component with `AuthControlled` authority, and `code` must keep the storage layout. It replaces any custom script and script argument, and fails when own output notes or an expiration delta are set. `withAccountCodeUpgrade(code)` only places the code in the advice map, and `request.accountCodeUpgrade()` returns it.
 
+## Withdrawing USDCx (Circle xReserve)
+
+`client.transactions.withdrawUsdcx(...)` emits a single public burn note with the fixed `BURN` tag. The USDCx faucet, a public account, consumes and burns it, and Circle releases USDC to the recipient on the destination domain.
+
+```typescript
+await client.transactions.withdrawUsdcx({
+  account: wallet, // sender, the executing account
+  token: usdcxFaucet, // public USDCx faucet; consumes the note and burns the asset
+  amount: 1_000_000n, // a number must be a safe integer; use a bigint above 2 ** 53 - 1
+  destinationDomain: 6, // Circle domain id
+  destinationRecipient: "0x0000000000000000000000001111111111111111111111111111111111111111", // 32 bytes
+});
+```
+
+`destinationRecipient` is a `0x`-prefixed 64-digit hex string, validated before any WASM call. An EVM address is left-padded with zeros to 32 bytes. The lower-level builders are `Note.createXReserveBurnNote(...)` and `client.newXReserveBurnTransactionRequest(...)`, which take the recipient as a 32-byte `Uint8Array`.
+
 ## Paying Transaction Fees
 
 Since protocol 0.16 a chain can charge a verification fee, and the fee is paid from inside the account's auth procedure rather than by the transaction kernel. `fee::pay_fee` reads the asset and rate to pay in out of the transaction's auth argument: `AUTH_ARGS` has to be `hash(CONVERSION_INFO || SALT)`, with the preimage reachable in the advice map. A procedure that reaches `pay_fee` without that commitment aborts with `ERR_FEE_CONVERSION_INFO_MISSING`.
@@ -272,9 +288,9 @@ On a chain that charges nothing, a request for an account that is not a multisig
 
 ### The convenience constructors handle it
 
-`newSendTransactionRequest`, `newMintTransactionRequest`, `newConsumeTransactionRequest`, `newSwapTransactionRequest`, `newB2AggTransactionRequest`, `newPswapCreateTransactionRequest`, `newPswapConsumeTransactionRequest` and `newPswapCancelTransactionRequest` declare a salt themselves where the executing account needs one. Each returns a finished `TransactionRequest`, which takes no salt declaration afterwards, so they declare it while they build. A finished request from anywhere else gets the multisig auth args from `withFeeAwareAuth`; see [Executing a request someone else built](#executing-a-request-someone-else-built).
+`newSendTransactionRequest`, `newMintTransactionRequest`, `newConsumeTransactionRequest`, `newSwapTransactionRequest`, `newB2AggTransactionRequest`, `newXReserveBurnTransactionRequest`, `newPswapCreateTransactionRequest`, `newPswapConsumeTransactionRequest` and `newPswapCancelTransactionRequest` declare a salt themselves where the executing account needs one. Each returns a finished `TransactionRequest`, which takes no salt declaration afterwards, so they declare it while they build. A finished request from anywhere else gets the multisig auth args from `withFeeAwareAuth`; see [Executing a request someone else built](#executing-a-request-someone-else-built).
 
-The `client.transactions` operations that build their own request - `send`, `mint`, `consume`, `consumeAll`, `swap`, `bridge`, `createNetworkNote`, `execute`, `pswapCreate`, `pswapConsume`, `pswapCancel`, and the named operations of `batch` and `preview` - declare it too. The ones that take a finished request **from you** never do: `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview`. Those are the paths the next two sections are for.
+The `client.transactions` operations that build their own request - `send`, `mint`, `consume`, `consumeAll`, `swap`, `bridge`, `withdrawUsdcx`, `createNetworkNote`, `execute`, `pswapCreate`, `pswapConsume`, `pswapCancel`, and the named operations of `batch` and `preview` - declare it too. The ones that take a finished request **from you** never do: `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview`. Those are the paths the next two sections are for.
 
 `submitBatch` is worth calling out because a batch proves each transaction as it is pushed, on the client's built-in local prover rather than `proverUrl`. A multisig request that declares no salt is rejected by miden-client during preparation, after the proofs of everything ahead of it in the batch have already been paid for. Build multisig requests from `feeAwareTransactionRequestBuilder`, or pass a finished one through `withFeeAwareAuth`, before batching them.
 

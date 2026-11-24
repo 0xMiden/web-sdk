@@ -240,6 +240,9 @@ function makeInner(overrides = {}) {
     newSendTransactionRequest: vi.fn().mockResolvedValue("sendRequest"),
     newMintTransactionRequest: vi.fn().mockResolvedValue("mintRequest"),
     newB2AggTransactionRequest: vi.fn().mockResolvedValue("b2aggRequest"),
+    newXReserveBurnTransactionRequest: vi
+      .fn()
+      .mockResolvedValue("xreserveBurnRequest"),
     newConsumeTransactionRequest: vi.fn().mockResolvedValue("consumeRequest"),
     // Keep the builder the resource actually used, so a test can assert what was
     // declared on it rather than only that one was asked for.
@@ -920,6 +923,103 @@ describe("TransactionsResource", () => {
       });
       expect(inner.syncChain).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
+    });
+  });
+
+  describe("withdrawUsdcx", () => {
+    const RECIPIENT =
+      "0x1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30";
+
+    it("builds an xReserve burn request and submits", async () => {
+      const { resource, inner } = makeResource();
+      const result = await resource.withdrawUsdcx({
+        account: "0xsender",
+        token: "0xfaucet",
+        amount: 250,
+        destinationDomain: 6,
+        destinationRecipient: RECIPIENT,
+      });
+
+      // Pin the argument order: a sender/faucet swap burns from the wrong side.
+      expect(inner.newXReserveBurnTransactionRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xsender" }),
+        expect.objectContaining({ hex: "0xfaucet" }),
+        250n,
+        6,
+        Uint8Array.from(
+          RECIPIENT.slice(2)
+            .match(/../g)
+            .map((byte) => parseInt(byte, 16))
+        )
+      );
+      expect(inner.executeTransaction).toHaveBeenCalled();
+      expect(result.txId).toBeDefined();
+    });
+
+    it.each([
+      ["missing 0x prefix", RECIPIENT.slice(2)],
+      ["31 bytes", RECIPIENT.slice(0, -2)],
+      ["non-hex digit", RECIPIENT.slice(0, -1) + "g"],
+    ])("rejects a destinationRecipient with %s", async (_label, recipient) => {
+      const { resource, inner } = makeResource();
+      await expect(
+        resource.withdrawUsdcx({
+          account: "0xsender",
+          token: "0xfaucet",
+          amount: 250,
+          destinationDomain: 6,
+          destinationRecipient: recipient,
+        })
+      ).rejects.toThrow(/destinationRecipient/);
+      expect(inner.newXReserveBurnTransactionRequest).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["above 2^53 - 1", Number.MAX_SAFE_INTEGER + 2],
+      ["fractional", 1.5],
+      ["NaN", NaN],
+    ])(
+      "rejects a number amount that is %s before any WASM call",
+      async (_label, amount) => {
+        const { resource, inner, wasm } = makeResource();
+        await expect(
+          resource.withdrawUsdcx({
+            account: "0xsender",
+            token: "0xfaucet",
+            amount,
+            destinationDomain: 6,
+            destinationRecipient: RECIPIENT,
+          })
+        ).rejects.toThrow(/amount/);
+        expect(wasm.AccountId.fromHex).not.toHaveBeenCalled();
+        expect(inner.newXReserveBurnTransactionRequest).not.toHaveBeenCalled();
+      }
+    );
+
+    it("forwards a bigint amount above 2^53 - 1 exactly", async () => {
+      const { resource, inner } = makeResource();
+      await resource.withdrawUsdcx({
+        account: "0xsender",
+        token: "0xfaucet",
+        amount: 9007199254740993n,
+        destinationDomain: 6,
+        destinationRecipient: RECIPIENT,
+      });
+      expect(inner.newXReserveBurnTransactionRequest.mock.calls[0][2]).toBe(
+        9007199254740993n
+      );
+    });
+
+    it("documents a destinationRecipient the validator accepts", () => {
+      const skill = readFileSync(
+        new URL("../../../skills/web-client-usage/SKILL.md", import.meta.url),
+        "utf8"
+      );
+      const documented = skill.match(
+        /withdrawUsdcx\(\{[^}]*?destinationRecipient: ([^,\n]+),/s
+      )?.[1];
+      expect(documented).toBeDefined();
+      expect(documented).toMatch(/^"0x[0-9a-fA-F]{64}"$/);
     });
   });
 
@@ -1681,6 +1781,7 @@ describe("TransactionsResource", () => {
       "createNetworkNote",
       "mint",
       "bridge",
+      "withdrawUsdcx",
       "consume",
       "consumeAll",
       "swap",
