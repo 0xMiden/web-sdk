@@ -25,6 +25,7 @@ import { CompilerResource } from "./resources/compiler.js";
 import {
   createP2IDNote,
   createP2IDENote,
+  createFeeSponsorshipNote,
   buildSwapTag,
   buildNetworkNote,
   isStandardPayment,
@@ -82,6 +83,7 @@ export { MidenClient };
 export {
   createP2IDNote,
   createP2IDENote,
+  createFeeSponsorshipNote,
   buildSwapTag,
   buildNetworkNote,
   isStandardPayment,
@@ -206,7 +208,10 @@ export const BasicFungibleFaucetComponent = /* @__PURE__ */ _reexport(
 );
 export const BatchItem = /* @__PURE__ */ _reexport("BatchItem");
 export const BlockHeader = /* @__PURE__ */ _reexport("BlockHeader");
+export const BurnNote = /* @__PURE__ */ _reexport("BurnNote");
 export const ChainAnchor = /* @__PURE__ */ _reexport("ChainAnchor");
+export const ClaimLeafData = /* @__PURE__ */ _reexport("ClaimLeafData");
+export const ClaimProofData = /* @__PURE__ */ _reexport("ClaimProofData");
 export const CodeBuilder = /* @__PURE__ */ _reexport("CodeBuilder");
 export const CommittedNote = /* @__PURE__ */ _reexport("CommittedNote");
 export const ConsumableNoteRecord = /* @__PURE__ */ _reexport(
@@ -217,6 +222,8 @@ export const EthAddress = /* @__PURE__ */ _reexport("EthAddress");
 export const ExecutedTransaction = /* @__PURE__ */ _reexport(
   "ExecutedTransaction"
 );
+export const FeeSponsorshipNote =
+  /* @__PURE__ */ _reexport("FeeSponsorshipNote");
 export const Felt = /* @__PURE__ */ _reexport("Felt");
 export const FeltArray = /* @__PURE__ */ _reexport("FeltArray");
 export const FetchedAccount = /* @__PURE__ */ _reexport("FetchedAccount");
@@ -235,6 +242,7 @@ export const InputNoteState = /* @__PURE__ */ _reexport("InputNoteState");
 export const InputNotes = /* @__PURE__ */ _reexport("InputNotes");
 export const Library = /* @__PURE__ */ _reexport("Library");
 export const MerklePath = /* @__PURE__ */ _reexport("MerklePath");
+export const MintNote = /* @__PURE__ */ _reexport("MintNote");
 export const NetworkAccountTarget = /* @__PURE__ */ _reexport(
   "NetworkAccountTarget"
 );
@@ -280,6 +288,7 @@ export const NoteRecipient = /* @__PURE__ */ _reexport("NoteRecipient");
 export const NoteRecipientArray =
   /* @__PURE__ */ _reexport("NoteRecipientArray");
 export const NoteScript = /* @__PURE__ */ _reexport("NoteScript");
+export const NoteScriptArray = /* @__PURE__ */ _reexport("NoteScriptArray");
 export const NoteScriptFee = /* @__PURE__ */ _reexport("NoteScriptFee");
 export const NoteStorage = /* @__PURE__ */ _reexport("NoteStorage");
 export const NoteSyncBlock = /* @__PURE__ */ _reexport("NoteSyncBlock");
@@ -292,6 +301,8 @@ export const OutputNoteArray = /* @__PURE__ */ _reexport("OutputNoteArray");
 export const OutputNoteRecord = /* @__PURE__ */ _reexport("OutputNoteRecord");
 export const OutputNoteState = /* @__PURE__ */ _reexport("OutputNoteState");
 export const OutputNotes = /* @__PURE__ */ _reexport("OutputNotes");
+export const P2idNote = /* @__PURE__ */ _reexport("P2idNote");
+export const P2ideNote = /* @__PURE__ */ _reexport("P2ideNote");
 export const Package = /* @__PURE__ */ _reexport("Package");
 export const PartialNote = /* @__PURE__ */ _reexport("PartialNote");
 export const Poseidon2 = /* @__PURE__ */ _reexport("Poseidon2");
@@ -299,11 +310,13 @@ export const ProcedureThreshold =
   /* @__PURE__ */ _reexport("ProcedureThreshold");
 export const Program = /* @__PURE__ */ _reexport("Program");
 export const ProposedBatch = /* @__PURE__ */ _reexport("ProposedBatch");
+export const ProtocolConfig = /* @__PURE__ */ _reexport("ProtocolConfig");
 export const ProvenBatch = /* @__PURE__ */ _reexport("ProvenBatch");
 export const ProvenTransaction = /* @__PURE__ */ _reexport("ProvenTransaction");
 export const PswapLineageRecord =
   /* @__PURE__ */ _reexport("PswapLineageRecord");
 export const PswapLineageState = /* @__PURE__ */ _reexport("PswapLineageState");
+export const PswapNote = /* @__PURE__ */ _reexport("PswapNote");
 export const PublicKey = /* @__PURE__ */ _reexport("PublicKey");
 export const RpcClient = /* @__PURE__ */ _reexport("RpcClient");
 export const RpcTransactionRecord = /* @__PURE__ */ _reexport(
@@ -325,6 +338,7 @@ export const StorageMapSlotPatch = /* @__PURE__ */ _reexport(
   "StorageMapSlotPatch"
 );
 export const StorageMapUpdate = /* @__PURE__ */ _reexport("StorageMapUpdate");
+export const StorageMapWitness = /* @__PURE__ */ _reexport("StorageMapWitness");
 export const StoragePatchOperation = /* @__PURE__ */ _reexport(
   "StoragePatchOperation"
 );
@@ -333,6 +347,7 @@ export const StorageSlotArray = /* @__PURE__ */ _reexport("StorageSlotArray");
 export const StorageValueSlotPatch = /* @__PURE__ */ _reexport(
   "StorageValueSlotPatch"
 );
+export const SwapNote = /* @__PURE__ */ _reexport("SwapNote");
 export const SyncSummary = /* @__PURE__ */ _reexport("SyncSummary");
 export const TokenSymbol = /* @__PURE__ */ _reexport("TokenSymbol");
 export const TransactionArgs = /* @__PURE__ */ _reexport("TransactionArgs");

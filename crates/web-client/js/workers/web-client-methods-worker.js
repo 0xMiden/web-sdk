@@ -1,6 +1,6 @@
 import loadWasm from "../../dist/wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "../constants.js";
-import { createCallbackForwarder } from "../callbackBridge.js";
+import { appendAuthError, createCallbackForwarder } from "../callbackBridge.js";
 
 let wasmModule = null;
 
@@ -90,7 +90,23 @@ const serializeError = (error) => {
 // Global state variables.
 let wasmWebClient = null;
 let wasmSeed = null; // Seed for the WASM WebClient, if needed.
+// IndexedDB name the mock client opened. SYNC/SUBMIT mock paths recreate the
+// wasm client and must reopen the same store as INIT_MOCK.
+let wasmMockStoreName = "mock_client_db";
 let ready = false; // Indicates if the worker is fully initialized.
+
+const createMockClientOn = async (
+  client,
+  seed,
+  serializedMockChain,
+  serializedMockNoteTransportNode
+) =>
+  client.createMockClient(
+    seed,
+    serializedMockChain,
+    serializedMockNoteTransportNode,
+    wasmMockStoreName
+  );
 let messageQueue = []; // Queue for sequential processing.
 let processing = false; // Flag to ensure one message is processed at a time.
 
@@ -157,10 +173,22 @@ const methodHandlers = {
     const transactionRequest = wasm.TransactionRequest.deserialize(
       transactionRequestBytes
     );
-    const result = await wasmWebClient.executeTransaction(
-      accountId,
-      transactionRequest
-    );
+    let result;
+    try {
+      result = await wasmWebClient.executeTransaction(
+        accountId,
+        transactionRequest
+      );
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") {
+        throw appendAuthError(error, authError);
+      }
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
+    }
     const serializedResult = result.serialize();
     return serializedResult.buffer;
   },
@@ -182,6 +210,15 @@ const methodHandlers = {
       );
       const serializedResult = result.serialize();
       return serializedResult.buffer;
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") {
+        throw appendAuthError(error, authError);
+      }
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
     } finally {
       // Rebuilt from bytes on every anchored execution and the largest
       // transient here, since it carries a partial blockchain. The binding
@@ -220,10 +257,20 @@ const methodHandlers = {
       transactionRequestBytes
     );
 
-    const result = await wasmWebClient.executeTransaction(
-      accountId,
-      transactionRequest
-    );
+    let result;
+    try {
+      result = await wasmWebClient.executeTransaction(
+        accountId,
+        transactionRequest
+      );
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") throw appendAuthError(error, authError);
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
+    }
 
     const transactionId = result.id().toHex();
 
@@ -260,7 +307,18 @@ const methodHandlers = {
           )
         )
     );
-    return await wasmWebClient.submitNewTransactionBatch(items);
+    try {
+      return await wasmWebClient.submitNewTransactionBatch(items);
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") {
+        throw appendAuthError(error, authError);
+      }
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
+    }
   },
   [MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER]: async (args) => {
     const wasm = await getWasmOrThrow();
@@ -278,10 +336,20 @@ const methodHandlers = {
       ? wasm.TransactionProver.deserialize(proverPayload)
       : undefined;
 
-    const result = await wasmWebClient.executeTransaction(
-      accountId,
-      transactionRequest
-    );
+    let result;
+    try {
+      result = await wasmWebClient.executeTransaction(
+        accountId,
+        transactionRequest
+      );
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") throw appendAuthError(error, authError);
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
+    }
 
     const transactionId = result.id().toHex();
 
@@ -311,7 +379,8 @@ methodHandlers[MethodName.SYNC_STATE_MOCK] = async (args) => {
   serializedMockNoteTransportNode = serializedMockNoteTransportNode
     ? new Uint8Array(serializedMockNoteTransportNode)
     : null;
-  await wasmWebClient.createMockClient(
+  await createMockClientOn(
+    wasmWebClient,
     wasmSeed,
     serializedMockChain,
     serializedMockNoteTransportNode
@@ -326,7 +395,8 @@ methodHandlers[MethodName.SYNC_CHAIN_MOCK] = async (args) => {
   serializedMockNoteTransportNode = serializedMockNoteTransportNode
     ? new Uint8Array(serializedMockNoteTransportNode)
     : null;
-  await wasmWebClient.createMockClient(
+  await createMockClientOn(
+    wasmWebClient,
     wasmSeed,
     serializedMockChain,
     serializedMockNoteTransportNode
@@ -341,7 +411,8 @@ methodHandlers[MethodName.SYNC_NOTE_TRANSPORT_MOCK] = async (args) => {
   serializedMockNoteTransportNode = serializedMockNoteTransportNode
     ? new Uint8Array(serializedMockNoteTransportNode)
     : null;
-  await wasmWebClient.createMockClient(
+  await createMockClientOn(
+    wasmWebClient,
     wasmSeed,
     serializedMockChain,
     serializedMockNoteTransportNode
@@ -360,7 +431,8 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_MOCK] = async (args) => {
     : null;
 
   wasmWebClient = new wasm.WebClient();
-  await wasmWebClient.createMockClient(
+  await createMockClientOn(
+    wasmWebClient,
     wasmSeed,
     serializedMockChain,
     serializedMockNoteTransportNode
@@ -395,7 +467,8 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK] = async (
     : null;
 
   wasmWebClient = new wasm.WebClient();
-  await wasmWebClient.createMockClient(
+  await createMockClientOn(
+    wasmWebClient,
     wasmSeed,
     serializedMockChain,
     serializedMockNoteTransportNode
@@ -527,6 +600,7 @@ async function processMessage(event) {
         numThreads,
         serializedMockChain,
         serializedMockNoteTransportNode,
+        storeName,
       ] = args;
       const wasm = await getWasmOrThrow();
 
@@ -546,8 +620,10 @@ async function processMessage(event) {
         await wasm.initThreadPool(numThreads);
       }
 
+      wasmMockStoreName = storeName ?? "mock_client_db";
       wasmWebClient = new wasm.WebClient();
-      await wasmWebClient.createMockClient(
+      await createMockClientOn(
+        wasmWebClient,
         seed,
         serializedMockChain ? new Uint8Array(serializedMockChain) : undefined,
         serializedMockNoteTransportNode

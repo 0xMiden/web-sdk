@@ -4,8 +4,8 @@ import { toBech32AccountId } from "./accountBech32";
 /**
  * Normalize any account ID format (hex, bech32, 0x-prefixed) to bech32 for the
  * network of the provider's client. Returns the raw account id when that network
- * cannot be confirmed (no client yet, a mock client, or an endpoint naming no
- * known network), and the original string if the id cannot be parsed.
+ * cannot be confirmed (no client yet or a mock client), and the original string
+ * if the id cannot be parsed. An endpoint naming no known network is mainnet.
  */
 export function normalizeAccountId(id: string): string {
   return toBech32AccountId(id);

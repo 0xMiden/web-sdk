@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { formatAssetAmount, parseAssetAmount } from "../../utils/amounts";
+import {
+  formatAssetAmount,
+  parseAssetAmount,
+  toAmount,
+} from "../../utils/amounts";
 
 describe("formatAssetAmount", () => {
   it("returns the bigint as string when decimals is omitted", () => {
@@ -169,4 +173,22 @@ describe("parseAssetAmount", () => {
       expect(formatAssetAmount(parsed, decimals)).toBe(input);
     }
   });
+});
+
+describe("toAmount", () => {
+  it("passes a bigint and a safe number through as a bigint", () => {
+    expect(toAmount(2n ** 60n, "send")).toBe(2n ** 60n);
+    expect(toAmount(Number.MAX_SAFE_INTEGER, "send")).toBe(
+      BigInt(Number.MAX_SAFE_INTEGER)
+    );
+  });
+
+  it.each([2 ** 53, 1.5, Number.NaN, Infinity])(
+    "rejects the unsafe number %s, naming the method",
+    (value) => {
+      expect(() => toAmount(value, "mint")).toThrow(
+        "mint: amount must be a safe integer when given as a number; pass a bigint above 2^53 - 1"
+      );
+    }
+  );
 });

@@ -26,6 +26,7 @@ export { useAccounts } from "./hooks/useAccounts";
 export { useAccount } from "./hooks/useAccount";
 export { useNotes } from "./hooks/useNotes";
 export { useNoteStream } from "./hooks/useNoteStream";
+export { useNoteConsumability } from "./hooks/useNoteConsumability";
 export { useTransactionHistory } from "./hooks/useTransactionHistory";
 export { useSyncState } from "./hooks/useSyncState";
 export { useAssetMetadata } from "./hooks/useAssetMetadata";
@@ -44,6 +45,7 @@ export { useWaitForCommit } from "./hooks/useWaitForCommit";
 export { useWaitForNotes } from "./hooks/useWaitForNotes";
 export { useMint } from "./hooks/useMint";
 export { useBridge } from "./hooks/useBridge";
+export { useWithdrawUsdcx } from "./hooks/useWithdrawUsdcx";
 export { useConsume } from "./hooks/useConsume";
 export { useSwap } from "./hooks/useSwap";
 export { usePswapCreate } from "./hooks/usePswapCreate";
@@ -68,6 +70,7 @@ export { useSyncControl } from "./hooks/useSyncControl";
 export type {
   MidenConfig,
   RpcUrlConfig,
+  MidenNetwork,
   ProverConfig,
   ProverTarget,
   ProverUrls,
@@ -81,6 +84,9 @@ export type {
   AssetBalance,
   NotesFilter,
   NotesResult,
+  NoteConsumabilityStatus,
+  NoteConsumabilityOptions,
+  NoteConsumabilityResult,
   TransactionHistoryOptions,
   TransactionHistoryResult,
   TransactionStatus,
@@ -101,6 +107,7 @@ export type {
   WaitForNotesOptions,
   MintOptions,
   BridgeOptions,
+  WithdrawUsdcxOptions,
   CreateNetworkNoteOptions,
   NetworkNoteResult,
   ConsumeOptions,
@@ -142,6 +149,7 @@ export type {
   AccountFile,
   InputNoteRecord,
   ConsumableNoteRecord,
+  NoteConsumability,
   TransactionId,
   TransactionFilter,
   TransactionRecord,
@@ -165,6 +173,7 @@ export {
 } from "./utils/accountBech32";
 export { formatAssetAmount, parseAssetAmount } from "./utils/amounts";
 export { getNoteSummary, formatNoteSummary } from "./utils/notes";
+export { getNoteConsumabilityStatus } from "./utils/noteConsumability";
 export { normalizeAccountId, accountIdsEqual } from "./utils/accountId";
 export {
   readNoteAttachment,
@@ -204,6 +213,7 @@ export type { UseWaitForCommitResult } from "./hooks/useWaitForCommit";
 export type { UseWaitForNotesResult } from "./hooks/useWaitForNotes";
 export type { UseMintResult } from "./hooks/useMint";
 export type { UseBridgeResult } from "./hooks/useBridge";
+export type { UseWithdrawUsdcxResult } from "./hooks/useWithdrawUsdcx";
 export type { UseConsumeResult } from "./hooks/useConsume";
 export type { UseSwapResult } from "./hooks/useSwap";
 export type { UsePswapCreateResult } from "./hooks/usePswapCreate";

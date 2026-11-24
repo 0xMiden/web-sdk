@@ -235,6 +235,28 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     }
   );
 
+  mockTest(
+    "accounts.import of a private id reports ACCOUNT_IS_PRIVATE",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const wallet = await client.accounts.create();
+        let code = null;
+        try {
+          await client.accounts.import(wallet.id().toString());
+        } catch (error) {
+          code = error.code ?? null;
+        }
+        return {
+          isPublic: wallet.id().isPublic(),
+          code,
+        };
+      });
+      expect(result.isPublic).toBe(false);
+      expect(result.code).toBe("ACCOUNT_IS_PRIVATE");
+    }
+  );
+
   mockTest("accounts.list returns created accounts", async ({ page }) => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.createMock();
@@ -976,6 +998,53 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     expect(result.neverIsConsumableNow).toBe(false);
     expect(result.allAccountsCount).toBeGreaterThanOrEqual(1);
   });
+
+  mockTest(
+    "notes.screen screens a note the client has not imported",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const wallet = await client.accounts.create();
+        const faucet = await client.accounts.create({
+          type: window.FaucetType.FungibleFaucet,
+          symbol: "SCR",
+          decimals: 8,
+          maxSupply: 10_000_000n,
+        });
+        const note = window.createP2IDNote({
+          from: faucet,
+          to: wallet,
+          assets: { token: faucet, amount: 5n },
+        });
+        const view = (entries) =>
+          entries.map((entry) => ({
+            account: entry.accountId().toString(),
+            now: entry.consumptionStatus().isConsumableNow(),
+          }));
+
+        return {
+          wallet: wallet.id().toString(),
+          all: view(await client.notes.screen(note)),
+          byAccount: view(await client.notes.screen(note, { account: wallet })),
+          byHex: view(
+            await client.notes.screen(note, {
+              account: wallet.id().toString(),
+            })
+          ),
+          faucet: view(await client.notes.screen(note, { account: faucet })),
+          imported: (await client.notes.list()).length,
+        };
+      });
+
+      const entry = { account: result.wallet, now: true };
+      expect(result.all).toEqual([entry]);
+      expect(result.byAccount).toEqual([entry]);
+      expect(result.byHex).toEqual([entry]);
+      // An account that can never consume the note is left out.
+      expect(result.faucet).toEqual([]);
+      expect(result.imported).toBe(0);
+    }
+  );
 
   mockTest(
     "listAvailable and consumeAll leave out a public PSWAP order",
@@ -1939,6 +2008,49 @@ nodeTest.describe("MidenClient API - Integration", () => {
       // Before the first sync nothing names the faucet, and the error says what
       // to do about it.
       expect(result.beforeSync).toContain("feeFaucetId");
+      expect(result.reported).toBe(result.configured);
+    }
+  );
+
+  // The read follows the network the client talks to: nothing before the first
+  // sync, then the configuration that node's blocks commit to.
+  nodeTest(
+    "protocolConfig rejects before the first sync and reports the node's fee faucet after it",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.create({
+          rpcUrl: window.rpcUrl,
+          storeName: "miden_client_api_protocol_config_test",
+        });
+
+        let beforeSync = null;
+        try {
+          await client.protocolConfig();
+        } catch (err) {
+          beforeSync = String(err?.message ?? err);
+        }
+
+        await client.sync();
+
+        const canonical = (id) => {
+          try {
+            return window.AccountId.fromBech32(id).toString();
+          } catch {
+            return window.AccountId.fromHex(id).toString();
+          }
+        };
+
+        const config = await client.protocolConfig();
+        return {
+          beforeSync,
+          configured: canonical(window.feeFaucetId),
+          reported: config.feeFaucetId().toString(),
+        };
+      });
+
+      expect(result.beforeSync).toContain(
+        "the network's protocol configuration is not known yet"
+      );
       expect(result.reported).toBe(result.configured);
     }
   );

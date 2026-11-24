@@ -31,9 +31,10 @@ use miden_client::note_transport::grpc::GrpcNoteTransportClient;
 #[cfg(feature = "browser")]
 use miden_client::rpc::RpcError;
 use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, VerifyingRpcClient};
-use miden_client::store::{Store, StoreError};
+use miden_client::store::Store;
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::MockNoteTransportApi;
+use miden_client::transaction::BatchBuilderError;
 use miden_client::{Client, ClientError, ErrorHint};
 use models::code_builder::CodeBuilder;
 #[cfg(feature = "nodejs")]
@@ -330,35 +331,26 @@ impl WebClient {
     /// mock client, the one the mock chain itself commits to, and fails when neither is set.
     #[js_export(js_name = "feeFaucetId")]
     pub async fn fee_faucet_id(&self) -> Result<models::account_id::AccountId, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-
-        let sync_height = client
-            .get_sync_height()
-            .await
-            .map_err(|err| js_error_with_context(err, "failed to read the sync height"))?;
-        let header = client
-            .get_block_header_by_num(sync_height)
-            .await
-            .map_err(|err| js_error_with_context(err, "failed to read the synced block header"))?;
-        if let Some((header, _)) = header {
-            match client.get_protocol_config(header.protocol_config_commitment()).await {
-                Ok(config) => return Ok(config.fee_asset_id().faucet_id().into()),
-                // Nothing has been synced yet, so no configuration is stored for the header.
-                Err(ClientError::StoreError(StoreError::ProtocolConfigNotFound(_))) => {},
-                Err(err) => {
-                    return Err(js_error_with_context(
-                        err,
-                        "failed to read the protocol configuration",
-                    ));
-                },
-            }
-        }
-
-        (*self.fee_faucet.lock().await).map(Into::into).ok_or_else(|| {
+        self.known_fee_faucet_id().await?.ok_or_else(|| {
             from_str_err(
                 "the chain's fee faucet is not known yet: sync the client so it receives the \
                  protocol configuration from the node, or pass `feeFaucetId` when creating it",
+            )
+        })
+    }
+
+    /// Returns the protocol configuration of the connected network: its fee asset and the
+    /// commitment that block headers carry for it.
+    ///
+    /// The client receives the configuration from the node when it syncs, so this rejects until
+    /// the first sync has stored it. Mock clients are seeded with their chain's configuration.
+    #[js_export(js_name = "protocolConfig")]
+    pub async fn protocol_config(&self) -> Result<models::protocol_config::ProtocolConfig, JsErr> {
+        let config = self.synced_protocol_config().await?;
+        config.map(Into::into).ok_or_else(|| {
+            from_str_err(
+                "the network's protocol configuration is not known yet: sync the client so it \
+                 receives the configuration from the node",
             )
         })
     }
@@ -429,16 +421,14 @@ impl WebClient {
         Ok(keystore_api::WebKeystoreApi::new(ks))
     }
 
-    /// Returns the raw JS value that the most recent sign-callback invocation
-    /// threw, or `null` if the last sign call succeeded (or no call has
-    /// happened yet).
+    /// Returns the latest raw sign callback rejection or readable external `getKey` failure.
+    /// Returns `null` after a successful sign or `getKey` callback,
+    /// or when `executeTransaction` starts.
     ///
-    /// Combined with the serialized-call discipline enforced at the JS
-    /// `WebClient` wrapper, this lets a caller that caught a failed
-    /// `executeTransaction` / `submitNewTransaction` recover the original
-    /// JS error the signing callback threw — preserving any structured
-    /// metadata (e.g. a `reason: 'locked'` property) that the kernel-level
-    /// `auth::request` diagnostic would otherwise have erased.
+    /// With `useWorker: false`, callers can recover structured sign error metadata such as
+    /// `reason: 'locked'`. Failed `getKey` lookups return a string, since the native public-key
+    /// lookup cannot propagate errors directly. Transaction errors include any missing readable
+    /// callback detail on both the direct and worker paths.
     ///
     /// # Usage (TS)
     /// ```ts
@@ -455,7 +445,7 @@ impl WebClient {
     pub fn last_auth_error(&self) -> JsValue {
         let guard = self.inner.borrow();
         match guard.as_ref().and_then(|c| c.authenticator()) {
-            Some(keystore) => keystore.last_sign_error(),
+            Some(keystore) => keystore.last_auth_error(),
             None => JsValue::NULL,
         }
     }
@@ -860,6 +850,22 @@ pub(crate) fn js_error_with_context<T>(err: T, context: &str) -> JsErr
 where
     T: Error + 'static,
 {
+    build_js_error(err, context, None)
+}
+
+/// Like [`js_error_with_context`], for a failure that can only follow an accepted submit: the
+/// error always carries [`APPLY_AFTER_SUBMIT_FAILED`], so callers know not to resubmit.
+pub(crate) fn js_post_submit_error<T>(err: T, context: &str) -> JsErr
+where
+    T: Error + 'static,
+{
+    build_js_error(err, context, Some(APPLY_AFTER_SUBMIT_FAILED))
+}
+
+fn build_js_error<T>(err: T, context: &str, forced_code: Option<&'static str>) -> JsErr
+where
+    T: Error + 'static,
+{
     let error_message = build_error_chain(context, &err);
     let help = hint_from_error(&err);
 
@@ -872,7 +878,7 @@ where
         // Stable, machine-readable code for the ClientError variants JS callers
         // branch on, so they don't have to match the (changeable) message text.
         // The worker shim's serializeError forwards both `code` and `help`.
-        if let Some(code) = code_from_error(&err) {
+        if let Some(code) = forced_code.or_else(|| code_from_error(&err)) {
             let _ = Reflect::set(&js_error, &JsValue::from_str("code"), &JsValue::from_str(code));
         }
         js_error
@@ -884,7 +890,12 @@ where
             Some(help) => format!("{error_message} [help: {help}]"),
             None => error_message,
         };
-        napi::Error::from_reason(message)
+        // napi cannot attach a `code`, so the post-submit code prefixes the message
+        // (the `from_str_err_with_code` shape).
+        match forced_code.or_else(|| post_submit_code(&err)) {
+            Some(code) => napi::Error::from_reason(format!("{code}: {message}")),
+            None => napi::Error::from_reason(message),
+        }
     }
 }
 
@@ -907,16 +918,43 @@ fn hint_from_error(err: &(dyn Error + 'static)) -> Option<String> {
     err.source().and_then(hint_from_error)
 }
 
+/// Code for a failure that follows a transaction or batch the node already accepted. The resource
+/// API raises the same string from `transactions.js`; wallets must not resubmit on it.
+pub(crate) const APPLY_AFTER_SUBMIT_FAILED: &str = "ApplyTransactionAfterSubmitFailed";
+
+/// [`APPLY_AFTER_SUBMIT_FAILED`] for the typed variants that report an accepted submission whose
+/// local store update failed. Uncertain outcomes (`BatchSubmissionOutcomeUnknown`) are not
+/// accepted submissions and map to `None`.
+fn post_submit_code(err: &(dyn Error + 'static)) -> Option<&'static str> {
+    if let Some(client_error) = err.downcast_ref::<ClientError>() {
+        return match client_error {
+            ClientError::ApplyTransactionAfterSubmitFailed { .. }
+            | ClientError::BatchBuilder(
+                BatchBuilderError::BatchSubmittedButApplyFailed { .. }
+                | BatchBuilderError::BatchSubmittedButUpdateBuildFailed { .. },
+            ) => Some(APPLY_AFTER_SUBMIT_FAILED),
+            _ => None,
+        };
+    }
+
+    err.source().and_then(post_submit_code)
+}
+
 /// Maps the typed [`ClientError`] variants that JS callers need to distinguish
 /// to stable string codes (exposed as the `code` property on the thrown JS
 /// error). Only the variants consumers branch on are mapped; everything else
 /// returns `None`.
 #[cfg(feature = "browser")]
 fn code_from_error(err: &(dyn Error + 'static)) -> Option<&'static str> {
+    if let Some(code) = post_submit_code(err) {
+        return Some(code);
+    }
+
     if let Some(client_error) = err.downcast_ref::<ClientError>() {
         return match client_error {
             ClientError::AccountNotFoundOnChain(_) => Some("ACCOUNT_NOT_FOUND_ON_CHAIN"),
             ClientError::AccountAlreadyTracked(_) => Some("ACCOUNT_ALREADY_TRACKED"),
+            ClientError::AccountIsPrivate(_) => Some("ACCOUNT_IS_PRIVATE"),
             ClientError::AccountNotAllowlisted(_) => Some("ACCOUNT_NOT_ALLOWLISTED"),
             ClientError::AccountAlreadyAllowed(_) => Some("ACCOUNT_ALREADY_ALLOWED"),
             ClientError::NoteAcquisition(_) => Some("NOTE_ACQUISITION_REFUSED"),
@@ -952,4 +990,76 @@ fn registration_code(err: &RpcError) -> Option<&'static str> {
         RegisterAccountError::AlreadyRegistered => "ALREADY_REGISTERED",
         RegisterAccountError::InvalidRequest(_) => "INVALID_REGISTRATION_REQUEST",
     })
+}
+
+#[cfg(test)]
+mod post_submit_code_tests {
+    use miden_client::block::BlockNumber;
+    use miden_client::store::StoreError;
+    use miden_client::transaction::{BatchBuilderError, TransactionStoreUpdateError};
+
+    use super::*;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("wrapper")]
+    struct Wrapper(#[source] ClientError);
+
+    fn store_error() -> StoreError {
+        StoreError::DatabaseError("disk full".to_string())
+    }
+
+    fn batch_apply_failed() -> ClientError {
+        ClientError::BatchBuilder(BatchBuilderError::BatchSubmittedButApplyFailed {
+            block_num: BlockNumber::from(7u32),
+            source: store_error(),
+        })
+    }
+
+    fn batch_update_build_failed() -> ClientError {
+        ClientError::BatchBuilder(BatchBuilderError::BatchSubmittedButUpdateBuildFailed {
+            block_num: BlockNumber::from(7u32),
+            source: TransactionStoreUpdateError::Store(store_error()),
+        })
+    }
+
+    #[test]
+    fn batch_post_submit_variants_carry_the_code() {
+        assert_eq!(post_submit_code(&batch_apply_failed()), Some(APPLY_AFTER_SUBMIT_FAILED));
+        assert_eq!(post_submit_code(&batch_update_build_failed()), Some(APPLY_AFTER_SUBMIT_FAILED));
+    }
+
+    #[test]
+    fn code_survives_being_wrapped() {
+        assert_eq!(
+            post_submit_code(&Wrapper(batch_apply_failed())),
+            Some(APPLY_AFTER_SUBMIT_FAILED)
+        );
+    }
+
+    #[test]
+    fn other_batch_errors_carry_no_code() {
+        assert_eq!(post_submit_code(&ClientError::BatchBuilder(BatchBuilderError::Empty)), None);
+    }
+
+    #[cfg(feature = "nodejs")]
+    #[test]
+    fn node_prefixes_the_code_once() {
+        let err = js_error_with_context(batch_apply_failed(), "failed to submit transaction batch");
+        assert!(err.reason.starts_with("ApplyTransactionAfterSubmitFailed: failed to submit"));
+        assert_eq!(err.reason.matches(APPLY_AFTER_SUBMIT_FAILED).count(), 1);
+
+        let err = js_post_submit_error(store_error(), "failed to apply transaction result");
+        assert!(
+            err.reason.starts_with(
+                "ApplyTransactionAfterSubmitFailed: failed to apply transaction result"
+            )
+        );
+        assert_eq!(err.reason.matches(APPLY_AFTER_SUBMIT_FAILED).count(), 1);
+
+        let err = js_error_with_context(
+            ClientError::BatchBuilder(BatchBuilderError::Empty),
+            "failed to submit transaction batch",
+        );
+        assert!(!err.reason.contains(APPLY_AFTER_SUBMIT_FAILED));
+    }
 }

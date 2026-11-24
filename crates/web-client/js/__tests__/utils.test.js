@@ -5,6 +5,7 @@ import {
   resolveNoteType,
   resolveStorageMode,
   resolveAuthScheme,
+  installAuthSchemeResolution,
   resolveNoteIdHex,
   resolveTransactionIdHex,
   hashSeed,
@@ -291,6 +292,53 @@ describe("resolveAuthScheme", () => {
     expect(() => resolveAuthScheme("rsa", wasm)).toThrow(
       'Unknown auth scheme: "rsa"'
     );
+  });
+});
+
+// ── installAuthSchemeResolution ───────────────────────────────────────────────
+
+describe("installAuthSchemeResolution", () => {
+  const wasm = { AuthScheme: { AuthEcdsaK256Keccak: 1, AuthRpoFalcon512: 2 } };
+  const makeComponent = () => {
+    const received = [];
+    class AccountComponent {
+      static createAuthComponentFromCommitment(commitment, scheme) {
+        received.push(scheme);
+        return "component";
+      }
+    }
+    return { AccountComponent, received };
+  };
+
+  it("resolves the friendly scheme once, even when installed twice", () => {
+    const { AccountComponent, received } = makeComponent();
+    installAuthSchemeResolution(AccountComponent, wasm);
+    const installed = AccountComponent.createAuthComponentFromCommitment;
+    installAuthSchemeResolution(AccountComponent, wasm);
+    expect(AccountComponent.createAuthComponentFromCommitment).toBe(installed);
+    expect(
+      AccountComponent.createAuthComponentFromCommitment("c", "ecdsa")
+    ).toBe("component");
+    expect(received).toEqual([1]);
+  });
+
+  it("leaves a static it cannot redefine untouched", () => {
+    const { AccountComponent } = makeComponent();
+    const original = AccountComponent.createAuthComponentFromCommitment;
+    Object.defineProperty(
+      AccountComponent,
+      "createAuthComponentFromCommitment",
+      { value: original, writable: false, configurable: false }
+    );
+    installAuthSchemeResolution(AccountComponent, wasm);
+    expect(AccountComponent.createAuthComponentFromCommitment).toBe(original);
+  });
+
+  it("does nothing without the class or its static", () => {
+    expect(() => installAuthSchemeResolution(undefined, wasm)).not.toThrow();
+    class Bare {}
+    installAuthSchemeResolution(Bare, wasm);
+    expect(Bare.createAuthComponentFromCommitment).toBeUndefined();
   });
 });
 

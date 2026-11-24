@@ -16,6 +16,7 @@ import {
   getUnspentInputNoteNullifiers,
   getNoteScript,
 } from "./notes.js";
+import { recordReads } from "./test-utils.js";
 
 // Unique DB names to avoid collisions between tests.
 let dbCounter = 0;
@@ -54,7 +55,8 @@ const CONSUMED_STATES = new Uint8Array([
   STATE_CONSUMED_EXTERNAL,
 ]);
 
-// Unspent state discriminants (stateDiscriminant 2, 4, 5)
+// Unspent state discriminants (stateDiscriminant 0, 1, 2, 4, 5)
+const STATE_UNVERIFIED = 1;
 const STATE_COMMITTED = 2;
 const STATE_PROCESSING_AUTHENTICATED = 4;
 const STATE_PROCESSING_UNAUTHENTICATED = 5;
@@ -398,6 +400,61 @@ describe("getInputNoteAfter ordering", () => {
 
 // CURSOR SEMANTICS TESTS
 // ================================================================================================
+
+describe("getInputNoteAfter index use", () => {
+  const CONSUMER_INDEX =
+    "[consumerAccountId+consumedBlockHeight+consumedTxOrder+detailsCommitment]";
+
+  it("reads only the consumer's range of the consumer-prefixed index, for every cursor and bound shape", async () => {
+    const dbId = await openTestDb();
+    for (let height = 1; height <= 3; height++) {
+      await insertNote(dbId, `mine-${height}`, {
+        consumedBlockHeight: height,
+        consumedTxOrder: 0,
+      });
+      await insertNote(dbId, `other-${height}`, {
+        consumedBlockHeight: height,
+        consumedTxOrder: 0,
+        consumerAccountId: "0xother",
+      });
+    }
+    const cursor = await cursorFor(dbId, "mine-1");
+
+    const recorder = recordReads();
+    try {
+      const page = (
+        blockStart?: number,
+        blockEnd?: number,
+        after?: typeof cursor
+      ) =>
+        getInputNoteAfter(
+          dbId,
+          CONSUMED_STATES,
+          CONSUMER,
+          blockStart,
+          blockEnd,
+          after?.blockHeight,
+          after?.txOrder,
+          after?.detailsCommitment
+        );
+      const ids = async (...args: Parameters<typeof page>) =>
+        ((await page(...args)) ?? []).map((n) => n.createdAt);
+      // A range that left the consumer would surface an "other-" note here.
+      expect(await ids()).toEqual(["mine-1"]);
+      expect(await ids(2, 3)).toEqual(["mine-2"]);
+      expect(await ids(undefined, 2, cursor)).toEqual(["mine-2"]);
+    } finally {
+      recorder.stop();
+    }
+
+    const noteReads = recorder.reads.filter((r) => r.store === "inputNotes");
+    expect(noteReads.length).toBeGreaterThan(0);
+    for (const read of noteReads) {
+      expect(read.index).toBe(CONSUMER_INDEX);
+      expect(read.ranged).toBe(true);
+    }
+  });
+});
 
 describe("getInputNoteAfter cursor semantics", () => {
   it("returns the first note when no cursor is given", async () => {
@@ -863,7 +920,7 @@ describe("getInputNotesFromNullifiers", () => {
 // ================================================================================================
 
 describe("getUnspentInputNoteNullifiers", () => {
-  it("returns nullifiers for notes with discriminant 2, 4, or 5", async () => {
+  it("returns nullifiers for notes with discriminant 0, 1, 2, 4, or 5", async () => {
     const dbId = await openTestDb();
     await insertNote(dbId, "note-committed", {
       stateDiscriminant: STATE_COMMITTED,
@@ -881,13 +938,38 @@ describe("getUnspentInputNoteNullifiers", () => {
       stateDiscriminant: STATE_EXPECTED,
       nullifier: "0xnull-expected",
     });
+    await insertNote(dbId, "note-unverified", {
+      stateDiscriminant: STATE_UNVERIFIED,
+      nullifier: "0xnull-unverified",
+    });
 
     const nullifiers = await getUnspentInputNoteNullifiers(dbId);
-    expect(nullifiers).toHaveLength(3);
+    expect(nullifiers).toHaveLength(5);
     expect(nullifiers).toContain("0xnull-committed");
     expect(nullifiers).toContain("0xnull-proc-auth");
     expect(nullifiers).toContain("0xnull-proc-unauth");
-    expect(nullifiers).not.toContain("0xnull-expected");
+    expect(nullifiers).toContain("0xnull-expected");
+    expect(nullifiers).toContain("0xnull-unverified");
+  });
+
+  it("reads the [stateDiscriminant+nullifier] index keys instead of scanning notes", async () => {
+    const dbId = await openTestDb();
+    await insertNote(dbId, "note-committed", {
+      stateDiscriminant: STATE_COMMITTED,
+      nullifier: "0xnull-committed",
+    });
+    const notes = getDatabase(dbId).inputNotes;
+    const whereSpy = vi.spyOn(notes, "where");
+    const collection = Object.getPrototypeOf(notes.toCollection());
+    const keysSpy = vi.spyOn(collection, "keys");
+    const toArraySpy = vi.spyOn(collection, "toArray");
+
+    expect(await getUnspentInputNoteNullifiers(dbId)).toEqual([
+      "0xnull-committed",
+    ]);
+    expect(whereSpy).toHaveBeenCalledWith("[stateDiscriminant+nullifier]");
+    expect(keysSpy).toHaveBeenCalledTimes(1);
+    expect(toArraySpy).not.toHaveBeenCalled();
   });
 
   it("returns empty array when no unspent notes", async () => {

@@ -10,7 +10,8 @@ export async function getTransactions(dbId, filter) {
         const db = getDatabase(dbId);
         if (filter === "Uncommitted") {
             transactionRecords = await db.transactions
-                .filter((tx) => tx.statusVariant === STATUS_PENDING_VARIANT)
+                .where("statusVariant")
+                .equals(STATUS_PENDING_VARIANT)
                 .toArray();
         }
         else if (filter.startsWith(IDS_FILTER_PREFIX)) {

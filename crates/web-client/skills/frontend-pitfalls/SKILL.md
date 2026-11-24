@@ -119,7 +119,9 @@ which one you are relying on tells you what a second browser tab can still do to
    call takes its place on the layer 1 chain when it is made and requests the lock
    when its turn comes (chain, then lock), so call order, `waitForIdle()` and
    `terminate()` treat it like any other call. While it waits for another client's lock,
-   later calls on its own client wait behind it. A call of a sync joins its client's
+   later calls on its own client wait behind it. Such a call waits at most 10 minutes
+   from when it is made, then rejects with `Timed out after <ms> ms waiting for the sync lock of <store>`
+   and its work never runs. A call of a sync joins its client's
    pending run of the *same* sync only while no other call has been queued on that client
    since the run; after one has, it starts a run of its own behind that call, so it never
    settles ahead of a call made before it. Every other call, the same sync on another
@@ -131,7 +133,8 @@ which one you are relying on tells you what a second browser tab can still do to
    lock the callback holds, and every later call on that client waits behind it. It is
    also any lock whose holder is waiting on such a call, such as `@miden-sdk/react`'s
    `runExclusive`, which `MidenProvider` holds across its init sync, or an application
-   mutex around `_withInnerWebClient`. Every client on the store then stops. With no Web
+   mutex around `_withInnerWebClient`. Every client on the store stalls until the
+   waiting store-locked call's bound runs out and it rejects. With no Web
    Locks API it degrades to an in-process per-database chain. Two writes take no lock:
    the free `importStore` function, which replaces a whole store, so run it only while no
    client uses that store; and the genesis block header `createClient` stores in a store
@@ -223,9 +226,9 @@ Both hex and bech32 formats work in all hooks. Prefer hex for constants, bech32 
 
 **Gotcha: the HRP is inferred from the endpoint URL, not from the chain.** `bech32id()` (and `toBech32AccountId()`) read `client.endpoint()` from the provider's client, the URL of the node it was created against, lowercase it, and look for substrings in this order: `devnet` or `mdev` -> devnet, `mainnet` -> mainnet, `testnet` or `mtst` -> testnet, `localhost` or `127.0.0.1` -> devnet. An unset `rpcUrl` is not a gap here: the client defaulted to testnet and reports that endpoint.
 
-**Anything matching none of them renders the hex ID**, and so does every call made before `MidenProvider` has a client. `MidenConfig.rpcUrl` resolves only the shorthands `"testnet"`, `"devnet"` and `"localhost"` / `"local"` to concrete URLs and passes any other value through verbatim, so a private or self-hosted RPC endpoint whose hostname names no network shows hex IDs where you might expect bech32.
+**Anything matching none of them is mainnet (`mm`)**, and every call made before `MidenProvider` has a client renders the hex ID. `MidenConfig.rpcUrl` resolves only the shorthands `"mainnet"`, `"testnet"`, `"devnet"` and `"localhost"` / `"local"` to concrete URLs and passes any other value through verbatim, so a private or self-hosted RPC endpoint whose hostname names no network formats mainnet (`mm`) addresses; set `MidenConfig.network` when that host is not mainnet.
 
-If you run a custom network, do not rely on `bech32id()` producing bech32 - key off hex, and render bech32 yourself with `AccountId.toBech32(networkId, ...)` where you control the network mapping.
+If you run a custom network, set `MidenConfig.network` or render bech32 yourself with `AccountId.toBech32(networkId, ...)` where you control the network mapping. An unnamed host is mainnet, not hex.
 
 The three real HRPs are `mtst` (testnet), `mdev` (devnet) and `mm` (mainnet); a custom
 network supplies its own through `NetworkId::custom`. **There is no `miden1` prefix** -
@@ -459,8 +462,8 @@ Four companions to the same boundary:
 
 **Config cannot carry a prover instance.** Neither `ClientOptions.proverUrl` nor the React
 SDK's `ProverTarget` / `ProverConfig` has an arm that accepts a `TransactionProver`. The
-raw client takes `proverUrl?: "local" | "devnet" | "testnet" | (string & {})`, and
-`ProverTarget` widens that to `"local" | "localhost" | "devnet" | "testnet" | string |
+raw client takes `proverUrl?: "local" | "mainnet" | "devnet" | "testnet" | (string & {})`, and
+`ProverTarget` widens that to `"local" | "localhost" | "mainnet" | "devnet" | "testnet" | string |
 { url, timeoutMs? }`, with `ProverConfig` adding `{ primary, fallback }` around it - every
 arm is a URL or a name, never a handle. So a callback prover cannot be supplied through
 config at all; it has to be passed at the call that proves, which is why the
@@ -509,7 +512,7 @@ Verify: `crates/web-client/js/eager.js`.
 - `FungibleAsset.withCallbacks(flag)` removed. The flag is an immutable property of the issuing faucet's account id; `FungibleAsset.callbacks()` still reports it.
 - `TransactionSummary.salt()` replaced by `userParams()` (the seven user-defined field elements the summary commitment binds).
 - `ExecutedTransaction.accountDelta()` and `TransactionStoreUpdate.accountDelta()` replaced by `accountPatch()`, exposing the absolute-valued `AccountPatch` / `AccountStoragePatch` / `AccountVaultPatch`. `TransactionSummary.accountDelta()` remains relative. `AccountStorageDelta` was removed.
-- `AccountComponent.createNetworkAuth` renamed to `createNetworkAuthComponents(NoteScriptFee[], feeFaucetId)`, which returns an **array**. Add every returned component to the builder with `AccountBuilder.withComponent`. Since 0.17 `feeFaucetId` must be the chain's own (`client.feeFaucetId()`): the node never runs network transactions for an account whose fee asset differs from the chain's protocol configuration, and the notes sent to it silently go unconsumed.
+- `AccountComponent.createNetworkAuth` renamed to `createNetworkAuthComponents(NoteScriptFee[], feeFaucetId)`, which returns an **array**. Add every returned component to the builder with `AccountBuilder.withComponent`. Since 0.17 `feeFaucetId` must be the chain's own (`client.feeFaucetId()`, the faucet `client.protocolConfig()` names): the node never runs network transactions for an account whose fee asset differs from the chain's protocol configuration, and the notes sent to it silently go unconsumed.
 - MASM: note scripts calling `basic_wallet::add_assets_to_account` must switch to `basic_wallet::move_note_assets_to_account` (a stale script fails to compile with `undefined item 'add_assets_to_account'`). Account-component procedures now require `@account_procedure`, and transaction scripts use `@transaction_script pub proc main`.
 - `newConsumeTransactionRequest` is async and takes the consuming account as a second argument. `newPswapConsumeTransactionRequest` and `newPswapCancelTransactionRequest` are async too (parameters unchanged). Code going through `client.transactions.consume(...)` / `consumeAll(...)` or the `useConsume` hook is unaffected.
 - `TransactionProver.newLocalProver()` now produces Poseidon2 proofs, matching the client's own default prover instead of the prover crate's Blake3 default. Expect local proving to take roughly 1.6-2.6x longer. This is an alignment, not a regression - do not go hunting for a performance bug.
@@ -524,7 +527,7 @@ Verify: `crates/web-client/js/eager.js`.
 | FP2 | Sequences are not atomic | HIGH | Forwarded async calls serialize themselves (raw-bound `SYNC_METHODS` do not); wrap multi-call sequences in `runExclusive()` |
 | FP3 | COOP/COEP | HIGH | Default ST build needs no headers; required ONLY for the `/mt` build |
 | FP4 | BigInt | HIGH | Hooks and the high-level `MidenClient` coerce `number`; strict `bigint` only at the low-level request constructors |
-| FP5 | Bech32 mismatch | HIGH | Match network in rpcUrl and addresses; the HRP is inferred from `client.endpoint()`, and an unrecognised endpoint renders hex |
+| FP5 | Bech32 mismatch | HIGH | Match network in rpcUrl and addresses; the HRP is inferred from `client.endpoint()`, and an unrecognised endpoint is mainnet (`mm`) |
 | FP6 | Auto-sync | MEDIUM | Default 15000ms; prefer `useSyncControl()` over `autoSyncInterval: 0` |
 | FP7 | IndexedDB loss | HIGH | Upgrading from a pre-0.17.0 SDK clears the store once and its export cannot be imported; a newer SDK's store and export are refused |
 | FP8 | Vite config | MEDIUM | `midenVitePlugin()` has four options; bare call is right for ST, `crossOriginIsolation: true` only for `/mt` |

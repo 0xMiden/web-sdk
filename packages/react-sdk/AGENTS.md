@@ -46,9 +46,10 @@ rejects `feeFaucetId()` and asks you to sync first.
 ```tsx
 <MidenProvider
   config={{
-    rpcUrl: "testnet",          // "devnet" | "testnet" | "localhost" | "local" | custom URL
+    rpcUrl: "testnet",          // "mainnet" | "devnet" | "testnet" | "localhost" | "local" | custom URL
+    network: "mainnet",         // optional: "mainnet" | "testnet" | "devnet", address prefix; wins over the rpcUrl inference
     feeFaucetId: FEE_FAUCET,    // optional: what feeFaucetId() reports before the first sync
-    prover: "testnet",          // "local" | "localhost" | "devnet" | "testnet" | URL
+    prover: "testnet",          // "local" | "localhost" | "mainnet" | "devnet" | "testnet" | URL
                                 //   | { url, timeoutMs }
                                 //   | { primary, fallback, disableFallback?, onFallback? }
     autoSyncInterval: 15000,    // ms, set to 0 to disable. Default: 15000
@@ -95,6 +96,7 @@ UI thread is not competing with WASM anyway.
 
 | Network | Use When |
 |---------|----------|
+| `mainnet` | Production, with real funds |
 | `devnet` | Development, testing with fake tokens |
 | `testnet` | Pre-production testing |
 | `localhost` | Local node at `http://localhost:57291` |
@@ -168,13 +170,16 @@ so a bare string throws a runtime `TypeError`.
 
 Metadata is read from the node the provider's client was created against
 (`client.endpoint()`), so nothing is fetched until the provider is ready.
+Reads from a previous client or cache generation cannot repopulate the cache
+after a reset. The current client can fetch the same asset while an old read
+is still pending.
 
 ## Writing Data (Mutation Hooks)
 
 Most mutation hooks return `{ <action>, result, isLoading, stage, error, reset }`:
 the action callback is named after the hook (`send`, `consume`, `mint`, ...) and
 the resolved value is on `result`. That holds for `useSend`, `useMultiSend`,
-`useBatch`, `useConsume`, `useMint`, `useBridge`, `useSwap`, `useCreateNetworkNote`,
+`useBatch`, `useConsume`, `useMint`, `useBridge`, `useWithdrawUsdcx`, `useSwap`, `useCreateNetworkNote`,
 `useTransaction` and the `usePswap*` family.
 
 **The busy flag is not `isLoading` everywhere.** Every write hook returns its
@@ -183,7 +188,7 @@ in-progress flag, and only the transaction family has a `stage`:
 
 | Family | Hooks | Busy flag | `stage`? |
 |---|---|---|---|
-| Transaction | `useSend`, `useMultiSend`, `useBatch`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `useTransaction`, all four `usePswap*` writes | `isLoading` | yes |
+| Transaction | `useSend`, `useMultiSend`, `useBatch`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useWithdrawUsdcx`, `useCreateNetworkNote`, `useTransaction`, all four `usePswap*` writes | `isLoading` | yes |
 | Account create / import | `useCreateWallet`, `useCreateFaucet`, `useImportAccount` | `isCreating` (`isImporting` for the last) | no |
 | Everything else names its own | `useChainAnchor().isCapturing`, `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting` | as named | no |
 
@@ -322,6 +327,25 @@ await bridge({
   destinationAddress: "0x000000000000000000000000000000000000dEaD",
 });
 ```
+
+### Withdraw USDCx (Circle xReserve)
+```tsx
+const { withdrawUsdcx } = useWithdrawUsdcx();
+
+// Emits a public burn note that the USDCx faucet consumes; Circle releases
+// USDC to the 32-byte recipient on the destination domain.
+await withdrawUsdcx({
+  from: senderAccountId,
+  faucetId: usdcxFaucetId,
+  amount: 1_000_000n,
+  destinationDomain: 6,
+  destinationRecipient: "0x" + evmAddress.slice(2).padStart(64, "0"),
+});
+```
+
+A `number` amount on any transaction hook must be a safe integer; pass a
+`bigint` above `2 ** 53 - 1`. No hook claims an inbound AggLayer deposit yet:
+build it with `Note.createClaimNote(...)` and submit it with `useTransaction`.
 
 ### Create a Network Note
 ```tsx
@@ -701,9 +725,10 @@ account.bech32id();  // "mtst1qy35..."
 
 The bech32 prefix tracks the active network and is inferred from the client's
 `endpoint()`: `mtst1` testnet, `mdev1` devnet (and a local node), `mm1`
-mainnet. Until the provider has a client, and for an endpoint naming none of
-those networks, `bech32id()` and `toBech32AccountId()` return the hex ID instead
-of guessing. Don't hardcode a prefix and don't pattern-match on one you
+mainnet. An endpoint naming no network, such as a custom mainnet RPC host, is
+mainnet. Set `config.network` (`"mainnet" | "testnet" | "devnet"`) to override
+the inference. Until the provider has a client, `bech32id()` and
+`toBech32AccountId()` return the hex ID instead of guessing. Don't hardcode a prefix and don't pattern-match on one you
 invented - `miden1` is not a Miden prefix.
 
 ## Hook Reference
@@ -716,6 +741,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | `useAccounts()` | `accounts` (`wallets` mirrors it, `faucets` is always `[]`; both deprecated) | List local accounts. `error` is always `null` |
 | `useAccount(id)` | `account`, `assets`, `getBalance(faucetId)` | Account details + balances |
 | `useNotes(filter?)` | `notes`, `consumableNotes`, `noteSummaries`, `consumableNoteSummaries` | Input notes + UI summaries |
+| `useNoteConsumability(note, { accountId? })` | `status` (`immediately`, `afterBlock` with `blockHeight`, or `never`), `consumability` | Screen a note, imported or not; an empty screen of tracked accounts is `never`; with none tracked, `status` stays null. Presentation only: claim from `useNotes().consumableNotes` |
 | `useNoteStream(filter?)` | streaming variant of `useNotes` | Auto-updates as notes arrive. Each `StreamedNote` has `standardPayment` (true only for P2ID/P2IDE); check it before treating a note as funds or consuming it |
 | `useSyncState()` | `syncHeight`, `isSyncing`, `lastSyncTime`, `sync()` | Sync status + manual trigger |
 | `useSyncControl()` | `pauseSync()`, `resumeSync()`, `isPaused` | Pause/resume the auto-sync timer |
@@ -741,6 +767,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | `useBatch()` | `batch({ items })` - items are `{ account, request }` pairs | `BatchResult` (with `blockNumber`) |
 | `useMint()` | `mint({ faucetId, to, amount })` | `TransactionResult` |
 | `useBridge()` | `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress })` | `TransactionResult` (emits an AggLayer B2AGG bridge-out note) |
+| `useWithdrawUsdcx()` | `withdrawUsdcx({ from, faucetId, amount, destinationDomain, destinationRecipient })` | `TransactionResult` (emits a Circle xReserve USDCx burn note) |
 | `useCreateNetworkNote()` | `createNetworkNote({ accountId, target, script \| recipient, ... })` | `NetworkNoteResult` (`{ txId, note }`; note satisfies `note.isNetworkNote()`) |
 | `useConsume()` | `consume({ accountId, notes })` | `TransactionResult`. Runs each note script; a P2ID or P2IDE payment moves assets in, other scripts can move assets out; check `isStandardPayment(record)` first |
 | `useSwap()` | `swap({ ... })` | `TransactionResult` |
@@ -902,5 +929,5 @@ import type {
 | "Client not ready" | Wrap component in `MidenProvider`, check `useMiden().isReady` |
 | Transaction stuck | Check `stage` value, network connectivity, prover availability |
 | Notes not appearing | Call `sync()` manually, check `autoSyncInterval` config |
-| Bech32 address wrong or shown as hex | Verify `rpcUrl` names the intended network; a custom endpoint renders hex |
+| Bech32 address wrong or shown as hex | Verify `rpcUrl` names the intended network, or set `config.network`; a custom endpoint is mainnet unless `network` says otherwise |
 | WASM init fails | Check browser compatibility, ensure WASM served with correct MIME type |

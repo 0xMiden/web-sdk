@@ -9,6 +9,7 @@ import { DEFAULTS } from "../types";
 import { parseAccountId } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
 import { getNoteType } from "../utils/noteFilters";
+import { toAmount } from "../utils/amounts";
 
 export interface UseMintResult {
   /** Mint tokens from a faucet to a target account */
@@ -86,7 +87,7 @@ export function useMint(): UseMintResult {
             targetAccountIdObj,
             faucetIdObj,
             noteType,
-            BigInt(options.amount)
+            toAmount(options.amount, "mint")
           );
 
           const txId = prover

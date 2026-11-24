@@ -27,6 +27,7 @@ vi.mock("../wasm.js", () => ({ default: async () => fakeWasm }));
 
 import { AsyncLock } from "../asyncLock.js";
 import { MidenClient } from "../client.js";
+import { LOCK_WAIT_TIMEOUT_MS, MAX_JOIN_AGE_MS } from "../syncLock.js";
 import {
   WasmWebClient,
   MockWasmWebClient,
@@ -82,7 +83,7 @@ function makeWasmClient(name) {
   };
 }
 
-function makeWebClient(storeName, name, { mock = false } = {}) {
+function makeWebClient(storeName, name, { mock = false, observability } = {}) {
   const instance = mock
     ? new MockWasmWebClient()
     : new WasmWebClient(
@@ -94,7 +95,8 @@ function makeWebClient(storeName, name, { mock = false } = {}) {
         undefined,
         undefined,
         undefined,
-        false
+        false,
+        observability
       );
   const wasmClient = makeWasmClient(name);
   instance.wasmWebClient = wasmClient;
@@ -1255,6 +1257,46 @@ describe("store lock across WebClient instances (Web Locks)", () => {
     ]);
   });
 
+  it("queues an outside call made while an _withInnerWebClient callback awaits", async () => {
+    const a = makeWebClient(uniqueStore(), "A");
+    const midenA = new MidenClient(a.client, async () => fakeWasm, null);
+
+    const gate = deferred();
+    const hatch = midenA._withInnerWebClient(async (inner) => {
+      await inner.getAccounts("in");
+      await gate.promise;
+      return "hatch";
+    });
+    await release("A.getAccounts in");
+    const outside = a.client.getAccounts("out");
+    await flush();
+    expect(events).toEqual(["start A.getAccounts in", "end A.getAccounts in"]);
+
+    gate.resolve();
+    await expect(hatch).resolves.toBe("hatch");
+    await release("A.getAccounts out");
+    await expect(outside).resolves.toBe("A.getAccounts out");
+  });
+
+  it("queues a call made through the handle after its callback settled", async () => {
+    const a = makeWebClient(uniqueStore(), "A");
+    const midenA = new MidenClient(a.client, async () => fakeWasm, null);
+
+    let kept;
+    await midenA._withInnerWebClient(async (inner) => {
+      kept = inner;
+    });
+    const running = deferred();
+    a.instance._serializeWasmCall(() => running.promise);
+    const late = kept.getAccounts("late");
+    await flush();
+    expect(events).toEqual([]);
+
+    running.resolve();
+    await release("A.getAccounts late");
+    await expect(late).resolves.toBe("A.getAccounts late");
+  });
+
   it("runs account creation and an un-awaited transaction made after it in call order", async () => {
     const store = uniqueStore();
     const a = makeWebClient(store, "A");
@@ -1443,5 +1485,256 @@ describe("store lock across WebClient instances (no Web Locks)", () => {
       "start A.importNoteFile f2",
       "end A.importNoteFile f2",
     ]);
+  });
+});
+
+// ── wait bound from the call, without Web Locks ───────────────────────────────
+
+describe("store lock wait bound from the call (no Web Locks)", () => {
+  beforeEach(() => {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {},
+    });
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Fake timers must not call flush, release, or waitForStart. Pump microtasks
+  // until the wasm call has parked.
+  async function pumpUntilParked(label) {
+    for (let i = 0; i < 20 && !parked.has(label); i++) {
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(parked.has(label)).toBe(true);
+  }
+
+  // Attach before time advances, so a rejection is observed as its message
+  // and a promise that never settles stays "pending".
+  function track(promise) {
+    let state = "pending";
+    promise.then(
+      () => {
+        state = "resolved";
+      },
+      (error) => {
+        state = error.message;
+      }
+    );
+    return () => state;
+  }
+
+  it("rejects another client's sync waiting on a parked sync, and leaves the holder", async () => {
+    const store = uniqueStore();
+    const a = makeWebClient(store, "A");
+    const b = makeWebClient(store, "B");
+
+    const held = track(a.client.syncState());
+    await pumpUntilParked("A.syncState");
+    const waiting = track(b.client.syncState());
+    await vi.advanceTimersByTimeAsync(LOCK_WAIT_TIMEOUT_MS);
+
+    expect(waiting()).toMatch(/sync lock/i);
+    expect(b.wasmClient.syncStateImpl).not.toHaveBeenCalled();
+    expect(held()).toBe("pending");
+    expect(parked.has("A.syncState")).toBe(true);
+    expect(a.wasmClient.syncStateImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an import queued behind a call on its client, and the import never runs", async () => {
+    const store = uniqueStore();
+    const a = makeWebClient(store, "A");
+
+    const executed = a.client.executeTransaction("acc", "request");
+    await pumpUntilParked("A.executeTransaction acc");
+    const imported = track(a.client.importNoteFile("f1"));
+    await vi.advanceTimersByTimeAsync(LOCK_WAIT_TIMEOUT_MS);
+
+    expect(imported()).toMatch(/sync lock/i);
+    expect(a.wasmClient.importNoteFile).not.toHaveBeenCalled();
+
+    const resolveTx = parked.get("A.executeTransaction acc");
+    parked.delete("A.executeTransaction acc");
+    resolveTx();
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(executed).resolves.toBe("A.executeTransaction acc");
+    expect(a.wasmClient.importNoteFile).not.toHaveBeenCalled();
+  });
+
+  it("rejects a sync started after the join window while a joiner, a read and a creation stay pending", async () => {
+    const store = uniqueStore();
+    const a = makeWebClient(store, "A");
+
+    const held = track(a.client.syncState());
+    await pumpUntilParked("A.syncState");
+    const joiner = track(a.client.syncState());
+    const accounts = track(a.client.getAccounts());
+    const wallet = track(a.client.newWallet());
+    await vi.advanceTimersByTimeAsync(MAX_JOIN_AGE_MS + 1);
+    const again = track(a.client.syncState());
+    await vi.advanceTimersByTimeAsync(LOCK_WAIT_TIMEOUT_MS);
+
+    expect(again()).toMatch(/sync lock/i);
+    expect(joiner()).toBe("pending");
+    expect(accounts()).toBe("pending");
+    expect(wallet()).toBe("pending");
+    expect(held()).toBe("pending");
+    expect(a.wasmClient.syncStateImpl).toHaveBeenCalledTimes(1);
+  });
+
+  // The observer is registered after the holder parks, so only the waiting
+  // call is observed. `seen.length` is read inside that call's reaction.
+  function deadlineReaction(promise, seen) {
+    let atReject;
+    let message;
+    const settled = promise.then(
+      () => {
+        atReject = seen.length;
+      },
+      (error) => {
+        atReject = seen.length;
+        message = error.message;
+      }
+    );
+    return {
+      settled,
+      atReject: () => atReject,
+      message: () => message,
+    };
+  }
+
+  function releaseParked(label) {
+    const resolveParked = parked.get(label);
+    parked.delete(label);
+    resolveParked();
+  }
+
+  // The skipped turn is queued behind the holder's promise, so one zero-delay
+  // tick is not always the turn itself.
+  async function drainChain() {
+    for (let i = 0; i < 20; i++) {
+      await vi.advanceTimersByTimeAsync(0);
+    }
+  }
+
+  it.each([
+    {
+      name: "importNoteFile",
+      call: (client) => client.importNoteFile("f1"),
+    },
+    {
+      name: "fetchPrivateNotes",
+      call: (client) => client.fetchPrivateNotes(),
+    },
+  ])(
+    "observes $name, queued behind a parked call, once when the deadline rejects it, with durationMs 0",
+    async ({ name, call }) => {
+      const store = uniqueStore();
+      const a = makeWebClient(store, "A");
+
+      const executed = a.client.executeTransaction("acc", "request");
+      await pumpUntilParked("A.executeTransaction acc");
+      const seen = [];
+      setObserver((observation) => seen.push(observation));
+      const waiting = deadlineReaction(call(a.client), seen);
+      await vi.advanceTimersByTimeAsync(LOCK_WAIT_TIMEOUT_MS);
+      await waiting.settled;
+
+      expect(waiting.message()).toMatch(/sync lock/i);
+      expect(waiting.atReject()).toBe(1);
+      expect(seen).toEqual([{ op: name, outcome: "error", durationMs: 0 }]);
+
+      releaseParked("A.executeTransaction acc");
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(executed).resolves.toBe("A.executeTransaction acc");
+      await drainChain();
+      expect(seen).toHaveLength(1);
+      expect(a.wasmClient[name]).not.toHaveBeenCalled();
+    }
+  );
+
+  it("observes an import that times out before its turn with the sync-lock error when observeSensitive is on", async () => {
+    const store = uniqueStore();
+    const a = makeWebClient(store, "A", {
+      observability: { observeSensitive: true },
+    });
+
+    const executed = a.client.executeTransaction("acc", "request");
+    await pumpUntilParked("A.executeTransaction acc");
+    const seen = [];
+    setObserver((observation) => seen.push(observation));
+    const waiting = deadlineReaction(a.client.importNoteFile("f1"), seen);
+    await vi.advanceTimersByTimeAsync(LOCK_WAIT_TIMEOUT_MS);
+    await waiting.settled;
+
+    expect(waiting.atReject()).toBe(1);
+    expect(seen[0].op).toBe("importNoteFile");
+    expect(seen[0].outcome).toBe("error");
+    expect(seen[0].durationMs).toBe(0);
+    expect(seen[0].sensitive.errorMessage).toMatch(/sync lock/i);
+    expect(typeof seen[0].sensitive.errorStack).toBe("string");
+
+    releaseParked("A.executeTransaction acc");
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(executed).resolves.toBe("A.executeTransaction acc");
+    await drainChain();
+    expect(seen).toHaveLength(1);
+    expect(a.wasmClient.importNoteFile).not.toHaveBeenCalled();
+  });
+
+  it.each(["syncState", "syncChain", "syncNoteTransport"])(
+    "observes a %s started after the join window once, when it rejects, and the pending joiner adds none",
+    async (method) => {
+      const store = uniqueStore();
+      const a = makeWebClient(store, "A");
+
+      const held = a.client[method]();
+      await pumpUntilParked(`A.${method}`);
+      const seen = [];
+      setObserver((observation) => seen.push(observation));
+      const joiner = track(a.client[method]());
+      await vi.advanceTimersByTimeAsync(MAX_JOIN_AGE_MS + 1);
+      const again = deadlineReaction(a.client[method](), seen);
+      await vi.advanceTimersByTimeAsync(LOCK_WAIT_TIMEOUT_MS);
+      await again.settled;
+
+      expect(again.message()).toMatch(/sync lock/i);
+      expect(again.atReject()).toBe(1);
+      expect(joiner()).toBe("pending");
+      expect(seen).toEqual([{ op: method, outcome: "error", durationMs: 0 }]);
+
+      releaseParked(`A.${method}`);
+      await vi.advanceTimersByTimeAsync(0);
+      await held;
+      await drainChain();
+      expect(seen).toHaveLength(1);
+      expect(a.wasmClient[`${method}Impl`]).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it("does not observe a mock syncState that times out queued behind a parked mock call", async () => {
+    const a = makeWebClient(undefined, "A", { mock: true });
+
+    const executed = a.client.executeTransaction("acc", "request");
+    await pumpUntilParked("A.executeTransaction acc");
+    const seen = [];
+    setObserver((observation) => seen.push(observation));
+    const waiting = deadlineReaction(a.client.syncState(), seen);
+    await vi.advanceTimersByTimeAsync(LOCK_WAIT_TIMEOUT_MS);
+    await waiting.settled;
+
+    expect(waiting.message()).toMatch(/sync lock/i);
+    expect(waiting.atReject()).toBe(0);
+    expect(seen).toEqual([]);
+
+    releaseParked("A.executeTransaction acc");
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(executed).resolves.toBe("A.executeTransaction acc");
+    await drainChain();
+    expect(seen).toEqual([]);
+    expect(a.wasmClient.syncStateImpl).not.toHaveBeenCalled();
   });
 });

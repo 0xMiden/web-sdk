@@ -2,6 +2,8 @@ use alloc::collections::BTreeMap;
 use core::num::NonZeroU32;
 
 use js_export_macro::js_export;
+#[cfg(feature = "browser")]
+use js_sys::Reflect;
 use miden_client::account::standards::auth::{FeeConversionInfo, MultisigAuthArgs};
 use miden_client::account::{AccountComponentInterfaceExt, AccountId as NativeAccountId};
 use miden_client::agglayer::B2AggNote;
@@ -11,6 +13,7 @@ use miden_client::note::{
     BlockNumber,
     Note as NativeNote,
     NoteAssets as NativeNoteAssets,
+    NoteScript as NativeNoteScript,
     PswapNote,
 };
 #[cfg(feature = "testing")]
@@ -27,7 +30,10 @@ use miden_client::transaction::{
     TransactionRequest as NativeTransactionRequest,
     TransactionRequestBuilder as NativeTransactionRequestBuilder,
 };
+use miden_client::usdcx::note::xreserve_burn::XReserveBurnNote;
 use miden_client::{Client, ClientError, Word as NativeWord};
+#[cfg(feature = "browser")]
+use wasm_bindgen::JsValue;
 
 use crate::models::NoteType;
 use crate::models::account_id::AccountId;
@@ -37,8 +43,9 @@ use crate::models::chain_anchor::ChainAnchor;
 use crate::models::eth_address::EthAddress;
 use crate::models::felt::Felt;
 use crate::models::foreign_account::ForeignAccount;
-use crate::models::miden_arrays::{FeltArray, ForeignAccountArray};
-use crate::models::note::Note;
+use crate::models::miden_arrays::{FeltArray, ForeignAccountArray, NoteScriptArray};
+use crate::models::note::{Note, xreserve_burn_items};
+use crate::models::note_script::NoteScript;
 use crate::models::proven_transaction::ProvenTransaction;
 use crate::models::provers::TransactionProver;
 use crate::models::transaction_id::TransactionId;
@@ -56,7 +63,7 @@ use crate::platform::{
     js_u64_to_u64,
     maybe_wrap_send,
 };
-use crate::{WebClient, js_error_with_context};
+use crate::{WebClient, js_error_with_context, js_post_submit_error};
 
 #[js_export]
 impl WebClient {
@@ -68,7 +75,7 @@ impl WebClient {
         note_type: NoteType,
         amount: JsU64,
     ) -> Result<TransactionRequest, JsErr> {
-        let amount = js_u64_to_u64(amount);
+        let amount = js_u64_to_u64(amount)?;
         let fungible_asset = FungibleAsset::new(faucet_id.into(), amount)
             .map_err(|err| js_error_with_context(err, "failed to create fungible asset"))?;
 
@@ -113,7 +120,7 @@ impl WebClient {
             from_str_err("Client not initialized while generating transaction request")
         })?;
 
-        let amount = js_u64_to_u64(amount);
+        let amount = js_u64_to_u64(amount)?;
         let fungible_asset = FungibleAsset::new(faucet_id.into(), amount)
             .map_err(|err| js_error_with_context(err, "failed to create fungible asset"))?;
 
@@ -166,7 +173,7 @@ impl WebClient {
             from_str_err("Client not initialized while generating transaction request")
         })?;
 
-        let amount = js_u64_to_u64(amount);
+        let amount = js_u64_to_u64(amount)?;
         let fungible_asset = FungibleAsset::new(faucet_id.into(), amount)
             .map_err(|err| js_error_with_context(err, "failed to create fungible asset"))?;
         let note_assets = NativeNoteAssets::new(vec![fungible_asset.into()])
@@ -191,6 +198,76 @@ impl WebClient {
         Ok(b2agg_transaction_request.into())
     }
 
+    /// Builds a transaction request that withdraws `USDCx` through Circle xReserve.
+    ///
+    /// The request emits a single public xReserve burn note holding `amount` units of the
+    /// `faucet_id` asset. The faucet consumes and burns it, and Circle releases USDC to
+    /// `destination_recipient` (32 bytes) on `destination_domain`.
+    #[js_export(js_name = "newXReserveBurnTransactionRequest")]
+    pub async fn new_xreserve_burn_transaction_request(
+        &self,
+        sender_account_id: &AccountId,
+        faucet_id: &AccountId,
+        amount: JsU64,
+        destination_domain: u32,
+        destination_recipient: Vec<u8>,
+    ) -> Result<TransactionRequest, JsErr> {
+        let items = xreserve_burn_items(destination_domain, destination_recipient)?;
+        let amount = AssetAmount::new(js_u64_to_u64(amount)?)
+            .map_err(|err| js_error_with_context(err, "failed to create burn amount"))?;
+
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| {
+            from_str_err("Client not initialized while generating transaction request")
+        })?;
+
+        let burn_note = XReserveBurnNote::create(
+            sender_account_id.into(),
+            faucet_id.into(),
+            amount,
+            items,
+            client.rng(),
+        )
+        .map_err(|err| js_error_with_context(err, "failed to create xreserve burn note"))?;
+
+        let builder = fee_aware_builder(client, sender_account_id.into()).await?;
+        let request = builder.own_output_notes(vec![burn_note]).build().map_err(|err| {
+            js_error_with_context(err, "failed to create xreserve burn transaction request")
+        })?;
+
+        Ok(request.into())
+    }
+
+    /// Builds a transaction request that registers custom note scripts in the node's script
+    /// registry, so a network account can later run them.
+    ///
+    /// The request emits one public note per script, with no assets and no storage. Submit it from
+    /// `sender_account_id` before the network transaction that needs the scripts: the submit
+    /// methods never register the scripts a request declares through `withExpectedNtxScripts`.
+    #[js_export(js_name = "newRegisterNoteScriptsTransactionRequest")]
+    pub async fn new_register_note_scripts_transaction_request(
+        &self,
+        sender_account_id: &AccountId,
+        scripts: NoteScriptArray,
+    ) -> Result<TransactionRequest, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| {
+            from_str_err("Client not initialized while generating transaction request")
+        })?;
+
+        let items: Vec<NoteScript> = scripts.into();
+        let native_scripts: Vec<NativeNoteScript> = items.into_iter().map(Into::into).collect();
+
+        let builder = fee_aware_builder(client, sender_account_id.into()).await?;
+        let request = builder
+            .build_register_note_scripts(sender_account_id.into(), native_scripts, client.rng())
+            .map_err(|err| {
+                js_error_with_context(err, "failed to create register note scripts request")
+            })?;
+
+        Ok(request.into())
+    }
+
     #[js_export(js_name = "newSwapTransactionRequest")]
     #[allow(clippy::too_many_arguments)]
     pub async fn new_swap_transaction_request(
@@ -203,7 +280,7 @@ impl WebClient {
         note_type: NoteType,
         payback_note_type: NoteType,
     ) -> Result<TransactionRequest, JsErr> {
-        let offered_asset_amount = js_u64_to_u64(offered_asset_amount);
+        let offered_asset_amount = js_u64_to_u64(offered_asset_amount)?;
         let offered_fungible_asset =
             FungibleAsset::new(offered_asset_faucet_id.into(), offered_asset_amount)
                 .map_err(|err| {
@@ -211,7 +288,7 @@ impl WebClient {
                 })?
                 .into();
 
-        let requested_asset_amount = js_u64_to_u64(requested_asset_amount);
+        let requested_asset_amount = js_u64_to_u64(requested_asset_amount)?;
         let requested_fungible_asset =
             FungibleAsset::new(requested_asset_faucet_id.into(), requested_asset_amount)
                 .map_err(|err| {
@@ -259,13 +336,13 @@ impl WebClient {
         note_type: NoteType,
         payback_note_type: NoteType,
     ) -> Result<TransactionRequest, JsErr> {
-        let offered_asset_amount = js_u64_to_u64(offered_asset_amount);
+        let offered_asset_amount = js_u64_to_u64(offered_asset_amount)?;
         let offered_fungible_asset =
             FungibleAsset::new(offered_asset_faucet_id.into(), offered_asset_amount).map_err(
                 |err| js_error_with_context(err, "failed to create offered fungible asset"),
             )?;
 
-        let requested_asset_amount = js_u64_to_u64(requested_asset_amount);
+        let requested_asset_amount = js_u64_to_u64(requested_asset_amount)?;
         let requested_fungible_asset =
             FungibleAsset::new(requested_asset_faucet_id.into(), requested_asset_amount).map_err(
                 |err| js_error_with_context(err, "failed to create requested fungible asset"),
@@ -321,9 +398,9 @@ impl WebClient {
         let pswap = PswapNote::try_from(&native_pswap_note)
             .map_err(|err| js_error_with_context(err, "invalid PSWAP note"))?;
 
-        let account_fill_amount = AssetAmount::new(js_u64_to_u64(account_fill_amount))
+        let account_fill_amount = AssetAmount::new(js_u64_to_u64(account_fill_amount)?)
             .map_err(|err| js_error_with_context(err, "invalid account fill amount"))?;
-        let note_fill_amount = AssetAmount::new(js_u64_to_u64(note_fill_amount))
+        let note_fill_amount = AssetAmount::new(js_u64_to_u64(note_fill_amount)?)
             .map_err(|err| js_error_with_context(err, "invalid note fill amount"))?;
 
         // miden-client 0.16 treats an overfill as a full fill. Keep the web client's existing
@@ -396,7 +473,9 @@ impl WebClient {
     /// Executes a transaction specified by the request against the specified account,
     /// proves it, submits it to the network, and updates the local database.
     ///
-    /// Uses the prover configured for this client.
+    /// Uses the prover configured for this client. It submits exactly this request: scripts the
+    /// request declares through `withExpectedNtxScripts` are not registered here, so submit
+    /// `newRegisterNoteScriptsTransactionRequest` first.
     ///
     /// If the transaction utilizes foreign account data, there is a chance that the client doesn't
     /// have the required block header in the local database. In these scenarios, a sync to
@@ -422,6 +501,9 @@ impl WebClient {
 
     /// Executes a transaction specified by the request against the specified account, proves it
     /// with the user provided prover, submits it to the network, and updates the local database.
+    /// It submits exactly this request: scripts the request declares through
+    /// `withExpectedNtxScripts` are not registered here, so submit
+    /// `newRegisterNoteScriptsTransactionRequest` first.
     ///
     /// If the transaction utilizes foreign account data, there is a chance that the client doesn't
     /// have the required block header in the local database. In these scenarios, a sync to the
@@ -452,6 +534,9 @@ impl WebClient {
     /// the per-tx updates to the local store. Returns the node's chain tip as of submission, not
     /// the block the batch commits in, which only a later sync reveals.
     ///
+    /// Like the single submit, it registers no script a request declares through
+    /// `withExpectedNtxScripts`.
+    ///
     /// Every proof is produced inside the batch primitive by the client's built-in local prover.
     /// Unlike `submitNewTransactionWithProver`, this takes no prover, so a JS-side `proverUrl` or
     /// React `prover` setting does not apply to batches.
@@ -469,6 +554,15 @@ impl WebClient {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
 
+        // `BatchBuilder` borrows `client` until `submit`, so retained callback
+        // detail is read from this keystore handle.
+        #[cfg(feature = "browser")]
+        let keystore = client.authenticator().cloned();
+        #[cfg(feature = "browser")]
+        if let Some(keystore) = keystore.as_ref() {
+            keystore.clear_auth_error();
+        }
+
         let mut builder = client.new_transaction_batch();
 
         for item in &items {
@@ -476,13 +570,30 @@ impl WebClient {
             let native_req: NativeTransactionRequest = item.request().into();
             maybe_wrap_send(Box::pin(builder.push(native_account_id, native_req)))
                 .await
-                .map_err(|err| js_error_with_context(err, "failed to push transaction to batch"))?;
+                .map_err(|err| {
+                    let js_error =
+                        js_error_with_context(err, "failed to push transaction to batch");
+                    #[cfg(feature = "browser")]
+                    append_get_key_detail(
+                        &js_error,
+                        keystore.as_ref().and_then(|keystore| keystore.last_get_key_error()),
+                    );
+                    js_error
+                })?;
         }
 
         maybe_wrap_send(Box::pin(builder.submit()))
             .await
             .map(|block_number| block_number.as_u32())
-            .map_err(|err| js_error_with_context(err, "failed to submit transaction batch"))
+            .map_err(|err| {
+                let js_error = js_error_with_context(err, "failed to submit transaction batch");
+                #[cfg(feature = "browser")]
+                append_get_key_detail(
+                    &js_error,
+                    keystore.as_ref().and_then(|keystore| keystore.last_get_key_error()),
+                );
+                js_error
+            })
     }
 
     /// Executes a transaction specified by the request against the specified account but does not
@@ -500,12 +611,22 @@ impl WebClient {
     ) -> Result<TransactionResult, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        #[cfg(feature = "browser")]
+        if let Some(keystore) = client.authenticator() {
+            keystore.clear_auth_error();
+        }
         let native_request: NativeTransactionRequest = transaction_request.into();
         let fut = Box::pin(client.execute_transaction(account_id.into(), native_request));
-        maybe_wrap_send(fut)
-            .await
-            .map(TransactionResult::from)
-            .map_err(|err| js_error_with_context(err, "failed to execute transaction"))
+        let result = maybe_wrap_send(fut).await;
+        result.map(TransactionResult::from).map_err(|err| {
+            let js_error = js_error_with_context(err, "failed to execute transaction");
+            #[cfg(feature = "browser")]
+            append_get_key_detail(
+                &js_error,
+                client.authenticator().and_then(|keystore| keystore.last_get_key_error()),
+            );
+            js_error
+        })
     }
 
     /// Captures a [`ChainAnchor`] at the client's current sync height, tracking the blocks the
@@ -571,16 +692,25 @@ impl WebClient {
     ) -> Result<TransactionResult, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        #[cfg(feature = "browser")]
+        if let Some(keystore) = client.authenticator() {
+            keystore.clear_auth_error();
+        }
         let native_request: NativeTransactionRequest = transaction_request.into();
         let fut = Box::pin(client.execute_transaction_at(
             account_id.into(),
             native_request,
             anchor.into(),
         ));
-        maybe_wrap_send(fut)
-            .await
-            .map(TransactionResult::from)
-            .map_err(|err| map_anchor_err(err, "failed to execute transaction at anchor"))
+        maybe_wrap_send(fut).await.map(TransactionResult::from).map_err(|err| {
+            let js_error = map_anchor_err(err, "failed to execute transaction at anchor");
+            #[cfg(feature = "browser")]
+            append_get_key_detail(
+                &js_error,
+                client.authenticator().and_then(|keystore| keystore.last_get_key_error()),
+            );
+            js_error
+        })
     }
 
     /// Executes a transaction at `anchor` and returns the `TransactionSummary` the account is
@@ -607,6 +737,12 @@ impl WebClient {
     ) -> Result<TransactionSummary, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        #[cfg(feature = "browser")]
+        let keystore = client.authenticator().cloned();
+        #[cfg(feature = "browser")]
+        if let Some(keystore) = keystore.as_ref() {
+            keystore.clear_auth_error();
+        }
 
         let native_request: NativeTransactionRequest = transaction_request.into();
         let fut = Box::pin(client.execute_transaction_at(
@@ -624,7 +760,15 @@ impl WebClient {
             Err(ClientError::TransactionExecutorError(TransactionExecutorError::Unauthorized(
                 summary,
             ))) => Ok(TransactionSummary::from(*summary)),
-            Err(err) => Err(map_anchor_err(err, "failed to execute transaction at anchor")),
+            Err(err) => {
+                let js_error = map_anchor_err(err, "failed to execute transaction at anchor");
+                #[cfg(feature = "browser")]
+                append_get_key_detail(
+                    &js_error,
+                    keystore.as_ref().and_then(|keystore| keystore.last_get_key_error()),
+                );
+                Err(js_error)
+            },
         }
     }
 
@@ -657,6 +801,12 @@ impl WebClient {
     ) -> Result<TransactionSummary, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        #[cfg(feature = "browser")]
+        let keystore = client.authenticator().cloned();
+        #[cfg(feature = "browser")]
+        if let Some(keystore) = keystore.as_ref() {
+            keystore.clear_auth_error();
+        }
 
         let native_request: NativeTransactionRequest = transaction_request.into();
         let fut = Box::pin(client.execute_transaction(account_id.into(), native_request));
@@ -669,7 +819,15 @@ impl WebClient {
             Err(ClientError::TransactionExecutorError(TransactionExecutorError::Unauthorized(
                 summary,
             ))) => Ok(TransactionSummary::from(*summary)),
-            Err(err) => Err(js_error_with_context(err, "failed to execute transaction")),
+            Err(err) => {
+                let js_error = js_error_with_context(err, "failed to execute transaction");
+                #[cfg(feature = "browser")]
+                append_get_key_detail(
+                    &js_error,
+                    keystore.as_ref().and_then(|keystore| keystore.last_get_key_error()),
+                );
+                Err(js_error)
+            },
         }
     }
 
@@ -787,14 +945,14 @@ impl WebClient {
         let update = maybe_wrap_send(fut)
             .await
             .map(TransactionStoreUpdate::from)
-            .map_err(|err| js_error_with_context(err, "failed to build transaction update"))?;
+            .map_err(|err| js_post_submit_error(err, "failed to build transaction update"))?;
 
         // High-level apply fires registered observers (e.g. PSWAP tracking);
         // the low-level `apply_transaction_update` would persist without them.
         let fut = Box::pin(client.apply_transaction(transaction_result.native(), height));
         maybe_wrap_send(fut)
             .await
-            .map_err(|err| js_error_with_context(err, "failed to apply transaction result"))?;
+            .map_err(|err| js_post_submit_error(err, "failed to apply transaction result"))?;
 
         Ok(update)
     }
@@ -968,6 +1126,25 @@ impl WebClient {
         };
         let auth_args = multisig_auth_args(client, overrides).await?;
         Ok(native_request.with_auth_args(&auth_args).into())
+    }
+}
+
+/// Appends retained getKey callback detail to a transaction error message.
+///
+/// Native error codes and other properties stay as the caller built them. Detail already present
+/// in the message is not appended again.
+#[cfg(feature = "browser")]
+fn append_get_key_detail(js_error: &JsErr, callback_error: Option<String>) {
+    let Some(callback_error) = callback_error else {
+        return;
+    };
+    let message_key = JsValue::from_str("message");
+    if let Ok(message) = Reflect::get(js_error, &message_key)
+        && let Some(message) = message.as_string()
+        && !message.contains(&callback_error)
+    {
+        let combined = format!("{message}: {callback_error}");
+        let _ = Reflect::set(js_error, &message_key, &JsValue::from_str(&combined));
     }
 }
 

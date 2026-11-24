@@ -223,3 +223,5 @@ impl From<&NoteScript> for NativeNoteScript {
         note_script.0.clone()
     }
 }
+
+impl_napi_from_value!(NoteScript);

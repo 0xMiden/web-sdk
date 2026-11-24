@@ -891,6 +891,83 @@ export class MidenDatabase {
           .delete([SETTING_SCOPE_CLIENT, RPC_LIMITS_SETTING_KEY])
       );
 
+    // v10 (#525): prune note-source tags whose notes are no longer inclusion-pending.
+    // Sync used to delete note-source tags only for committed input notes, so a
+    // note that went expected -> consumed during catch-up (common for fast-filled
+    // PSWAP orders) left its tag row forever and the account kept tracking the
+    // shared pair tag. sqlite-store already deletes once `!is_inclusion_pending`.
+    // This upgrade cleans already-leaked rows; sync now matches that rule going
+    // forward. Keep a tag while an Expected (0) or Unverified (1) input note
+    // still needs it; leave account/subscription sourced tags alone.
+    this.dexie
+      .version(10)
+      .stores({})
+      .upgrade(async (tx) => {
+        const pendingInputNoteCommitments = new Set<string>(
+          await tx.inputNotes
+            .where("stateDiscriminant")
+            .anyOf([0, 1])
+            .primaryKeys()
+        );
+        await tx.tags
+          .filter(
+            (tag) =>
+              !!tag.sourceNoteId &&
+              !pendingInputNoteCommitments.has(tag.sourceNoteId)
+          )
+          .delete();
+      });
+
+    // v11 (#267): index-only, so Dexie builds it without an upgrade hook. Serves the
+    // key-only unspent-nullifier read; a row without a nullifier is left out of the index.
+    this.dexie.version(11).stores({
+      [Table.InputNotes]: indexes(
+        "detailsCommitment",
+        "noteId",
+        "nullifier",
+        "scriptRoot",
+        "stateDiscriminant",
+        "[consumedBlockHeight+consumedTxOrder+detailsCommitment]",
+        "[stateDiscriminant+nullifier]"
+      ),
+    });
+
+    // v12 (#267): index-only, so Dexie builds them without an upgrade hook. The consumer-first
+    // consumption index replaces the v11 one, which no read uses any more (a note with no
+    // consumer is left out of it). `codeRoot` lets account-history pruning ask whether a root is
+    // still referenced instead of scanning three tables; `[tag+sourceNoteId+sourceAccountId]`
+    // serves the exact tag lookup.
+    this.dexie.version(12).stores({
+      [Table.InputNotes]: indexes(
+        "detailsCommitment",
+        "noteId",
+        "nullifier",
+        "scriptRoot",
+        "stateDiscriminant",
+        "[consumerAccountId+consumedBlockHeight+consumedTxOrder+detailsCommitment]",
+        "[stateDiscriminant+nullifier]"
+      ),
+      [Table.LatestAccountHeaders]: indexes(
+        "&id",
+        "accountCommitment",
+        "codeRoot"
+      ),
+      [Table.HistoricalAccountHeaders]: indexes(
+        "&accountCommitment",
+        "id",
+        "[id+replacedAtNonce]",
+        "codeRoot"
+      ),
+      [Table.ForeignAccountCode]: indexes("accountId", "codeRoot"),
+      [Table.Tags]: indexes(
+        "id++",
+        "tag",
+        "sourceNoteId",
+        "sourceAccountId",
+        "[tag+sourceNoteId+sourceAccountId]"
+      ),
+    });
+
     this.accountCodes = this.dexie.table<IAccountCode, string>(
       Table.AccountCode
     );

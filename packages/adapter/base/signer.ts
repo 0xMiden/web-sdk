@@ -8,6 +8,7 @@ import {
 } from "./transaction";
 import {
   Asset,
+  StorageReadRequest,
   CreateAccountParams,
   GuardianInfo,
   InputNoteDetails,
@@ -67,6 +68,10 @@ export interface MessageSignerWalletAdapterProps<
   requestSend(transaction: MidenSendTransaction): Promise<string>;
   requestConsume(transaction: MidenConsumeTransaction): Promise<string>;
   createAccount(params?: CreateAccountParams): Promise<string>;
+  /** True when the wallet exposes storage reads and the grant covers them. */
+  readonly supportsStorageReads?: boolean;
+  /** Rejects with `WalletStorageUnsupportedError` when the wallet lacks it. */
+  requestStorage?(request: StorageReadRequest): Promise<string>;
 }
 
 export type MessageSignerWalletAdapter<Name extends string = string> =

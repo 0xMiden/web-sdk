@@ -9,7 +9,7 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { wrapClient, normalizeArg } from "./napi-compat.js";
-import { validateNoteTransportRetryOptions } from "../utils.js";
+import { claimStore, validateNoteTransportRetryOptions } from "../utils.js";
 
 let _counter = 0;
 
@@ -20,6 +20,26 @@ function createTempDir(label) {
   );
   fs.mkdirSync(path.join(dir, "keystore"), { recursive: true });
   return dir;
+}
+
+// One identity per SQLite file, so every spelling of its path claims the same
+// store. A parent that does not exist yet keeps its resolved spelling.
+function canonicalPath(file) {
+  // `..` after a symlink means the link target's parent: only a relative path
+  // is made absolute first, and the native realpath, unlike the JS one, does
+  // not collapse `..` lexically.
+  const absolute = path.isAbsolute(file) ? file : path.resolve(file);
+  for (const [dir, name] of [
+    [absolute, ""],
+    [path.dirname(absolute), path.basename(absolute)],
+  ]) {
+    try {
+      return path.join(fs.realpathSync.native(dir), name);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  return path.resolve(absolute);
 }
 
 /**
@@ -41,7 +61,7 @@ function normBytes(val) {
  * Creates the WasmWebClient factory for Node.js.
  *
  * Matches the browser interface:
- *   WasmWebClient.createClient(rpcUrl, noteTransportUrl, seed, storeName, logLevel, useWorker, observability, feeFaucetId, noteTransportMaxRetries, noteTransportRetryIntervalMs)
+ *   WasmWebClient.createClient(rpcUrl, noteTransportUrl, seed, storeName, logLevel, useWorker, observability, feeFaucetId, noteTransportMaxRetries, noteTransportRetryIntervalMs, callbackTimeoutMs, exclusive)
  *   WasmWebClient.createClientWithExternalKeystore(rpcUrl, noteTransportUrl, seed, storeName, getKey, insertKey, sign, logLevel, useWorker, observability, feeFaucetId, noteTransportMaxRetries, noteTransportRetryIntervalMs, callbackTimeoutMs)
  *   WasmWebClient.buildSwapTag(...)
  *
@@ -67,7 +87,9 @@ export function createWasmWebClient(rawSdk, options) {
       browserOptions,
       feeFaucetId,
       noteTransportMaxRetries,
-      noteTransportRetryIntervalMs
+      noteTransportRetryIntervalMs,
+      _callbackTimeoutMs,
+      exclusive = false
     ) => {
       if (browserOptions?.beforeNoteAcquisition !== undefined) {
         throw new TypeError(
@@ -81,24 +103,40 @@ export function createWasmWebClient(rawSdk, options) {
         noteTransportMaxRetries,
         noteTransportRetryIntervalMs
       );
-      const dir = options?.dataDir
-        ? path.join(options.dataDir, storeName || "default")
-        : storeName
-          ? defaultDataDir(storeName)
-          : createTempDir("client");
+      // `storeIdentifier()` is the open store's SQLite path: reopen that file.
+      const dbPath =
+        storeName && path.isAbsolute(storeName) && storeName.endsWith(".db")
+          ? storeName
+          : undefined;
+      const dir = dbPath
+        ? path.dirname(dbPath)
+        : options?.dataDir
+          ? path.resolve(options.dataDir, storeName || "default")
+          : storeName
+            ? defaultDataDir(storeName)
+            : createTempDir("client");
 
-      const client = new rawSdk.WebClient();
-      await client.createClient(
-        rpcUrl ?? null,
-        noteTransportUrl ?? null,
-        normBytes(seed) ?? null,
-        path.join(dir, `${storeName || "store"}.db`),
-        path.join(dir, "keystore"),
-        feeFaucetId ?? null,
-        noteTransportMaxRetries ?? null,
-        noteTransportRetryIntervalMs ?? null
+      const storePath = canonicalPath(
+        dbPath ?? path.join(dir, `${storeName || "store"}.db`)
       );
-      return wrapClient(client, storeName, rawSdk);
+      const releaseStore = claimStore(storePath, exclusive);
+      const client = new rawSdk.WebClient();
+      try {
+        await client.createClient(
+          rpcUrl ?? null,
+          noteTransportUrl ?? null,
+          normBytes(seed) ?? null,
+          storePath,
+          path.join(dir, "keystore"),
+          feeFaucetId ?? null,
+          noteTransportMaxRetries ?? null,
+          noteTransportRetryIntervalMs ?? null
+        );
+      } catch (error) {
+        releaseStore();
+        throw error;
+      }
+      return wrapClient(client, storeName, rawSdk, releaseStore);
     },
 
     createClientWithExternalKeystore: async () => {

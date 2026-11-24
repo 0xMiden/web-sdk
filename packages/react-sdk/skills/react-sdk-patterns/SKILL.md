@@ -33,8 +33,9 @@ import { MidenProvider } from "@miden-sdk/react";
 
 <MidenProvider
   config={{
-    rpcUrl: "testnet",          // "devnet" | "testnet" | "localhost" | "local" | custom URL
-    prover: "testnet",          // "local" | "localhost" | "devnet" | "testnet" | URL
+    rpcUrl: "testnet",          // "mainnet" | "devnet" | "testnet" | "localhost" | "local" | custom URL
+    network: "mainnet",         // optional: "mainnet" | "testnet" | "devnet", address prefix; wins over the rpcUrl inference
+    prover: "testnet",          // "local" | "localhost" | "mainnet" | "devnet" | "testnet" | URL
                                 //   | { url, timeoutMs }
                                 //   | { primary, fallback, disableFallback?, onFallback? }
     autoSyncInterval: 15000,    // ms, set to 0 to disable. Default: 15000
@@ -70,6 +71,7 @@ Keep the `config` object's identity stable: define it outside the component, or 
 
 | Network | rpcUrl | Use When |
 |---------|--------|----------|
+| Mainnet | `"mainnet"` | Production, with real funds |
 | Testnet | `"testnet"` | Recommended for new projects - primary development network |
 | Devnet | `"devnet"` | Early-access testing (may lag feature parity with testnet) |
 | Localhost | `"localhost"` | Local node at `http://localhost:57291` |
@@ -85,6 +87,7 @@ The package exports 37 hooks from `src/hooks/`, plus the context accessors `useM
 | Hook | Kind | Notes |
 |------|------|-------|
 | `useBridge()` | transaction | AggLayer bridge-out. `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress, skipSync? })` |
+| `useWithdrawUsdcx()` | transaction | Circle xReserve USDCx withdrawal. `withdrawUsdcx({ from, faucetId, amount, destinationDomain, destinationRecipient, skipSync? })`; `destinationRecipient` is 0x-prefixed 32-byte hex. No claim hook exists for inbound AggLayer deposits: use `Note.createClaimNote` with `useTransaction` |
 | `useCreateNetworkNote()` | transaction | see "Network Notes" below |
 | `usePswapCreate/Consume/Cancel/CancelByOrder()` | transaction | see "PSWAP" below |
 | `usePswapLineages/LineagesFor/Lineage()` | query | tracked PSWAP lineages |
@@ -149,6 +152,18 @@ const { noteSummaries, consumableNoteSummaries } = useNotes({ sender: "0x..." })
 const { noteSummaries, consumableNoteSummaries } = useNotes({ excludeIds: ["0xnote1", "0xnote2"] });
 ```
 
+### useNoteConsumability(note, options?)
+```tsx
+const { status, consumability, isLoading, error, refetch } = useNoteConsumability(note, { accountId });
+// status - null until screened, then
+//   { kind: "immediately" } | { kind: "afterBlock", blockHeight } | { kind: "never" }
+// An empty screen of tracked accounts is "never"; with no tracked account, status stays null.
+// Re-screens after each sync; keyed on note.id(), so a rebuilt Note object does not re-screen.
+// Presentation only: claim from useNotes().consumableNotes, never from status === "immediately",
+// which also matches another trader's PSWAP order.
+// getNoteConsumabilityStatus(record.noteConsumability(), accountIdHex?) gives the same status for a record.
+```
+
 ### useNoteStream(options?)
 ```tsx
 const { notes, latest, markHandled, markAllHandled, snapshot, isLoading, error } = useNoteStream();
@@ -185,6 +200,10 @@ const meta = assetMetadata.get(faucetId);
 
 Pass an array even for a single asset - the hook calls `.filter` on its argument, so a bare string throws a runtime `TypeError`. Metadata is read from the node the provider's client was created against (`client.endpoint()`), so nothing is fetched until the provider is ready.
 
+Metadata reads started before a client replacement or cache reset are discarded.
+A pending read from the old client does not block the current client's request
+for the same asset.
+
 ### useTransactionHistory(options?)
 ```tsx
 const { records, record, status, isLoading, error, refetch } = useTransactionHistory({ id: txId });
@@ -193,18 +212,32 @@ const { records, record, status, isLoading, error, refetch } = useTransactionHis
 //   id      - string | TransactionId. Populates `record` and `status`.
 //   ids     - Array<string | TransactionId>. `record` and `status` are populated only
 //             when exactly one id was supplied; with several they stay null.
-//   filter  - a raw TransactionFilter. It OVERRIDES id/ids entirely: when `filter`
-//             is set the hook queries with it and applies no local id narrowing.
+//   filter  - () => TransactionFilter (preferred) or a TransactionFilter. It OVERRIDES
+//             id/ids entirely: when `filter` is set the hook queries with it and
+//             applies no local id narrowing.
 //   refreshOnSync - re-fetch after every provider sync. Default: true
 //                   (only `refreshOnSync: false` turns it off).
 ```
+
+Pass `filter` as a factory: `getTransactions` takes its filter by value, so a `TransactionFilter` instance is consumed by the first fetch and the next refetch (after a sync, by default) fails with `null pointer passed to rust`. The factory is called for every fetch. Keep it referentially stable - define it at module scope or wrap it in `useCallback` - because a new `filter` value triggers a refetch:
+
+```tsx
+const uncommitted = () => TransactionFilter.uncommitted();
+
+function PendingTxs() {
+  const { records } = useTransactionHistory({ filter: uncommitted });
+  // ...
+}
+```
+
+`id` / `ids` need no such care: the hook reads each `TransactionId`'s hex once and builds fresh handles for every fetch, so the caller's handles stay usable.
 
 A note on `ids`: the hook uses `TransactionFilter.ids(...)` only when every entry is a real `TransactionId`. A list containing any hex string falls back to `TransactionFilter.all()` plus a local hex comparison, so it fetches everything and filters in JS.
 
 ## Mutation Hooks
 
 Each returns its own action function plus `error` and `reset`. The families differ in their loading/progress fields:
-- **Transaction hooks** (`useSend`, `useMultiSend`, `useBatch`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`, `usePswapCancel`, `usePswapCancelByOrder`, `useTransaction`) expose `isLoading` and `stage` (a `TransactionStage`).
+- **Transaction hooks** (`useSend`, `useMultiSend`, `useBatch`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useWithdrawUsdcx`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`, `usePswapCancel`, `usePswapCancelByOrder`, `useTransaction`) expose `isLoading` and `stage` (a `TransactionStage`).
 - **Account create/import hooks** (`useCreateWallet`, `useCreateFaucet`, `useImportAccount`) expose `isCreating` (or `isImporting` for the latter) and have **no** `stage`.
 - **Everything else names its own busy flag**: `useChainAnchor().isCapturing`, `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting`.
 
@@ -596,7 +629,7 @@ import { WalletAdapterNetwork } from "@miden-sdk/miden-wallet-adapter-base";
 </MultiSignerProvider>
 ```
 
-`MidenFiSignerProvider`'s `network` prop is the **`WalletAdapterNetwork` enum** from `@miden-sdk/miden-wallet-adapter-base` (`Devnet | Testnet | Localnet`), not a raw string. It is a TypeScript string enum, so `network="testnet"` does not type-check even though the member's value is `"testnet"`.
+`MidenFiSignerProvider`'s `network` prop is the **`WalletAdapterNetwork` enum** from `@miden-sdk/miden-wallet-adapter-base` (`Mainnet | Devnet | Testnet | Localnet`), not a raw string. It is a TypeScript string enum, so `network="testnet"` does not type-check even though the member's value is `"testnet"`.
 
 ```tsx
 const { signers, activeSigner, connectSigner, disconnectSigner } = useMultiSigner() ?? {};
@@ -655,7 +688,7 @@ formatAssetAmount(1000000n, 8)       // "0.01"
 parseAssetAmount("0.01", 8)           // 1000000n
 const summary = getNoteSummary(note); // { id, assets, sender } | null
 formatNoteSummary(summary);           // "1.5 TEST from mtst1..."
-toBech32AccountId("0x1234...");       // "mtst1..." on testnet; the hex ID when the network is unknown
+toBech32AccountId("0x1234...");       // "mtst1..." on testnet; "mm1..." when the endpoint names no network
 ```
 
 `getNoteSummary(note, getAssetMetadata?)` takes a `ConsumableNoteRecord | InputNoteRecord` and returns `NoteSummary | null` - **`null`** when the note's id is missing or anything in the read throws, i.e. for a note whose id or metadata is not ready yet. Guard before formatting.
@@ -666,7 +699,7 @@ toBech32AccountId("0x1234...");       // "mtst1..." on testnet; the hex ID when 
 
 `waitForWalletDetection(adapter, timeoutMs = 5000)` resolves once the adapter's `readyState` reaches `"Installed"` and otherwise rejects with `"Wallet extension not detected within <n>ms."` Its `WalletAdapterLike` argument is a duck type (`{ readyState: string; on/off("readyStateChange", cb) }`) with no dependency on any wallet-adapter package, so it works against any adapter and against a plain fake object.
 
-The HRP is inferred from the client's `endpoint()`, the URL of the node it was created against (testnet when no `rpcUrl` is configured): mainnet=`mm`, testnet=`mtst`, devnet=`mdev`, and a local node gets `mdev` too - there is no `miden` HRP. Before the provider has a client, and for an endpoint naming none of those networks, the helpers return the hex ID. See `frontend-pitfalls` FP5 for the trap in that inference.
+The HRP is inferred from the client's `endpoint()`, the URL of the node it was created against (testnet when no `rpcUrl` is configured): mainnet=`mm`, testnet=`mtst`, devnet=`mdev`, and a local node gets `mdev` too - there is no `miden` HRP. An endpoint naming none of those networks, such as a custom mainnet RPC host, is mainnet; `config.network` (`"mainnet" | "testnet" | "devnet"`) overrides the inference. Before the provider has a client, the helpers return the hex ID. See `frontend-pitfalls` FP5 for the trap in that inference.
 
 ## Direct Client Access
 
@@ -681,7 +714,7 @@ await runExclusive(async () => {
 });
 ```
 
-**The built-in hooks route their own client calls through `runExclusive` too.** 22 files under `src/hooks/` pull it out of `useMiden()` and wrap their multi-call work, using the pattern `const runExclusiveSafe = runExclusive ?? runExclusiveDirect;` so they still serialize when no provider-supplied lock is available: `useSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useTransaction`, `usePreview`, `useChainAnchor`, `useCreateWallet`, `useCreateFaucet`, `useExecuteProgram`, `useCreateNetworkNote`, `useMultiSend`, `useWaitForNotes`, the four export/import hooks and all four PSWAP transaction hooks. Use it for your own multi-step sequences for the same reason they do - the client serializes each individual forwarded call, not your group of them (see `frontend-pitfalls` FP2, which also names the raw-bound `SYNC_METHODS` that serialize themselves not at all).
+**The built-in hooks route their own client calls through `runExclusive` too.** 22 files under `src/hooks/` pull it out of `useMiden()` and wrap their multi-call work, using the pattern `const runExclusiveSafe = runExclusive ?? runExclusiveDirect;` so they still serialize when no provider-supplied lock is available: `useSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useWithdrawUsdcx`, `useTransaction`, `usePreview`, `useChainAnchor`, `useCreateWallet`, `useCreateFaucet`, `useExecuteProgram`, `useCreateNetworkNote`, `useMultiSend`, `useWaitForNotes`, the four export/import hooks and all four PSWAP transaction hooks. Use it for your own multi-step sequences for the same reason they do - the client serializes each individual forwarded call, not your group of them (see `frontend-pitfalls` FP2, which also names the raw-bound `SYNC_METHODS` that serialize themselves not at all).
 
 ## Non-Surface: Do Not Invent These
 
@@ -704,7 +737,7 @@ import type {
   AccountsResult, AccountResult, AssetBalance, NotesFilter, NotesResult, NoteSummary,
   SendOptions, SendResult, MultiSendOptions, MultiSendRecipient,
   BatchItemInput, BatchOptions, BatchResult,
-  MintOptions, ConsumeOptions, SwapOptions, BridgeOptions,
+  MintOptions, ConsumeOptions, SwapOptions, BridgeOptions, WithdrawUsdcxOptions,
   CreateNetworkNoteOptions, NetworkNoteResult,
   PswapCreateOptions, PswapConsumeOptions, PswapCancelOptions,
   PswapCancelByOrderOptions, PswapLineagesResult, PswapLineageResult,

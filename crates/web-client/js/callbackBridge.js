@@ -28,7 +28,8 @@ const describeThrown = (thrown) => {
 
 /**
  * Converts whatever a keystore callback threw into a structured-cloneable
- * object that keeps its `name`, `message`, `code`, `reason` and `cause`.
+ * object that keeps its `name`, `message`, `code`, `reason` and up to eight
+ * nested causes.
  *
  * Any value can be thrown, including a bare string, `{ code: 4001 }`, `null`
  * or an `Error` with an empty message, so `message` falls back to a
@@ -43,7 +44,12 @@ export function serializeCallbackError(thrown, callbackType) {
     message: `${callbackType} callback threw an unreadable value`,
   };
 
-  const serialize = (value, seen) => {
+  const serialize = (value, seen, depth = 0) => {
+    if (depth > 8) {
+      return {
+        message: `${callbackType} callback threw a cause nested too deeply`,
+      };
+    }
     if (typeof value !== "object" || value === null) {
       const message =
         typeof value === "string" && value !== ""
@@ -100,7 +106,7 @@ export function serializeCallbackError(thrown, callbackType) {
     }
     if (cause.ok && cause.value !== undefined) {
       try {
-        serialized.cause = serialize(cause.value, seen);
+        serialized.cause = serialize(cause.value, seen, depth + 1);
       } catch {
         serialized.cause = {
           message: `${callbackType} callback threw an unreadable cause`,
@@ -124,7 +130,10 @@ export function serializeCallbackError(thrown, callbackType) {
  * @param {unknown} serialized
  * @returns {Error}
  */
-export function deserializeCallbackError(serialized) {
+export function deserializeCallbackError(serialized, depth = 0) {
+  if (depth > 8) {
+    return new Error("callback failed with a cause nested too deeply");
+  }
   if (
     typeof serialized !== "object" ||
     serialized === null ||
@@ -138,9 +147,24 @@ export function deserializeCallbackError(serialized) {
   if (serialized.code !== undefined) error.code = serialized.code;
   if (serialized.reason !== undefined) error.reason = serialized.reason;
   if (serialized.cause !== undefined) {
-    error.cause = deserializeCallbackError(serialized.cause);
+    error.cause = deserializeCallbackError(serialized.cause, depth + 1);
   }
   return error;
+}
+
+/** Appends readable auth callback detail without serializing unrelated object fields. */
+export function appendAuthError(message, authError) {
+  let detail;
+  try {
+    detail = typeof authError === "string" ? authError : authError?.message;
+  } catch {
+    return message;
+  }
+  return typeof detail === "string" &&
+    detail !== "" &&
+    !message.includes(detail)
+    ? `${message}: ${detail}`
+    : message;
 }
 
 /**

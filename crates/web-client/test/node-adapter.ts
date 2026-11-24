@@ -270,6 +270,7 @@ export async function setupNodeGlobals(
     Account: sdk.Account,
     AccountStorageMode: sdk.AccountStorageMode,
     AuthScheme: sdk.AuthScheme,
+    BurnNote: sdk.BurnNote,
     NoteType: sdk.NoteType,
     TransactionFilter: sdk.TransactionFilter,
     TransactionProver: sdk.TransactionProver,
@@ -291,6 +292,7 @@ export async function setupNodeGlobals(
     createAuthFalcon512RpoMultisig: sdk.createAuthFalcon512RpoMultisig,
     BasicFungibleFaucetComponent: sdk.BasicFungibleFaucetComponent,
     Endpoint: sdk.Endpoint,
+    FeeSponsorshipNote: sdk.FeeSponsorshipNote,
     Felt: sdk.Felt,
     ForeignAccount: sdk.ForeignAccount,
     FungibleAsset: sdk.FungibleAsset,
@@ -309,7 +311,10 @@ export async function setupNodeGlobals(
     NoteStorage: sdk.NoteStorage,
     NoteTag: sdk.NoteTag,
     OutputNote: sdk.OutputNote,
+    P2idNote: sdk.P2idNote,
+    P2ideNote: sdk.P2ideNote,
     Package: sdk.Package,
+    PswapNote: sdk.PswapNote,
     ProcedureThreshold: sdk.ProcedureThreshold,
     PublicKey: sdk.PublicKey,
     Rpo: sdk.Rpo,
@@ -320,6 +325,7 @@ export async function setupNodeGlobals(
     SlotAndKeys: sdk.SlotAndKeys,
     StorageMap: sdk.StorageMap,
     StorageSlot: sdk.StorageSlot,
+    SwapNote: sdk.SwapNote,
     TestUtils: sdk.TestUtils,
     TokenSymbol: sdk.TokenSymbol,
     TransactionRequestBuilder: sdk.TransactionRequestBuilder,
@@ -387,6 +393,8 @@ export async function setupNodeGlobals(
     if (standalone.createP2IDNote) w.createP2IDNote = standalone.createP2IDNote;
     if (standalone.createP2IDENote)
       w.createP2IDENote = standalone.createP2IDENote;
+    if (standalone.createFeeSponsorshipNote)
+      w.createFeeSponsorshipNote = standalone.createFeeSponsorshipNote;
     if (standalone.buildSwapTag) w.buildSwapTag = standalone.buildSwapTag;
   } catch (e) {
     // If import fails, MidenClient and standalone tests will skip

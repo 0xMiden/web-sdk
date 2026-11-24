@@ -8,10 +8,46 @@ export * from "./api-types";
 // friendly const, so name it explicitly to keep the wasm enum from winning.
 export { AuthScheme } from "./api-types";
 
+// The runtime wraps these two bindings so they take the friendly scheme as
+// well as the wasm enum value; widen their declarations to match. Instances
+// and return values are still the wasm classes.
+export type AccountComponent = WasmAccountComponent;
+export declare const AccountComponent: typeof WasmAccountComponent & {
+  /**
+   * Builds a single-signature auth component from a public key commitment.
+   *
+   * @param commitment - The public key commitment.
+   * @param auth_scheme - `AuthScheme.ECDSA` or `AuthScheme.Falcon`, or a
+   *   numeric value of the wasm `AuthScheme` enum.
+   */
+  createAuthComponentFromCommitment(
+    commitment: Word,
+    auth_scheme: AuthSchemeType | number
+  ): WasmAccountComponent;
+};
+export type AuthGuardedMultisigConfig = WasmAuthGuardedMultisigConfig;
+export declare const AuthGuardedMultisigConfig: typeof WasmAuthGuardedMultisigConfig & {
+  /**
+   * Builds a guarded-multisig configuration.
+   *
+   * @param auth_scheme - `AuthScheme.ECDSA` or `AuthScheme.Falcon`, or a
+   *   numeric value of the wasm `AuthScheme` enum. It applies to every
+   *   approver and to the guardian.
+   */
+  new (
+    approvers: Word[],
+    default_threshold: number,
+    guardian: Word,
+    auth_scheme: AuthSchemeType | number
+  ): WasmAuthGuardedMultisigConfig;
+};
+
 // Import types needed for the @internal class declarations below
 import type {
   Account,
+  AccountComponent as WasmAccountComponent,
   AccountStorageMode,
+  AuthGuardedMultisigConfig as WasmAuthGuardedMultisigConfig,
   AuthSecretKey,
   WebClient as WasmWebClientBase,
   SyncSummary,
@@ -172,7 +208,8 @@ export declare class WasmWebClient extends WasmWebClientBase {
     feeFaucetId?: string,
     noteTransportMaxRetries?: number,
     noteTransportRetryIntervalMs?: number,
-    callbackTimeoutMs?: number
+    callbackTimeoutMs?: number,
+    exclusive?: boolean
   ): Promise<WasmWebClient>;
 
   static createClientWithExternalKeystore(
@@ -189,7 +226,8 @@ export declare class WasmWebClient extends WasmWebClientBase {
     feeFaucetId?: string,
     noteTransportMaxRetries?: number,
     noteTransportRetryIntervalMs?: number,
-    callbackTimeoutMs?: number
+    callbackTimeoutMs?: number,
+    exclusive?: boolean
   ): Promise<WasmWebClient>;
 
   // The wrapper resolves a friendly scheme to the wasm enum and passes a
@@ -226,6 +264,12 @@ export declare class WasmWebClient extends WasmWebClientBase {
   syncNoteTransport(): Promise<void>;
   onStateChanged(callback: (event: any) => void): (() => void) | undefined;
   /**
+   * The error that latched this client's worker as dead, or `undefined` until
+   * the worker fails. Every later worker call throws this same Error until
+   * terminate(). After terminate(), those calls throw "WebClient terminated".
+   */
+  readonly workerFailure: Error | undefined;
+  /**
    * Terminates this WebClient: stops its Web Worker if there is one, and
    * releases the main-realm wasm client and, through it, its IndexedDB store
    * connection, which closes once no other client in this realm holds the
@@ -242,7 +286,7 @@ export declare class WasmWebClient extends WasmWebClientBase {
    * harmless.
    *
    * The release and the rejections are browser-only: on the Node.js binding
-   * WasmWebClient.terminate() is a no-op.
+   * WasmWebClient.terminate() releases only the store's ownership claim.
    */
   terminate(): void;
 }
@@ -253,7 +297,8 @@ export declare class MockWasmWebClient extends WasmWebClient {
     serializedMockChain?: Uint8Array,
     serializedMockNoteTransportNode?: Uint8Array,
     seed?: Uint8Array,
-    logLevel?: LogLevel
+    logLevel?: LogLevel,
+    storeName?: string
   ): Promise<MockWasmWebClient>;
 
   proveBlock(): Promise<void>;

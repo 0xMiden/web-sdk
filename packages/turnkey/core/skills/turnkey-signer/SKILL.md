@@ -57,7 +57,7 @@ Second argument (`MidenClientOpts & MidenAccountOpts`):
 | Option | Type | Notes |
 |---|---|---|
 | `storageMode` | `AccountStorageMode` | Required. An instance (`AccountStorageMode.public()`), never a string. |
-| `endpoint` | `string` | Becomes `ClientOptions.rpcUrl`, so `"testnet"`, `"devnet"`, `"localhost"` and raw URLs all work. Omitted means the SDK default. |
+| `endpoint` | `string` | Becomes `ClientOptions.rpcUrl`, so `"mainnet"`, `"testnet"`, `"devnet"`, `"localhost"` and raw URLs all work. Omitted means the SDK default. |
 | `noteTransportUrl` | `string` | Becomes `ClientOptions.noteTransportUrl`. |
 | `seed` | `Uint8Array` | Client seed, passed straight through. |
 | `accountSeed` | `string` | UTF-8, truncated to 32 bytes. Defaults to 32 zero bytes. |
@@ -69,8 +69,9 @@ the type and nothing reads it.
 `accountId` comes back as the canonical hex string.
 
 What the call does, in order: creates a `MidenClient` with `autoSync: true` and
-a keystore whose `getKey` always resolves `undefined` and whose `insertKey` is
-a no-op, so no secret key is ever generated or stored locally; syncs; derives
+a keystore whose `getKey` always resolves `undefined` and whose `insertKey`
+rejects, so no secret key is ever generated or stored locally and creating an
+account with a generated key fails; syncs; derives
 the commitment from `account.publicKey`; builds an account from the account
 seed with the ECDSA auth component plus the basic wallet component; attempts
 `accounts.import(account)` so an account already on chain is hydrated rather
@@ -154,7 +155,9 @@ The auth component comes from
 `AccountComponent.createAuthComponentFromCommitment(commitment, 1)`, where `1`
 is the WASM `AuthScheme` enum's ECDSA k256/keccak variant. (The `AuthScheme`
 constant exported from `@miden-sdk/miden-sdk` is a different thing, the string
-pair `{ Falcon, ECDSA }` for client options; do not pass it here.) The Turnkey
+pair `{ Falcon, ECDSA }`. SDK versions that include web-sdk#365's fix also
+accept `AuthScheme.ECDSA` here; older ones reject it, so `1` is the value that
+works with every version.) The Turnkey
 key must be secp256k1 and the wallet account Ethereum-format; a key on any other
 curve cannot back this account.
 

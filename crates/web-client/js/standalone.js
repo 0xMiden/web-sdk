@@ -2,6 +2,7 @@ import {
   isStandardPaymentNote,
   resolveAccountRef,
   resolveNoteType,
+  toAmount,
 } from "./utils.js";
 
 const SIGN_BYTES_DOMAIN_TAG = "miden-wallet/sign-bytes/v1";
@@ -80,6 +81,57 @@ export function createP2IDENote(opts) {
 }
 
 /**
+ * Creates a fee-sponsorship note bound to a feature note.
+ *
+ * @param {object} opts
+ * @param {AccountRef} opts.from - Sponsor account.
+ * @param {AccountRef} opts.to - Public target the feature note routes to.
+ * @param {NoteId} opts.featureNoteId - Feature note this sponsorship attaches to.
+ * @param {FungibleAsset} opts.asset - Single fungible fee asset.
+ * @param {AccountRef} [opts.reclaimer] - Defaults to the sponsor (`from`); cloned if passed as an `AccountId`.
+ * @param {number} [opts.reclaimAfter] - Optional positive 32-bit integer (`> 0`) block height enabling reclaim.
+ * @returns {Note}
+ */
+export function createFeeSponsorshipNote(opts) {
+  const wasm = getWasm();
+  if (!opts?.featureNoteId) {
+    throw new Error("createFeeSponsorshipNote requires featureNoteId");
+  }
+  if (!opts?.asset) {
+    throw new Error("createFeeSponsorshipNote requires asset");
+  }
+  if (
+    opts.reclaimAfter != null &&
+    (!Number.isInteger(opts.reclaimAfter) ||
+      opts.reclaimAfter <= 0 ||
+      opts.reclaimAfter > 0xffffffff)
+  ) {
+    throw new TypeError(
+      "createFeeSponsorshipNote: reclaimAfter must be a positive 32-bit integer"
+    );
+  }
+  const sender = resolveAccountRef(opts.from, wasm);
+  const target = resolveAccountRef(opts.to, wasm);
+  let reclaimer;
+  if (opts.reclaimer != null) {
+    const resolvedReclaimer = resolveAccountRef(opts.reclaimer, wasm);
+    reclaimer =
+      typeof opts.reclaimer !== "string" &&
+      typeof opts.reclaimer?.id !== "function"
+        ? wasm.AccountId.fromHex(resolvedReclaimer.toString())
+        : resolvedReclaimer;
+  }
+  return wasm.Note.createFeeSponsorshipNote(
+    sender,
+    target,
+    opts.featureNoteId,
+    opts.asset,
+    reclaimer,
+    opts.reclaimAfter ?? undefined
+  );
+}
+
+/**
  * True when the note runs the standard P2ID or P2IDE payment script.
  *
  * @param {ConsumableNoteRecord | InputNoteRecord} record - The note to check.
@@ -109,9 +161,9 @@ export function buildSwapTag(opts) {
   return _WebClient.buildSwapTag(
     noteType,
     offeredFaucetId,
-    BigInt(opts.offer.amount),
+    toAmount(opts.offer.amount, "buildSwapTag"),
     requestedFaucetId,
-    BigInt(opts.request.amount)
+    toAmount(opts.request.amount, "buildSwapTag")
   );
 }
 
@@ -119,7 +171,7 @@ function fungibleAssetsFrom(assets, wasm) {
   const assetArray = Array.isArray(assets) ? assets : [assets];
   return assetArray.map((asset) => {
     const faucetId = resolveAccountRef(asset.token, wasm);
-    return new wasm.FungibleAsset(faucetId, BigInt(asset.amount));
+    return new wasm.FungibleAsset(faucetId, toAmount(asset.amount, "asset"));
   });
 }
 

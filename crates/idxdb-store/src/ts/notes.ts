@@ -1,5 +1,5 @@
 import { getDatabase, IInputNote, IOutputNote } from "./schema.js";
-import type { Transaction } from "dexie";
+import Dexie, { type Transaction } from "dexie";
 
 import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
 
@@ -162,16 +162,23 @@ export async function getOutputNotesFromIds(dbId: string, noteIds: string[]) {
   }
 }
 
+// Expected, Unverified, Committed, ProcessingAuthenticated and ProcessingUnauthenticated.
+const UNSPENT_STATE_DISCRIMINANTS = [0, 1, 2, 4, 5];
+
 export async function getUnspentInputNoteNullifiers(dbId: string) {
   try {
     const db = getDatabase(dbId);
-    const notes = await db.inputNotes
-      .where("stateDiscriminant")
-      .anyOf([2, 4, 5])
-      .toArray();
-    return notes
-      .map((note) => note.nullifier)
-      .filter((nullifier): nullifier is string => nullifier != null);
+    // Key-only read: no note rows are loaded. Notes without a nullifier are not in the index.
+    const keys = await db.inputNotes
+      .where("[stateDiscriminant+nullifier]")
+      .inAnyRange(
+        UNSPENT_STATE_DISCRIMINANTS.map((state) => [
+          [state, Dexie.minKey],
+          [state, Dexie.maxKey],
+        ])
+      )
+      .keys();
+    return keys.map((key) => (key as unknown as [number, string])[1]);
   } catch (err) {
     logWebStoreError(err, "Failed to get unspent input note nullifiers");
   }
@@ -251,7 +258,7 @@ export async function upsertInputNote(
 }
 
 const INPUT_NOTE_CONSUMPTION_INDEX =
-  "[consumedBlockHeight+consumedTxOrder+detailsCommitment]";
+  "[consumerAccountId+consumedBlockHeight+consumedTxOrder+detailsCommitment]";
 
 // Returns a one-element array so the caller's shape is uniform with the other readers. The
 // cursor is compared as an index key rather than looked up, so it still resolves the right
@@ -274,26 +281,29 @@ export async function getInputNoteAfter(
       cursorTxOrder != null &&
       cursorDetailsCommitment != null;
 
-    // With a cursor, `blockStart` is left to the predicate below: the cursor is the tighter
-    // lower bound, and emitting both abandons the row-value seek.
-    const ordered = hasCursor
-      ? db.inputNotes
-          .where(INPUT_NOTE_CONSUMPTION_INDEX)
-          .above([cursorBlockHeight, cursorTxOrder, cursorDetailsCommitment])
-      : blockStart != null
-        ? db.inputNotes
-            .where(INPUT_NOTE_CONSUMPTION_INDEX)
-            .aboveOrEqual([blockStart])
-        : db.inputNotes.orderBy(INPUT_NOTE_CONSUMPTION_INDEX);
+    // The consumer leads the index, so every read is one consumer's slice. With a cursor,
+    // `blockStart` is left to the predicate below: the cursor is the tighter lower bound.
+    const lower = hasCursor
+      ? [
+          consumerAccountId,
+          cursorBlockHeight,
+          cursorTxOrder,
+          cursorDetailsCommitment,
+        ]
+      : [consumerAccountId, blockStart ?? Dexie.minKey];
+    const upper =
+      blockEnd != null
+        ? [consumerAccountId, blockEnd, Dexie.maxKey]
+        : [consumerAccountId, Dexie.maxKey];
 
-    const note = await ordered
+    const note = await db.inputNotes
+      .where(INPUT_NOTE_CONSUMPTION_INDEX)
+      .between(lower, upper, !hasCursor, true)
       .filter((n: IInputNote) => {
         if (states.length > 0 && !states.includes(n.stateDiscriminant))
           return false;
-        if (n.consumerAccountId !== consumerAccountId) return false;
         if (blockStart != null && n.consumedBlockHeight! < blockStart)
           return false;
-        if (blockEnd != null && n.consumedBlockHeight! > blockEnd) return false;
         return true;
       })
       .first();

@@ -5,6 +5,7 @@ import {
   _setWebClient,
   createP2IDNote,
   createP2IDENote,
+  createFeeSponsorshipNote,
   buildSwapTag,
   isStandardPayment,
   domainSeparatedSignCommitment,
@@ -22,6 +23,7 @@ function makeWasm() {
     Note: {
       createP2IDNote: vi.fn().mockReturnValue("p2idNote"),
       createP2IDENote: vi.fn().mockReturnValue("p2ideNote"),
+      createFeeSponsorshipNote: vi.fn().mockReturnValue("feeSponsorshipNote"),
     },
     NoteAttachment: vi.fn().mockImplementation((data) => ({ data })),
     NoteAssets: vi.fn().mockImplementation(() => "noteAssets"),
@@ -204,6 +206,166 @@ describe("createP2IDENote", () => {
       timelockUntil: 200,
     });
     expect(wasm.NoteAttachment).toHaveBeenCalledWith([]);
+  });
+});
+
+// ── createFeeSponsorshipNote ──────────────────────────────────────────────────
+
+describe("createFeeSponsorshipNote", () => {
+  let wasm;
+
+  beforeEach(() => {
+    wasm = makeWasm();
+    _setWasm(wasm);
+  });
+
+  afterEach(() => {
+    _setWasm(null);
+  });
+
+  it("throws when WASM is not initialized", () => {
+    _setWasm(null);
+    expect(() =>
+      createFeeSponsorshipNote({
+        from: "0xsender",
+        to: "0xrecipient",
+        featureNoteId: "featureNoteId",
+        asset: "feeAsset",
+      })
+    ).toThrow("WASM not initialized");
+  });
+
+  it("requires featureNoteId and asset", () => {
+    expect(() =>
+      createFeeSponsorshipNote({
+        from: "0xsender",
+        to: "0xrecipient",
+        asset: "feeAsset",
+      })
+    ).toThrow("createFeeSponsorshipNote requires featureNoteId");
+
+    expect(() =>
+      createFeeSponsorshipNote({
+        from: "0xsender",
+        to: "0xrecipient",
+        featureNoteId: "featureNoteId",
+      })
+    ).toThrow("createFeeSponsorshipNote requires asset");
+  });
+
+  it.each([0, -1, 1.5, NaN, Infinity, 0x1_0000_0000])(
+    "rejects invalid reclaimAfter value %p before resolving WASM handles",
+    (reclaimAfter) => {
+      expect(() =>
+        createFeeSponsorshipNote({
+          from: "0xsender",
+          to: "0xrecipient",
+          featureNoteId: "featureNoteId",
+          asset: "feeAsset",
+          reclaimAfter,
+        })
+      ).toThrow(TypeError);
+      expect(wasm.AccountId.fromHex).not.toHaveBeenCalled();
+      expect(wasm.Note.createFeeSponsorshipNote).not.toHaveBeenCalled();
+    }
+  );
+
+  it("accepts omitted, null, and positive 32-bit reclaimAfter values", () => {
+    expect(
+      createFeeSponsorshipNote({
+        from: "0xsender",
+        to: "0xrecipient",
+        featureNoteId: "featureNoteId",
+        asset: "feeAsset",
+      })
+    ).toBe("feeSponsorshipNote");
+    expect(wasm.Note.createFeeSponsorshipNote).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "featureNoteId",
+      "feeAsset",
+      undefined,
+      undefined
+    );
+
+    createFeeSponsorshipNote({
+      from: "0xsender",
+      to: "0xrecipient",
+      featureNoteId: "featureNoteId",
+      asset: "feeAsset",
+      reclaimAfter: null,
+    });
+    expect(wasm.Note.createFeeSponsorshipNote).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "featureNoteId",
+      "feeAsset",
+      undefined,
+      undefined
+    );
+
+    createFeeSponsorshipNote({
+      from: "0xsender",
+      to: "0xrecipient",
+      featureNoteId: "featureNoteId",
+      asset: "feeAsset",
+      reclaimAfter: 0xffffffff,
+    });
+    expect(wasm.Note.createFeeSponsorshipNote).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "featureNoteId",
+      "feeAsset",
+      undefined,
+      0xffffffff
+    );
+  });
+
+  it("resolves AccountRef variants and clones AccountId opts.reclaimer via AccountId.fromHex", () => {
+    const senderAccountId = { kind: "senderId", toString: () => "0xsender" };
+    const senderAccount = { id: vi.fn(() => senderAccountId) };
+    const reclaimerAccountId = {
+      kind: "reclaimerId",
+      toString: () => "0xreclaimer",
+    };
+
+    createFeeSponsorshipNote({
+      from: senderAccount,
+      to: "mtst1qtarget",
+      featureNoteId: "featureNoteId",
+      asset: "feeAsset",
+      reclaimer: reclaimerAccountId,
+      reclaimAfter: 42,
+    });
+
+    expect(senderAccount.id).toHaveBeenCalledOnce();
+    expect(wasm.AccountId.fromBech32).toHaveBeenCalledWith("mtst1qtarget");
+    expect(wasm.AccountId.fromHex).toHaveBeenCalledWith("0xreclaimer");
+
+    const [, , , , passedReclaimer, passedReclaimAfter] =
+      wasm.Note.createFeeSponsorshipNote.mock.calls.at(-1);
+    expect(passedReclaimer).not.toBe(reclaimerAccountId);
+    expect(passedReclaimer.toString()).toBe("0xreclaimer");
+    expect(passedReclaimAfter).toBe(42);
+
+    // String and Account reclaimers already allocate fresh handles and need no extra clone.
+    wasm.AccountId.fromHex.mockClear();
+    const reclaimerFromAccount = {
+      kind: "accountId",
+      toString: () => "0xacct",
+    };
+    const reclaimerAccount = { id: vi.fn(() => reclaimerFromAccount) };
+    createFeeSponsorshipNote({
+      from: { toString: () => "0xsenderId" },
+      to: "mtst1qtarget",
+      featureNoteId: "featureNoteId",
+      asset: "feeAsset",
+      reclaimer: reclaimerAccount,
+    });
+    expect(wasm.AccountId.fromHex).not.toHaveBeenCalled();
+    expect(wasm.Note.createFeeSponsorshipNote.mock.calls.at(-1)[4]).toBe(
+      reclaimerFromAccount
+    );
   });
 });
 
@@ -487,5 +649,84 @@ describe("domainSeparatedSignCommitment docs", () => {
     ]) {
       expect(text).toContain(fact);
     }
+  });
+});
+
+describe("createFeeSponsorshipNote docs", () => {
+  const repo = new URL("../../../../", import.meta.url);
+  it.each([
+    "crates/web-client/README.md",
+    "crates/web-client/AGENTS.md",
+    "crates/web-client/skills/web-client-usage/SKILL.md",
+    "docs/external/src/web-client/library/network-notes.md",
+  ])("%s documents the fee-sponsorship API", (path) => {
+    const text = readFileSync(new URL(path, repo), "utf8");
+    for (const fact of [
+      "createFeeSponsorshipNote",
+      "Note.createFeeSponsorshipNote",
+      "FeeSponsorshipNote.tryFromNote",
+      "featureNoteId",
+      "reclaimer",
+      "reclaimAfter",
+      "reclaimHeight",
+      "public",
+      "0 is rejected",
+      "sender",
+      "asset",
+      "tag",
+      "serialNumber",
+      "intoNote",
+    ]) {
+      expect(text).toContain(fact);
+    }
+  });
+});
+
+// ── number amounts ────────────────────────────────────────────────────────────
+
+describe("number amounts", () => {
+  let wasm;
+  let swapTagMock;
+
+  beforeEach(() => {
+    wasm = makeWasm();
+    _setWasm(wasm);
+    swapTagMock = vi.fn().mockReturnValue("swapTag");
+    _setWebClient({ buildSwapTag: swapTagMock });
+  });
+
+  afterEach(() => {
+    _setWasm(null);
+    _setWebClient(null);
+  });
+
+  const unsafe = Number.MAX_SAFE_INTEGER + 2;
+  const swap = (offer, request) =>
+    buildSwapTag({
+      type: "public",
+      offer: { token: "0xa", amount: offer },
+      request: { token: "0xb", amount: request },
+    });
+
+  it("buildSwapTag rejects an unsafe number on either side", () => {
+    expect(() => swap(unsafe, 1n)).toThrow(/amount must be a safe integer/);
+    expect(() => swap(1n, 1.5)).toThrow(/amount must be a safe integer/);
+  });
+
+  it("buildSwapTag forwards a bigint above 2^53 - 1 exactly", () => {
+    expect(swap(9007199254740993n, 9007199254740995n)).toBe("swapTag");
+    expect(swapTagMock.mock.calls[0][2]).toBe(9007199254740993n);
+    expect(swapTagMock.mock.calls[0][4]).toBe(9007199254740995n);
+  });
+
+  it("createP2IDNote rejects an unsafe asset number before building it", () => {
+    expect(() =>
+      createP2IDNote({
+        from: "0xsender",
+        to: "0xrecipient",
+        assets: { token: "0xfaucet", amount: unsafe },
+      })
+    ).toThrow(/amount must be a safe integer/);
+    expect(wasm.FungibleAsset).not.toHaveBeenCalled();
   });
 });
