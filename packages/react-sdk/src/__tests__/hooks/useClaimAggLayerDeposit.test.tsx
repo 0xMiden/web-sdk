@@ -95,6 +95,8 @@ describe("useClaimAggLayerDeposit", () => {
     expect(String(executing)).toBe("0xsender");
     const builder =
       await client.feeAwareTransactionRequestBuilder.mock.results[0].value;
+    const [outputs] = builder.withOwnOutputNotes.mock.calls[0];
+    expect((outputs as { notes: unknown[] }).notes).toEqual([out.note]);
     const [declared] = builder.withForeignAccounts.mock.calls[0];
     expect((declared as { pushed: unknown[] }).pushed).toHaveLength(1);
     const publicAccount = ForeignAccount.public as ReturnType<typeof vi.fn>;
