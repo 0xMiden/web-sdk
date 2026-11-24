@@ -323,7 +323,7 @@ if (root === NoteScript.mint().root().toHex()) {
 ```
 
 To screen a note before importing it, pass it to the client. Each entry is a
-`NoteConsumability`, as `getConsumableNotes` returns:
+`NoteConsumability`, as `ConsumableNoteRecord.noteConsumability()` lists them:
 
 ```typescript
 const all = await client.getNoteConsumability(note); // every tracked account
