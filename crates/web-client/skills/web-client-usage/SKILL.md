@@ -1044,7 +1044,7 @@ A watch-only account is a public on-chain account the client follows without sub
 const account = await client.accounts.importWatched(oracleId);
 ```
 
-Tracking an account's witness makes every sync fetch it, so a transaction that uses the account as a foreign account resolves its witness locally instead of asking the node:
+Tracking an account's witness keeps it current: the first sync fetches it and every sync that advances the chain refreshes it, so a transaction that uses the account as a foreign account resolves its witness locally instead of asking the node:
 
 ```typescript
 await client.accounts.trackWitness(oracleId); // true if it was not tracked before
