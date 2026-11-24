@@ -135,6 +135,7 @@ const ciShardProjects = process.env.CI
           "test/direct_call_serialization.test.ts",
           "test/with_inner_web_client_reentrancy.test.ts",
           "test/transaction_request_builders.test.ts",
+          "test/standard_note_decoders.test.ts",
         ],
         testIgnore: browserTestIgnore,
       },

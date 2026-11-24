@@ -50,6 +50,23 @@ const fakeNative = vi.hoisted(() => {
       return this._height;
     }
   }
+  // Every optional field reads null from napi, as an unset Option<T> does.
+  class P2ideNote {
+    reclaimHeight() {
+      return null;
+    }
+    timelockHeight() {
+      return null;
+    }
+  }
+  class SwapNote {
+    paybackTarget() {
+      return null;
+    }
+    paybackRecipient() {
+      return null;
+    }
+  }
   class TransactionRequestBuilder {
     withOwnOutputNotes(notes) {
       received.push(notes);
@@ -124,6 +141,8 @@ const fakeNative = vi.hoisted(() => {
     Word,
     BasicFungibleFaucetComponent,
     FeeSponsorshipNote,
+    P2ideNote,
+    SwapNote,
     TransactionRequestBuilder,
     NoteStorage,
     SigningInputs,
@@ -144,6 +163,8 @@ vi.mock("../node/loader.js", () => ({
     Word: fakeNative.Word,
     BasicFungibleFaucetComponent: fakeNative.BasicFungibleFaucetComponent,
     FeeSponsorshipNote: fakeNative.FeeSponsorshipNote,
+    P2ideNote: fakeNative.P2ideNote,
+    SwapNote: fakeNative.SwapNote,
     TransactionRequestBuilder: fakeNative.TransactionRequestBuilder,
     NoteStorage: fakeNative.NoteStorage,
     SigningInputs: fakeNative.SigningInputs,
@@ -301,6 +322,17 @@ describe("Node napi boundary", () => {
       new nodeIndex.FeeSponsorshipNote(null).reclaimHeight()
     ).toBeUndefined();
     expect(new nodeIndex.FeeSponsorshipNote(42).reclaimHeight()).toBe(42);
+  });
+
+  it("exports the P2ideNote and SwapNote decoders with unset fields as undefined", () => {
+    expect(nodeIndex.P2ideNote).toBeTypeOf("function");
+    expect(nodeIndex.SwapNote).toBeTypeOf("function");
+    const p2ide = new nodeIndex.P2ideNote();
+    expect(p2ide.reclaimHeight()).toBeUndefined();
+    expect(p2ide.timelockHeight()).toBeUndefined();
+    const swap = new nodeIndex.SwapNote();
+    expect(swap.paybackTarget()).toBeUndefined();
+    expect(swap.paybackRecipient()).toBeUndefined();
   });
 
   it("keeps the NoteScript.p2id and p2ide aliases", () => {
