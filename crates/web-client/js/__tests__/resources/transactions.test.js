@@ -819,6 +819,78 @@ describe("TransactionsResource", () => {
     });
   });
 
+  describe("number amounts on swap, pswap and network notes", () => {
+    const pswapNote = { note: "0xpswapNote", account: "0xaccHex" };
+    const calls = {
+      "swap offer": (r, amount) =>
+        r.swap({
+          account: "0xaccHex",
+          offer: { token: "0xo", amount },
+          request: { token: "0xw", amount: 5n },
+          type: "public",
+        }),
+      "swap request": (r, amount) =>
+        r.swap({
+          account: "0xaccHex",
+          offer: { token: "0xo", amount: 5n },
+          request: { token: "0xw", amount },
+          type: "public",
+        }),
+      "pswapCreate offer": (r, amount) =>
+        r.pswapCreate({
+          account: "0xaccHex",
+          offer: { token: "0xo", amount },
+          request: { token: "0xw", amount: 5n },
+          type: "public",
+        }),
+      "pswapCreate request": (r, amount) =>
+        r.pswapCreate({
+          account: "0xaccHex",
+          offer: { token: "0xo", amount: 5n },
+          request: { token: "0xw", amount },
+          type: "public",
+        }),
+      "pswapConsume fillAmount": (r, amount) =>
+        r.pswapConsume({ ...pswapNote, fillAmount: amount }),
+      "pswapConsume noteFillAmount": (r, amount) =>
+        r.pswapConsume({
+          ...pswapNote,
+          fillAmount: 1n,
+          noteFillAmount: amount,
+        }),
+      "createNetworkNote asset": (r, amount) =>
+        r.createNetworkNote({
+          account: "0xsender",
+          target: "0xtarget",
+          script: "myScript",
+          assets: { token: "0xf", amount },
+        }),
+    };
+
+    describe.each(Object.keys(calls))("%s", (name) => {
+      it.each([
+        ["above 2^53 - 1", Number.MAX_SAFE_INTEGER + 2],
+        ["fractional", 1.5],
+      ])("rejects a number that is %s", async (_l, amount) => {
+        const { resource, inner, wasm } = makeResource();
+        await expect(calls[name](resource, amount)).rejects.toThrow(
+          /amount must be a safe integer/
+        );
+        expect(inner.newSwapTransactionRequest).not.toHaveBeenCalled();
+        expect(inner.newPswapCreateTransactionRequest).not.toHaveBeenCalled();
+        expect(inner.newPswapConsumeTransactionRequest).not.toHaveBeenCalled();
+        expect(wasm.FungibleAsset).not.toHaveBeenCalled();
+      });
+
+      it("accepts a bigint above 2^53 - 1", async () => {
+        const { resource } = makeResource();
+        await expect(
+          calls[name](resource, 9007199254740993n)
+        ).resolves.toBeDefined();
+      });
+    });
+  });
+
   describe("withdrawUsdcx", () => {
     const RECIPIENT =
       "0x1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30";
