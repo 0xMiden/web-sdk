@@ -432,6 +432,43 @@ test.describe("remote keystore", () => {
     expect(message).not.toContain("JsValue(");
   });
 
+  test("does not track a new wallet whose key insertKey refused", async ({
+    page,
+  }) => {
+    const accountCount = await page.evaluate(async () => {
+      const client =
+        await window.WasmWebClient.createClientWithExternalKeystore(
+          window.rpcUrl,
+          undefined,
+          undefined,
+          `${window.storeName}-insert-key-refused`,
+          undefined,
+          () => Promise.reject(new Error("key refused")),
+          undefined,
+          undefined,
+          true,
+          undefined,
+          window.feeFaucetId
+        );
+
+      await client
+        .newWallet(
+          window.AccountStorageMode.private(),
+          window.AuthScheme.AuthRpoFalcon512,
+          undefined
+        )
+        .then(
+          () => {
+            throw new Error("wallet creation unexpectedly succeeded");
+          },
+          () => {}
+        );
+      return (await client.getAccounts()).length;
+    });
+
+    expect(accountCount).toBe(0);
+  });
+
   test("preserves a string insertKey rejection in newWallet failures", async ({
     page,
   }) => {
