@@ -85,6 +85,7 @@ midenVitePlugin({
   rpcProxyPath: "/rpc.Api",                        // default
   crossOriginIsolation: false,                     // default
   wasmPackages: ["@miden-sdk/miden-sdk"],           // default
+  preserveSymlinks: false,                         // default
 });
 ```
 
@@ -94,7 +95,7 @@ midenVitePlugin({
 |--------|---------|
 | `resolve.alias` | Force single copy of WASM module (avoids class identity issues) |
 | `resolve.dedupe` | Vite deduplication hint |
-| `resolve.preserveSymlinks` | Monorepo/symlink support |
+| `resolve.preserveSymlinks` | Only when the `preserveSymlinks` option is `true` (off by default; breaks pnpm's default layout) |
 | `optimizeDeps.exclude` | Don't pre-bundle WASM packages |
 | `server.headers` (COOP/COEP) | SharedArrayBuffer for WASM workers |
 | `server.proxy` | gRPC-web CORS bypass in dev |
@@ -123,6 +124,11 @@ midenVitePlugin({
 - **Type:** `string`
 - **Default:** `"/rpc.Api"`
 - Path prefix for gRPC-web proxy requests.
+
+### `preserveSymlinks`
+- **Type:** `boolean`
+- **Default:** `false`
+- Sets Vite's `resolve.preserveSymlinks` to `true`. Leave it off with pnpm's default layout: packages in the `.pnpm` store then resolve their own dependencies from the real path, whereas with it on the build fails with `Rollup failed to resolve import "zustand"`. Single copies of the WASM and React packages are enforced by the alias and `resolve.dedupe` regardless. Enable it only for a linked local checkout (`file:` / `link:`) whose symlinked path must be kept.
 
 ## Requirements
 
