@@ -142,6 +142,8 @@ var Table;
     Table["PswapLineages"] = "pswapLineages";
     Table["ChainAnchors"] = "chainAnchors";
     Table["TransactionLogs"] = "transactionLogs";
+    Table["CodeMastForests"] = "codeMastForests";
+    Table["CodeProcedures"] = "codeProcedures";
 })(Table || (Table = {}));
 /** Scope of a row of the `settings` table, which version 14 removes. The upgrades before it read
  *  it. */
@@ -320,6 +322,8 @@ export class MidenDatabase {
     clientConfig;
     userSettings;
     pswapLineages;
+    codeMastForests;
+    codeProcedures;
     constructor(network) {
         this.dexie = new Dexie(network);
         // --- Schema versioning ---
@@ -515,6 +519,13 @@ export class MidenDatabase {
         this.dexie.version(18).stores({
             [Table.TransactionLogs]: indexes("[transactionId+logIndex]", "topic"),
         });
+        // v19: the code registry. `codeMastForests` holds each MAST forest once, with its debug info
+        // when known, and `codeProcedures` maps each procedure root to the forest that holds it. The
+        // procedure roots are also the leaves of the code tree.
+        this.dexie.version(19).stores({
+            [Table.CodeMastForests]: indexes("commitment"),
+            [Table.CodeProcedures]: indexes("procedureRoot"),
+        });
         this.accountCodes = this.dexie.table(Table.AccountCode);
         this.latestAccountStorages = this.dexie.table(Table.LatestAccountStorage);
         this.historicalAccountStorages = this.dexie.table(Table.HistoricalAccountStorage);
@@ -542,6 +553,8 @@ export class MidenDatabase {
         this.clientConfig = this.dexie.table(Table.ClientConfig);
         this.userSettings = this.dexie.table(Table.UserSettings);
         this.pswapLineages = this.dexie.table(Table.PswapLineages);
+        this.codeMastForests = this.dexie.table(Table.CodeMastForests);
+        this.codeProcedures = this.dexie.table(Table.CodeProcedures);
         this.dexie.on("populate", (tx) => {
             seedProtocolV1Store(tx)
                 /* v8 ignore next 2: populate failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */

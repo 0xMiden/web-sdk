@@ -173,6 +173,8 @@ enum Table {
   PswapLineages = "pswapLineages",
   ChainAnchors = "chainAnchors",
   TransactionLogs = "transactionLogs",
+  CodeMastForests = "codeMastForests",
+  CodeProcedures = "codeProcedures",
 }
 
 /** Scope of a row of the `settings` table, which version 14 removes. The upgrades before it read
@@ -291,6 +293,19 @@ export interface ITransactionLog {
   emitter: string;
   topic: string;
   content: Uint8Array;
+}
+
+/** A MAST forest of the code registry, keyed by its commitment. */
+export interface ICodeMastForest {
+  commitment: string;
+  mast: Uint8Array;
+  debugInfo?: Uint8Array;
+}
+
+/** A procedure of the code registry and the commitment of the forest that holds it. */
+export interface ICodeProcedure {
+  procedureRoot: string;
+  commitment: string;
 }
 
 export interface IInputNote {
@@ -656,6 +671,8 @@ declare module "dexie" {
     clientConfig: Table<IKeyValue, string>;
     userSettings: Table<IKeyValue, string>;
     pswapLineages: Table<IPswapLineage, string>;
+    codeMastForests: Table<ICodeMastForest, string>;
+    codeProcedures: Table<ICodeProcedure, string>;
   }
 }
 
@@ -687,6 +704,8 @@ export type MidenDexie = Dexie & {
   clientConfig: Dexie.Table<IKeyValue, string>;
   userSettings: Dexie.Table<IKeyValue, string>;
   pswapLineages: Dexie.Table<IPswapLineage, string>;
+  codeMastForests: Dexie.Table<ICodeMastForest, string>;
+  codeProcedures: Dexie.Table<ICodeProcedure, string>;
 };
 
 export class MidenDatabase {
@@ -721,6 +740,8 @@ export class MidenDatabase {
   clientConfig: Dexie.Table<IKeyValue, string>;
   userSettings: Dexie.Table<IKeyValue, string>;
   pswapLineages: Dexie.Table<IPswapLineage, string>;
+  codeMastForests: Dexie.Table<ICodeMastForest, string>;
+  codeProcedures: Dexie.Table<ICodeProcedure, string>;
 
   constructor(network: string) {
     this.dexie = new Dexie(network) as MidenDexie;
@@ -993,6 +1014,14 @@ export class MidenDatabase {
       [Table.TransactionLogs]: indexes("[transactionId+logIndex]", "topic"),
     });
 
+    // v19: the code registry. `codeMastForests` holds each MAST forest once, with its debug info
+    // when known, and `codeProcedures` maps each procedure root to the forest that holds it. The
+    // procedure roots are also the leaves of the code tree.
+    this.dexie.version(19).stores({
+      [Table.CodeMastForests]: indexes("commitment"),
+      [Table.CodeProcedures]: indexes("procedureRoot"),
+    });
+
     this.accountCodes = this.dexie.table<IAccountCode, string>(
       Table.AccountCode
     );
@@ -1068,6 +1097,12 @@ export class MidenDatabase {
     this.userSettings = this.dexie.table<IKeyValue, string>(Table.UserSettings);
     this.pswapLineages = this.dexie.table<IPswapLineage, string>(
       Table.PswapLineages
+    );
+    this.codeMastForests = this.dexie.table<ICodeMastForest, string>(
+      Table.CodeMastForests
+    );
+    this.codeProcedures = this.dexie.table<ICodeProcedure, string>(
+      Table.CodeProcedures
     );
 
     this.dexie.on("populate", (tx) => {

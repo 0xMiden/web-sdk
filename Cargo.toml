@@ -49,12 +49,13 @@ js-export-macro = { path = "crates/js-export-macro", version = "0.18.0" }
 # the items `miden-client` does not re-export. `miden-objects` holds the protobuf messages of the
 # protocol types, which `miden-client-proto` resolves. A requirement that drifts from
 # `miden-client`'s would resolve a second copy of the protocol types, so bump them together.
-miden-client              = { default-features = false, git = "https://github.com/0xMiden/rust-sdk", rev = "391f05d5cbb280b56adfff4b59faf0239364c683" }
-miden-client-core         = { default-features = false, git = "https://github.com/0xMiden/rust-sdk", rev = "391f05d5cbb280b56adfff4b59faf0239364c683" }
-miden-client-proto        = { default-features = false, git = "https://github.com/0xMiden/rust-sdk", rev = "391f05d5cbb280b56adfff4b59faf0239364c683" }
-miden-client-sqlite-store = { default-features = false, git = "https://github.com/0xMiden/rust-sdk", rev = "391f05d5cbb280b56adfff4b59faf0239364c683" }
+miden-client              = { default-features = false, git = "https://github.com/0xMiden/rust-sdk", rev = "7b1d52d0752c1fc0f1ebf9b54ef0242df2c89222" }
+miden-client-core         = { default-features = false, git = "https://github.com/0xMiden/rust-sdk", rev = "7b1d52d0752c1fc0f1ebf9b54ef0242df2c89222" }
+miden-client-proto        = { default-features = false, git = "https://github.com/0xMiden/rust-sdk", rev = "7b1d52d0752c1fc0f1ebf9b54ef0242df2c89222" }
+miden-client-sqlite-store = { default-features = false, git = "https://github.com/0xMiden/rust-sdk", rev = "7b1d52d0752c1fc0f1ebf9b54ef0242df2c89222" }
 miden-objects             = { default-features = false, git = "https://github.com/0xMiden/protocol", rev = "44079e2ed39305e9ce10db7270663d568065b28a" }
 miden-protocol            = { default-features = false, git = "https://github.com/0xMiden/protocol", rev = "44079e2ed39305e9ce10db7270663d568065b28a" }
+miden-tx                  = { default-features = false, git = "https://github.com/0xMiden/protocol", rev = "44079e2ed39305e9ce10db7270663d568065b28a" }
 
 
 # VM crates

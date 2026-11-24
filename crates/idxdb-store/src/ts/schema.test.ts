@@ -42,6 +42,12 @@ const V17_STORES: Record<string, string> = Object.fromEntries(
   }).filter(([name]) => name !== "settings" && name !== "blockchainCheckpoint")
 );
 
+// The schema the version chain reaches at v18: v17 plus the transaction logs.
+const V18_STORES: Record<string, string> = {
+  ...V17_STORES,
+  transactionLogs: "[transactionId+logIndex],topic",
+};
+
 // Track DBs for cleanup.
 const openDbs: Dexie[] = [];
 
@@ -750,6 +756,25 @@ describe("MidenDatabase migrations", () => {
     expect(
       await mdb.transactionLogs.where("topic").equals("topic-b").count()
     ).toBe(1);
+  });
+
+  // v19: the code registry tables. The upgrade keeps the rows of a v18 store.
+  it("v19 migration adds the code registry and keeps the rows of a v18 store", async () => {
+    const name = uniqueDbName();
+    const header = { root: "0xcode", code: new Uint8Array([1]) };
+
+    const dbV18 = trackDb(new Dexie(name));
+    dbV18.version(18).stores(V18_STORES);
+    await dbV18.open();
+    await dbV18.table("accountCode").put(header);
+    dbV18.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    await mdb.dexie.open();
+
+    expect(await mdb.accountCodes.toArray()).toEqual([header]);
+    expect(await mdb.codeMastForests.count()).toBe(0);
+    expect(await mdb.codeProcedures.count()).toBe(0);
   });
 });
 

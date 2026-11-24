@@ -15,6 +15,7 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use base64::Engine;
@@ -65,6 +66,10 @@ use miden_client_core::store::{
     InputNoteCursor,
     PartialBlockchainFilter,
 };
+use miden_protocol::MastForest;
+use miden_protocol::code::ProcedureRoot;
+use miden_protocol::vm::PackageDebugInfo;
+use miden_tx::LoadedMastForest;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use wasm_bindgen::prelude::*;
@@ -74,6 +79,7 @@ pub mod account;
 pub mod auth;
 mod bytes;
 pub mod chain_data;
+mod code;
 pub mod export;
 mod forest;
 pub mod import;
@@ -550,6 +556,23 @@ impl Store for IdxdbStore {
 
     async fn insert_protocol_config(&self, config: &ProtocolConfig) -> Result<(), StoreError> {
         self.insert_protocol_config(config).await
+    }
+
+    // CODE REGISTRY
+    // --------------------------------------------------------------------------------------------
+
+    async fn insert_procedures_with_debug_info(
+        &self,
+        procedures: Vec<(Arc<MastForest>, PackageDebugInfo)>,
+    ) -> Result<(), StoreError> {
+        self.insert_procedures_with_debug_info(procedures).await
+    }
+
+    async fn get_procedure(
+        &self,
+        procedure_root: ProcedureRoot,
+    ) -> Result<Option<LoadedMastForest>, StoreError> {
+        self.get_procedure(procedure_root).await
     }
 
     // RPC LIMITS

@@ -94,6 +94,7 @@ const ciShardProjects = process.env.CI
         testMatch: [
           "test/account.test.ts",
           "test/account_code_dangling.test.ts",
+          "test/code_registry.test.ts",
           "test/account_component.test.ts",
           "test/allowlist.test.ts",
           "test/account_file.test.ts",
@@ -221,6 +222,7 @@ export default defineConfig({
       testIgnore: [
         "test/store_isolation*",
         "test/account_code_dangling.test.ts", // IndexedDB corruption regression
+        "test/code_registry.test.ts", // reads the IndexedDB store
         "test/sync_lock*",
         "test/import_export*",
         "test/remote_keystore*",
