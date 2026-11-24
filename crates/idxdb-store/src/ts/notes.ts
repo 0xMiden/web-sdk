@@ -143,8 +143,8 @@ export async function getOutputNotesFromIds(dbId: string, noteIds: string[]) {
   }
 }
 
-// Committed, ProcessingAuthenticated and ProcessingUnauthenticated.
-const UNSPENT_STATE_DISCRIMINANTS = [2, 4, 5];
+// Expected, Unverified, Committed, ProcessingAuthenticated and ProcessingUnauthenticated.
+const UNSPENT_STATE_DISCRIMINANTS = [0, 1, 2, 4, 5];
 
 export async function getUnspentInputNoteNullifiers(dbId: string) {
   try {
