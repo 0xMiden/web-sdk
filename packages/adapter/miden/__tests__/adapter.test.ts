@@ -758,7 +758,7 @@ describe("MidenWalletAdapter", () => {
       );
       expect(adapter.supportsStorageReads).toBe(true);
       await expect(adapter.requestStorage(request)).resolves.toBe("0xabc");
-      expect(mockWallet.requestStorage).toHaveBeenCalledWith(request);
+      expect((mockWallet as any).requestStorage).toHaveBeenCalledWith(request);
     });
 
     it("rejects without calling the wallet when storage was not granted", async () => {
@@ -769,7 +769,7 @@ describe("MidenWalletAdapter", () => {
       await expect(adapter.requestStorage(request)).rejects.toThrow(
         WalletPrivateDataPermissionError
       );
-      expect(mockWallet.requestStorage).not.toHaveBeenCalled();
+      expect((mockWallet as any).requestStorage).not.toHaveBeenCalled();
     });
 
     it("rejects as unsupported when the wallet lacks the method", async () => {
