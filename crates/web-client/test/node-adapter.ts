@@ -291,6 +291,7 @@ export async function setupNodeGlobals(
     createAuthFalcon512RpoMultisig: sdk.createAuthFalcon512RpoMultisig,
     BasicFungibleFaucetComponent: sdk.BasicFungibleFaucetComponent,
     Endpoint: sdk.Endpoint,
+    FeeSponsorshipNote: sdk.FeeSponsorshipNote,
     Felt: sdk.Felt,
     ForeignAccount: sdk.ForeignAccount,
     FungibleAsset: sdk.FungibleAsset,
@@ -387,6 +388,8 @@ export async function setupNodeGlobals(
     if (standalone.createP2IDNote) w.createP2IDNote = standalone.createP2IDNote;
     if (standalone.createP2IDENote)
       w.createP2IDENote = standalone.createP2IDENote;
+    if (standalone.createFeeSponsorshipNote)
+      w.createFeeSponsorshipNote = standalone.createFeeSponsorshipNote;
     if (standalone.buildSwapTag) w.buildSwapTag = standalone.buildSwapTag;
   } catch (e) {
     // If import fails, MidenClient and standalone tests will skip

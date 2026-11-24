@@ -25,6 +25,7 @@ import { CompilerResource } from "./resources/compiler.js";
 import {
   createP2IDNote,
   createP2IDENote,
+  createFeeSponsorshipNote,
   buildSwapTag,
   buildNetworkNote,
   isStandardPayment,
@@ -82,6 +83,7 @@ export { MidenClient };
 export {
   createP2IDNote,
   createP2IDENote,
+  createFeeSponsorshipNote,
   buildSwapTag,
   buildNetworkNote,
   isStandardPayment,
@@ -217,6 +219,8 @@ export const EthAddress = /* @__PURE__ */ _reexport("EthAddress");
 export const ExecutedTransaction = /* @__PURE__ */ _reexport(
   "ExecutedTransaction"
 );
+export const FeeSponsorshipNote =
+  /* @__PURE__ */ _reexport("FeeSponsorshipNote");
 export const Felt = /* @__PURE__ */ _reexport("Felt");
 export const FeltArray = /* @__PURE__ */ _reexport("FeltArray");
 export const FetchedAccount = /* @__PURE__ */ _reexport("FetchedAccount");
@@ -299,6 +303,7 @@ export const ProcedureThreshold =
   /* @__PURE__ */ _reexport("ProcedureThreshold");
 export const Program = /* @__PURE__ */ _reexport("Program");
 export const ProposedBatch = /* @__PURE__ */ _reexport("ProposedBatch");
+export const ProtocolConfig = /* @__PURE__ */ _reexport("ProtocolConfig");
 export const ProvenBatch = /* @__PURE__ */ _reexport("ProvenBatch");
 export const ProvenTransaction = /* @__PURE__ */ _reexport("ProvenTransaction");
 export const PswapLineageRecord =

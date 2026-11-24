@@ -273,6 +273,13 @@ protocol configuration, which the client receives from the node when it syncs,
 so execution never needs the option: it only sets what `client.feeFaucetId()`
 reports before the first sync. Snippets below leave it out.
 
+`client.protocolConfig()` returns that configuration as a `ProtocolConfig`: its
+`feeFaucetId()` is the faucet `client.feeFaucetId()` reports after a sync, and
+its `commitment()` is what block headers carry as `protocolConfigCommitment()`.
+It rejects with "the network's protocol configuration is not known yet" until
+the first sync stores the configuration; a mock client is seeded with its
+chain's.
+
 `noteTransportMaxRetries` (0 to 10, default 3) and
 `noteTransportRetryIntervalMs` (0 to 60000, default 250), with a total computed
 backoff `interval * (2^retries - 1)` of at most 120000 ms, set how
@@ -446,7 +453,7 @@ The following are just a few simple examples to get started. For more details, s
 ```typescript
 import { MidenClient, FaucetType } from "@miden-sdk/miden-sdk";
 
-// 1. Create client (defaults to testnet, or use createTestnet()/createDevnet())
+// 1. Create client (defaults to testnet, or use createTestnet()/createDevnet()/createMainnet())
 const client = await MidenClient.createDevnet();
 
 // 2. Create a wallet and a token (faucet account)
@@ -588,6 +595,11 @@ For `client.accounts.create()`, select visibility with `storage: "public"` or
 `"private"`, and create a fungible faucet with `type: FaucetType.FungibleFaucet`.
 Migrate previous `AccountType.FungibleFaucet` uses to `FaucetType.FungibleFaucet`.
 Omit `type` to create a wallet, or pass `components` to create a contract.
+A contract also needs a raw 32-byte `seed` and `auth`. `auth` is an
+`AuthSecretKey` stored with the account, or `"none"` for a NoAuth contract that
+anyone can call and that stores no key. Omitting `auth` is rejected and does
+not default to NoAuth. `"none"` is only valid on a contract; wallet and faucet
+`auth` stays `AuthScheme.Falcon` or `AuthScheme.ECDSA`.
 The legacy selectors `0`, `1` and `"NonFungibleFaucet"` are still read as
 faucet types (non-fungible faucets are not supported yet and are rejected);
 `0` and `1` are also `AccountType.Private` / `AccountType.Public`, so never pass
@@ -785,7 +797,6 @@ const { blockNumber } = await client.transactions.batch({
     { kind: "send", account: alice, to: carol, token: dagToken, amount: 30n, type: "public" },
     { kind: "consume", account: bob, notes: pendingNotes },
   ],
-  // waitForConfirmation is currently broken for batches — see below.
 });
 // The node's chain tip as of submission, not the block the batch commits in.
 console.log(`Batch submitted at chain tip ${blockNumber}`);
@@ -804,7 +815,13 @@ const { blockNumber } = await client.transactions.submitBatch([
 ]);
 ```
 
-The batch primitive returns only a block number. There are no per-tx ids in the result, and the number is the node's chain tip as of submission, not the block the batch commits in. Even were it the commit block, `waitForConfirmation` would confirm only that the client had caught up to it, not that the batch committed. `waitForConfirmation` on a batch does not currently work: its poll calls a sync method that does not exist, so the poll cannot advance the height itself and the call throws `Batch confirmation timed out` unless the client is already at or past that height. Tracked in [#314](https://github.com/0xMiden/web-sdk/issues/314); prefer syncing and checking `client.transactions.list()` yourself. The batch's own effects are already in the local store when the call returns, so what you are waiting for is chain inclusion:
+The batch primitive returns only a block number. There are no per-tx ids in the result, and the number is the node's chain tip as of submission, not the block the batch commits in. The batch's own effects are already in the local store when the call returns, so what is left to wait for is chain inclusion. Pass `waitForConfirmation: true` to have the call resolve only once every transaction of the batch is committed; it rejects if the node discards one, or when `timeout` (default 60 seconds) runs out first:
+
+```typescript
+await client.transactions.submitBatch(items, { waitForConfirmation: true });
+```
+
+To check later instead, sync and read the transactions:
 
 ```typescript
 await client.sync();
@@ -833,8 +850,12 @@ continue to sync before relying on on-chain balances.
 
 For browser stores, `apply` requires the stored account to match the
 transaction's execution input. A mismatch rejects before changing account state
-or transaction history. A submitted transaction may already be on-chain when
-local apply fails; check its status before submitting again.
+or transaction history. A submitted transaction is already accepted by the node when
+local apply fails, so `apply` and the single-transaction `transactions.*` helpers
+(which apply after submitting) reject with `code: "ApplyTransactionAfterSubmitFailed"`,
+`transactionId`, `submissionHeight` and the original error as `cause`. A batch whose
+local update fails after the node accepted it rejects with the same `code` and the
+accepted block in its message, without those fields. Do not submit it again.
 
 To submit a proof produced somewhere that shares nothing with this client (a detached prover), pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
 
@@ -1044,9 +1065,10 @@ To create the receiving account, build a **public** account carrying the network
 ```typescript
 // Each allowed note script carries the fee charged to consume it, in the
 // chain's fee asset. Zero is a valid price. The fee faucet must be the chain's
-// own: the node never runs network transactions for an account whose fee asset
-// differs from the chain's protocol configuration, and says nothing to the
-// client - the account's notes are simply never consumed.
+// own, the one `client.protocolConfig()` names: the node never runs network
+// transactions for an account whose fee asset differs from the chain's
+// protocol configuration, and says nothing to the client - the account's notes
+// are simply never consumed.
 const feeFaucetId = await client.feeFaucetId();
 const components = AccountComponent.createNetworkAuthComponents(
   [new NoteScriptFee(myNoteScript.root(), 0n)],
@@ -1063,6 +1085,37 @@ const { account } = builder.build();
 ```
 
 The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional third argument (`TransactionScript.root()`). Deploying the account needs an effect: since 0.17 the auth component asserts the transaction consumed an input note, created an output note, or changed account state before it pays the fee, so an empty transaction aborts. Consume a note the account allowlists, or run an allowlisted transaction script that changes its state. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
+
+#### Fee Sponsorship Notes
+
+Use `createFeeSponsorshipNote` (or `Note.createFeeSponsorshipNote`) to attach a fee-sponsorship note to a feature note (`featureNoteId`) targeted at a **public** account (`to` must be public for network note routing). `reclaimer` defaults to the sponsor (`from`). Omit `reclaimAfter` / `reclaimHeight` to disable reclaim, or pass a positive 32-bit integer (`0` is rejected). Standalone `createFeeSponsorshipNote` clones an `AccountId` passed as `reclaimer`, while `Note.createFeeSponsorshipNote` consumes a passed `reclaimer` `AccountId` in browser WASM. Decode an existing note with `FeeSponsorshipNote.tryFromNote`:
+
+```typescript
+import {
+  FeeSponsorshipNote,
+  FungibleAsset,
+  createFeeSponsorshipNote,
+} from "@miden-sdk/miden-sdk";
+
+const note = createFeeSponsorshipNote({
+  from: sponsorAccountId,
+  to: targetNetworkAccountId,
+  featureNoteId: featureNote.id(),
+  asset: new FungibleAsset(feeFaucetId, 1_000n),
+  reclaimer: reclaimerAccountId, // optional; defaults to `from`
+  reclaimAfter: 100, // optional positive 32-bit integer (> 0; 0 is rejected)
+});
+
+const decoded = FeeSponsorshipNote.tryFromNote(note);
+decoded.featureNoteId();
+decoded.sender();
+decoded.reclaimer();
+decoded.reclaimHeight(); // number | undefined
+decoded.asset();
+decoded.tag();
+decoded.serialNumber();
+decoded.intoNote();
+```
 
 ### Read the Client's Node URL
 
@@ -1171,7 +1224,7 @@ const client = await MidenClient.create({
 });
 ```
 
-`observer` is a field on `ClientOptions`, so it works on `create`, `createTestnet`, and `createDevnet` alike.
+`observer` is a field on `ClientOptions`, so it works on `create`, `createTestnet`, `createDevnet`, and `createMainnet` alike.
 
 **The SDK never transports an observation.** It hands the object to your callback and forgets about it. There is no telemetry dependency in `@miden-sdk/miden-sdk` — not a direct one, not a peer, not an optional one — and the module that delivers observations has no egress primitive in it and imports nothing at all. Both halves are enforced on every CI run by `js/__tests__/no-telemetry-dependency.test.js`, which parses the module rather than grepping it: it asserts the module reaches for no global object, builds no code at runtime, constructs nothing, and calls nothing but your observer. Where the observations go is entirely your decision, made in your code.
 
@@ -1197,7 +1250,7 @@ interface MidenObservation {
 
 `op` is the name of the underlying client method, not the name of the high-level call you made. One call into a resource API usually produces **several** observations: `client.transactions.send(...)` builds the request and then runs execute → prove → submit → apply, so it reports `newSendTransactionRequest`, `executeTransaction`, `proveTransaction`, `submitProvenTransaction`, and `applyTransaction` as five separate observations. Aggregate by `op` rather than assuming a one-to-one mapping with your own call sites.
 
-`durationMs` is measured with `performance.now()` from when the call's turn on its client's queue starts until the call settles, so time spent queued behind the same client's earlier calls is not in it. It is a fractional millisecond value, not an integer. Round it yourself if your backend wants integers.
+`durationMs` is measured with `performance.now()` from when the call's turn on its client's queue starts until the call settles, so time spent queued behind the same client's earlier calls is not in it. A store-locked call that times out before its turn starts has no turn, so it reports 0, delivered when it rejects, and the wait it spent queued is not counted. It is a fractional millisecond value, not an integer. Round it yourself if your backend wants integers.
 
 Two properties are worth relying on:
 

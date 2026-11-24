@@ -36,6 +36,11 @@ const EXCLUDED = {
   "storage_view.test.ts": "runs in `nodejs`",
   "worker_init_failure.test.ts":
     "browser-worker failure injection, run locally",
+  // SDK surface lands first; chromium shard registration is a follow-up so
+  // this PR does not touch playwright.config.ts. The `nodejs` project still
+  // picks the file up via `**/*.test.ts`.
+  "fee_sponsorship_note.test.ts":
+    "nodejs only for now; chromium shard in follow-up",
 
   // KNOWN GAP: the `nodejs` project ignores each of these by name (or by the
   // `test/*.browser.test.ts` glob) and no chromium shard lists them, so they
@@ -171,5 +176,21 @@ describe("playwright CI shard coverage", () => {
     const onDisk = new Set(integrationTestFiles());
     const stale = Object.keys(EXCLUDED).filter((f) => !onDisk.has(f));
     expect(stale, "stale EXCLUDED entries hide real gaps").toEqual([]);
+  });
+});
+
+// The store-read failure ("failed to read the protocol configuration") and the
+// `feeFaucetId()` rejection both contain "protocol configuration", so only the
+// full sentence tells the not-synced rejection apart from them.
+describe("protocolConfig integration assertions", () => {
+  it("pre-sync protocolConfig rejection is pinned to the not-synced sentence", () => {
+    const spec = fs.readFileSync(
+      path.join(testDir, "miden_client_api.test.ts"),
+      "utf8"
+    );
+    expect(spec).toContain(
+      `"the network's protocol configuration is not known yet"`
+    );
+    expect(spec).not.toContain(`toContain("protocol configuration")`);
   });
 });

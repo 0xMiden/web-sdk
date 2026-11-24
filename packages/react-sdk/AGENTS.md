@@ -46,9 +46,9 @@ rejects `feeFaucetId()` and asks you to sync first.
 ```tsx
 <MidenProvider
   config={{
-    rpcUrl: "testnet",          // "devnet" | "testnet" | "localhost" | "local" | custom URL
+    rpcUrl: "testnet",          // "mainnet" | "devnet" | "testnet" | "localhost" | "local" | custom URL
     feeFaucetId: FEE_FAUCET,    // optional: what feeFaucetId() reports before the first sync
-    prover: "testnet",          // "local" | "localhost" | "devnet" | "testnet" | URL
+    prover: "testnet",          // "local" | "localhost" | "mainnet" | "devnet" | "testnet" | URL
                                 //   | { url, timeoutMs }
                                 //   | { primary, fallback, disableFallback?, onFallback? }
     autoSyncInterval: 15000,    // ms, set to 0 to disable. Default: 15000
@@ -95,6 +95,7 @@ UI thread is not competing with WASM anyway.
 
 | Network | Use When |
 |---------|----------|
+| `mainnet` | Production, with real funds |
 | `devnet` | Development, testing with fake tokens |
 | `testnet` | Pre-production testing |
 | `localhost` | Local node at `http://localhost:57291` |
@@ -168,6 +169,9 @@ so a bare string throws a runtime `TypeError`.
 
 Metadata is read from the node the provider's client was created against
 (`client.endpoint()`), so nothing is fetched until the provider is ready.
+Reads from a previous client or cache generation cannot repopulate the cache
+after a reset. The current client can fetch the same asset while an old read
+is still pending.
 
 ## Writing Data (Mutation Hooks)
 

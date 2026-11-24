@@ -43,9 +43,10 @@ const client = await MidenClient.createTestnet();
 await client.sync();
 ```
 
-`create(options)` targets an explicit endpoint; `createTestnet()` and
-`createDevnet()` are preconfigured; `createMock()` backs tests with an in-memory
-chain and no network.
+`create(options)` targets an explicit endpoint; `createTestnet()`,
+`createDevnet()` and `createMainnet()` are preconfigured; `createMock(options)`
+backs tests with an in-memory chain and no network (pass a distinct `storeName`
+when running multiple same-origin browser mocks, as omitting it shares `mock_client_db`).
 
 `feeFaucetId` is optional. Since 0.17 the chain's fee asset lives in the
 protocol configuration, which the client receives from the node when it syncs,
@@ -53,6 +54,13 @@ so execution never needs the option: it only sets what `client.feeFaucetId()`
 reports before the first sync. Before that sync, a client created without it
 rejects `feeFaucetId()` and asks you to sync first; a mock client reports its
 mock chain's own faucet.
+
+`client.protocolConfig()` returns that configuration as a `ProtocolConfig`: its
+`feeFaucetId()` is the faucet `client.feeFaucetId()` reports after a sync, and
+its `commitment()` is what block headers carry as `protocolConfigCommitment()`.
+It rejects with "the network's protocol configuration is not known yet" until
+the first sync stores the configuration; a mock client is seeded with its
+chain's.
 
 State is split across resources rather than living on the client:
 `accounts`, `transactions`, `notes`, `tags`, `settings`, `keystore`, `compile`
@@ -125,8 +133,12 @@ continue to sync before relying on on-chain balances.
 
 For browser stores, `apply` requires the stored account to match the
 transaction's execution input. A mismatch rejects before changing account state
-or transaction history. A submitted transaction may already be on-chain when
-local apply fails; check its status before submitting again.
+or transaction history. A submitted transaction is already accepted by the node when
+local apply fails, so `apply` and the single-transaction `transactions.*` helpers
+(which apply after submitting) reject with `code: "ApplyTransactionAfterSubmitFailed"`,
+`transactionId`, `submissionHeight` and the original error as `cause`. A batch whose
+local update fails after the node accepted it rejects with the same `code` and the
+accepted block in its message, without those fields. Do not submit it again.
 
 **Amounts are always `BigInt`.** Passing a `number` either throws at the WASM
 boundary or silently loses precision above 2^53. Convert at the edges of your
@@ -144,7 +156,13 @@ with it, and free the object wrappers the skills call out individually.
 **Account visibility and faucet kind are separate.** Use native
 `AccountType.Private` / `AccountType.Public` with `AccountBuilder.accountType()`.
 Use `FaucetType.FungibleFaucet` for `accounts.create({ type })`, and `storage`
-for visibility. Older `AccountType.FungibleFaucet` references must migrate to
+for visibility. Pass `components` to `accounts.create` for a contract. A
+contract also needs a raw 32-byte `seed` and `auth`. `auth` is an
+`AuthSecretKey` stored with the account, or `"none"` for a NoAuth contract that
+anyone can call and that stores no key. Omitting `auth` is rejected and does
+not default to NoAuth. `"none"` is only valid on a contract; wallet and faucet
+`auth` stays `AuthScheme.Falcon` or `AuthScheme.ECDSA`. Older
+`AccountType.FungibleFaucet` references must migrate to
 `FaucetType.FungibleFaucet`; `create()` throws a `TypeError` for an unrecognised
 `type` rather than creating a wallet. The legacy `0` / `1` are still faucet
 selectors and equal `AccountType.Private` / `Public`, so never pass a visibility
@@ -192,6 +210,38 @@ public metadata, the registry's approved script and inputs, and
 `[new NetworkAccountTarget(registryId).toAttachment()]`. The registry account
 must be public. A tag alone does not make a network note. Consume the returned P2ID note to put
 the asset back in the vault. The amount-based `send` helper remains fungible-only.
+
+## Fee sponsorship notes
+
+Use standalone `createFeeSponsorshipNote` (or `Note.createFeeSponsorshipNote`)
+to build a fee-sponsorship note bound to `featureNoteId` and routed to a
+**public** `to` account (`to` must be public for network routing). `reclaimer`
+defaults to the sponsor (`from`). Omit `reclaimAfter` / `reclaimHeight` to
+disable reclaim; when set, it must be a positive 32-bit integer (`0` is
+rejected). Prefer `createFeeSponsorshipNote` when passing an `AccountId`
+`reclaimer` because standalone clones it, whereas `Note.createFeeSponsorshipNote`
+consumes a passed `reclaimer` `AccountId` in browser WASM even on error.
+
+```typescript
+const sponsorship = createFeeSponsorshipNote({
+  from: sponsorId,
+  to: publicTargetId,
+  featureNoteId: featureNote.id(),
+  asset: new FungibleAsset(feeFaucetId, 1_000n),
+  reclaimer: reclaimerId, // optional; defaults to `from`
+  reclaimAfter: 100, // optional positive 32-bit integer (> 0; 0 is rejected)
+});
+
+const decoded = FeeSponsorshipNote.tryFromNote(sponsorship);
+decoded.featureNoteId();
+decoded.sender();
+decoded.reclaimer();
+decoded.reclaimHeight(); // number | undefined
+decoded.asset();
+decoded.tag();
+decoded.serialNumber();
+decoded.intoNote();
+```
 
 ## Going deeper
 

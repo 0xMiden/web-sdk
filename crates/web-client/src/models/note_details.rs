@@ -3,6 +3,7 @@ use miden_client::note::NoteDetails as NativeNoteDetails;
 
 use super::note_assets::NoteAssets;
 use super::note_recipient::NoteRecipient;
+use super::word::Word;
 
 /// Details of a note consisting of assets, script, inputs, and a serial number.
 ///
@@ -12,9 +13,8 @@ use super::note_recipient::NoteRecipient;
 /// `NoteDetails::nullifier()` were removed on the 0.15 protocol surface —
 /// the ID now requires a `NoteMetadata` to compute (see `NoteId::new`),
 /// and the nullifier moved onto `InputNoteRecord` where it is optional.
-/// Use `details_commitment()` on a containing record (e.g.
-/// `InputNoteRecord::details_commitment`) for the metadata-independent
-/// identifier.
+/// Use [`NoteDetails::details_commitment`] (or the same method on `Note` /
+/// `InputNoteRecord`) for the metadata-independent identifier.
 #[derive(Clone)]
 #[js_export]
 pub struct NoteDetails(NativeNoteDetails);
@@ -25,6 +25,12 @@ impl NoteDetails {
     #[js_export(constructor)]
     pub fn new(note_assets: &NoteAssets, note_recipient: &NoteRecipient) -> NoteDetails {
         NoteDetails(NativeNoteDetails::new(note_assets.into(), note_recipient.into()))
+    }
+
+    /// Returns the commitment to these details (recipient + assets), without metadata.
+    #[js_export(js_name = "detailsCommitment")]
+    pub fn details_commitment(&self) -> Word {
+        self.0.commitment().as_word().into()
     }
 
     /// Returns the assets locked by the note.

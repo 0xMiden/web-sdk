@@ -152,7 +152,7 @@ function App() {
   return (
     <MidenProvider
       config={{
-        // RPC endpoint (defaults to testnet). You can also use 'devnet' or 'testnet'.
+        // RPC endpoint (defaults to testnet). You can also use 'mainnet', 'devnet' or 'testnet'.
         rpcUrl: 'devnet',
 
         // Optional: the faucet the chain mints its fee asset from, bech32 or hex.
@@ -180,7 +180,7 @@ function App() {
         // See "Keystore Callback Timeouts" below.
         callbackTimeoutMs: 120000,
 
-        // Optional: prover selection ('local' | 'devnet' | 'testnet' | URL)
+        // Optional: prover selection ('local' | 'mainnet' | 'devnet' | 'testnet' | URL)
         // prover: 'local',
       }}
       // Optional: Custom loading component
@@ -996,8 +996,11 @@ function WaitForTx({ txId }: { txId: string }) {
 #### `useTransactionHistory()`
 
 Query transaction history and get live state for a single transaction. You can
-pass a single ID, multiple IDs, or a custom `TransactionFilter`. Results refresh
-after each successful sync by default.
+pass a single ID, multiple IDs, or a custom filter. Results refresh
+after each successful sync by default. Pass a custom filter as a factory, e.g.
+`filter: () => TransactionFilter.uncommitted()` defined at module scope: a
+`TransactionFilter` instance is consumed by the first fetch, so a refetch with
+it fails.
 It hides the filter plumbing and provides a single-record convenience view.
 The hook keeps lists fresh on sync so you don't wire manual refreshes.
 

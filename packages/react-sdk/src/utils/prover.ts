@@ -2,6 +2,7 @@ import { TransactionProver } from "@miden-sdk/miden-sdk";
 import type { MidenConfig, ProverConfig, ProverTarget } from "../types";
 
 const DEFAULT_PROVER_URLS = {
+  mainnet: "https://tx-prover.mainnet.miden.io",
   devnet: "https://tx-prover.devnet.miden.io",
   testnet: "https://tx-prover.testnet.miden.io",
 };
@@ -74,7 +75,11 @@ function resolveProverTarget(
     if (normalized === "local" || normalized === "localhost") {
       return TransactionProver.newLocalProver();
     }
-    if (normalized === "devnet" || normalized === "testnet") {
+    if (
+      normalized === "mainnet" ||
+      normalized === "devnet" ||
+      normalized === "testnet"
+    ) {
       const url =
         config.proverUrls?.[normalized] ?? DEFAULT_PROVER_URLS[normalized];
       return TransactionProver.newRemoteProver(

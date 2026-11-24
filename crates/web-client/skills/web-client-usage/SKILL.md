@@ -178,6 +178,13 @@ reports before the first sync. Before that sync, a client created without it
 rejects `feeFaucetId()` and asks you to sync first; a mock client reports its
 mock chain's own faucet.
 
+`client.protocolConfig()` returns that configuration as a `ProtocolConfig`: its
+`feeFaucetId()` is the faucet `client.feeFaucetId()` reports after a sync, and
+its `commitment()` is what block headers carry as `protocolConfigCommitment()`.
+It rejects with "the network's protocol configuration is not known yet" until
+the first sync stores the configuration; a mock client is seeded with its
+chain's.
+
 Both accept the same `ClientOptions` for overrides:
 
 ```typescript
@@ -192,7 +199,7 @@ const client = await MidenClient.createTestnet({
 
 ```typescript
 const client = await MidenClient.create({
-  rpcUrl: "https://rpc.testnet.miden.io", // string URL or "testnet"/"devnet"/"localhost"/"local"
+  rpcUrl: "https://rpc.testnet.miden.io", // string URL or "mainnet"/"testnet"/"devnet"/"localhost"/"local"
   feeFaucetId: FEE_FAUCET, // optional - what feeFaucetId() reports before the first sync
   noteTransportUrl: "https://transport.miden.io",
   noteTransportMaxRetries: 3, // optional - in-call retries of a private note send; see below
@@ -252,8 +259,10 @@ to `false` when you pass a `CallbackProver` from
 `TransactionProver.newCallbackProver(jsFn)` (the worker boundary serializes the
 prover and silently downgrades the callback variant to `"local"`), or when
 embedding in a single-WebView native shell. `client.lastAuthError()` - which
-returns the raw value your sign callback threw - is only meaningful with
-`useWorker: false`.
+returns the raw sign rejection or a readable external `getKey` failure string -
+is only meaningful with `useWorker: false`. `executeTransaction` clears the stored
+detail when it starts, as does a successful sign or `getKey` callback. On both worker and direct
+paths, failed `executeTransaction` calls include any missing readable callback detail.
 
 Under the worker, `keystore` callbacks run on the main thread and the worker
 waits for each one. `callbackTimeoutMs` sets that wait: left unset, `sign` has
@@ -319,7 +328,11 @@ const client = await MidenClient.createTestnet();
 so a test suite needs no node, no faucet and no block time:
 
 ```typescript
-const client = await MidenClient.createMock({ seed, serializedMockChain });
+const client = await MidenClient.createMock({
+  seed,
+  serializedMockChain,
+  storeName: "mock-app-tests", // optional IndexedDB name (defaults to "mock_client_db")
+});
 await client.proveBlock(); // advance the mock chain by one block
 const dump = await client.serializeMockChain(); // snapshot for restore
 client.usesMockChain(); // boolean - true only for a mock client
@@ -327,7 +340,10 @@ client.usesMockChain(); // boolean - true only for a mock client
 
 `serializedMockChain` restores a previous `serializeMockChain()` dump;
 `serializedNoteTransport` does the same for the mock note-transport node
-(`serializeMockNoteTransportNode()`). `proveBlock`, `serializeMockChain` and
+(`serializeMockNoteTransportNode()`). `storeName` sets the browser IndexedDB
+name (default `"mock_client_db"`): pass a distinct `storeName` when a second
+independent mock runs in the same origin so it does not share store state with
+another live mock. `proveBlock`, `serializeMockChain` and
 `serializeMockNoteTransportNode` throw on a non-mock client.
 
 ### Termination
@@ -374,7 +390,7 @@ Common patterns:
   side-effect that must not race with a kernel callback (e.g. clearing an
   in-memory unlock token after a wallet "lock")
 
-`autoSync: true` (default for `createTestnet`/`createDevnet`) only triggers a
+`autoSync: true` (default for `createTestnet`/`createDevnet`/`createMainnet`) only triggers a
 single sync at construction time - it is not a polling loop. Use the React
 SDK's `useSyncState` or `MidenProvider` `autoSyncInterval` for periodic sync.
 
@@ -385,8 +401,12 @@ continue to sync before relying on on-chain balances.
 
 For browser stores, `apply` requires the stored account to match the
 transaction's execution input. A mismatch rejects before changing account state
-or transaction history. A submitted transaction may already be on-chain when
-local apply fails; check its status before submitting again.
+or transaction history. A submitted transaction is already accepted by the node when
+local apply fails, so `apply` and the single-transaction `transactions.*` helpers
+(which apply after submitting) reject with `code: "ApplyTransactionAfterSubmitFailed"`,
+`transactionId`, `submissionHeight` and the original error as `cause`. A batch whose
+local update fails after the node accepted it rejects with the same `code` and the
+accepted block in its message, without those fields. Do not submit it again.
 
 ## Type Conversions
 
@@ -472,6 +492,11 @@ faucet missing `symbol`, `decimals` or `maxSupply`. The legacy `0`, `1` and
 Neither enum has wallet or contract members. Omit `type` for a wallet, or pass
 `components` for a contract (the strings `"MutableContract"` / `"ImmutableContract"`
 are also accepted). Use `storage` to select visibility in `accounts.create()`.
+A contract also needs a raw 32-byte `seed` and `auth`. `auth` is an
+`AuthSecretKey` stored with the account, or `"none"` for a NoAuth contract that
+anyone can call and that stores no key. Omitting `auth` is rejected and does
+not default to NoAuth. `"none"` is only valid on a contract; wallet and faucet
+`auth` stays `AuthScheme.Falcon` or `AuthScheme.ECDSA`.
 
 `StorageMode` has only `Public`/`Private`. There is no `StorageMode.Network`
 (accessing it yields `undefined`, which silently resolves to private).
@@ -522,6 +547,38 @@ public metadata, the registry's approved script and inputs, and
 must be public. A tag alone does not make a network note. Consume the returned P2ID note to put
 the asset back in the vault. The amount-based `send` helper remains fungible-only.
 
+## Fee Sponsorship Notes
+
+Use standalone `createFeeSponsorshipNote` (or `Note.createFeeSponsorshipNote`)
+to build a fee-sponsorship note bound to `featureNoteId` and routed to a
+**public** `to` account (`to` must be public for network routing). `reclaimer`
+defaults to the sponsor (`from`). Omit `reclaimAfter` / `reclaimHeight` to
+disable reclaim; when set, it must be a positive 32-bit integer (`0` is
+rejected). Prefer `createFeeSponsorshipNote` when passing an `AccountId`
+`reclaimer` because standalone clones it, whereas `Note.createFeeSponsorshipNote`
+consumes a passed `reclaimer` `AccountId` in browser WASM even on error.
+
+```typescript
+const sponsorship = createFeeSponsorshipNote({
+  from: sponsorId,
+  to: publicTargetId,
+  featureNoteId: featureNote.id(),
+  asset: new FungibleAsset(feeFaucetId, 1_000n),
+  reclaimer: reclaimerId, // optional; defaults to `from`
+  reclaimAfter: 100, // optional positive 32-bit integer (> 0; 0 is rejected)
+});
+
+const decoded = FeeSponsorshipNote.tryFromNote(sponsorship);
+decoded.featureNoteId();
+decoded.sender();
+decoded.reclaimer();
+decoded.reclaimHeight(); // number | undefined
+decoded.asset();
+decoded.tag();
+decoded.serialNumber();
+decoded.intoNote();
+```
+
 ## Account Creation
 
 ```typescript
@@ -545,7 +602,11 @@ const faucet = await client.accounts.create({
 });
 
 // Custom contract - selected by passing `components` (NOT by an AccountType
-// member). Requires seed and an AuthSecretKey.
+// member). A contract also needs a raw 32-byte `seed` and `auth`. `auth` is an
+// `AuthSecretKey` stored with the account, or `"none"` for a NoAuth contract
+// that anyone can call and that stores no key. Omitting `auth` is rejected and
+// does not default to NoAuth. `"none"` is only valid on a contract; wallet and
+// faucet `auth` stays `AuthScheme.Falcon` or `AuthScheme.ECDSA`.
 const component = await client.compile.component({
   code: contractMasm,
   slots: [],
@@ -554,6 +615,11 @@ const contract = await client.accounts.create({
   seed: new Uint8Array(32),
   auth: secretKey, // AuthSecretKey, not the AuthScheme enum
   components: [component], // presence of `components` routes to a contract
+});
+const noAuthContract = await client.accounts.create({
+  seed: new Uint8Array(32),
+  auth: "none",
+  components: [component],
 });
 ```
 
@@ -567,7 +633,8 @@ A contract is whatever `accounts.create()` call carries `components` - the
 string forms `type: "MutableContract"` / `"ImmutableContract"` also route to a
 contract, but the canonical selector is `components`, and `components` none of
 which exports a non-auth (`@account_procedure`) procedure is rejected, an empty
-array included. There is **no** `AccountType.MutableContract`;
+array included. `components` selects the contract, and `seed` plus `auth` are
+still required. There is **no** `AccountType.MutableContract`;
 `type: AccountType.MutableContract` is `undefined` and, without `components`,
 would silently create a wallet.
 
@@ -585,14 +652,16 @@ builds exactly the code the Rust client builds:
 - `createAuthGuardedMultisig(config)` builds the standard guarded multisig.
   Configure it with
   `new AuthGuardedMultisigConfig(approvers, defaultThreshold, guardian, authScheme)`
-  (optionally `.withProcThresholds([...])`).
+  (optionally `.withProcThresholds([...])`), where `authScheme` is
+  `AuthScheme.ECDSA` or `AuthScheme.Falcon`.
 - `AccountComponent.createNetworkAuthComponents(allowedNoteScriptFees, feeFaucetId, allowedTxScriptRoots?)`
   builds a network account's auth. Each `new NoteScriptFee(noteScript.root(), amount)`
   pairs an allowlisted note script root with the fee the account charges to
   consume notes running it (zero is valid). `feeFaucetId` must be the chain's
-  own fee faucet, `client.feeFaucetId()`: the node never runs network
-  transactions for an account whose fee asset differs from the chain's protocol
-  configuration, and the client is not told - the notes just sit unconsumed.
+  own fee faucet, `client.feeFaucetId()` (the faucet `client.protocolConfig()`
+  names): the node never runs network transactions for an account whose fee
+  asset differs from the chain's protocol configuration, and the client is not
+  told - the notes just sit unconsumed.
   It returns an **array**; add every element to the builder:
 
   ```typescript
@@ -626,10 +695,11 @@ check, because another registration can consume the code between calls.
 
 Since protocol 0.16 the verification fee is paid inside the account's auth
 procedure, which reads it from the transaction's auth argument. Fees settle in
-the chain's native fee asset at rate 1/1, so there is nothing for a caller to
-convert - `miden-client` builds and commits the conversion info. The one thing
-it will not invent is the salt the commitment is made under, because every
-multisig flavour reuses that salt as its transaction summary's replay guard.
+the chain's native fee asset (the one `client.protocolConfig()` names) at rate
+1/1, so there is nothing for a caller to convert - `miden-client` builds and
+commits the conversion info. The one thing it will not invent is the salt the
+commitment is made under, because every multisig flavour reuses that salt as
+its transaction summary's replay guard.
 
 Every `client.transactions` operation that builds its own request already
 declares a salt. The paths that take a **request from you** do not:
@@ -1045,8 +1115,9 @@ this client, and no note may be consumed twice in one batch.
 
 The result is `{ blockNumber }` only - the Rust V1 batch API returns no
 per-transaction ids, and the number is the node's chain tip as of submission,
-not the block the batch commits in. `waitForConfirmation` does not currently
-work on a batch (#314): sync and check `transactions.list()` instead. A
+not the block the batch commits in. `waitForConfirmation: true` resolves the
+call once every transaction of the batch is committed, and rejects if the node
+discards one or `timeout` (default 60 s) runs out. A
 `custom` operation carries a request you built, so the fee rules above apply to
 it: use `client.feeAwareTransactionRequestBuilder(account)`, or
 `client.withFeeAwareAuth(request, account)` for a finished request you did not
