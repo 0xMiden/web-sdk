@@ -978,6 +978,42 @@ export async function upsertAccountRecord(
   }
 }
 
+export async function insertAccount(
+  dbId: string,
+  accountId: string,
+  codeRoot: string,
+  code: Uint8Array,
+  storageSlots: JsStorageSlot[],
+  storageMapEntries: JsStorageMapEntry[],
+  vaultAssets: JsVaultAsset[],
+  storageRoot: string,
+  vaultRoot: string,
+  nonce: string,
+  committed: boolean,
+  commitment: string,
+  accountSeed: Uint8Array | undefined,
+  watched: boolean,
+  address: Uint8Array
+) {
+  await upsertAccountCode(dbId, codeRoot, code);
+  await upsertAccountStorage(dbId, accountId, storageSlots);
+  await upsertStorageMapEntries(dbId, accountId, storageMapEntries);
+  await upsertVaultAssets(dbId, accountId, vaultAssets);
+  await upsertAccountRecord(
+    dbId,
+    accountId,
+    codeRoot,
+    storageRoot,
+    vaultRoot,
+    nonce,
+    committed,
+    commitment,
+    accountSeed,
+    watched
+  );
+  await insertAccountAddress(dbId, accountId, address);
+}
+
 export async function insertAccountAddress(
   dbId: string,
   accountId: string,
