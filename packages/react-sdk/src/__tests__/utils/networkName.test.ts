@@ -17,6 +17,18 @@ describe("resolveNetworkName", () => {
     expect(resolveNetworkName("http://127.0.0.1:57291")).toBe("devnet");
   });
 
+  it("prefers devnet, then mainnet, then testnet when the endpoint names more than one", () => {
+    expect(resolveNetworkName("https://rpc.mainnet.miden.io/testnet")).toBe(
+      "mainnet"
+    );
+    expect(resolveNetworkName("https://rpc.devnet.mainnet.example")).toBe(
+      "devnet"
+    );
+    expect(resolveNetworkName("http://localhost/rpc.mainnet.miden.io")).toBe(
+      "mainnet"
+    );
+  });
+
   it("defaults an endpoint naming no network to mainnet", () => {
     expect(resolveNetworkName("https://rpc.cedar.miden.io")).toBe("mainnet");
   });
