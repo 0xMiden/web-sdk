@@ -154,15 +154,18 @@ test("a custom note script is registered and declared for network execution", as
   const result = await run(async ({ client, sdk, helpers }) => {
     const { wallet } = await helpers.setupWalletAndFaucet();
     const builder = await client.createCodeBuilder();
-    const custom = builder.compileNoteScript(`
-      @note_script
-      pub proc main
-        push.7 drop
-      end
-    `);
+    // The browser build consumes a handle passed by value, so every use compiles its own copy.
+    const custom = async () =>
+      await builder.compileNoteScript(`
+        @note_script
+        pub proc main
+          push.7 drop
+        end
+      `);
+    const customRoot = (await custom()).root().toHex();
     const register = await client.newRegisterNoteScriptsTransactionRequest(
       wallet.id(),
-      new sdk.NoteScriptArray([custom])
+      new sdk.NoteScriptArray([await custom()])
     );
     const roots = register
       .expectedOutputOwnNotes()
@@ -170,12 +173,12 @@ test("a custom note script is registered and declared for network execution", as
     const txId = await client.submitNewTransaction(wallet.id(), register);
     await client.proveBlock();
     const declared = new sdk.TransactionRequestBuilder()
-      .withExpectedNtxScripts(new sdk.NoteScriptArray([custom]))
+      .withExpectedNtxScripts(new sdk.NoteScriptArray([await custom()]))
       .build()
       .expectedNtxScripts()
       .map((s) => s.root().toHex());
     return {
-      custom: custom.root().toHex(),
+      custom: customRoot,
       roots,
       submitted: txId.toHex().length,
       declared,
