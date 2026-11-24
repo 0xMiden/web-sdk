@@ -1065,7 +1065,8 @@ describe("a store written by a newer client", () => {
 
     // The missing table makes Dexie patch the store to native version 91.
     expect(await reopen(name, "0.17.4")).toBeDefined();
-    expect(await nativeVersion(name)).toBe(101);
+    // Reopening runs the v11 upgrade, which replaces the patched native version.
+    expect(await nativeVersion(name)).toBe(110);
   });
 
   it("refuses it when a newer client upgrades the store under an open connection", async () => {

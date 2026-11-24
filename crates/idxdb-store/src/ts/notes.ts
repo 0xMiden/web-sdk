@@ -1,5 +1,5 @@
 import { getDatabase, IInputNote, IOutputNote } from "./schema.js";
-import type { Transaction } from "dexie";
+import Dexie, { type Transaction } from "dexie";
 
 import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
 
@@ -143,16 +143,23 @@ export async function getOutputNotesFromIds(dbId: string, noteIds: string[]) {
   }
 }
 
+// Committed, ProcessingAuthenticated and ProcessingUnauthenticated.
+const UNSPENT_STATE_DISCRIMINANTS = [2, 4, 5];
+
 export async function getUnspentInputNoteNullifiers(dbId: string) {
   try {
     const db = getDatabase(dbId);
-    const notes = await db.inputNotes
-      .where("stateDiscriminant")
-      .anyOf([2, 4, 5])
-      .toArray();
-    return notes
-      .map((note) => note.nullifier)
-      .filter((nullifier): nullifier is string => nullifier != null);
+    // Key-only read: no note rows are loaded. Notes without a nullifier are not in the index.
+    const keys = await db.inputNotes
+      .where("[stateDiscriminant+nullifier]")
+      .inAnyRange(
+        UNSPENT_STATE_DISCRIMINANTS.map((state) => [
+          [state, Dexie.minKey],
+          [state, Dexie.maxKey],
+        ])
+      )
+      .keys();
+    return keys.map((key) => (key as unknown as [number, string])[1]);
   } catch (err) {
     logWebStoreError(err, "Failed to get unspent input note nullifiers");
   }

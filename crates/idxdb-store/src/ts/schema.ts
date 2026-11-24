@@ -756,6 +756,20 @@ export class MidenDatabase {
           .delete();
       });
 
+    // v11 (#267): index-only, so Dexie builds it without an upgrade hook. Serves the
+    // key-only unspent-nullifier read; a row without a nullifier is left out of the index.
+    this.dexie.version(11).stores({
+      [Table.InputNotes]: indexes(
+        "detailsCommitment",
+        "noteId",
+        "nullifier",
+        "scriptRoot",
+        "stateDiscriminant",
+        "[consumedBlockHeight+consumedTxOrder+detailsCommitment]",
+        "[stateDiscriminant+nullifier]"
+      ),
+    });
+
     this.accountCodes = this.dexie.table<IAccountCode, string>(
       Table.AccountCode
     );
