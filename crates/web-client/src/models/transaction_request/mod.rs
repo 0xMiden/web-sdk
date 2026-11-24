@@ -41,6 +41,16 @@ impl TransactionRequest {
         deserialize_from_bytes::<NativeTransactionRequest>(&bytes).map(TransactionRequest)
     }
 
+    /// Returns whether `other` has the same fields as this request.
+    ///
+    /// This compares the request's structure, not its serialized bytes. A `MerkleStore` serializes
+    /// the entries beyond its empty-subtree defaults in hash-map order, so two requests with every
+    /// field equal can serialize differently, for example after a `deserialize`. Use this to check
+    /// that a request kept its fields through a copy or a transport.
+    pub fn equals(&self, other: &TransactionRequest) -> bool {
+        self.0 == other.0
+    }
+
     /// Returns output notes created by the sender account.
     #[js_export(js_name = "expectedOutputOwnNotes")]
     pub fn expected_output_own_notes(&self) -> Result<Vec<Note>, JsErr> {
