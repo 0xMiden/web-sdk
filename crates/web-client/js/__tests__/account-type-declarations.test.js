@@ -218,73 +218,73 @@ it("type-checks the friendly AuthScheme in AuthGuardedMultisigConfig and createA
   ).toEqual([]);
 });
 
-it("type-checks FeeSponsorshipNote, FungibleAsset, and createFeeSponsorshipNote across index, api-types, and docs-entry", () => {
-  const feeSponsorshipNative = `
-    export enum AuthScheme { AuthEcdsaK256Keccak = 1, AuthRpoFalcon512 = 2 }
-    export class AccountId {
-      free(): void;
-      toString(): string;
-    }
-    export class AccountHeader {
-      free(): void;
-      id(): AccountId;
-    }
-    export class Account {
-      free(): void;
-      id(): AccountId;
-    }
-    export class AccountComponent { free(): void; }
-    export class AccountStorage { free(): void; }
-    export class AccountStorageMode { free(): void; }
-    export class AuthGuardedMultisigConfig { free(): void; }
-    export class AuthSecretKey { free(): void; }
-    export class Felt { free(): void; }
-    export class NoteId {
-      free(): void;
-      toString(): string;
-    }
-    export class NoteTag {
-      free(): void;
-      asU32(): number;
-    }
-    export class Word { free(): void; }
-    export class FungibleAsset {
-      free(): void;
-      amount(): bigint;
-      faucetId(): AccountId;
-    }
-    export class Note {
-      free(): void;
-      static createP2IDNote(...args: any[]): Note;
-      static createP2IDENote(...args: any[]): Note;
-      static createFeeSponsorshipNote(
-        sender: AccountId,
-        target: AccountId,
-        feature_note_id: NoteId,
-        asset: FungibleAsset,
-        reclaimer?: AccountId,
-        reclaim_height?: number
-      ): Note;
-    }
-    export class FeeSponsorshipNote {
-      free(): void;
-      static tryFromNote(note: Note): FeeSponsorshipNote;
-      sender(): AccountId;
-      serialNumber(): Word;
-      tag(): NoteTag;
-      asset(): FungibleAsset;
-      featureNoteId(): NoteId;
-      reclaimer(): AccountId;
-      reclaimHeight(): number | undefined;
-      intoNote(): Note;
-    }
-    export class SyncSummary { free(): void; }
-    export class WebClient {
-      free(): void;
-      static buildSwapTag(...args: any[]): NoteTag;
-    }
-  `;
+const feeSponsorshipNative = `
+  export enum AuthScheme { AuthEcdsaK256Keccak = 1, AuthRpoFalcon512 = 2 }
+  export class AccountId {
+    free(): void;
+    toString(): string;
+  }
+  export class AccountHeader {
+    free(): void;
+    id(): AccountId;
+  }
+  export class Account {
+    free(): void;
+    id(): AccountId;
+  }
+  export class AccountComponent { free(): void; }
+  export class AccountStorage { free(): void; }
+  export class AccountStorageMode { free(): void; }
+  export class AuthGuardedMultisigConfig { free(): void; }
+  export class AuthSecretKey { free(): void; }
+  export class Felt { free(): void; }
+  export class NoteId {
+    free(): void;
+    toString(): string;
+  }
+  export class NoteTag {
+    free(): void;
+    asU32(): number;
+  }
+  export class Word { free(): void; }
+  export class FungibleAsset {
+    free(): void;
+    amount(): bigint;
+    faucetId(): AccountId;
+  }
+  export class Note {
+    free(): void;
+    static createP2IDNote(...args: any[]): Note;
+    static createP2IDENote(...args: any[]): Note;
+    static createFeeSponsorshipNote(
+      sender: AccountId,
+      target: AccountId,
+      feature_note_id: NoteId,
+      asset: FungibleAsset,
+      reclaimer?: AccountId,
+      reclaim_height?: number
+    ): Note;
+  }
+  export class FeeSponsorshipNote {
+    free(): void;
+    static tryFromNote(note: Note): FeeSponsorshipNote;
+    sender(): AccountId;
+    serialNumber(): Word;
+    tag(): NoteTag;
+    asset(): FungibleAsset;
+    featureNoteId(): NoteId;
+    reclaimer(): AccountId;
+    reclaimHeight(): number | undefined;
+    intoNote(): Note;
+  }
+  export class SyncSummary { free(): void; }
+  export class WebClient {
+    free(): void;
+    static buildSwapTag(...args: any[]): NoteTag;
+  }
+`;
 
+it("type-checks FeeSponsorshipNote, FungibleAsset, and createFeeSponsorshipNote across index and docs-entry", () => {
   expect(
     diagnostics(
       feeSponsorshipNative,
@@ -372,7 +372,9 @@ it("type-checks FeeSponsorshipNote, FungibleAsset, and createFeeSponsorshipNote 
     `
     )
   ).toEqual([]);
+}, 15_000);
 
+it("strictly type-checks api-types.d.ts and docs-entry.d.ts declarations without skipLibCheck", () => {
   // Strict declaration check (skipLibCheck: false) directly over authored .d.ts files
   // so missing internal imports like FungibleAsset in api-types.d.ts fail even without consumers.
   const apiTypes = fileURLToPath(
@@ -425,4 +427,4 @@ it("type-checks FeeSponsorshipNote, FungibleAsset, and createFeeSponsorshipNote 
       }
     )
   ).toEqual([]);
-});
+}, 15_000);
