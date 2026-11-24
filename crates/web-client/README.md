@@ -1012,6 +1012,27 @@ ForeignAccount.private(account);
 
 A public entry's inputs are fetched against the transaction's reference block, and the vault and storage maps the foreign code actually reads are resolved during execution as per-asset and per-key witnesses rather than up front. A transaction pinned to a block the node no longer serves account state for therefore cannot execute: pin it to a recent block instead.
 
+### Watch-Only Accounts and Witnesses
+
+A watch-only account is a public on-chain account the client follows without subscribing to its note tag. Sync keeps its commitment, nonce and storage current, but notes addressed to it are not pulled.
+
+```typescript
+const account = await client.accounts.importWatched(oracleId);
+```
+
+Tracking an account's witness makes every sync fetch it, so a transaction that uses the account as a foreign account resolves its witness locally instead of asking the node:
+
+```typescript
+await client.accounts.trackWitness(oracleId); // true if it was not tracked before
+await client.sync(); // fetches the witness
+await client.accounts.trackedWitnesses(); // [oracleId]
+await client.accounts.untrackWitness(oracleId); // true if it was tracked
+```
+
+The tracked set persists across client reopens. `trackWitness` does not validate the account: sync fails while a tracked account has no witness the node can return, so an account that is not in the account tree blocks sync until `untrackWitness` removes it.
+
+`getStorageMapWitness(account, slotName, key)` reads the stored witness for a key of a storage map slot. The result has `get(key)` for the value and `root()` for the map root.
+
 ### Partial-Swap (PSWAP) Orders
 
 A partial-swap note offers one asset for another and can be filled by multiple
