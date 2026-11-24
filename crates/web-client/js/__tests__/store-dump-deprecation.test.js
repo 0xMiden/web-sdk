@@ -9,7 +9,9 @@ function docBefore(source, anchor) {
   expect(at, `${anchor} not found`).toBeGreaterThan(-1);
   const end = source.lastIndexOf("*/", at);
   expect(source.slice(end + 2, at).trim(), `${anchor} has no JSDoc`).toBe("");
-  return source.slice(source.lastIndexOf("/**", end), end + 2);
+  const start = source.lastIndexOf("/*", end);
+  expect(source.startsWith("/**", start), `${anchor} has no JSDoc`).toBe(true);
+  return source.slice(start, end + 2);
 }
 
 const REPLACEMENT = /storeName/;
