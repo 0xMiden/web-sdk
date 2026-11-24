@@ -276,6 +276,15 @@ test.describe("standard note decoders", () => {
         sdk.NoteType.Public,
         new sdk.NoteAttachment()
       );
+      // Same SWAP script and storage, but not exactly one asset.
+      const offered = new sdk.FungibleAsset(faucetA.id(), sdk.u64(10));
+      const requested = new sdk.FungibleAsset(faucetB.id(), sdk.u64(5));
+      const withAssets = (list) =>
+        new sdk.Note(
+          new sdk.NoteAssets(list),
+          publicNote.metadata(),
+          publicNote.recipient()
+        );
       return {
         sender: pub.sender().toString(),
         expectedSender: sender.id().toString(),
@@ -301,6 +310,10 @@ test.describe("standard note decoders", () => {
         roundTripId: priv.intoNote().id().toString(),
         originalId: privateNote.id().toString(),
         wrongScriptError: errorOf(() => sdk.SwapNote.tryFromNote(p2id)),
+        twoAssetsError: errorOf(() =>
+          sdk.SwapNote.tryFromNote(withAssets([offered, requested]))
+        ),
+        noAssetsError: errorOf(() => sdk.SwapNote.tryFromNote(withAssets([]))),
       };
     });
 
@@ -320,5 +333,7 @@ test.describe("standard note decoders", () => {
     expect(result.serial).toBe(result.expectedSerial);
     expect(result.roundTripId).toBe(result.originalId);
     expect(result.wrongScriptError).toMatch(/not a SWAP note/);
+    expect(result.twoAssetsError).toMatch(/exactly one offered asset/);
+    expect(result.noAssetsError).toMatch(/exactly one offered asset/);
   });
 });
