@@ -16,14 +16,9 @@ import test from "./playwright.global.setup";
  * the inner slot ran. Result: the promise returned by
  * `_withInnerWebClient` hung forever.
  *
- * The fix adds a `_withInnerLockDepth` counter on the inner WebClient.
- * `_withInnerWebClient` bumps it around the `await fn(inner)`, and
- * `_serializeWasmCall` runs its callback inline (no chain enqueue) when
- * the counter is > 0. This breaks the re-entry deadlock while preserving
- * serialization against external callers — they still queue behind the
- * outer slot, which only resolves after `fn` (including all its inline
- * re-entries) settles. See the SAFETY CONTRACT comment on
- * `_withInnerWebClient` for the external-mutex requirement.
+ * The fix hands `fn` a trusted handle on the inner WebClient: calls made
+ * through it run inline in the slot `fn` holds, while every other caller,
+ * including one that runs during an await inside `fn`, queues behind it.
  *
  * These tests cover the three call shapes the wallet (Miden Wallet's
  * MV3 extension) actually uses inside `_withInnerWebClient`, plus the
@@ -104,32 +99,12 @@ test.describe("_withInnerWebClient re-entrancy", () => {
     expect(typeof result.blockNum).toBe("number");
   });
 
-  test("an external SDK call made during fn runs inline (documents the safety-contract hole)", async ({
+  test("an external SDK call made during fn queues behind fn", async ({
     page,
   }) => {
-    // Characterizes the documented limit of the re-entrancy fix. The
-    // `_withInnerLockDepth` counter is GLOBAL on the inner client, not
-    // scoped to `fn`'s async context — so while `fn` is mid-flight
-    // (depth > 0), ANY `_serializeWasmCall` runs inline, including one
-    // issued by code OUTSIDE `fn`. Such a caller does NOT queue behind the
-    // outer slot; it interleaves. This is exactly why `_withInnerWebClient`'s
-    // SAFETY CONTRACT requires callers to hold an external mutex preventing
-    // concurrent access during `fn` (the Miden Wallet's `withWasmClientLock`
-    // discipline satisfies it).
-    //
-    // The interleaving is pinned with explicit handshakes rather than timer
-    // races: `_serializeWasmCall`'s inline path is `Promise.resolve().then`,
-    // so whether an external call runs inline vs queued hinges on whether
-    // `depth > 0` at the exact microtask it fires — not something a `setTimeout`
-    // can order reliably. `fnEntered` guarantees the external call is issued
-    // only once `fn` is mid-flight (depth = 1, so it MUST take the inline
-    // path), and `fn` parks on `externalDone` until the external call returns.
-    //
-    // If a regression closed the hole (context-scoped depth) or reverted the
-    // fix (re-queuing the call), the external read would queue behind the
-    // outer slot — which is parked on `externalDone` — and deadlock. The
-    // 5s race below converts that hang into a fast, explicit failure:
-    // "external-blocked" instead of "external-ran".
+    // `fn` parks until the external call, issued while `fn` is mid-flight,
+    // has had 500 ms to run. It must still be pending then and settle only
+    // after `fn` does.
     const result = await page.evaluate(async () => {
       const inner = window.client as any;
       const client = new (window as any).MidenClient(
@@ -138,7 +113,7 @@ test.describe("_withInnerWebClient re-entrancy", () => {
         null
       );
       const order: string[] = [];
-      // Bogus hex → the proxy-fallback read returns undefined cheaply.
+      // Bogus hex: the proxy-fallback read returns undefined cheaply.
       const ZERO_HEX = "0x" + "0".repeat(64);
 
       const defer = () => {
@@ -147,58 +122,44 @@ test.describe("_withInnerWebClient re-entrancy", () => {
         return { promise, resolve };
       };
       const fnEntered = defer();
-      const externalDone = defer();
+      const releaseFn = defer();
 
       const innerSlot = client._withInnerWebClient(async (innerArg: any) => {
         order.push("inner-start");
-        // Inline re-entrant call FROM fn: a proxy-fallback read.
         await innerArg.getInputNote(ZERO_HEX);
-        order.push("inner-middle");
-        // Signal that fn is mid-flight (depth = 1), then park until the
-        // external call has run, so its inline execution is observable
-        // BEFORE this slot resolves.
         fnEntered.resolve();
-        await externalDone.promise;
+        await releaseFn.promise;
         order.push("inner-end");
       });
 
-      // External SDK call issued only after `fn` is mid-flight, so depth > 0
-      // and `_serializeWasmCall` MUST take the inline path. Uses the shared
-      // inner client (the `MidenClient` wrapper has no proxy fallback). The
-      // race guards against a regression that would queue this call and
-      // deadlock against the parked outer slot.
       const externalSlot = (async () => {
         await fnEntered.promise;
-        order.push("external-queued");
-        const ran = inner.getInputNote(ZERO_HEX).then(() => "ran");
-        const blocked = new Promise((r) => setTimeout(r, 5_000, "blocked"));
-        const outcome = await Promise.race([ran, blocked]);
-        order.push("external-" + outcome);
-        externalDone.resolve();
+        const ran = inner
+          .getInputNote(ZERO_HEX)
+          .then(() => order.push("external-ran"));
+        await new Promise((r) => setTimeout(r, 500));
+        order.push("external-waited");
+        releaseFn.resolve();
+        await ran;
       })();
 
       await Promise.all([innerSlot, externalSlot]);
       return { order };
     });
 
-    // The external call ran inline DURING `fn` (not blocked behind the outer
-    // slot), and did so before this slot resolved — so "external-ran" lands
-    // before "inner-end".
-    expect(result.order).toContain("external-ran");
-    expect(result.order).not.toContain("external-blocked");
-    expect(result.order).toContain("inner-end");
-    expect(result.order.indexOf("external-ran")).toBeLessThan(
-      result.order.indexOf("inner-end")
-    );
+    expect(result.order).toEqual([
+      "inner-start",
+      "external-waited",
+      "inner-end",
+      "external-ran",
+    ]);
   });
 
   test("rejection in fn propagates and releases the chain so subsequent calls work", async ({
     page,
   }) => {
-    // Throwing from inside fn must not leave _withInnerLockDepth >0
-    // permanently (which would silently disable serialization for all
-    // future calls). After a rejected fn, subsequent SDK calls should
-    // see normal queueing behavior.
+    // Throwing from inside fn must release the chain slot. After a
+    // rejected fn, subsequent SDK calls should see normal queueing behavior.
     const result = await page.evaluate(async () => {
       const inner = window.client as any;
       const client = new (window as any).MidenClient(

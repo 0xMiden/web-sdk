@@ -33,6 +33,7 @@ vi.mock("../wasm.js", () => ({
   }),
 }));
 
+import { MidenClient } from "../client.js";
 import {
   WasmWebClient,
   MockWasmWebClient,
@@ -45,7 +46,6 @@ afterEach(() => __resetObserverForTest());
 /** A host carrying just the state `_serializeWasmCall` reads. */
 function makeHost() {
   return {
-    _withInnerLockDepth: 0,
     _wasmCallChain: Promise.resolve(),
     _serializeWasmCall: WasmWebClient.prototype._serializeWasmCall,
   };
@@ -239,14 +239,14 @@ describe("_serializeWasmCall preserves call semantics", () => {
     ]);
   });
 
-  it("runs inline without touching the chain while an inner lock is held", async () => {
+  it("runs a call through a trusted handle inline without touching the chain", async () => {
     const seen = [];
     setObserver((o) => seen.push(o));
     const host = makeHost();
-    host._withInnerLockDepth = 1;
+    const { handle } = MidenClient._createTrustedHandle(host);
     const chainBefore = host._wasmCallChain;
     await expect(
-      host._serializeWasmCall(async () => "value", "opOne")
+      handle._serializeWasmCall(async () => "value", "opOne")
     ).resolves.toBe("value");
     expect(host._wasmCallChain).toBe(chainBefore);
     expect(seen).toHaveLength(1);
@@ -257,7 +257,6 @@ describe("_serializeWasmCall preserves call semantics", () => {
 describe("submitNewTransactionBatch joins the chain when called", () => {
   function makeBatchHost(Client, fields) {
     return Object.assign(Object.create(Client.prototype), {
-      _withInnerLockDepth: 0,
       _wasmCallChain: Promise.resolve(),
       ...fields,
     });

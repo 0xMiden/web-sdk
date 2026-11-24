@@ -1342,7 +1342,6 @@ describe("executeTransaction auth error boundaries", () => {
         worker: null,
         wasmWebClient,
         getWasmWebClient: async () => wasmWebClient,
-        _withInnerLockDepth: 0,
         _wasmCallChain: Promise.resolve(),
       });
       const log = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -1477,7 +1476,6 @@ describe("executeTransaction auth error boundaries", () => {
         worker: null,
         wasmWebClient,
         getWasmWebClient: async () => wasmWebClient,
-        _withInnerLockDepth: 0,
         _wasmCallChain: Promise.resolve(),
       });
       const args =
@@ -1525,7 +1523,6 @@ describe("executeTransaction auth error boundaries", () => {
         worker: null,
         wasmWebClient,
         getWasmWebClient: async () => wasmWebClient,
-        _withInnerLockDepth: 0,
         _wasmCallChain: Promise.resolve(),
       });
       const args =

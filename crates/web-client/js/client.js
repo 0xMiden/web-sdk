@@ -24,6 +24,7 @@ export class MidenClient {
   static _WasmWebClient = null;
   static _MockWasmWebClient = null;
   static _getWasmOrThrow = null;
+  static _createTrustedHandle = null;
 
   #inner;
   #getWasm;
@@ -66,29 +67,18 @@ export class MidenClient {
    * The callback runs inside `_serializeWasmCall`, so the WASM RefCell is
    * held for the duration of `fn`. Concurrent SDK calls (sync, other
    * transactions, etc.) queue on the same chain and run after `fn`
-   * settles. Without this serialization, raw inner-client access would
-   * race the proxy's chain and trip wasm-bindgen's "recursive use of an
-   * object detected" panic.
+   * settles, including calls that land during one of `fn`'s awaits.
+   * Without this serialization, raw inner-client access would race the
+   * proxy's chain and trip wasm-bindgen's "recursive use of an object
+   * detected" panic.
    *
-   * Re-entrancy: while `fn` is running, the underlying client's
-   * `_withInnerLockDepth` counter is bumped so that `_serializeWasmCall`
-   * invocations made BY `fn` (or any proxy-dispatched method it calls)
-   * run inline rather than enqueuing on the chain. Without this, every
-   * `await inner.X(...)` inside `fn` would enqueue behind the outer
-   * `_withInnerWebClient` slot which is itself awaiting `fn` —
-   * a classic re-entrant-lock deadlock. The depth counter restores the
-   * intent of the docstring above: the lock is held for the duration
-   * of `fn`, and inner-client calls "borrow" that already-held lock
-   * instead of trying to re-acquire it.
-   *
-   * SAFETY CONTRACT for re-entrancy: callers MUST hold an external
-   * mutex preventing concurrent access to this same client instance
-   * via other code paths during `fn`. The chain still serializes
-   * against external callers — they queue behind the outer slot — but
-   * if an external task runs during one of `fn`'s awaits and calls
-   * into the SDK, it will see `_withInnerLockDepth > 0` and run
-   * inline, racing wasm-bindgen's borrow check. The wallet pattern
-   * (own outer mutex around `_withInnerWebClient`) satisfies this.
+   * Re-entrancy: `fn` receives a trusted handle on the client, and only
+   * calls made through that handle run inline in the slot `fn` holds;
+   * queueing them would deadlock behind `fn` itself. Use the handle, not
+   * another reference to the client, inside `fn`: a call through any
+   * other reference queues behind `fn` and never settles while `fn`
+   * awaits it. Once `fn` settles, calls through a kept handle queue like
+   * any other.
    *
    * A call inside `fn` that takes the store lock (see
    * `WebClient._withStoreLock`) still waits for other clients on the same
@@ -116,11 +106,11 @@ export class MidenClient {
     }
     const inner = this.#inner;
     return inner._serializeWasmCall(async () => {
-      inner._withInnerLockDepth = (inner._withInnerLockDepth || 0) + 1;
+      const { handle, release } = MidenClient._createTrustedHandle(inner);
       try {
-        return await fn(inner);
+        return await fn(handle);
       } finally {
-        inner._withInnerLockDepth--;
+        release();
       }
     });
   }
