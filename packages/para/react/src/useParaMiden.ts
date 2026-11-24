@@ -10,6 +10,20 @@ import {
   type CustomSignConfirmStep,
 } from "@miden-sdk/para";
 
+type ParaMidenSessionState = {
+  key: string | null;
+  client: MidenClient | null;
+  accountId: string;
+  error: string;
+};
+
+const EMPTY_SESSION: ParaMidenSessionState = {
+  key: null,
+  client: null,
+  accountId: "",
+  error: "",
+};
+
 /**
  * React hook that converts Para React SDK context into a ready-to-use MidenClient.
  * Spawns the client once a Para session with at least one EVM wallet is active,
@@ -41,9 +55,8 @@ export function useParaMiden(
 ) {
   const para = useClient();
   const { isConnected, embedded } = useAccount();
-  const [client, setClient] = useState<MidenClient | null>(null);
-  const [accountId, setAccountId] = useState<string>("");
-  const [error, setError] = useState<string>("");
+  const [sessionState, setSessionState] =
+    useState<ParaMidenSessionState>(EMPTY_SESSION);
 
   const evmWallets = useMemo(
     () => embedded.wallets?.filter((wallet) => wallet.type === "EVM"),
@@ -73,15 +86,34 @@ export function useParaMiden(
   const hasCustomSignConfirmStep = Boolean(customSignConfirmStep);
   const { accountSeed, noteTransportUrl, nodeTransportUrl, seed } = opts;
 
-  useEffect(() => {
-    setClient(null);
-    setAccountId("");
-    setError("");
+  const activeKey =
+    isConnected && hasPara && hasWallets
+      ? JSON.stringify([
+          walletKey,
+          nodeUrl,
+          storageMode,
+          accountSeed ?? null,
+          noteTransportUrl ?? null,
+          nodeTransportUrl ?? null,
+          seed ?? null,
+          showSigningModal,
+          hasCustomSignConfirmStep,
+        ])
+      : null;
 
-    if (!isConnected || !hasPara || !hasWallets) {
+  const isCurrentSession = activeKey !== null && sessionState.key === activeKey;
+  const client = isCurrentSession ? sessionState.client : null;
+  const accountId = isCurrentSession ? sessionState.accountId : "";
+  const error = isCurrentSession ? sessionState.error : "";
+
+  useEffect(() => {
+    setSessionState((prev) => (prev === EMPTY_SESSION ? prev : EMPTY_SESSION));
+
+    if (activeKey === null) {
       return;
     }
 
+    const currentKey = activeKey;
     let cancelled = false;
     let createdClient: MidenClient | null = null;
 
@@ -118,13 +150,22 @@ export function useParaMiden(
         }
 
         createdClient = midenParaClient;
-        setClient(midenParaClient);
-        setAccountId(aId);
+        setSessionState({
+          key: currentKey,
+          client: midenParaClient,
+          accountId: aId,
+          error: "",
+        });
       } catch (err) {
         if (cancelled) {
           return;
         }
-        setError(err instanceof Error ? err.message : String(err));
+        setSessionState({
+          key: currentKey,
+          client: null,
+          accountId: "",
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
 
@@ -136,6 +177,7 @@ export function useParaMiden(
       createdClient = null;
     };
   }, [
+    activeKey,
     isConnected,
     hasPara,
     hasWallets,

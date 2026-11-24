@@ -60,8 +60,10 @@ const loadUseParaMiden = (mocks = {}) => {
 
 const renderHook = async (useParaMiden, args) => {
   let latest;
+  const renders = [];
   const Harness = ({ hookArgs }) => {
     latest = useParaMiden(...hookArgs);
+    renders.push(latest);
     return null;
   };
 
@@ -89,7 +91,12 @@ const renderHook = async (useParaMiden, args) => {
     });
   };
 
-  return { getLatest: () => latest, rerender, unmount };
+  return {
+    getLatest: () => latest,
+    getRenders: () => renders,
+    rerender,
+    unmount,
+  };
 };
 
 const createClientFactory = ({ mode = "resolve", error, events } = {}) => {
@@ -607,6 +614,174 @@ test("useParaMiden serializes setup when wallet switches while createParaMidenCl
     await flushPromises();
     assert.strictEqual(getLatest().client.id, "client-evm-b");
     assert.strictEqual(getLatest().accountId, "acc-evm-b");
+  } finally {
+    restore();
+  }
+});
+
+test("useParaMiden gates stale client, accountId, and error on the transition render before effects run", async () => {
+  const state = {
+    para: { id: "para" },
+    isConnected: true,
+    wallets: [{ id: "evm-a", type: "EVM" }],
+  };
+  const factory = createClientFactory();
+  const { useParaMiden, restore } = loadUseParaMiden(
+    buildMocks(state, factory)
+  );
+  const args = [
+    "https://rpc.testnet.miden.io",
+    "public",
+    {
+      accountSeed: "s1",
+      noteTransportUrl: "https://t1.miden.io",
+      nodeTransportUrl: "https://n1.miden.io",
+      seed: "seed-1",
+    },
+    true,
+  ];
+
+  try {
+    const { getLatest, getRenders, rerender } = await renderHook(
+      useParaMiden,
+      args
+    );
+    assert.strictEqual(getLatest().client.id, "client-evm-a");
+    assert.strictEqual(getLatest().accountId, "acc-evm-a");
+
+    // Wallet change transition render must expose null client and empty accountId immediately.
+    let before = getRenders().length;
+    state.wallets = [{ id: "evm-b", type: "EVM" }];
+    await rerender(args);
+    let transition = getRenders()[before];
+    assert.strictEqual(transition.client, null);
+    assert.strictEqual(transition.accountId, "");
+    assert.strictEqual(getLatest().client.id, "client-evm-b");
+
+    // Config changes (nodeUrl, noteTransportUrl, nodeTransportUrl, seed, customSignConfirmStep presence)
+    // must gate transition render immediately and trigger rebuilds.
+    before = getRenders().length;
+    await rerender([
+      "https://rpc.devnet.miden.io",
+      "public",
+      {
+        accountSeed: "s1",
+        noteTransportUrl: "https://t2.miden.io",
+        nodeTransportUrl: "https://n2.miden.io",
+        seed: "seed-2",
+      },
+      true,
+      () => {},
+    ]);
+    transition = getRenders()[before];
+    assert.strictEqual(transition.client, null);
+    assert.strictEqual(transition.accountId, "");
+    assert.strictEqual(factory.calls.length, 3);
+    assert.strictEqual(
+      factory.calls[2][2].noteTransportUrl,
+      "https://t2.miden.io"
+    );
+    assert.strictEqual(
+      factory.calls[2][2].nodeTransportUrl,
+      "https://n2.miden.io"
+    );
+    assert.strictEqual(factory.calls[2][2].seed, "seed-2");
+    assert.strictEqual(typeof factory.calls[2][4], "function");
+
+    // Toggling customSignConfirmStep back to undefined also invalidates and rebuilds.
+    before = getRenders().length;
+    await rerender([
+      "https://rpc.devnet.miden.io",
+      "public",
+      {
+        accountSeed: "s1",
+        noteTransportUrl: "https://t2.miden.io",
+        nodeTransportUrl: "https://n2.miden.io",
+        seed: "seed-2",
+      },
+      true,
+    ]);
+    transition = getRenders()[before];
+    assert.strictEqual(transition.client, null);
+    assert.strictEqual(factory.calls.length, 4);
+    assert.strictEqual(factory.calls[3][4], undefined);
+
+    // Logout transition render must gate client and accountId immediately.
+    before = getRenders().length;
+    state.isConnected = false;
+    state.wallets = [];
+    await rerender(args);
+    transition = getRenders()[before];
+    assert.strictEqual(transition.client, null);
+    assert.strictEqual(transition.accountId, "");
+
+    // Failed setup -> logout transition render must clear error immediately.
+    factory.setMode("reject", new Error("boom"));
+    state.isConnected = true;
+    state.wallets = [{ id: "evm-c", type: "EVM" }];
+    await rerender(args);
+    assert.strictEqual(getLatest().error, "boom");
+
+    before = getRenders().length;
+    state.isConnected = false;
+    state.wallets = [];
+    await rerender(args);
+    transition = getRenders()[before];
+    assert.strictEqual(transition.error, "");
+    assert.strictEqual(transition.client, null);
+    assert.strictEqual(transition.accountId, "");
+  } finally {
+    restore();
+  }
+});
+
+test("useParaMiden does not expose terminated client on A -> B (pending) -> A transition", async () => {
+  const state = {
+    para: { id: "para" },
+    isConnected: true,
+    wallets: [{ id: "evm-a", type: "EVM" }],
+  };
+  const factory = createClientFactory({ mode: "defer" });
+  const { useParaMiden, restore } = loadUseParaMiden(
+    buildMocks(state, factory)
+  );
+  const args = ["https://rpc.testnet.miden.io", "public"];
+
+  try {
+    const { getLatest, getRenders, rerender } = await renderHook(
+      useParaMiden,
+      args
+    );
+    factory.pending[0].resolve();
+    await flushPromises();
+    await flushPromises();
+    assert.strictEqual(getLatest().client.id, "client-evm-a");
+
+    // Switch A -> B while B is pending; A is terminated.
+    state.wallets = [{ id: "evm-b", type: "EVM" }];
+    await rerender(args);
+    assert.strictEqual(factory.clients[0].terminate.mock.callCount(), 1);
+    assert.strictEqual(getLatest().client, null);
+
+    // Switch back B -> A while B is still pending; must never expose terminated client A.
+    const before = getRenders().length;
+    state.wallets = [{ id: "evm-a", type: "EVM" }];
+    await rerender(args);
+    assert.strictEqual(getRenders()[before].client, null);
+    assert.strictEqual(getLatest().client, null);
+    assert.strictEqual(getLatest().accountId, "");
+
+    // Resolve B (superseded and terminated), then resolve the fresh A setup.
+    factory.pending[1].resolve();
+    await flushPromises();
+    await flushPromises();
+    assert.strictEqual(factory.clients[1].terminate.mock.callCount(), 1);
+
+    factory.pending[2].resolve();
+    await flushPromises();
+    await flushPromises();
+    assert.strictEqual(getLatest().client.id, "client-evm-a");
+    assert.strictEqual(getLatest().client !== factory.clients[0], true);
   } finally {
     restore();
   }
