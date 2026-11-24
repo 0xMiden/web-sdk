@@ -535,6 +535,22 @@ export interface BridgeOptions {
   skipSync?: boolean;
 }
 
+// USDCx withdrawal options (Circle xReserve)
+export interface WithdrawUsdcxOptions {
+  /** Account that creates and funds the burn note (the sender) */
+  from: AccountRef;
+  /** USDCx faucet ID. It consumes the note and burns the asset; it must be a public account */
+  faucetId: AccountRef;
+  /** Amount of USDCx to withdraw. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1` */
+  amount: bigint | number;
+  /** Circle domain of the destination chain (for example 6 for Arbitrum) */
+  destinationDomain: number;
+  /** Destination recipient in Circle's 32-byte form, 0x-prefixed hex (64 hex digits); an EVM address is left-padded with zeros */
+  destinationRecipient: string;
+  /** Skip auto-sync after withdrawing. Default: false */
+  skipSync?: boolean;
+}
+
 // Consume options
 export interface ConsumeOptions {
   /** Account ID that will consume the notes */

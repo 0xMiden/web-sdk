@@ -22,6 +22,7 @@ import {
   settlePrivateNotes,
 } from "../utils/privateNoteDelivery";
 import { useMidenStore } from "../store/MidenStore";
+import { toAmount } from "../utils/amounts";
 
 export interface UseSendResult {
   /** Send tokens from one account to another */
@@ -135,7 +136,7 @@ export function useSend(): UseSendResult {
         if (amount === undefined || amount === null) {
           throw new Error("Amount is required (provide amount or sendAll)");
         }
-        amount = BigInt(amount);
+        amount = toAmount(amount, "send");
 
         const assetId =
           options.assetId ??

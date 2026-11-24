@@ -44,6 +44,7 @@ export { useWaitForCommit } from "./hooks/useWaitForCommit";
 export { useWaitForNotes } from "./hooks/useWaitForNotes";
 export { useMint } from "./hooks/useMint";
 export { useBridge } from "./hooks/useBridge";
+export { useWithdrawUsdcx } from "./hooks/useWithdrawUsdcx";
 export { useConsume } from "./hooks/useConsume";
 export { useSwap } from "./hooks/useSwap";
 export { usePswapCreate } from "./hooks/usePswapCreate";
@@ -101,6 +102,7 @@ export type {
   WaitForNotesOptions,
   MintOptions,
   BridgeOptions,
+  WithdrawUsdcxOptions,
   CreateNetworkNoteOptions,
   NetworkNoteResult,
   ConsumeOptions,
@@ -204,6 +206,7 @@ export type { UseWaitForCommitResult } from "./hooks/useWaitForCommit";
 export type { UseWaitForNotesResult } from "./hooks/useWaitForNotes";
 export type { UseMintResult } from "./hooks/useMint";
 export type { UseBridgeResult } from "./hooks/useBridge";
+export type { UseWithdrawUsdcxResult } from "./hooks/useWithdrawUsdcx";
 export type { UseConsumeResult } from "./hooks/useConsume";
 export type { UseSwapResult } from "./hooks/useSwap";
 export type { UsePswapCreateResult } from "./hooks/usePswapCreate";
