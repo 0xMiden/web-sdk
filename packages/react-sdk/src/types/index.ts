@@ -9,6 +9,7 @@ import type {
   AccountFile,
   InputNoteRecord,
   ConsumableNoteRecord,
+  NoteConsumability,
   TransactionFilter,
   TransactionId,
   TransactionRecord,
@@ -41,6 +42,7 @@ export type {
   AccountFile,
   InputNoteRecord,
   ConsumableNoteRecord,
+  NoteConsumability,
   TransactionFilter,
   TransactionId,
   TransactionRecord,
@@ -296,6 +298,33 @@ export interface NotesResult {
   refetch: () => Promise<void>;
 }
 
+/**
+ * Whether a note can be consumed, from the screener's result: now, once the
+ * chain reaches `blockHeight`, or never. `never` also covers an empty result,
+ * which the screener returns when no screened account can consume the note
+ * under the current conditions. A client tracking no accounts screens nothing,
+ * so its status stays null.
+ */
+export type NoteConsumabilityStatus =
+  | { kind: "immediately" }
+  | { kind: "afterBlock"; blockHeight: number }
+  | { kind: "never" };
+
+export interface NoteConsumabilityOptions {
+  /** Screen for this account only; omit to screen every tracked account. */
+  accountId?: AccountRef;
+}
+
+export interface NoteConsumabilityResult {
+  /** The note's status; null until it has been screened, or without a note. */
+  status: NoteConsumabilityStatus | null;
+  /** The screener's entries, one per account that can consume the note. */
+  consumability: NoteConsumability[] | null;
+  isLoading: boolean;
+  error: Error | null;
+  refetch: () => Promise<void>;
+}
+
 export type TransactionStatus = "pending" | "committed" | "discarded";
 
 export interface TransactionHistoryOptions {
@@ -540,6 +569,22 @@ export interface BridgeOptions {
   /** Destination Ethereum address on the destination network (0x-prefixed hex) */
   destinationAddress: string;
   /** Skip auto-sync after bridging. Default: false */
+  skipSync?: boolean;
+}
+
+// USDCx withdrawal options (Circle xReserve)
+export interface WithdrawUsdcxOptions {
+  /** Account that creates and funds the burn note (the sender) */
+  from: AccountRef;
+  /** USDCx faucet ID. It consumes the note and burns the asset; it must be a public account */
+  faucetId: AccountRef;
+  /** Amount of USDCx to withdraw. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1` */
+  amount: bigint | number;
+  /** Circle domain of the destination chain (for example 6 for Arbitrum) */
+  destinationDomain: number;
+  /** Destination recipient in Circle's 32-byte form, 0x-prefixed hex (64 hex digits); an EVM address is left-padded with zeros */
+  destinationRecipient: string;
+  /** Skip auto-sync after withdrawing. Default: false */
   skipSync?: boolean;
 }
 

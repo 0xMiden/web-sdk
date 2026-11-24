@@ -169,6 +169,20 @@ export const createMockConsumableNoteRecord = (
   free: vi.fn(),
 });
 
+// Mock NoteConsumability, as `client.getNoteConsumability` returns it: `now`
+// for Consumable, a height for ConsumableAfter, neither for any other status.
+export const createMockNoteConsumability = (
+  accountIdHex: string,
+  now: boolean,
+  after?: number
+) => ({
+  accountId: vi.fn(() => createMockAccountId(accountIdHex)),
+  consumptionStatus: vi.fn(() => ({
+    isConsumableNow: vi.fn(() => now),
+    consumableAfterBlock: vi.fn(() => after),
+  })),
+});
+
 // Mock SyncSummary
 export const createMockSyncSummary = (blockNum: number = 100) => ({
   blockNum: vi.fn(() => blockNum),
@@ -348,6 +362,7 @@ const ASYNC_IN_RUST = [
   "newMintTransactionRequest",
   "newSendTransactionRequest",
   "newB2AggTransactionRequest",
+  "newXReserveBurnTransactionRequest",
   "newConsumeTransactionRequest",
   "newSwapTransactionRequest",
   "newPswapCreateTransactionRequest",
@@ -422,6 +437,8 @@ export const createMockWebClient = (
     // Note methods
     getInputNotes: vi.fn().mockResolvedValue([]),
     getConsumableNotes: vi.fn().mockResolvedValue([]),
+    getNoteConsumability: vi.fn().mockResolvedValue([]),
+    getNoteConsumabilityForAccount: vi.fn().mockResolvedValue([]),
     getInputNote: vi.fn().mockResolvedValue(null),
     getTransactions: vi.fn().mockResolvedValue([createMockTransactionRecord()]),
 
@@ -438,6 +455,9 @@ export const createMockWebClient = (
       .fn()
       .mockResolvedValue(createMockTransactionRequest()),
     newB2AggTransactionRequest: vi
+      .fn()
+      .mockResolvedValue(createMockTransactionRequest()),
+    newXReserveBurnTransactionRequest: vi
       .fn()
       .mockResolvedValue(createMockTransactionRequest()),
     newConsumeTransactionRequest: vi
@@ -570,11 +590,14 @@ type MockWebClientType = {
   getSyncHeight: ReturnType<typeof vi.fn>;
   getInputNotes: ReturnType<typeof vi.fn>;
   getConsumableNotes: ReturnType<typeof vi.fn>;
+  getNoteConsumability: ReturnType<typeof vi.fn>;
+  getNoteConsumabilityForAccount: ReturnType<typeof vi.fn>;
   getInputNote: ReturnType<typeof vi.fn>;
   getTransactions: ReturnType<typeof vi.fn>;
   newMintTransactionRequest: ReturnType<typeof vi.fn>;
   newSendTransactionRequest: ReturnType<typeof vi.fn>;
   newB2AggTransactionRequest: ReturnType<typeof vi.fn>;
+  newXReserveBurnTransactionRequest: ReturnType<typeof vi.fn>;
   newConsumeTransactionRequest: ReturnType<typeof vi.fn>;
   newSwapTransactionRequest: ReturnType<typeof vi.fn>;
   newPswapCreateTransactionRequest: ReturnType<typeof vi.fn>;

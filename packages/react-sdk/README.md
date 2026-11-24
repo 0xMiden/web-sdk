@@ -33,6 +33,7 @@ React hooks library for the Miden Web Client. Provides a simple, ergonomic inter
 - **Temporal Note Tracking** - `useNoteStream()` tracks when notes first appear, with built-in filtering, handled-note exclusion, and phase snapshots
 - **Session Wallets** - `useSessionAccount()` manages the create-fund-consume lifecycle for temporary wallets
 - **AggLayer Bridge-Out** - `useBridge()` emits a B2AGG note to bridge a fungible asset out to another network via the AggLayer
+- **USDCx Withdrawal** - `useWithdrawUsdcx()` emits a Circle xReserve burn note that releases USDC on the destination chain
 - **Network Notes** - `useCreateNetworkNote()` creates custom-script network notes
 - **Concurrency Safety** - Transaction hooks prevent double-sends with built-in concurrency guards
 - **Auto Pre-Sync** - Transaction hooks sync before executing by default (opt out with `skipSync`)
@@ -695,6 +696,42 @@ function NotesList() {
 }
 ```
 
+#### `useNoteConsumability(note, options?)`
+
+Show whether a note can be consumed: now, after a block height, or never. The
+hook screens the note, imported or not, with the screener sync uses, and
+screens it again after each sync. Pass `accountId` to screen for one account;
+omit it to screen every tracked account. An empty screen of
+tracked accounts reads as `never`; with no tracked account, `status` stays
+`null` because nothing was screened.
+
+```tsx
+import { useNoteConsumability } from '@miden-sdk/react';
+
+function NoteStatus({ note, accountId }) {
+  const {
+    status,         // null until screened, then one of the kinds below
+    consumability,  // the screener's NoteConsumability entries
+    isLoading,
+    error,
+    refetch,
+  } = useNoteConsumability(note, { accountId });
+
+  if (!status) return <span>Checking...</span>;
+  if (status.kind === 'immediately') return <span>Claimable now</span>;
+  if (status.kind === 'afterBlock')
+    return <span>Unlocks at block {status.blockHeight}</span>;
+  return <span>Not claimable</span>; // status.kind === 'never'
+}
+```
+
+The hook only presents the screen. What to claim still comes from
+`useNotes().consumableNotes`, which holds payments consumable now: a note this
+hook reports `immediately` may be another trader's PSWAP order, which
+consuming would fill from your vault. `getNoteConsumabilityStatus(entries,
+accountIdHex?)` derives the same status from any `NoteConsumability[]`, such
+as `ConsumableNoteRecord.noteConsumability()`.
+
 #### `useNoteStream(options?)`
 
 Temporal note tracking with a unified model. Replaces the common pattern of
@@ -1102,6 +1139,37 @@ function MintForm() {
   );
 }
 ```
+
+Every transaction hook takes an amount as a `bigint` or a `number`. A `number`
+must be a safe integer: anything else (`2 ** 53`, `1.5`, `NaN`) throws
+`<method>: amount must be a safe integer when given as a number` before the
+amount reaches a transaction builder, so pass a `bigint` above `2 ** 53 - 1`.
+
+#### `useWithdrawUsdcx()`
+
+Withdraw USDCx through Circle xReserve. The hook emits one public burn note
+that the USDCx faucet (a public account) consumes and burns, and Circle then
+releases USDC to the recipient on the destination domain. It syncs afterwards
+unless `skipSync` is set.
+
+```tsx
+const { withdrawUsdcx, isLoading, stage } = useWithdrawUsdcx();
+
+await withdrawUsdcx({
+  from: senderAccountId,
+  faucetId: usdcxFaucetId,
+  amount: 1_000_000n,
+  destinationDomain: 6, // Circle domain, for example 6 for Arbitrum
+  // Circle's 32-byte recipient: an EVM address left-padded with zeros
+  destinationRecipient: '0x' + evmAddress.slice(2).padStart(64, '0'),
+});
+```
+
+A `destinationRecipient` that is not a 0x-prefixed 32-byte hex string throws
+before the note is built. There is no hook for claiming an inbound AggLayer
+deposit yet: build the CLAIM note with `Note.createClaimNote(...)` from
+`@miden-sdk/miden-sdk` and submit it as an own output note with `useTransaction`,
+declaring the bridge account as a foreign account.
 
 #### `useConsume()`
 
