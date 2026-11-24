@@ -27,7 +27,8 @@ impl PswapNote {
     ///
     /// Errors when the note's script is not the standard PSWAP script, its storage does not decode
     /// as PSWAP storage, it does not carry exactly one fungible asset, or its attachment is
-    /// malformed.
+    /// malformed. A note with more than one attachment is rejected too, though a generic [`Note`]
+    /// may carry several.
     #[js_export(js_name = "tryFromNote")]
     pub fn try_from_note(note: &Note) -> Result<PswapNote, JsErr> {
         if note.0.script().root() != NativePswapNote::script_root() {

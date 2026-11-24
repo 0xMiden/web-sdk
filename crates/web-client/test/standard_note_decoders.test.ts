@@ -415,6 +415,13 @@ test.describe("standard note decoders", () => {
           )
         )
       );
+      // The generic Note allows several attachments; the PSWAP decoder accepts one.
+      const twoAttachments = sdk.Note.withAttachments(
+        pswapNote.assets(),
+        pswapNote.metadata(),
+        pswapNote.recipient(),
+        [...pswapNote.attachments(), new sdk.NoteAttachment()]
+      );
       return {
         sender: decoded.sender().toString(),
         creator: decoded.creatorAccountId().toString(),
@@ -446,6 +453,9 @@ test.describe("standard note decoders", () => {
         originalId: pswapNote.id().toString(),
         wrongScriptError: errorOf(() => sdk.PswapNote.tryFromNote(p2id)),
         malformedError: errorOf(() => sdk.PswapNote.tryFromNote(shortStorage)),
+        attachmentsError: errorOf(() =>
+          sdk.PswapNote.tryFromNote(twoAttachments)
+        ),
       };
     });
 
@@ -465,6 +475,7 @@ test.describe("standard note decoders", () => {
     expect(result.roundTripId).toBe(result.originalId);
     expect(result.wrongScriptError).toMatch(/not a PSWAP note/);
     expect(result.malformedError).toMatch(/decode PSWAP note/);
+    expect(result.attachmentsError).toMatch(/decode PSWAP note/);
   });
 
   test("BurnNote.tryFromNote decodes the burned asset and rejects mismatches", async ({

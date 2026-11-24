@@ -150,6 +150,7 @@ if (root === NoteScript.pswap().root().toHex()) {
 ```
 
 A BURN note whose storage does not hold exactly the asset it carries is
-rejected, as the BURN script rejects it at consume time.
+rejected, as the BURN script rejects it at consume time. A PSWAP note with more than one
+attachment is rejected too.
 
 See also [Transactions](./transactions.md) for `consumeAll`'s fee handling.
