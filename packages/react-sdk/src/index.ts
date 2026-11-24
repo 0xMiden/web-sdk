@@ -26,6 +26,7 @@ export { useAccounts } from "./hooks/useAccounts";
 export { useAccount } from "./hooks/useAccount";
 export { useNotes } from "./hooks/useNotes";
 export { useNoteStream } from "./hooks/useNoteStream";
+export { useNoteConsumability } from "./hooks/useNoteConsumability";
 export { useTransactionHistory } from "./hooks/useTransactionHistory";
 export { useSyncState } from "./hooks/useSyncState";
 export { useAssetMetadata } from "./hooks/useAssetMetadata";
@@ -82,6 +83,9 @@ export type {
   AssetBalance,
   NotesFilter,
   NotesResult,
+  NoteConsumabilityStatus,
+  NoteConsumabilityOptions,
+  NoteConsumabilityResult,
   TransactionHistoryOptions,
   TransactionHistoryResult,
   TransactionStatus,
@@ -143,6 +147,7 @@ export type {
   AccountFile,
   InputNoteRecord,
   ConsumableNoteRecord,
+  NoteConsumability,
   TransactionId,
   TransactionFilter,
   TransactionRecord,
@@ -166,6 +171,7 @@ export {
 } from "./utils/accountBech32";
 export { formatAssetAmount, parseAssetAmount } from "./utils/amounts";
 export { getNoteSummary, formatNoteSummary } from "./utils/notes";
+export { getNoteConsumabilityStatus } from "./utils/noteConsumability";
 export { normalizeAccountId, accountIdsEqual } from "./utils/accountId";
 export {
   readNoteAttachment,
