@@ -547,6 +547,7 @@ export function createSdkWrapper(rawSdk) {
     AuthSecretKey: wrapClass(rawSdk.AuthSecretKey),
     Felt: wrapClass(rawSdk.Felt),
     FungibleAsset: wrapClass(rawSdk.FungibleAsset),
+    Note: wrapClass(rawSdk.Note),
     Word: wrapClass(rawSdk.Word),
     NoteTag: wrapClass(rawSdk.NoteTag),
     // Array type polyfills
