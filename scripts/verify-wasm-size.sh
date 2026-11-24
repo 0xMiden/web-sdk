@@ -5,7 +5,7 @@ set -euo pipefail
 
 readonly DIST_DIR="${1:-crates/web-client/dist}"
 readonly ST_MAX_BYTES=$((25 * 1024 * 1024))
-readonly MT_MAX_BYTES=$((36 * 1024 * 1024))
+readonly MT_MAX_BYTES=$((35 * 1024 * 1024))
 
 if [[ ! -d "$DIST_DIR" ]]; then
   echo "::error::WASM dist directory does not exist: $DIST_DIR"
