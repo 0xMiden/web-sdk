@@ -420,7 +420,12 @@ test.describe("standard note decoders", () => {
         pswapNote.assets(),
         pswapNote.metadata(),
         pswapNote.recipient(),
-        [...pswapNote.attachments(), new sdk.NoteAttachment()]
+        [1, 2].map((n) =>
+          sdk.NoteAttachment.fromWord(
+            new sdk.NoteAttachmentScheme(n),
+            new sdk.Word(sdk.u64Array([n, 0, 0, 0]))
+          )
+        )
       );
       return {
         sender: decoded.sender().toString(),

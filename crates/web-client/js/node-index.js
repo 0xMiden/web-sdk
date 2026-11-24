@@ -312,8 +312,8 @@ export const ProvenBatch = /* @__PURE__ */ _reexport("ProvenBatch");
 export const ProvenTransaction = /* @__PURE__ */ _reexport("ProvenTransaction");
 export const PswapLineageRecord =
   /* @__PURE__ */ _reexport("PswapLineageRecord");
-export const PswapNote = /* @__PURE__ */ _reexport("PswapNote");
 export const PswapLineageState = /* @__PURE__ */ _reexport("PswapLineageState");
+export const PswapNote = /* @__PURE__ */ _reexport("PswapNote");
 export const PublicKey = /* @__PURE__ */ _reexport("PublicKey");
 export const RpcClient = /* @__PURE__ */ _reexport("RpcClient");
 export const RpcTransactionRecord = /* @__PURE__ */ _reexport(
