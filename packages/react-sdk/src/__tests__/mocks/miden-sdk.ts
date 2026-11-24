@@ -243,6 +243,7 @@ export const createMockTransactionRequest = () => ({
   withAuthArgs: vi.fn(
     () => createMockTransactionRequest() as unknown as TransactionRequest
   ),
+  equals: vi.fn(() => true),
   serialize: vi.fn(() => new Uint8Array()),
   free: vi.fn(),
   [Symbol.dispose]: vi.fn(),
