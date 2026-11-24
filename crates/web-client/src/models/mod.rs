@@ -64,6 +64,7 @@ pub mod consumable_note_record;
 pub mod endpoint;
 pub mod eth_address;
 pub mod executed_transaction;
+pub mod fee_sponsorship_note;
 pub mod felt;
 pub mod fetched_account;
 pub mod foreign_account;

@@ -1014,6 +1014,92 @@ test.describe("MidenClient API - Mock Chain", () => {
     expect(tagValue >= 0 && tagValue <= 0xffffffff).toBe(true);
   });
 
+  test("node-index FeeSponsorshipNote and createFeeSponsorshipNote round-trip", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const jsDir = path.resolve(import.meta.dirname, "..", "js");
+    const prevStatics = {
+      wasmWebClient: MidenClient._WasmWebClient,
+      mockWasmWebClient: MidenClient._MockWasmWebClient,
+      getWasmOrThrow: MidenClient._getWasmOrThrow,
+    };
+
+    try {
+      const {
+        MockWasmWebClient,
+        FeeSponsorshipNote,
+        createFeeSponsorshipNote,
+        Note,
+        FungibleAsset,
+        NoteAssets,
+        NoteType,
+        NoteAttachment,
+        AccountStorageMode,
+        AuthScheme,
+      } = await import(path.join(jsDir, "node-index.js"));
+
+      const mockClient = await MockWasmWebClient.createClient();
+      const sender = await mockClient.newWallet(
+        AccountStorageMode.public(),
+        AuthScheme.Falcon
+      );
+      const target = await mockClient.newWallet(
+        AccountStorageMode.public(),
+        AuthScheme.Falcon
+      );
+      const faucet = await mockClient.newFaucet(
+        AccountStorageMode.public(),
+        false,
+        "FEE",
+        "FEE",
+        8,
+        sdk.u64(1_000_000),
+        AuthScheme.Falcon
+      );
+
+      const featureNote = Note.createP2IDNote(
+        sender.id(),
+        target.id(),
+        new NoteAssets([new FungibleAsset(faucet.id(), sdk.u64(1))]),
+        NoteType.Public,
+        new NoteAttachment()
+      );
+
+      const sponsorship = createFeeSponsorshipNote({
+        from: sender,
+        to: target.id(),
+        featureNoteId: featureNote.id(),
+        asset: new FungibleAsset(faucet.id(), sdk.u64(10)),
+      });
+
+      const decoded = FeeSponsorshipNote.tryFromNote(sponsorship);
+      expect(decoded.featureNoteId().toString()).toBe(
+        featureNote.id().toString()
+      );
+      expect(decoded.sender().toString()).toBe(sender.id().toString());
+      expect(decoded.reclaimer().toString()).toBe(sender.id().toString());
+      expect(decoded.reclaimHeight()).toBeUndefined();
+      expect(Number(decoded.asset().amount())).toBe(10);
+      expect(decoded.asset().faucetId().toString()).toBe(
+        faucet.id().toString()
+      );
+      expect(decoded.intoNote().id().toString()).toBe(
+        sponsorship.id().toString()
+      );
+    } finally {
+      MidenClient._WasmWebClient = prevStatics.wasmWebClient;
+      MidenClient._MockWasmWebClient = prevStatics.mockWasmWebClient;
+      MidenClient._getWasmOrThrow = prevStatics.getWasmOrThrow;
+      const standalone = await import(path.join(jsDir, "standalone.js"));
+      if (standalone._setWasm)
+        standalone._setWasm(await prevStatics.getWasmOrThrow());
+      if (standalone._setWebClient)
+        standalone._setWebClient(prevStatics.wasmWebClient);
+    }
+  });
+
   test("accounts.getOrImport returns existing account without importing", async ({
     sdk,
   }) => {
