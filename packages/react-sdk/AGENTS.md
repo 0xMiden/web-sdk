@@ -179,7 +179,7 @@ is still pending.
 Most mutation hooks return `{ <action>, result, isLoading, stage, error, reset }`:
 the action callback is named after the hook (`send`, `consume`, `mint`, ...) and
 the resolved value is on `result`. That holds for `useSend`, `useMultiSend`,
-`useBatch`, `useConsume`, `useMint`, `useBridge`, `useSwap`, `useCreateNetworkNote`,
+`useBatch`, `useConsume`, `useMint`, `useBridge`, `useWithdrawUsdcx`, `useSwap`, `useCreateNetworkNote`,
 `useTransaction` and the `usePswap*` family.
 
 **The busy flag is not `isLoading` everywhere.** Every write hook returns its
@@ -188,7 +188,7 @@ in-progress flag, and only the transaction family has a `stage`:
 
 | Family | Hooks | Busy flag | `stage`? |
 |---|---|---|---|
-| Transaction | `useSend`, `useMultiSend`, `useBatch`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `useTransaction`, all four `usePswap*` writes | `isLoading` | yes |
+| Transaction | `useSend`, `useMultiSend`, `useBatch`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useWithdrawUsdcx`, `useCreateNetworkNote`, `useTransaction`, all four `usePswap*` writes | `isLoading` | yes |
 | Account create / import | `useCreateWallet`, `useCreateFaucet`, `useImportAccount` | `isCreating` (`isImporting` for the last) | no |
 | Everything else names its own | `useChainAnchor().isCapturing`, `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting` | as named | no |
 
@@ -327,6 +327,25 @@ await bridge({
   destinationAddress: "0x000000000000000000000000000000000000dEaD",
 });
 ```
+
+### Withdraw USDCx (Circle xReserve)
+```tsx
+const { withdrawUsdcx } = useWithdrawUsdcx();
+
+// Emits a public burn note that the USDCx faucet consumes; Circle releases
+// USDC to the 32-byte recipient on the destination domain.
+await withdrawUsdcx({
+  from: senderAccountId,
+  faucetId: usdcxFaucetId,
+  amount: 1_000_000n,
+  destinationDomain: 6,
+  destinationRecipient: "0x" + evmAddress.slice(2).padStart(64, "0"),
+});
+```
+
+A `number` amount on any transaction hook must be a safe integer; pass a
+`bigint` above `2 ** 53 - 1`. No hook claims an inbound AggLayer deposit yet:
+build it with `Note.createClaimNote(...)` and submit it with `useTransaction`.
 
 ### Create a Network Note
 ```tsx
@@ -747,6 +766,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | `useBatch()` | `batch({ items })` - items are `{ account, request }` pairs | `BatchResult` (with `blockNumber`) |
 | `useMint()` | `mint({ faucetId, to, amount })` | `TransactionResult` |
 | `useBridge()` | `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress })` | `TransactionResult` (emits an AggLayer B2AGG bridge-out note) |
+| `useWithdrawUsdcx()` | `withdrawUsdcx({ from, faucetId, amount, destinationDomain, destinationRecipient })` | `TransactionResult` (emits a Circle xReserve USDCx burn note) |
 | `useCreateNetworkNote()` | `createNetworkNote({ accountId, target, script \| recipient, ... })` | `NetworkNoteResult` (`{ txId, note }`; note satisfies `note.isNetworkNote()`) |
 | `useConsume()` | `consume({ accountId, notes })` | `TransactionResult`. Runs each note script; a P2ID or P2IDE payment moves assets in, other scripts can move assets out; check `isStandardPayment(record)` first |
 | `useSwap()` | `swap({ ... })` | `TransactionResult` |

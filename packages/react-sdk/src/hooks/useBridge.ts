@@ -8,6 +8,7 @@ import type {
 } from "../types";
 import { parseAccountId } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
+import { toAmount } from "../utils/amounts";
 
 export interface UseBridgeResult {
   /** Bridge a fungible asset out to another network via the AggLayer */
@@ -96,7 +97,7 @@ export function useBridge(): UseBridgeResult {
             senderId,
             bridgeId,
             assetId,
-            BigInt(options.amount),
+            toAmount(options.amount, "bridge"),
             options.destinationNetwork,
             destinationAddress
           );

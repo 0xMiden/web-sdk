@@ -162,6 +162,8 @@ describe("unsafe number amounts", () => {
   });
 
   it("useCreateFaucet rejects an unsafe maxSupply", async () => {
+    // createFaucet only runs for the store's current client.
+    useMidenStore.getState().setClient(client as never);
     const { result } = renderHook(() => useCreateFaucet());
     await expect(
       result.current.createFaucet({ tokenSymbol: "TEST", maxSupply: UNSAFE })

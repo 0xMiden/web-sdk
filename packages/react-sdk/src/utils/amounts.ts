@@ -73,3 +73,14 @@ export const parseAssetAmount = (input: string, decimals?: number): bigint => {
 
   return BigInt(normalizedWhole) * factor + BigInt(paddedFraction || "0");
 };
+
+// BigInt() rounds an unsafe number silently, so reject one before any WASM call.
+// Same wording as the web client's toAmount, which this package cannot import.
+export const toAmount = (amount: bigint | number, method: string): bigint => {
+  if (typeof amount === "number" && !Number.isSafeInteger(amount)) {
+    throw new Error(
+      `${method}: amount must be a safe integer when given as a number; pass a bigint above 2^53 - 1`
+    );
+  }
+  return BigInt(amount);
+};
