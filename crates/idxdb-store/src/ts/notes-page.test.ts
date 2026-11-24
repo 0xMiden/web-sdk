@@ -198,7 +198,7 @@ describe("bounded input-note pages", () => {
     rows.push(row(301, 0));
     const { dbId, db } = await fixture(rows);
     const reads = observeRawReads();
-    const scripts = vi.spyOn(db.notesScripts, "get");
+    const scripts = vi.spyOn(db.notesScripts, "bulkGet");
     const first = await page(dbId, new Uint8Array([0]), null, 128);
     expect(first).toEqual({
       notes: [],
