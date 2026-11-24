@@ -93,13 +93,18 @@ window.__bech32 = {
   ensureAccountBech32,
 };
 
-// -- Reads optional ?rpcUrl=<network> query parameter ------------------------
+// -- Reads optional ?rpcUrl= and ?network= query parameters ------------------------
 // Allows a single HTML page to exercise different resolveNetworkId() branches.
 const getConfigFromQuery = () => {
   try {
     const params = new URLSearchParams(window.location.search);
     const rpcUrl = params.get("rpcUrl");
-    return rpcUrl ? { rpcUrl, autoSyncInterval: 0 } : { autoSyncInterval: 0 };
+    const network = params.get("network");
+    return {
+      autoSyncInterval: 0,
+      ...(rpcUrl ? { rpcUrl } : {}),
+      ...(network ? { network } : {}),
+    };
   } catch {
     return { autoSyncInterval: 0 };
   }

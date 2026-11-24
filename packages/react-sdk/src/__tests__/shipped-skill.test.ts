@@ -7,6 +7,7 @@ const read = (path: string) =>
   readFileSync(new URL(path, import.meta.url), "utf8");
 const skill = read("../../skills/react-sdk-patterns/SKILL.md");
 const agents = read("../../AGENTS.md");
+const readme = read("../../README.md");
 
 function section(text: string, heading: string): string {
   const start = text.indexOf(heading);
@@ -41,5 +42,27 @@ describe("shipped react-sdk docs", () => {
       .find((line) => line.includes("| `useConsume()`"));
     expect(row).toContain("isStandardPayment(record)");
     expect(row).toContain("each note script");
+  });
+
+  it("documents an unnamed endpoint as mainnet", () => {
+    expect(read("../../../../AGENTS.md")).toContain(
+      "mainnet `mm1` when it names no known network"
+    );
+    const pitfalls = read(
+      "../../../../crates/web-client/skills/frontend-pitfalls/SKILL.md"
+    );
+    expect(pitfalls).toContain(
+      "Anything matching none of them is mainnet (`mm`)"
+    );
+    expect(pitfalls).toContain("An unnamed host is mainnet, not hex.");
+    expect(pitfalls).toContain("an unrecognised endpoint is mainnet (`mm`)");
+    expect(skill).toContain('"mm1..." when the endpoint names no network');
+    for (const path of ["../types/augmentations.ts", "../utils/accountId.ts"]) {
+      expect(read(path)).toContain(
+        "An endpoint naming no known network is mainnet."
+      );
+    }
+    expect(readme).toContain("hex before a client exists");
+    expect(readme).toContain("raw id before a client exists");
   });
 });

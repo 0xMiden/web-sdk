@@ -1190,6 +1190,31 @@ await client.transactions.bridge({
 
 The 20-byte destination is also available as an `EthAddress` (`EthAddress.fromHex("0x…")`) for the lower-level builders `Note.createB2AggNote(...)` and `client.newB2AggTransactionRequest(...)`.
 
+### Claim an inbound AggLayer deposit
+
+`Note.createClaimNote(...)` builds the public CLAIM note that asks the AggLayer bridge to mint an inbound deposit. The proof and leaf come from the AggLayer `claimAsset` data; the Miden amount is derived from the leaf's uint256 amount and the faucet's decimal scale, `floor(amount / 10^scale)`, which is what the bridge verifies.
+
+```typescript
+const proof = new ClaimProofData(
+  smtProofLocalExitRoot, // 32 hex nodes
+  smtProofRollupExitRoot, // 32 hex nodes
+  globalIndex,
+  mainnetExitRoot,
+  rollupExitRoot
+);
+const leaf = new ClaimLeafData(
+  originNetwork,
+  EthAddress.fromHex(originTokenAddress),
+  destinationNetwork,
+  EthAddress.fromHex(destinationAddress),
+  "100000000000000000000", // uint256 amount as a decimal string
+  metadataHash
+);
+const note = Note.createClaimNote(proof, leaf, 10, bridgeAccountId, senderId);
+```
+
+A scale above 18, or a scaled amount above the maximum fungible amount, throws. Submit the note as an own output note of a transaction, for example through `feeAwareTransactionRequestBuilder(sender)` and `withOwnOutputNotes`. It is a network note targeting the bridge account, so the transaction must also declare that account with `withForeignAccounts`, as for any network note.
+
 ### Withdraw USDCx (Circle xReserve)
 
 `client.transactions.withdrawUsdcx(...)` emits a single public burn note with the fixed `BURN` tag. The USDCx faucet (a public account) consumes and burns it, and Circle releases USDC to the recipient on the destination domain.
@@ -1349,9 +1374,19 @@ const client = await MidenClient.create({
 
 A batch signs while it is built, so one failed or timed out `sign` fails the whole batch.
 
+### One Client per Store
+
+Two live clients on one store do not coordinate with each other. Opening a store that another live client in the same realm has open (the same IndexedDB database in the browser, the same SQLite file on Node.js) logs a `console.warn` naming that client, `client #N` in the order clients opened the store. Pass `exclusive: true` to refuse instead: the open throws an error naming the owner, and while an exclusive client lives every other open of its store throws too.
+
+```typescript
+const owner = await MidenClient.create({ rpcUrl: "testnet", storeName: "app", exclusive: true });
+await MidenClient.create({ rpcUrl: "testnet", storeName: "app" }); // throws: Store "app" is already open in client #1 ...
+owner.terminate(); // releases the store; the next open succeeds without a warning
+```
+
 ### Cleanup
 
-When you're finished using a MidenClient instance, call `terminate()`. In the browser it stops the client's Web Worker if there is one, and releases its main-realm wasm client and, through it, its IndexedDB connection once the calls already queued or running have settled. On the Node.js binding it releases nothing.
+When you're finished using a MidenClient instance, call `terminate()`. In the browser it stops the client's Web Worker if there is one, and releases its main-realm wasm client and, through it, its IndexedDB connection once the calls already queued or running have settled. On the Node.js binding it releases only the store's ownership claim (see [One Client per Store](#one-client-per-store)).
 
 ```typescript
 client.terminate();

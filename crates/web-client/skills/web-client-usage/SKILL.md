@@ -205,6 +205,7 @@ const client = await MidenClient.create({
   noteTransportMaxRetries: 3, // optional - in-call retries of a private note send; see below
   noteTransportRetryIntervalMs: 250, // optional - delay before the first retry, in ms
   storeName: "my-store",
+  exclusive: false, // optional - true refuses a store another live client has open; see below
   seed: new Uint8Array(32), // optional - string or Uint8Array; see below
   proverUrl: "testnet", // optional - sets a default prover
   autoSync: true, // optional - call sync() after init
@@ -225,6 +226,12 @@ const client = await MidenClient.create({
 ```
 
 If `rpcUrl` is omitted, `create()` delegates to `createTestnet()`.
+
+Keep one live client per store: two clients on the same store do not
+coordinate. Opening a store another live client in the realm has open warns
+(`console.warn`, naming the owner as `client #N`); with `exclusive: true` the
+open throws an error naming the owner instead, and while an exclusive client
+lives every other open of its store throws. `terminate()` releases the store.
 
 `client.endpoint()` returns the resolved node URL synchronously, e.g.
 `"https://rpc.testnet.miden.io"` when `rpcUrl` was omitted; a `createMock()`
@@ -361,8 +368,9 @@ then waits until the wasm client is freed and its store connection released.
 The release waits for calls already queued or running to settle. Use
 `await using client = ...` when the code after the block deletes or reopens
 the same store. The release is browser-only: on the Node.js binding
-`terminate()` releases nothing (its inner client's `terminate()` is a no-op)
-and `[Symbol.asyncDispose]` resolves at once.
+`terminate()` releases only the store's ownership claim (see
+`MidenClient.create`'s `exclusive`) and `[Symbol.asyncDispose]` resolves at
+once.
 
 ## Sync - Always Sync First
 
@@ -948,6 +956,31 @@ const { txId } = await client.transactions.bridge({
   destinationAddress: "0xabc...", // 0x-prefixed Ethereum hex
 });
 ```
+
+### Claim an inbound AggLayer deposit
+
+`Note.createClaimNote(...)` builds the public CLAIM note that asks the AggLayer bridge to mint an inbound deposit. The proof and leaf come from the AggLayer `claimAsset` data; the Miden amount is derived from the leaf's uint256 amount and the faucet's decimal scale, `floor(amount / 10^scale)`, which is what the bridge verifies.
+
+```typescript
+const proof = new ClaimProofData(
+  smtProofLocalExitRoot, // 32 hex nodes
+  smtProofRollupExitRoot, // 32 hex nodes
+  globalIndex,
+  mainnetExitRoot,
+  rollupExitRoot
+);
+const leaf = new ClaimLeafData(
+  originNetwork,
+  EthAddress.fromHex(originTokenAddress),
+  destinationNetwork,
+  EthAddress.fromHex(destinationAddress),
+  "100000000000000000000", // uint256 amount as a decimal string
+  metadataHash
+);
+const note = Note.createClaimNote(proof, leaf, 10, bridgeAccountId, senderId);
+```
+
+A scale above 18, or a scaled amount above the maximum fungible amount, throws. Submit the note as an own output note of a transaction, for example through `feeAwareTransactionRequestBuilder(sender)` and `withOwnOutputNotes`. It is a network note targeting the bridge account, so the transaction must also declare that account with `withForeignAccounts`, as for any network note.
 
 ### Withdraw USDCx (Circle xReserve)
 

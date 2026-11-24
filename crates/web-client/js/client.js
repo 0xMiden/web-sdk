@@ -192,7 +192,8 @@ export class MidenClient {
         options?.feeFaucetId,
         options?.noteTransportMaxRetries,
         options?.noteTransportRetryIntervalMs,
-        options?.callbackTimeoutMs
+        options?.callbackTimeoutMs,
+        options?.exclusive
       );
     } else {
       inner = await WebClientClass.createClient(
@@ -205,7 +206,9 @@ export class MidenClient {
         options,
         options?.feeFaucetId,
         options?.noteTransportMaxRetries,
-        options?.noteTransportRetryIntervalMs
+        options?.noteTransportRetryIntervalMs,
+        undefined,
+        options?.exclusive
       );
     }
 
@@ -464,7 +467,8 @@ export class MidenClient {
    * store connection once the calls already queued or running have settled.
    * After this, all method calls will throw. To wait for the release, use
    * `await using` or `await client[Symbol.asyncDispose]()`. The release is
-   * browser-only: on the Node.js binding nothing is released.
+   * browser-only: on the Node.js binding only the store's ownership claim
+   * (see `ClientOptions.exclusive`) is released.
    * A store handle you obtain yourself, such as an AccountReader from
    * `accountReader`, keeps the connection open until you free it.
    */
@@ -481,8 +485,8 @@ export class MidenClient {
   /**
    * Terminates the client, then waits until its wasm client is freed and its
    * store connection released, so the store can be deleted or reopened once
-   * this settles. On the Node.js binding it releases nothing and resolves at
-   * once.
+   * this settles. On the Node.js binding it releases only the store's
+   * ownership claim and resolves at once.
    * A store handle you obtain yourself, such as an AccountReader from
    * `accountReader`, keeps the connection open until you free it.
    */

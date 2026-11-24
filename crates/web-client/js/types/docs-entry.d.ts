@@ -23,6 +23,8 @@ export {
   BlockHeader,
   BurnNote,
   ChainAnchor,
+  ClaimLeafData,
+  ClaimProofData,
   ConsumableNoteRecord,
   Endpoint,
   EthAddress,

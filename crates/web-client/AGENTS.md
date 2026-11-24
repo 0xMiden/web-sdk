@@ -131,6 +131,13 @@ Account witnesses refresh when another client changes that state, preserving
 untouched vault assets and storage maps. This does not fetch new chain state;
 continue to sync before relying on on-chain balances.
 
+**One client per store.** Two live clients on one store do not coordinate.
+Opening a store another live client in the realm has open (the same IndexedDB
+name in the browser, the same SQLite file on Node.js) logs a `console.warn`
+naming that client as `client #N`. `MidenClient.create({ ..., exclusive: true })`
+makes the open throw instead, naming the owner, and refuses every later open of
+the store while that client lives. `terminate()` releases the store.
+
 For browser stores, `apply` requires the stored account to match the
 transaction's execution input. A mismatch rejects before changing account state
 or transaction history. A submitted transaction is already accepted by the node when

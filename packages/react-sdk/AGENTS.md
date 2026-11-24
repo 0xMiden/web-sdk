@@ -47,6 +47,7 @@ rejects `feeFaucetId()` and asks you to sync first.
 <MidenProvider
   config={{
     rpcUrl: "testnet",          // "mainnet" | "devnet" | "testnet" | "localhost" | "local" | custom URL
+    network: "mainnet",         // optional: "mainnet" | "testnet" | "devnet", address prefix; wins over the rpcUrl inference
     feeFaucetId: FEE_FAUCET,    // optional: what feeFaucetId() reports before the first sync
     prover: "testnet",          // "local" | "localhost" | "mainnet" | "devnet" | "testnet" | URL
                                 //   | { url, timeoutMs }
@@ -705,9 +706,10 @@ account.bech32id();  // "mtst1qy35..."
 
 The bech32 prefix tracks the active network and is inferred from the client's
 `endpoint()`: `mtst1` testnet, `mdev1` devnet (and a local node), `mm1`
-mainnet. Until the provider has a client, and for an endpoint naming none of
-those networks, `bech32id()` and `toBech32AccountId()` return the hex ID instead
-of guessing. Don't hardcode a prefix and don't pattern-match on one you
+mainnet. An endpoint naming no network, such as a custom mainnet RPC host, is
+mainnet. Set `config.network` (`"mainnet" | "testnet" | "devnet"`) to override
+the inference. Until the provider has a client, `bech32id()` and
+`toBech32AccountId()` return the hex ID instead of guessing. Don't hardcode a prefix and don't pattern-match on one you
 invented - `miden1` is not a Miden prefix.
 
 ## Hook Reference
@@ -906,5 +908,5 @@ import type {
 | "Client not ready" | Wrap component in `MidenProvider`, check `useMiden().isReady` |
 | Transaction stuck | Check `stage` value, network connectivity, prover availability |
 | Notes not appearing | Call `sync()` manually, check `autoSyncInterval` config |
-| Bech32 address wrong or shown as hex | Verify `rpcUrl` names the intended network; a custom endpoint renders hex |
+| Bech32 address wrong or shown as hex | Verify `rpcUrl` names the intended network, or set `config.network`; a custom endpoint is mainnet unless `network` says otherwise |
 | WASM init fails | Check browser compatibility, ensure WASM served with correct MIME type |
