@@ -35,6 +35,7 @@ export {
   FungibleAsset,
   InputNote,
   InputNoteRecord,
+  MintNote,
   NetworkAccountTarget,
   NonFungibleAsset,
   Note,

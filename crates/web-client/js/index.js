@@ -191,6 +191,8 @@ const READ_METHODS = new Set([
   "getAccountVault",
   "getAccounts",
   "getConsumableNotes",
+  "getNoteConsumability",
+  "getNoteConsumabilityForAccount",
   "getInputNote",
   "getInputNotes",
   "getOutputNote",

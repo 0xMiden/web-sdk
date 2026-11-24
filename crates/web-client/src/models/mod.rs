@@ -77,6 +77,7 @@ pub mod input_note_state;
 pub mod input_notes;
 pub mod library;
 pub mod merkle_path;
+pub mod mint_note;
 pub mod network_account_target;
 pub mod network_note_status;
 pub mod non_fungible_asset;
