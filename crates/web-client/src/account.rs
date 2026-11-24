@@ -33,7 +33,8 @@ impl WebClient {
     }
 
     /// Keeps the account's witness up to date on every sync. Returns `true` if it was not
-    /// tracked before.
+    /// tracked before. The account is not validated here: sync fails while a tracked account
+    /// has no witness the node can return, until it is untracked.
     #[js_export(js_name = "trackAccountWitness")]
     pub async fn track_account_witness(&self, account_id: &AccountId) -> Result<bool, JsErr> {
         let mut guard = self.get_mut_inner().await;

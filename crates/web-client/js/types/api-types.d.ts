@@ -1294,6 +1294,10 @@ export interface AccountsResource {
    * after this call fetches it. Resolves to `true` if the account was not
    * tracked before.
    *
+   * The account is not validated against the network here. Sync fails while a
+   * tracked account has no witness the node can return, so an account that is
+   * not in the account tree blocks sync until it is untracked.
+   *
    * @param accountId - The account whose witness to track.
    */
   trackWitness(accountId: AccountRef): Promise<boolean>;
