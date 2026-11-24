@@ -1489,6 +1489,11 @@ await client.accounts.getBalance(account, token); // single-asset balance, retur
 await client.accounts.addAddress(ref, address); // track / untrack an address
 await client.accounts.removeAddress(ref, address);
 
+// Development faucets (testnet / devnet): native fee asset for a fresh wallet
+await client.accounts.requestFundingNote(wallet); // { noteId, transactionId, faucetId, amount }
+await client.accounts.fundAccount(wallet); // request → wait → consume → confirm → { noteId, transactionId, balance }
+await client.accounts.fundAccount(wallet, { faucetUrl, amount, timeout, pollInterval });
+
 await client.accounts.import(ref); // by id - fetches state from the network
 await client.accounts.import({ file }); // from an exported AccountFile
 await client.accounts.import({ seed, auth }); // rebuild a PUBLIC account from its seed

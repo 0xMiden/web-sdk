@@ -654,6 +654,29 @@ await client.transactions.consumeAll({ account: wallet });
 
 `register` fails with code `ACCOUNT_ALREADY_ALLOWED` for an account the node already allows, keeping the code, and a submission that would create an unregistered account fails with `ACCOUNT_NOT_ALLOWLISTED`. `accounts.isInvitationCodeValid` answers `false` for an unknown or registered code, and `true` when the node does not enforce an allowlist. `RpcClient.registerAccount`, `RpcClient.isAccountAllowed` and `RpcClient.isInvitationCodeValid` expose the node endpoints directly for flows that hold no account state. See [the allowlist guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/allowlist.md) for the full flow.
 
+### Fund from a Development Faucet
+
+On testnet and devnet, request the native fee asset and consume it so a fresh
+wallet can pay its first transaction fee:
+
+```typescript
+const client = await MidenClient.createTestnet();
+const wallet = await client.accounts.create();
+
+// Full flow: faucet → wait for note → consume → wait for confirmation
+const { noteId, transactionId, balance } =
+  await client.accounts.fundAccount(wallet);
+
+// Or request only and resume later:
+const receipt = await client.accounts.requestFundingNote(wallet);
+```
+
+Defaults use `https://faucet-api.testnet.miden.io` /
+`https://faucet-api.devnet.miden.io` from the RPC endpoint. Other networks need
+`faucetUrl`. The mint request is never retried — after a failure that retains a
+`noteId`, resume that note instead of calling the faucet again. See
+[the funding guide](https://github.com/0xMiden/web-sdk/blob/next/docs/external/src/web-client/library/funding.md).
+
 ### Create a Faucet
 
 ```typescript

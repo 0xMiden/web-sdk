@@ -401,6 +401,54 @@ export interface Asset {
 }
 
 /**
+ * Options for development funding via `accounts.requestFundingNote` /
+ * `accounts.fundAccount`. Amounts are in the native fee asset's base units.
+ */
+export interface FundingOptions {
+  /**
+   * Faucet API base URL. Testnet and devnet have defaults derived from the
+   * client's RPC endpoint; other networks require this field.
+   */
+  faucetUrl?: string;
+  /** Amount to request. Omit to use the faucet's advertised base amount. */
+  amount?: number | bigint | string;
+  /**
+   * Limit for each stage (faucet request, note discovery, confirmation) in
+   * milliseconds. Must be an integer between 1 and 2_147_483_647. Default 60_000.
+   */
+  timeout?: number;
+  /**
+   * Delay between chain syncs while waiting for the funding note, in
+   * milliseconds. Same bounds as `timeout`. Default 5_000.
+   */
+  pollInterval?: number;
+  /**
+   * Override the network inferred from the RPC endpoint when selecting the
+   * default faucet URL and validating a bech32 faucet id.
+   */
+  network?: "testnet" | "devnet" | "mainnet" | string;
+}
+
+/** Receipt when the faucet accepts a funding request. The note can still be pending. */
+export interface FundingNote {
+  noteId: string;
+  /** Faucet transaction that creates the note. */
+  transactionId: string;
+  /** Hex account id of the fee faucet. */
+  faucetId: string;
+  amount: bigint;
+}
+
+/** Confirmed funding result after the note is consumed. */
+export interface FundingResult {
+  noteId: string;
+  /** Transaction that consumes the funding note. */
+  transactionId: string;
+  /** Balance of the fee asset after the consumption fee is paid. */
+  balance: bigint;
+}
+
+/**
  * A note reference: hex note ID string, NoteId object, InputNoteRecord, or Note object.
  */
 export type NoteInput = string | NoteId | Note | InputNoteRecord;
@@ -1280,6 +1328,36 @@ export interface AccountsResource {
    * @param invitationCode - The invitation code the network operator issued.
    */
   isInvitationCodeValid(invitationCode: string): Promise<boolean>;
+  /**
+   * Request a public P2ID note of the chain's native fee asset from a
+   * development faucet. Does not consume the note or sign a transaction.
+   *
+   * Defaults to the public testnet / devnet faucet APIs when the client RPC
+   * endpoint names those networks; other networks require `faucetUrl`. The
+   * request is never retried: a timeout during minting can leave a note on
+   * the chain.
+   *
+   * @param account - Account that will receive the note.
+   * @param options - Faucet URL, amount, and per-stage timeouts.
+   */
+  requestFundingNote(
+    account: AccountRef,
+    options?: FundingOptions
+  ): Promise<FundingNote>;
+  /**
+   * Fund a tracked account from a development faucet: request a public P2ID
+   * note of the native fee asset, wait until it is committed locally, consume
+   * it, and wait for confirmation. A fresh wallet can pay its first fee from
+   * this note. After a failure that retains a note id, resume that note
+   * instead of requesting funds again.
+   *
+   * @param account - Tracked account to fund.
+   * @param options - Faucet URL, amount, and per-stage timeouts.
+   */
+  fundAccount(
+    account: AccountRef,
+    options?: FundingOptions
+  ): Promise<FundingResult>;
   /**
    * Retrieve an account by ID. Returns `null` if not found in the local store.
    * Browser stores read a coherent persisted snapshot, including changes made
