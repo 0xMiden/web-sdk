@@ -15,6 +15,7 @@ import {
   getUnspentInputNoteNullifiers,
   getNoteScript,
 } from "./notes.js";
+import { recordReads } from "./test-utils.js";
 
 // Unique DB names to avoid collisions between tests.
 let dbCounter = 0;
@@ -369,6 +370,52 @@ describe("getInputNoteAfter ordering", () => {
 
 // CURSOR SEMANTICS TESTS
 // ================================================================================================
+
+describe("getInputNoteAfter index use", () => {
+  const CONSUMER_INDEX =
+    "[consumerAccountId+consumedBlockHeight+consumedTxOrder+detailsCommitment]";
+
+  it("reads only the consumer's range of the consumer-prefixed index, for every cursor and bound shape", async () => {
+    const dbId = await openTestDb();
+    for (let height = 1; height <= 3; height++) {
+      await insertNote(dbId, `mine-${height}`, {
+        consumedBlockHeight: height,
+        consumedTxOrder: 0,
+      });
+      await insertNote(dbId, `other-${height}`, {
+        consumedBlockHeight: height,
+        consumedTxOrder: 0,
+        consumerAccountId: "0xother",
+      });
+    }
+    const cursor = await cursorFor(dbId, "mine-1");
+
+    const recorder = recordReads();
+    try {
+      await collectAllNoteIds(dbId, CONSUMED_STATES, CONSUMER);
+      await collectAllNoteIds(dbId, CONSUMED_STATES, CONSUMER, 2, 3);
+      await getInputNoteAfter(
+        dbId,
+        CONSUMED_STATES,
+        CONSUMER,
+        undefined,
+        2,
+        cursor.blockHeight,
+        cursor.txOrder,
+        cursor.detailsCommitment
+      );
+    } finally {
+      recorder.stop();
+    }
+
+    const noteReads = recorder.reads.filter((r) => r.store === "inputNotes");
+    expect(noteReads.length).toBeGreaterThan(0);
+    for (const read of noteReads) {
+      expect(read.index).toBe(CONSUMER_INDEX);
+      expect(read.ranged).toBe(true);
+    }
+  });
+});
 
 describe("getInputNoteAfter cursor semantics", () => {
   it("returns the first note when no cursor is given", async () => {
