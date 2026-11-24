@@ -26,11 +26,13 @@ This is the contract layer. It talks to no wallet and renders nothing.
 
 - **`BaseWalletAdapter` / `BaseSignerWalletAdapter` /
   `BaseMessageSignerWalletAdapter`** - abstract classes an adapter extends.
-  They are `EventEmitter`s over `connect`, `disconnect`, `error` and
-  `readyStateChange`. `connected` is derived from `address`.
+  They are `EventEmitter`s over `connect`, `accountChange(address, publicKey)`,
+  `disconnect`, `error` and `readyStateChange`. `accountChange` fires before the
+  `connect` that follows an account switch, and never on revocation.
+  `connected` is derived from `address`.
 - **`WalletReadyState`** - `Installed`, `NotDetected`, `Loadable`,
   `Unsupported`. The providers only connect on the first and third.
-- **Errors** - `WalletError` and 22 subclasses. Each carries the underlying
+- **Errors** - `WalletError` and 23 subclasses. Each carries the underlying
   failure on `.error` and a stable `.name`.
 - **Transactions** - `SendTransaction`, `ConsumeTransaction`,
   `CustomTransaction`, plus the `Transaction` envelope and `TransactionType`.
@@ -46,16 +48,19 @@ This is the contract layer. It talks to no wallet and renders nothing.
 amounts are always `BigInt`. Convert at the boundary and do not copy a bigint
 in from SDK code.
 
-**Only six of the error classes are ever thrown** by the packages in this
+**Only eight of the error classes are ever thrown** by the packages in this
 family: `WalletNotSelectedError`, `WalletNotReadyError`,
-`WalletConnectionError`, `WalletNotConnectedError`, `WalletTransactionError`
-and `WalletDisconnectionError`. The rest are vocabulary for other adapters.
+`WalletConnectionError`, `WalletNotConnectedError`, `WalletTransactionError`,
+`WalletDisconnectionError`, `WalletPrivateDataPermissionError` and
+`WalletStorageUnsupportedError`. The rest are vocabulary for other adapters.
 Writing a handler that waits for `WalletTimeoutError` waits forever.
 
 **`AllowedPrivateData` is a bitmask.** `None`, `Assets`, `Notes`, `Storage`,
 `All`. Combine with `|`. It decides what the wallet will answer for assets,
-notes and storage, so a connect with `None` makes every read come back empty
-rather than failing loudly.
+notes and storage, so a connect with `None` makes asset and note reads come
+back empty. `requestStorage` is stricter: without the `Storage` grant it throws
+`WalletPrivateDataPermissionError`, and for a wallet without the method it
+throws `WalletStorageUnsupportedError`.
 
 **`CustomTransaction` serializes eagerly.** Its constructor calls
 `serialize()` on the `TransactionRequest` you pass, so hand it a live object
