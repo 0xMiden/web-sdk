@@ -35,10 +35,7 @@ impl ClaimProofData {
     ) -> Result<ClaimProofData, JsErr> {
         Ok(ClaimProofData(ProofData {
             smt_proof_local_exit_root: smt_proof(&smt_proof_local_exit_root, "local exit root")?,
-            smt_proof_rollup_exit_root: smt_proof(
-                &smt_proof_rollup_exit_root,
-                "rollup exit root",
-            )?,
+            smt_proof_rollup_exit_root: smt_proof(&smt_proof_rollup_exit_root, "rollup exit root")?,
             global_index: GlobalIndex::new(bytes32(&global_index, "global index")?),
             mainnet_exit_root: ExitRoot::new(bytes32(&mainnet_exit_root, "mainnet exit root")?),
             rollup_exit_root: ExitRoot::new(bytes32(&rollup_exit_root, "rollup exit root")?),

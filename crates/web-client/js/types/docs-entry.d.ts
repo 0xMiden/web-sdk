@@ -22,6 +22,8 @@ export {
   BasicFungibleFaucetComponent,
   BlockHeader,
   ChainAnchor,
+  ClaimLeafData,
+  ClaimProofData,
   ConsumableNoteRecord,
   Endpoint,
   EthAddress,
