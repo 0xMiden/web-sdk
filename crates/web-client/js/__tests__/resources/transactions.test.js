@@ -1032,6 +1032,8 @@ describe("TransactionsResource", () => {
       expect(declared.pushed).toHaveLength(1);
       expect(wasm.ForeignAccount.public.mock.calls[0][0].hex).toBe("0xbridge");
       expect(inner.executeTransaction.mock.calls[0][0].hex).toBe("0xsender");
+      // The built request, not the builder, is what gets submitted.
+      expect(inner.executeTransaction.mock.calls[0][1]).toBe("txRequest");
       expect(result.note).toBe("claimNote");
       expect(result.txId).toBeDefined();
       expect(result.result).toBeDefined();
