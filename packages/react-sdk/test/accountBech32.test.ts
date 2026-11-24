@@ -244,6 +244,34 @@ test.describe("accountBech32 utilities (Playwright)", () => {
     expect(result).toMatch(/^mm1/);
   });
 
+  const bech32ForNewWallet = (page: Page) =>
+    page.evaluate(async () => {
+      const client = (window as any).__mockClient;
+      await client.syncState();
+      const wallet = await client.newWallet(
+        (window as any).AccountStorageMode.private(),
+        (window as any).AuthScheme.AuthRpoFalcon512
+      );
+      return (window as any).__bech32.toBech32AccountId(wallet.id().toString());
+    });
+
+  test("toBech32AccountId defaults an rpcUrl naming no network to mainnet", async ({
+    page,
+  }) => {
+    await loadBech32Page(page, { rpcUrl: "https://rpc.cedar.miden.io" });
+    expect(await bech32ForNewWallet(page)).toMatch(/^mm1/);
+  });
+
+  test("toBech32AccountId lets config.network win over the rpcUrl", async ({
+    page,
+  }) => {
+    await loadBech32Page(page, {
+      rpcUrl: "https://rpc.mainnet.miden.io",
+      network: "testnet",
+    });
+    expect(await bech32ForNewWallet(page)).toMatch(/^mtst1/);
+  });
+
   test("toBech32AccountId produces a testnet bech32 when rpcUrl is 'testnet'", async ({
     page,
   }) => {
@@ -282,32 +310,6 @@ test.describe("accountBech32 utilities (Playwright)", () => {
     });
 
     expect(result).toMatch(/^mdev1/);
-  });
-
-  test("toBech32AccountId returns the raw id for an rpcUrl naming no known network", async ({
-    page,
-  }) => {
-    // resolveNetworkId branch: no keyword match -> null, so no bech32 is made
-    // up for a network the endpoint does not name.
-    await loadBech32Page(page, {
-      rpcUrl: "https://my-custom-node.example.com/rpc",
-    });
-
-    const result = await page.evaluate(async () => {
-      const client = (window as any).__mockClient;
-      await client.syncState();
-      const wallet = await client.newWallet(
-        (window as any).AccountStorageMode.private(),
-        (window as any).AuthScheme.AuthRpoFalcon512
-      );
-      const hexId = wallet.id().toString();
-      return {
-        hexId,
-        converted: (window as any).__bech32.toBech32AccountId(hexId),
-      };
-    });
-
-    expect(result.converted).toBe(result.hexId);
   });
 
   // -------------------------------------------------------------------------
