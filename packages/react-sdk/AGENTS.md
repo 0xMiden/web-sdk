@@ -761,7 +761,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | `useImportAccount()` | `importAccount(...)` | `Account` |
 | `useImportNote()` | `importNote(...)` | imported `InputNoteRecord` |
 | `useExportNote()` | `exportNote(...)` | serialized note bytes |
-| `useImportStore()` / `useExportStore()` | store import/export (deprecated: manage store instances with `storeName`, or use `useImportNote()` / `useExportNote()`) | bytes / `void` |
+| `useImportStore()` / `useExportStore()` | store import/export (deprecated: manage store instances with `storeName`, or use `useImportNote()`, `useExportNote()` and `useImportAccount()`, and `useMidenClient().accounts.export(id)` to export an account) | bytes / `void` |
 | `useSend()` | `send({ from, to, assetId, amount, noteType })` | `SendResult` (with `txId`, `note`) |
 | `useMultiSend()` | `sendMany({ from, assetId, recipients })` | `TransactionResult` |
 | `useBatch()` | `batch({ items })` - items are `{ account, request }` pairs | `BatchResult` (with `blockNumber`) |
