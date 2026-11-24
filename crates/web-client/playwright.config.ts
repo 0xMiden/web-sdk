@@ -78,6 +78,7 @@ const ciShardProjects = process.env.CI
           "test/tags.test.ts",
           "test/notes.test.ts",
           "test/note_details_commitment.test.ts",
+          "test/xreserve_burn_note.test.ts",
           "test/note_transport.test.ts",
           "test/protocol_config.test.ts",
           "test/rpc_client.browser.test.ts",
