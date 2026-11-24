@@ -206,7 +206,7 @@ impl WebClient {
     pub async fn new_register_note_scripts_transaction_request(
         &self,
         sender_account_id: &AccountId,
-        scripts: &NoteScriptArray,
+        scripts: NoteScriptArray,
     ) -> Result<TransactionRequest, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| {
