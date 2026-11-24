@@ -192,4 +192,11 @@ tracks no accounts, so do not read it as never consumable. Screening does
 not import the note. The low-level `WebClient` exposes the same screen as
 `getNoteConsumability(note)` and `getNoteConsumabilityForAccount(note, accountId)`.
 
+In `@miden-sdk/react`, `useNoteConsumability(note, { accountId? })` runs this
+screen, again after each sync, and reduces it to a `status` of
+`{ kind: "immediately" }`, `{ kind: "afterBlock", blockHeight }` or
+`{ kind: "never" }`. An empty screen of tracked accounts is `never`; when the
+client tracks no accounts, `status` stays `null`. It only presents the result: `useNotes().consumableNotes`
+still offers payments consumable now and nothing else.
+
 See also [Transactions](./transactions.md) for `consumeAll`'s fee handling.

@@ -702,6 +702,42 @@ function NotesList() {
 }
 ```
 
+#### `useNoteConsumability(note, options?)`
+
+Show whether a note can be consumed: now, after a block height, or never. The
+hook screens the note, imported or not, with the screener sync uses, and
+screens it again after each sync. Pass `accountId` to screen for one account;
+omit it to screen every tracked account. An empty screen of
+tracked accounts reads as `never`; with no tracked account, `status` stays
+`null` because nothing was screened.
+
+```tsx
+import { useNoteConsumability } from '@miden-sdk/react';
+
+function NoteStatus({ note, accountId }) {
+  const {
+    status,         // null until screened, then one of the kinds below
+    consumability,  // the screener's NoteConsumability entries
+    isLoading,
+    error,
+    refetch,
+  } = useNoteConsumability(note, { accountId });
+
+  if (!status) return <span>Checking...</span>;
+  if (status.kind === 'immediately') return <span>Claimable now</span>;
+  if (status.kind === 'afterBlock')
+    return <span>Unlocks at block {status.blockHeight}</span>;
+  return <span>Not claimable</span>; // status.kind === 'never'
+}
+```
+
+The hook only presents the screen. What to claim still comes from
+`useNotes().consumableNotes`, which holds payments consumable now: a note this
+hook reports `immediately` may be another trader's PSWAP order, which
+consuming would fill from your vault. `getNoteConsumabilityStatus(entries,
+accountIdHex?)` derives the same status from any `NoteConsumability[]`, such
+as `ConsumableNoteRecord.noteConsumability()`.
+
 #### `useNoteStream(options?)`
 
 Temporal note tracking with a unified model. Replaces the common pattern of
