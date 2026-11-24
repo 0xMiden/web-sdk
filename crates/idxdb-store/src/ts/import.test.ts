@@ -153,6 +153,30 @@ describe("transformForImport", () => {
 // ================================================================================================
 
 describe("forceImportStore", () => {
+  it("discards the cached transaction encryption key when restoring a backup", async () => {
+    const dbId = await openTestDb();
+    const name = "transaction_encryption_key";
+    const userValue = new Uint8Array([2]);
+
+    await forceImportStore(
+      dbId,
+      JSON.stringify({
+        clientConfig: [
+          stampRow(CLIENT_VERSION),
+          { key: name, value: exportedBytes(new Uint8Array([1])) },
+        ],
+        userSettings: [{ key: name, value: exportedBytes(userValue) }],
+      })
+    );
+
+    const db = getDatabase(dbId);
+    expect(await db.clientConfig.get(name)).toBeUndefined();
+    expect(await db.userSettings.get(name)).toEqual({
+      key: name,
+      value: userValue,
+    });
+  });
+
   let logSpy: any;
   let errorSpy: any;
   let warnSpy: any;
