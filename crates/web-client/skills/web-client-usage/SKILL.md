@@ -43,18 +43,19 @@ const summary = await client._withInnerWebClient(async (inner) => {
 });
 ```
 
-**You must hold your own mutex around this.** The call chain serializes the
-callback against external callers, but it does not make the callback atomic.
-While `fn` runs, the client's re-entrancy depth is raised so that calls made
-*by* `fn` run inline instead of queueing - that is what stops `fn` deadlocking
-against itself. The consequence is the trap: if an unrelated task runs during
-one of `fn`'s `await`s and calls into the SDK, it also sees a raised depth,
-also runs inline, and races wasm-bindgen's borrow check. The chain will not
-save you there; only your own mutex around the whole `_withInnerWebClient`
-call will.
+The call chain serializes the callback against every other caller: an SDK
+call that an unrelated task makes during one of `fn`'s `await`s queues behind
+`fn`. `inner` is a trusted handle, and only calls made through it run inline in
+the slot `fn` holds - that is what stops `fn` deadlocking against itself. So
+inside `fn`, call the SDK only through `inner`: a call through `client` or any
+other reference queues behind `fn` and never settles while `fn` awaits it.
+Calls through `inner` run inline, so await them one at a time. The raw-bound
+accessors (`lastAuthError()`, the `keystore` getter, and on mock clients
+`proveBlock()` and `serializeMock*()`) never queue, so do not call them from
+another task while `fn` runs.
 
-Do not let the `inner` reference escape the callback either - it is only valid
-for the duration of `fn`.
+Do not let the `inner` reference escape the callback either - once `fn` settles,
+calls through it queue like any other call.
 
 It is marked `@internal`: pin the SDK version if you depend on it, and re-test
 the low-level surface on every upgrade.

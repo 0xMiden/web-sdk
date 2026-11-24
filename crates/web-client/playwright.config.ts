@@ -239,7 +239,7 @@ export default defineConfig({
         "test/no_wasm_reentry_via_tojson.test.ts",
         // _withInnerWebClient re-entrancy (#152): exercises the browser
         // worker-shim chain mechanics (_serializeWasmCall, the
-        // _withInnerLockDepth counter, chain release on rejection). The
+        // trusted handle, chain release on rejection). The
         // napi client has no JS call chain — serialization happens in
         // Rust — so the escape hatch and its tests are browser-only.
         "test/with_inner_web_client_reentrancy.test.ts",

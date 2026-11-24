@@ -170,6 +170,11 @@ impl WebClient {
         )
         .await?;
 
+        keystore
+            .add_key(&key_pair, new_account.id())
+            .await
+            .map_err(|err| from_str_err(&err.to_string()))?;
+
         {
             let mut guard = self.get_mut_inner().await;
             let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
@@ -178,11 +183,6 @@ impl WebClient {
                 .await
                 .map_err(|err| js_error_with_context(err, "failed to insert new faucet"))?;
         }
-
-        keystore
-            .add_key(&key_pair, new_account.id())
-            .await
-            .map_err(|err| from_str_err(&err.to_string()))?;
 
         Ok(new_account.into())
     }
@@ -204,6 +204,11 @@ impl WebClient {
 
         let (new_account, key_pair) = generate_wallet(storage_mode, init_seed, auth_scheme).await?;
 
+        keystore
+            .add_key(&key_pair, new_account.id())
+            .await
+            .map_err(|err| from_str_err(&err.to_string()))?;
+
         {
             let mut guard = self.get_mut_inner().await;
             let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
@@ -212,11 +217,6 @@ impl WebClient {
                 .await
                 .map_err(|err| js_error_with_context(err, "failed to insert new wallet"))?;
         }
-
-        keystore
-            .add_key(&key_pair, new_account.id())
-            .await
-            .map_err(|err| from_str_err(&err.to_string()))?;
 
         Ok(new_account.into())
     }
@@ -250,9 +250,9 @@ impl WebClient {
     }
 
     /// Inserts an account and its secret key in one call, matching how
-    /// `newWallet` / `newFaucet` already work internally.  If the key
-    /// insertion fails the account is still persisted (same as wallet/faucet),
-    /// but callers only need a single await instead of two. It first runs
+    /// `newWallet` / `newFaucet` already work internally. The key is stored
+    /// first, so a failed key insertion leaves no account without its key, and
+    /// callers only need a single await. It first runs
     /// `syncBeforeAccountCreation` unless `skip_pre_sync` is `true`.
     ///
     /// Same network-account fee-faucet check as [`Self::new_account`].
@@ -270,6 +270,14 @@ impl WebClient {
         self.reject_mismatched_network_fee_faucet(&native_account).await?;
         let account_id = native_account.id();
 
+        let keystore = self.get_keystore().await?;
+        let native_secret_key: AuthSecretKey = secret_key.into();
+
+        keystore
+            .add_key(&native_secret_key, account_id)
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to add secret key"))?;
+
         {
             let mut guard = self.get_mut_inner().await;
             let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
@@ -278,14 +286,6 @@ impl WebClient {
                 .await
                 .map_err(|err| js_error_with_context(err, "failed to insert new account"))?;
         }
-
-        let keystore = self.get_keystore().await?;
-        let native_secret_key: AuthSecretKey = secret_key.into();
-
-        keystore
-            .add_key(&native_secret_key, account_id)
-            .await
-            .map_err(|err| js_error_with_context(err, "failed to add secret key"))?;
 
         Ok(())
     }
