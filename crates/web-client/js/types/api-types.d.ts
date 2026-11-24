@@ -395,7 +395,7 @@ export type AccountRef = string | Account | AccountHeader | AccountId;
 export interface Asset {
   /** Token identifier (faucet account ID). */
   token: AccountRef;
-  /** Auto-converted to bigint internally. */
+  /** Auto-converted to bigint internally. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
 }
 
@@ -432,6 +432,7 @@ export interface FaucetCreateOptions {
   name?: string;
   symbol: string;
   decimals: number;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   maxSupply: number | bigint;
   storage?: StorageMode;
   auth?: AuthSchemeType;
@@ -586,6 +587,7 @@ export interface SendOptionsDefault extends TransactionOptions {
   account: AccountRef;
   to: AccountRef;
   token: AccountRef;
+  /** Amount to send. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   type?: NoteVisibility;
   returnNote?: false;
@@ -599,6 +601,7 @@ export interface SendOptionsReturnNote extends TransactionOptions {
   account: AccountRef;
   to: AccountRef;
   token: AccountRef;
+  /** Amount to send. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   type?: NoteVisibility;
   returnNote: true;
@@ -666,7 +669,7 @@ export interface MintOptions extends TransactionOptions {
   account: AccountRef;
   /** Recipient account. */
   to: AccountRef;
-  /** Amount to mint. */
+  /** Amount to mint. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   /** Note visibility. Defaults to "public". */
   type?: NoteVisibility;
@@ -679,7 +682,7 @@ export interface BridgeOptions extends TransactionOptions {
   bridgeAccount: AccountRef;
   /** Faucet / token ID of the fungible asset to bridge. */
   token: AccountRef;
-  /** Amount of the asset to bridge. */
+  /** Amount of the asset to bridge. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   /** AggLayer-assigned network ID of the destination chain. */
   destinationNetwork: number;
@@ -732,6 +735,7 @@ export type BatchOperation =
       account: AccountRef;
       to: AccountRef;
       token: AccountRef;
+      /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
       amount: number | bigint;
       type?: NoteVisibility;
       reclaimAfter?: number;
@@ -741,6 +745,7 @@ export type BatchOperation =
       kind: "mint";
       account: AccountRef;
       to: AccountRef;
+      /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
       amount: number | bigint;
       type?: NoteVisibility;
     }
@@ -926,9 +931,9 @@ export interface PswapConsumeOptions extends TransactionOptions {
   account: AccountRef;
   /** PSWAP note to consume — accepts a note id (hex), `NoteId`, `InputNoteRecord`, or `Note`. */
   note: NoteInput;
-  /** Requested-asset amount the consumer supplies from its own vault; a partial amount emits a remainder PSWAP note. */
+  /** Requested-asset amount the consumer supplies from its own vault; a partial amount emits a remainder PSWAP note. A `number` must be a safe integer. */
   fillAmount: number | bigint;
-  /** Requested-asset amount supplied by other in-flight notes in the same tx. Defaults to `0`; leave unset normally. */
+  /** Requested-asset amount supplied by other in-flight notes in the same tx. Defaults to `0`; leave unset normally. A `number` must be a safe integer. */
   noteFillAmount?: number | bigint;
 }
 
@@ -982,6 +987,7 @@ export interface PreviewSendOptions {
   account: AccountRef;
   to: AccountRef;
   token: AccountRef;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   type?: NoteVisibility;
   reclaimAfter?: number;
@@ -992,6 +998,7 @@ export interface PreviewMintOptions {
   operation: "mint";
   account: AccountRef;
   to: AccountRef;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   type?: NoteVisibility;
 }
@@ -1001,6 +1008,7 @@ export interface PreviewBridgeOptions {
   account: AccountRef;
   bridgeAccount: AccountRef;
   token: AccountRef;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   destinationNetwork: number;
   destinationAddress: string;
@@ -1034,7 +1042,9 @@ export interface PreviewPswapConsumeOptions {
   operation: "pswapConsume";
   account: AccountRef;
   note: NoteInput;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   fillAmount: number | bigint;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   noteFillAmount?: number | bigint;
 }
 

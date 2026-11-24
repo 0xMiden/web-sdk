@@ -4,6 +4,7 @@ import {
   resolveAccountRef,
   resolveNoteType,
   resolveTransactionIdHex,
+  toAmount,
 } from "../utils.js";
 
 /** Preview operations that build their own request, and so cannot be anchored. */
@@ -181,6 +182,7 @@ export class TransactionsResource {
         );
       }
 
+      const amount = toAmount(opts.amount, "send");
       const senderId = resolveAccountRef(opts.account, wasm);
       const receiverId = resolveAccountRef(opts.to, wasm);
       const faucetId = resolveAccountRef(opts.token, wasm);
@@ -189,9 +191,7 @@ export class TransactionsResource {
       const note = wasm.Note.createP2IDNote(
         senderId,
         receiverId,
-        new wasm.NoteAssets([
-          new wasm.FungibleAsset(faucetId, BigInt(opts.amount)),
-        ]),
+        new wasm.NoteAssets([new wasm.FungibleAsset(faucetId, amount)]),
         noteType,
         new wasm.NoteAttachment()
       );
@@ -264,7 +264,7 @@ export class TransactionsResource {
             (a) =>
               new wasm.FungibleAsset(
                 resolveAccountRef(a.token, wasm),
-                BigInt(a.amount)
+                toAmount(a.amount, "createNetworkNote")
               )
           )
         )
@@ -1231,11 +1231,11 @@ export class TransactionsResource {
   // ── Shared request builders ──
 
   async #buildSendRequest(opts, wasm) {
+    const amount = toAmount(opts.amount, "send");
     const accountId = resolveAccountRef(opts.account, wasm);
     const targetId = resolveAccountRef(opts.to, wasm);
     const faucetId = resolveAccountRef(opts.token, wasm);
     const noteType = resolveNoteType(opts.type, wasm);
-    const amount = BigInt(opts.amount);
 
     const request = await this.#inner.newSendTransactionRequest(
       accountId,
@@ -1250,10 +1250,10 @@ export class TransactionsResource {
   }
 
   async #buildMintRequest(opts, wasm) {
+    const amount = toAmount(opts.amount, "mint");
     const accountId = resolveAccountRef(opts.account, wasm);
     const targetId = resolveAccountRef(opts.to, wasm);
     const noteType = resolveNoteType(opts.type, wasm);
-    const amount = BigInt(opts.amount);
 
     // WASM signature: newMintTransactionRequest(target, faucet, noteType, amount)
     const request = await this.#inner.newMintTransactionRequest(
@@ -1266,10 +1266,10 @@ export class TransactionsResource {
   }
 
   async #buildB2AggRequest(opts, wasm) {
+    const amount = toAmount(opts.amount, "bridge");
     const accountId = resolveAccountRef(opts.account, wasm);
     const bridgeAccountId = resolveAccountRef(opts.bridgeAccount, wasm);
     const faucetId = resolveAccountRef(opts.token, wasm);
-    const amount = BigInt(opts.amount);
     const destinationAddress = wasm.EthAddress.fromHex(opts.destinationAddress);
 
     const request = await this.#inner.newB2AggTransactionRequest(
@@ -1284,11 +1284,7 @@ export class TransactionsResource {
   }
 
   async #buildXReserveBurnRequest(opts, wasm) {
-    if (typeof opts.amount === "number" && !Number.isSafeInteger(opts.amount)) {
-      throw new Error(
-        "withdrawUsdcx: amount must be a safe integer when given as a number; pass a bigint above 2^53 - 1"
-      );
-    }
+    const amount = toAmount(opts.amount, "withdrawUsdcx");
     const recipientHex = opts.destinationRecipient;
     if (
       typeof recipientHex !== "string" ||
@@ -1308,7 +1304,7 @@ export class TransactionsResource {
     const request = await this.#inner.newXReserveBurnTransactionRequest(
       accountId,
       faucetId,
-      BigInt(opts.amount),
+      amount,
       opts.destinationDomain,
       recipient
     );
@@ -1374,9 +1370,9 @@ export class TransactionsResource {
     const request = await this.#inner.newSwapTransactionRequest(
       accountId,
       offeredFaucetId,
-      BigInt(opts.offer.amount),
+      toAmount(opts.offer.amount, "swap"),
       requestedFaucetId,
-      BigInt(opts.request.amount),
+      toAmount(opts.request.amount, "swap"),
       noteType,
       paybackNoteType
     );
@@ -1396,9 +1392,9 @@ export class TransactionsResource {
     const request = await this.#inner.newPswapCreateTransactionRequest(
       accountId,
       offeredFaucetId,
-      BigInt(opts.offer.amount),
+      toAmount(opts.offer.amount, "pswapCreate"),
       requestedFaucetId,
-      BigInt(opts.request.amount),
+      toAmount(opts.request.amount, "pswapCreate"),
       noteType,
       paybackNoteType
     );
@@ -1413,8 +1409,8 @@ export class TransactionsResource {
     const request = await this.#inner.newPswapConsumeTransactionRequest(
       note,
       accountId,
-      BigInt(opts.fillAmount),
-      BigInt(noteFillAmount)
+      toAmount(opts.fillAmount, "pswapConsume"),
+      toAmount(noteFillAmount, "pswapConsume")
     );
     return { accountId, request };
   }
