@@ -238,6 +238,30 @@ describe("Node napi boundary", () => {
     expect(received[0]).toBe(first);
   });
 
+  it("unwraps a NoteScriptArray passed to withExpectedNtxScripts", () => {
+    const script = {};
+    new nodeIndex.TransactionRequestBuilder().withExpectedNtxScripts(
+      new nodeIndex.NoteScriptArray([script])
+    );
+
+    const received = fakeNative.received.at(-1);
+    expect(Array.isArray(received)).toBe(true);
+    expect(received).toEqual([script]);
+    expect(received[0]).toBe(script);
+  });
+
+  it("unwraps a NoteScriptArray passed to newRegisterNoteScriptsTransactionRequest", async () => {
+    const script = {};
+    await new fakeNative.WebClient().newRegisterNoteScriptsTransactionRequest(
+      "sender",
+      new nodeIndex.NoteScriptArray([script])
+    );
+
+    const received = fakeNative.received.at(-1);
+    expect(Array.isArray(received)).toBe(true);
+    expect(received[0]).toBe(script);
+  });
+
   it("hands a native constructor a real array of the container's items", () => {
     const felt = {};
     new nodeIndex.NoteStorage(new nodeIndex.FeltArray([felt]));
