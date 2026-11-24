@@ -138,6 +138,62 @@ Who may consume a note depends on the note:
 - `txFee()`, `swap()`, `pswap()` and `feeSponsorship()` can be consumed by any
   account.
 
+## Fee sponsorship notes
+
+Create a standard fee-sponsorship note with the standalone
+`createFeeSponsorshipNote` helper (or `Note.createFeeSponsorshipNote`) to fund a
+supported feature note (`BURN`, `CLAIM`, `B2AGG`, etc.) consumed by a public
+network account:
+
+```typescript
+import {
+  FeeSponsorshipNote,
+  FungibleAsset,
+  Note,
+  createFeeSponsorshipNote,
+} from "@miden-sdk/miden-sdk";
+
+// `to` must be a public account so the note routes as a network note.
+// `reclaimer` defaults to `from`; omit `reclaimAfter` to disable reclaim,
+// or pass a positive 32-bit integer (> 0; 0 is rejected).
+const sponsorship = createFeeSponsorshipNote({
+  from: sponsorAccountId,
+  to: targetNetworkAccountId,
+  featureNoteId: featureNote.id(),
+  asset: new FungibleAsset(feeFaucetId, 1_000n),
+  reclaimer: reclaimerAccountId, // optional; AccountId instances are cloned
+  reclaimAfter: 100, // optional positive 32-bit block height (> 0)
+});
+
+// Low-level WASM builder (same behavior, except passing an AccountId as
+// `reclaimer` in browser WASM consumes that handle even on error).
+const rawSponsorship = Note.createFeeSponsorshipNote(
+  sponsorAccountId,
+  targetNetworkAccountId,
+  featureNote.id(),
+  new FungibleAsset(feeFaucetId, 1_000n),
+  undefined, // reclaimer (defaults to sender)
+  undefined // reclaimHeight (omit/undefined to disable; 0 is rejected)
+);
+
+const decoded = FeeSponsorshipNote.tryFromNote(sponsorship);
+decoded.featureNoteId(); // NoteId bound to this sponsorship
+decoded.sender(); // AccountId
+decoded.reclaimer(); // AccountId (defaults to sender)
+decoded.reclaimHeight(); // number | undefined
+decoded.asset(); // FungibleAsset
+decoded.tag(); // NoteTag targeting `to`
+decoded.serialNumber(); // Word
+decoded.intoNote(); // Note
+```
+
+Binding `featureNoteId` lets whoever consumes that feature note claim the
+sponsorship in the same transaction. Prefer standalone
+`createFeeSponsorshipNote` when passing an `AccountId` instance for `reclaimer`:
+it clones `AccountId` inputs before calling `Note.createFeeSponsorshipNote`,
+whereas the low-level WASM method consumes a passed `reclaimer` `AccountId` in
+browser WASM.
+
 ## Creating a network account
 
 A network account is a **public** account carrying the network-account auth
@@ -158,10 +214,10 @@ import {
 // Each allowed script carries the fee charged to consume it, denominated in
 // the chain's fee asset. A zero price is valid.
 //
-// The fee faucet must be the chain's own. The node refuses to run network
-// transactions for an account whose fee asset differs from the chain's
-// protocol configuration, and nothing reports it to the client: the account's
-// notes are simply never consumed.
+// The fee faucet must be the chain's own, the one `client.protocolConfig()`
+// names. The node refuses to run network transactions for an account whose
+// fee asset differs from the chain's protocol configuration, and nothing
+// reports it to the client: the account's notes are simply never consumed.
 const feeFaucetId = await client.feeFaucetId();
 const components = AccountComponent.createNetworkAuthComponents(
   [new NoteScriptFee(noteScript.root(), 0n)],

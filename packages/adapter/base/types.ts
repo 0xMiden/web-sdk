@@ -1,6 +1,7 @@
 import type { InputNoteState, Note, NoteType } from "@miden-sdk/miden-sdk";
 
 export enum WalletAdapterNetwork {
+  Mainnet = "mainnet",
   Devnet = "devnet",
   Testnet = "testnet",
   Localnet = "localnet",
@@ -23,6 +24,13 @@ export enum AllowedPrivateData {
   Notes = 1 << 1, // 2
   Storage = 1 << 2, // 4
   All = (1 << 16) - 1, // 65535 (allows for new permissions without requiring a migration)
+}
+
+/** A read of one account storage slot, optionally one map entry of it. */
+export interface StorageReadRequest {
+  slotName: string;
+  /** Map key as a hex word; omit to read a value slot. */
+  key?: string;
 }
 
 export type SignKind = "word" | "signingInputs";

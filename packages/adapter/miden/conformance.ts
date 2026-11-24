@@ -47,11 +47,11 @@ type OwnKeys = Exclude<keyof MidenWallet, InheritedKeys>;
 
 /** The subset of {@link OwnKeys} that are callable — i.e. not `address`/`publicKey`. */
 type MethodKeys = {
-  [K in OwnKeys]-?: NonNullable<MidenWallet[K]> extends (
-    ...args: never[]
-  ) => unknown
-    ? K
-    : never;
+  [K in OwnKeys]-?: {} extends Pick<MidenWallet, K>
+    ? never
+    : MidenWallet[K] extends (...args: never[]) => unknown
+      ? K
+      : never;
 }[OwnKeys];
 
 /**

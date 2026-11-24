@@ -39,7 +39,12 @@ export class AccountsResource {
 
   /**
    * Create a wallet by default, a faucet via `FaucetType`, or a contract via
-   * `components`. Visibility is selected separately with `storage`.
+   * `components`. A contract also needs a raw 32-byte `seed` and `auth`.
+   * `auth` is an `AuthSecretKey` stored with the account, or `"none"` for a
+   * NoAuth contract that anyone can call and that stores no key. Omitting
+   * `auth` is rejected and does not default to NoAuth. `"none"` is only valid
+   * on a contract; wallet and faucet `auth` stays `AuthScheme.Falcon` or
+   * `AuthScheme.ECDSA`. Visibility is selected separately with `storage`.
    *
    * The legacy 0, 1 and "NonFungibleFaucet" still select a faucet; 0 and 1 are
    * also AccountType.Private/Public, so a visibility value passed as `type` is
@@ -111,11 +116,12 @@ export class AccountsResource {
     if (!opts.seed)
       throw new Error("Contract creation requires a 'seed' (Uint8Array)");
     if (!opts.auth)
-      throw new Error("Contract creation requires an 'auth' (AuthSecretKey)");
+      throw new Error(
+        "Contract creation requires an 'auth' (AuthSecretKey, or \"none\" for a NoAuth contract)"
+      );
 
+    const noAuth = opts.auth === "none";
     const storageMode = resolveStorageMode(opts.storage ?? "public", wasm);
-    const authComponent =
-      wasm.AccountComponent.createAuthComponentFromSecretKey(opts.auth);
 
     // Schema commitment from `build()` is not a substitute for contract code: a contract needs at
     // least one component exporting a non-auth procedure, or the account is created but nothing
@@ -135,9 +141,12 @@ export class AccountsResource {
       );
     }
 
-    let builder = new wasm.AccountBuilder(opts.seed)
-      .storageMode(storageMode)
-      .withAuthComponent(authComponent);
+    const base = new wasm.AccountBuilder(opts.seed).storageMode(storageMode);
+    let builder = noAuth
+      ? base.withNoAuthComponent()
+      : base.withAuthComponent(
+          wasm.AccountComponent.createAuthComponentFromSecretKey(opts.auth)
+        );
 
     for (const component of components) {
       builder = builder.withComponent(component);
@@ -146,7 +155,12 @@ export class AccountsResource {
     const built = builder.build();
     const account = built.account;
 
-    await this.#inner.newAccountWithSecretKey(account, opts.auth);
+    if (noAuth) {
+      // No key to store: the built account already carries its seed.
+      await this.#inner.newAccount(account, false);
+    } else {
+      await this.#inner.newAccountWithSecretKey(account, opts.auth);
+    }
     return account;
   }
 
@@ -258,6 +272,45 @@ export class AccountsResource {
     const id = resolveAccountRef(input, wasm);
     await this.#inner.importAccountById(id);
     return await this.#inner.getAccount(id);
+  }
+
+  async importWatched(ref) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const id = resolveAccountRef(ref, wasm);
+    await this.#inner.importWatchedAccountById(id);
+    return await this.#inner.getAccount(id);
+  }
+
+  async trackWitness(ref) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    return await this.#inner.trackAccountWitness(resolveAccountRef(ref, wasm));
+  }
+
+  async untrackWitness(ref) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    return await this.#inner.untrackAccountWitness(
+      resolveAccountRef(ref, wasm)
+    );
+  }
+
+  async trackedWitnesses() {
+    this.#client.assertNotTerminated();
+    return Array.from(await this.#inner.trackedAccountWitnesses());
+  }
+
+  async getStorageMapWitness(ref, slotName, key) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const id = resolveAccountRef(ref, wasm);
+    const reader = await this.#inner.accountReader(id);
+    try {
+      return await reader.getStorageMapWitness(slotName, key);
+    } finally {
+      reader.free?.();
+    }
   }
 
   async export(ref) {

@@ -240,6 +240,9 @@ function makeInner(overrides = {}) {
     newSendTransactionRequest: vi.fn().mockResolvedValue("sendRequest"),
     newMintTransactionRequest: vi.fn().mockResolvedValue("mintRequest"),
     newB2AggTransactionRequest: vi.fn().mockResolvedValue("b2aggRequest"),
+    newXReserveBurnTransactionRequest: vi
+      .fn()
+      .mockResolvedValue("xreserveBurnRequest"),
     newConsumeTransactionRequest: vi.fn().mockResolvedValue("consumeRequest"),
     // Keep the builder the resource actually used, so a test can assert what was
     // declared on it rather than only that one was asked for.
@@ -372,6 +375,90 @@ describe("TransactionsResource", () => {
         expect.anything(),
         callProver
       );
+    });
+  });
+
+  describe("apply failure after a successful submit", () => {
+    const storeError = new Error("IndexedDB quota exceeded");
+    const calls = {
+      send: (resource) =>
+        resource.send({
+          account: "0xsender",
+          to: "0xrecipient",
+          token: "0xfaucet",
+          type: "public",
+          amount: 100,
+        }),
+      mint: (resource) =>
+        resource.mint({
+          account: "0xfaucet",
+          to: "0xrecipient",
+          type: "public",
+          amount: 500,
+        }),
+      consume: (resource) =>
+        resource.consume({ account: "0xaccHex", notes: ["0xnote1"] }),
+      custom: (resource) =>
+        resource.execute({ account: "0xaccHex", script: "txScript" }),
+    };
+
+    const rejection = async (promise) => {
+      try {
+        await promise;
+      } catch (error) {
+        return error;
+      }
+      throw new Error("expected the call to reject");
+    };
+
+    it.each(Object.keys(calls))(
+      "%s wraps it with ApplyTransactionAfterSubmitFailed",
+      async (name) => {
+        const { resource, inner } = makeResource({
+          submitProvenTransaction: vi.fn().mockResolvedValue(42),
+          applyTransaction: vi.fn().mockRejectedValue(storeError),
+        });
+
+        const caught = await rejection(calls[name](resource));
+
+        expect(caught.code).toBe("ApplyTransactionAfterSubmitFailed");
+        expect(caught.cause).toBe(storeError);
+        expect(caught.transactionId).toBe("txHex");
+        expect(caught.submissionHeight).toBe(42);
+        expect(caught.message).toContain(
+          "accepted into the node's mempool at block 42"
+        );
+        expect(inner.applyTransaction).toHaveBeenCalledWith(
+          inner._txResult,
+          42
+        );
+      }
+    );
+
+    it("leaves a submit failure unwrapped and never applies", async () => {
+      const submitError = new Error("node rejected the transaction");
+      const { resource, inner } = makeResource({
+        submitProvenTransaction: vi.fn().mockRejectedValue(submitError),
+      });
+
+      const caught = await rejection(calls.send(resource));
+
+      expect(caught).toBe(submitError);
+      expect(caught.code).toBeUndefined();
+      expect(inner.applyTransaction).not.toHaveBeenCalled();
+    });
+
+    it("leaves an execution failure unwrapped and never submits", async () => {
+      const executeError = new Error("execution failed");
+      const { resource, inner } = makeResource({
+        executeTransaction: vi.fn().mockRejectedValue(executeError),
+      });
+
+      const caught = await rejection(calls.send(resource));
+
+      expect(caught).toBe(executeError);
+      expect(caught.code).toBeUndefined();
+      expect(inner.submitProvenTransaction).not.toHaveBeenCalled();
     });
   });
 
@@ -673,6 +760,103 @@ describe("TransactionsResource", () => {
       });
       expect(inner.syncChain).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
+    });
+  });
+
+  describe("withdrawUsdcx", () => {
+    const RECIPIENT =
+      "0x1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30";
+
+    it("builds an xReserve burn request and submits", async () => {
+      const { resource, inner } = makeResource();
+      const result = await resource.withdrawUsdcx({
+        account: "0xsender",
+        token: "0xfaucet",
+        amount: 250,
+        destinationDomain: 6,
+        destinationRecipient: RECIPIENT,
+      });
+
+      // Pin the argument order: a sender/faucet swap burns from the wrong side.
+      expect(inner.newXReserveBurnTransactionRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xsender" }),
+        expect.objectContaining({ hex: "0xfaucet" }),
+        250n,
+        6,
+        Uint8Array.from(
+          RECIPIENT.slice(2)
+            .match(/../g)
+            .map((byte) => parseInt(byte, 16))
+        )
+      );
+      expect(inner.executeTransaction).toHaveBeenCalled();
+      expect(result.txId).toBeDefined();
+    });
+
+    it.each([
+      ["missing 0x prefix", RECIPIENT.slice(2)],
+      ["31 bytes", RECIPIENT.slice(0, -2)],
+      ["non-hex digit", RECIPIENT.slice(0, -1) + "g"],
+    ])("rejects a destinationRecipient with %s", async (_label, recipient) => {
+      const { resource, inner } = makeResource();
+      await expect(
+        resource.withdrawUsdcx({
+          account: "0xsender",
+          token: "0xfaucet",
+          amount: 250,
+          destinationDomain: 6,
+          destinationRecipient: recipient,
+        })
+      ).rejects.toThrow(/destinationRecipient/);
+      expect(inner.newXReserveBurnTransactionRequest).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["above 2^53 - 1", Number.MAX_SAFE_INTEGER + 2],
+      ["fractional", 1.5],
+      ["NaN", NaN],
+    ])(
+      "rejects a number amount that is %s before any WASM call",
+      async (_label, amount) => {
+        const { resource, inner, wasm } = makeResource();
+        await expect(
+          resource.withdrawUsdcx({
+            account: "0xsender",
+            token: "0xfaucet",
+            amount,
+            destinationDomain: 6,
+            destinationRecipient: RECIPIENT,
+          })
+        ).rejects.toThrow(/amount/);
+        expect(wasm.AccountId.fromHex).not.toHaveBeenCalled();
+        expect(inner.newXReserveBurnTransactionRequest).not.toHaveBeenCalled();
+      }
+    );
+
+    it("forwards a bigint amount above 2^53 - 1 exactly", async () => {
+      const { resource, inner } = makeResource();
+      await resource.withdrawUsdcx({
+        account: "0xsender",
+        token: "0xfaucet",
+        amount: 9007199254740993n,
+        destinationDomain: 6,
+        destinationRecipient: RECIPIENT,
+      });
+      expect(inner.newXReserveBurnTransactionRequest.mock.calls[0][2]).toBe(
+        9007199254740993n
+      );
+    });
+
+    it("documents a destinationRecipient the validator accepts", () => {
+      const skill = readFileSync(
+        new URL("../../../skills/web-client-usage/SKILL.md", import.meta.url),
+        "utf8"
+      );
+      const documented = skill.match(
+        /withdrawUsdcx\(\{[^}]*?destinationRecipient: ([^,\n]+),/s
+      )?.[1];
+      expect(documented).toBeDefined();
+      expect(documented).toMatch(/^"0x[0-9a-fA-F]{64}"$/);
     });
   });
 
@@ -1434,6 +1618,7 @@ describe("TransactionsResource", () => {
       "createNetworkNote",
       "mint",
       "bridge",
+      "withdrawUsdcx",
       "consume",
       "consumeAll",
       "swap",
@@ -1743,6 +1928,32 @@ describe("TransactionsResource", () => {
       const update = await submitted.apply();
       expect(inner.applyTransaction).toHaveBeenCalledWith(inner._txResult, 123);
       expect(update).toBe("storeUpdate");
+    });
+
+    it("apply after a successful submit rejects with ApplyTransactionAfterSubmitFailed", async () => {
+      const storeError = new Error("IndexedDB quota exceeded");
+      const { resource, inner } = makeResource({
+        submitProvenTransaction: vi.fn().mockResolvedValue(123),
+        applyTransaction: vi.fn().mockRejectedValue(storeError),
+      });
+      const executed = await resource.executeRequest("0xaccHex", {});
+      const submitted = await (await executed.prove()).submit();
+
+      const caught = await submitted.apply().then(
+        () => {
+          throw new Error("expected apply to reject");
+        },
+        (error) => error
+      );
+
+      expect(caught.code).toBe("ApplyTransactionAfterSubmitFailed");
+      expect(caught.cause).toBe(storeError);
+      expect(caught.transactionId).toBe("txHex");
+      expect(caught.submissionHeight).toBe(123);
+      expect(caught.message).toContain(
+        "accepted into the node's mempool at block 123"
+      );
+      expect(inner.applyTransaction).toHaveBeenCalledWith(inner._txResult, 123);
     });
 
     it("waitForConfirmation delegates to resource.waitFor with the tx hex", async () => {
@@ -2541,89 +2752,532 @@ describe("TransactionsResource", () => {
       ).rejects.toThrow(/missing.*request/);
     });
 
-    // These three mocks supply `syncStateWithTimeout`, which does not exist on
-    // the real client — so they exercise the poll loop's shape, not a working
-    // feature. `waitForConfirmation` on a batch is broken in production; see
-    // https://github.com/0xMiden/web-sdk/issues/314.
-    it("submitBatch with waitForConfirmation exits once getSyncHeight reaches the block", async () => {
-      const heights = [99, 99, 100];
-      const { resource, inner } = makeResource({
-        submitNewTransactionBatch: vi.fn().mockResolvedValue(100),
-        getSyncHeight: vi
-          .fn()
-          .mockImplementation(() => Promise.resolve(heights.shift())),
-        syncStateWithTimeout: vi.fn().mockResolvedValue(undefined),
-      });
-
-      const r1 = fakeRequest("a");
-      const r2 = fakeRequest("b");
-      const result = await resource.submitBatch(
-        [
-          { account: "0xsender", request: r1 },
-          { account: "0xsender", request: r2 },
-        ],
-        {
-          waitForConfirmation: true,
-          timeout: 60_000,
-          interval: 0, // poll immediately, no wall-clock wait in tests
+    // A store double for the confirmation wait. `records` maps a transaction id
+    // to its status; each row's `accountId().toString()` is its executing
+    // account, `0xsender` unless `accounts` says otherwise. `getTransactions`
+    // answers the all, uncommitted, and ids filters. The poll still uses ids.
+    // `_submitNewTransactionBatchForWait` snapshots with `all`, runs
+    // `submitNewTransactionBatch`, then snapshots again.
+    function makeBatchStore({
+      pending = [],
+      discarded = [],
+      batch = ["0xb1", "0xb2"],
+    } = {}) {
+      const records = new Map([
+        ...pending.map((id) => [id, "pending"]),
+        ...discarded.map((id) => [id, "discarded"]),
+      ]);
+      const accounts = new Map();
+      // A row is a snapshot: status and account are read when it is built, so a
+      // snapshot taken before the submit still shows the old status after it.
+      const record = (id) => {
+        const status = records.get(id);
+        const account = accounts.get(id) ?? "0xsender";
+        return {
+          id: () => ({ toHex: () => id }),
+          accountId: () => ({ toString: () => account }),
+          transactionStatus: () => ({
+            isCommitted: () => status === "committed",
+            isDiscarded: () => status === "discarded",
+          }),
+        };
+      };
+      const getTransactions = vi.fn(async (filter) => {
+        if (filter === "filterAll") return [...records.keys()].map(record);
+        if (filter === "filterUncommitted") {
+          return [...records]
+            .filter(([, status]) => status === "pending")
+            .map(([id]) => record(id));
         }
+        return filter.ids.filter((id) => records.has(id)).map(record);
+      });
+      const submitNewTransactionBatch = vi.fn(async () => {
+        for (const id of batch) records.set(id, "pending");
+        return 100;
+      });
+      const wasmOverrides = {
+        TransactionFilter: {
+          all: vi.fn().mockReturnValue("filterAll"),
+          uncommitted: vi.fn().mockReturnValue("filterUncommitted"),
+          ids: vi.fn((txIds) => ({ ids: txIds.map((id) => id.toHex()) })),
+        },
+      };
+      const _submitNewTransactionBatchForWait = vi.fn(async () => {
+        const before = await getTransactions(
+          wasmOverrides.TransactionFilter.all()
+        );
+        const blockNumber = await submitNewTransactionBatch();
+        const after = await getTransactions(
+          wasmOverrides.TransactionFilter.all()
+        );
+        return { blockNumber, before, after };
+      });
+      return {
+        records,
+        accounts,
+        getTransactions,
+        submitNewTransactionBatch,
+        _submitNewTransactionBatchForWait,
+        wasmOverrides,
+      };
+    }
+
+    const batchItems = () => [
+      { account: "0xsender", request: fakeRequest("a") },
+      { account: "0xsender", request: fakeRequest("b") },
+    ];
+
+    it("submitBatch without waitForConfirmation does not query or sync", async () => {
+      const store = makeBatchStore();
+      const { resource, inner } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+        },
+        {},
+        store.wasmOverrides
       );
 
+      const result = await resource.submitBatch(batchItems());
+
       expect(result).toEqual({ blockNumber: 100 });
-      expect(inner.getSyncHeight).toHaveBeenCalled();
+      expect(inner.getTransactions).not.toHaveBeenCalled();
+      expect(inner.syncChain).not.toHaveBeenCalled();
     });
 
-    it("submitBatch waitForConfirmation swallows a rejected sync attempt", async () => {
-      // First syncState rejects, next call resolves; getSyncHeight returns the
-      // target on the first read so the poll loop exits cleanly.
-      const sync = vi.fn();
-      sync.mockRejectedValueOnce(new Error("transient"));
-      sync.mockResolvedValue(undefined);
-      const { resource, inner } = makeResource({
-        submitNewTransactionBatch: vi.fn().mockResolvedValue(50),
-        getSyncHeight: vi.fn().mockResolvedValue(50),
-        syncStateWithTimeout: sync,
+    it("submitBatch waitForConfirmation resolves only once the batch's transactions are committed", async () => {
+      const store = makeBatchStore();
+      // The batch lands on the third sync. The local height is not consulted:
+      // the client is already at the returned block number from the start.
+      let syncs = 0;
+      const syncChain = vi.fn(async () => {
+        syncs += 1;
+        if (syncs === 3) {
+          store.records.set("0xb1", "committed");
+          store.records.set("0xb2", "committed");
+        }
       });
-      const r = fakeRequest();
-      await resource.submitBatch([{ account: "0xsender", request: r }], {
+      const getSyncHeight = vi.fn().mockResolvedValue(100);
+      const { resource, inner } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+          syncChain,
+          getSyncHeight,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      const result = await resource.submitBatch(batchItems(), {
+        waitForConfirmation: true,
+        timeout: 60_000,
+        interval: 0, // poll immediately, no wall-clock wait in tests
+      });
+
+      expect(result).toEqual({ blockNumber: 100 });
+      expect(syncChain).toHaveBeenCalledTimes(3);
+      expect(getSyncHeight).not.toHaveBeenCalled();
+      expect(inner.syncState).not.toHaveBeenCalled();
+    });
+
+    it("submitBatch waitForConfirmation waits for the batch, not for transactions already pending", async () => {
+      // 0xold was pending before the batch and never commits.
+      const store = makeBatchStore({ pending: ["0xold"] });
+      const syncChain = vi.fn(async () => {
+        store.records.set("0xb1", "committed");
+        store.records.set("0xb2", "committed");
+      });
+      const { resource, wasm } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      await resource.submitBatch(batchItems(), {
         waitForConfirmation: true,
         interval: 0,
       });
-      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+
+      expect(store.records.get("0xold")).toBe("pending");
+      const polled = wasm.TransactionFilter.ids.mock.results.map(
+        (r) => r.value.ids
+      );
+      expect(polled).toEqual([["0xb1", "0xb2"]]);
+    });
+
+    it("submitBatch waitForConfirmation keeps waiting while only part of the batch is committed", async () => {
+      const store = makeBatchStore();
+      let syncs = 0;
+      const syncChain = vi.fn(async () => {
+        syncs += 1;
+        if (syncs === 1) store.records.set("0xb1", "committed");
+        if (syncs === 2) store.records.set("0xb2", "committed");
+      });
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      await resource.submitBatch(batchItems(), {
+        waitForConfirmation: true,
+        interval: 0,
+      });
+
+      expect(syncChain).toHaveBeenCalledTimes(2);
+    });
+
+    it("submitBatch waitForConfirmation rejects when the node discards a transaction", async () => {
+      const store = makeBatchStore();
+      const syncChain = vi.fn(async () => {
+        store.records.set("0xb2", "discarded");
+      });
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      await expect(
+        resource.submitBatch(batchItems(), {
+          waitForConfirmation: true,
+          interval: 0,
+        })
+      ).rejects.toThrow("Batch transaction rejected: 0xb2");
+    });
+
+    it("submitBatch waitForConfirmation rejects a batch transaction discarded before the post-submit read", async () => {
+      const store = makeBatchStore();
+      const recordBatch =
+        store.submitNewTransactionBatch.getMockImplementation();
+      store.submitNewTransactionBatch.mockImplementation(async () => {
+        const blockNumber = await recordBatch();
+        // A sync that ran while the batch was being applied settled this one.
+        store.records.set("0xb2", "discarded");
+        return blockNumber;
+      });
+      const syncChain = vi.fn(async () => {
+        store.records.set("0xb1", "committed");
+      });
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      await expect(
+        resource.submitBatch(batchItems(), {
+          waitForConfirmation: true,
+          interval: 0,
+        })
+      ).rejects.toThrow("Batch transaction rejected: 0xb2");
+    });
+
+    it("submitBatch waitForConfirmation ignores a concurrent transaction on another account", async () => {
+      const store = makeBatchStore();
+      const recordBatch =
+        store.submitNewTransactionBatch.getMockImplementation();
+      store.submitNewTransactionBatch.mockImplementation(async () => {
+        const blockNumber = await recordBatch();
+        store.records.set("0xother", "pending");
+        store.accounts.set("0xother", "0xstranger");
+        return blockNumber;
+      });
+      const syncChain = vi.fn(async () => {
+        store.records.set("0xb1", "committed");
+        store.records.set("0xb2", "committed");
+        store.records.set("0xother", "discarded");
+      });
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      await expect(
+        resource.submitBatch(batchItems(), {
+          waitForConfirmation: true,
+          interval: 0,
+        })
+      ).resolves.toEqual({ blockNumber: 100 });
+      const polled = store.wasmOverrides.TransactionFilter.ids.mock.calls.map(
+        ([ids]) => ids.map((id) => id.toHex())
+      );
+      expect(polled).toEqual([["0xb1", "0xb2"]]);
+    });
+
+    it("submitBatch waitForConfirmation waits for a batch that reuses discarded transaction ids", async () => {
+      const store = makeBatchStore({ discarded: ["0xb1", "0xb2"] });
+      const syncChain = vi.fn(async () => {
+        store.records.set("0xb1", "committed");
+        store.records.set("0xb2", "committed");
+      });
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      await expect(
+        resource.submitBatch(batchItems(), {
+          waitForConfirmation: true,
+          interval: 0,
+        })
+      ).resolves.toEqual({ blockNumber: 100 });
+      const polled = store.wasmOverrides.TransactionFilter.ids.mock.calls.map(
+        ([ids]) => ids.map((id) => id.toHex())
+      );
+      expect(polled).toEqual([["0xb1", "0xb2"]]);
+    });
+
+    it("submitBatch waitForConfirmation does not wait for a discarded transaction the batch did not resubmit", async () => {
+      const store = makeBatchStore({ discarded: ["0xold", "0xb1"] });
+      const syncChain = vi.fn(async () => {
+        store.records.set("0xb1", "committed");
+        store.records.set("0xb2", "committed");
+      });
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      await expect(
+        resource.submitBatch(batchItems(), {
+          waitForConfirmation: true,
+          interval: 0,
+        })
+      ).resolves.toEqual({ blockNumber: 100 });
+      const polled = store.wasmOverrides.TransactionFilter.ids.mock.calls.map(
+        ([ids]) => ids.map((id) => id.toHex())
+      );
+      expect(polled).toEqual([["0xb1", "0xb2"]]);
+    });
+
+    it("submitBatch waitForConfirmation rejects when the submission records no transaction", async () => {
+      const store = makeBatchStore({ batch: [] });
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      await expect(
+        resource.submitBatch(batchItems(), {
+          waitForConfirmation: true,
+          interval: 0,
+        })
+      ).rejects.toThrow("Batch confirmation found no transactions to wait for");
+      expect(store.wasmOverrides.TransactionFilter.ids).not.toHaveBeenCalled();
+    });
+
+    it("submitBatch waitForConfirmation waits when the chain-slot helper is absent", async () => {
+      const store = makeBatchStore({
+        pending: ["0xold"],
+        discarded: ["0xb1", "0xstuck"],
+      });
+      const syncChain = vi.fn(async () => {
+        store.records.set("0xb1", "committed");
+        store.records.set("0xb2", "committed");
+      });
+      const { resource, inner } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+      expect(inner._submitNewTransactionBatchForWait).toBeUndefined();
+
+      await expect(
+        resource.submitBatch(batchItems(), {
+          waitForConfirmation: true,
+          timeout: 1000,
+          interval: 0,
+        })
+      ).resolves.toEqual({ blockNumber: 100 });
+      const polled = store.wasmOverrides.TransactionFilter.ids.mock.calls.map(
+        ([ids]) => ids.map((id) => id.toHex())
+      );
+      expect(polled).toEqual([["0xb1", "0xb2"]]);
+      expect(store.wasmOverrides.TransactionFilter.all).toHaveBeenCalledTimes(
+        2
+      );
+      expect(store.getTransactions.mock.calls[0][0]).toBe("filterAll");
+      expect(store.getTransactions.mock.calls[1][0]).toBe("filterAll");
+      const [firstRead, secondRead] =
+        store.getTransactions.mock.invocationCallOrder;
+      const [submit] = store.submitNewTransactionBatch.mock.invocationCallOrder;
+      expect(submit).toBeGreaterThan(firstRead);
+      expect(submit).toBeLessThan(secondRead);
+    });
+
+    it("submitBatch waitForConfirmation swallows a rejected sync attempt", async () => {
+      const store = makeBatchStore();
+      const syncChain = vi.fn();
+      syncChain.mockRejectedValueOnce(new Error("transient"));
+      syncChain.mockImplementation(async () => {
+        store.records.set("0xb1", "committed");
+        store.records.set("0xb2", "committed");
+      });
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      await resource.submitBatch(batchItems(), {
+        waitForConfirmation: true,
+        interval: 0,
+      });
+
+      expect(syncChain).toHaveBeenCalledTimes(2);
     });
 
     it("submitBatch waitForConfirmation throws on timeout", async () => {
-      const { resource } = makeResource({
-        submitNewTransactionBatch: vi.fn().mockResolvedValue(1000),
-        getSyncHeight: vi.fn().mockResolvedValue(0),
-        syncStateWithTimeout: vi.fn().mockResolvedValue(undefined),
-      });
-      const r = fakeRequest();
+      const store = makeBatchStore();
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+        },
+        {},
+        store.wasmOverrides
+      );
+
       await expect(
-        resource.submitBatch([{ account: "0xsender", request: r }], {
+        resource.submitBatch(batchItems(), {
           waitForConfirmation: true,
-          timeout: 1, // 1ms — first poll already past
+          timeout: 1, // 1ms, the batch never commits
           interval: 0,
         })
       ).rejects.toThrow(/timed out/);
     });
 
     it("submitBatch waitForConfirmation gives up at the timeout, not an interval later", async () => {
-      const { resource } = makeResource({
-        submitNewTransactionBatch: vi.fn().mockResolvedValue(1000),
-        getSyncHeight: vi.fn().mockResolvedValue(0),
-        syncStateWithTimeout: vi.fn().mockResolvedValue(undefined),
-      });
-      const r = fakeRequest();
+      const store = makeBatchStore();
+      const { resource } = makeResource(
+        {
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+        },
+        {},
+        store.wasmOverrides
+      );
+
       const start = Date.now();
       await expect(
-        resource.submitBatch([{ account: "0xsender", request: r }], {
+        resource.submitBatch(batchItems(), {
           waitForConfirmation: true,
           timeout: 50,
           interval: 5000,
         })
-      ).rejects.toThrow("Batch confirmation timed out after 50ms");
+      ).rejects.toThrow(
+        "Batch confirmation timed out after 50ms (waiting for 2 transaction(s))"
+      );
       expect(Date.now() - start).toBeLessThan(1000);
     }, 10000);
+
+    it("batch forwards waitForConfirmation to submitBatch", async () => {
+      const store = makeBatchStore({ batch: ["0xb1"] });
+      const syncChain = vi.fn(async () => {
+        store.records.set("0xb1", "committed");
+      });
+      const { resource } = makeResource(
+        {
+          newSendTransactionRequest: vi
+            .fn()
+            .mockResolvedValue(fakeRequest("send")),
+          submitNewTransactionBatch: store.submitNewTransactionBatch,
+          _submitNewTransactionBatchForWait:
+            store._submitNewTransactionBatchForWait,
+          getTransactions: store.getTransactions,
+          syncChain,
+        },
+        {},
+        store.wasmOverrides
+      );
+
+      const result = await resource.batch({
+        operations: [
+          {
+            kind: "send",
+            account: "0xsender",
+            to: "0xreceiver",
+            token: "0xtoken",
+            amount: 1,
+          },
+        ],
+        waitForConfirmation: true,
+        interval: 0,
+      });
+
+      expect(result).toEqual({ blockNumber: 100 });
+      expect(syncChain).toHaveBeenCalledTimes(1);
+    });
   });
 });

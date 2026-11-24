@@ -78,6 +78,24 @@ async function proveResult(inner, defaultProver, result, opts) {
 }
 
 /**
+ * Wraps a failed local apply that follows an accepted submit. A bare apply
+ * error looks like a pre-submit failure and invites a double-spend retry.
+ * Matches the code `code_from_error` assigns to the Rust post-submit variants.
+ */
+function applyAfterSubmitError(applyError, txId, height) {
+  const txIdHex =
+    typeof txId?.toHex === "function" ? txId.toHex() : String(txId);
+  const wrapped = new Error(
+    `Transaction ${txIdHex} was accepted into the node's mempool at block ${height} but the local store update failed. Do not resubmit the same transaction.`
+  );
+  wrapped.code = "ApplyTransactionAfterSubmitFailed";
+  wrapped.cause = applyError;
+  wrapped.transactionId = txIdHex;
+  wrapped.submissionHeight = height;
+  return wrapped;
+}
+
+/**
  * Sleeps one polling interval, cut short at a finite `timeout` measured from
  * `start`, so a polling loop gives up at its deadline rather than up to one
  * interval after it. `timeout: 0` (poll indefinitely) sleeps the full interval.
@@ -307,6 +325,33 @@ export class TransactionsResource {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildB2AggRequest(opts, wasm);
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      accountId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, result };
+  }
+
+  /**
+   * Withdraws USDCx through Circle xReserve by emitting one public burn note
+   * that the USDCx faucet consumes. The amount and the recipient are validated
+   * before any WASM call.
+   */
+  async withdrawUsdcx(opts) {
+    rejectUnexpectedAnchor(opts, "withdrawUsdcx", "submit()");
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const { accountId, request } = await this.#buildXReserveBurnRequest(
+      opts,
+      wasm
+    );
 
     const { txId, result } = await this.#submitOrSubmitWithProver(
       accountId,
@@ -625,8 +670,7 @@ export class TransactionsResource {
    * https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
    *
    * @param {BatchOptions} opts - Batch options: the operations array, and
-   *   `timeout` / `waitForConfirmation` (the latter does not currently work,
-   *   see `submitBatch`).
+   *   `waitForConfirmation` / `timeout` (see `submitBatch`).
    * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
    *   submission, not the block the batch commits in.
    */
@@ -702,8 +746,12 @@ export class TransactionsResource {
    * `client.withFeeAwareAuth` before batching it.
    *
    * @param {Array<{ account: AccountRef, request: TransactionRequest }>} items - Per-tx (account, request) pairs.
-   * @param {object} [options] - Optional settings (timeout, and
-   *   `waitForConfirmation`, which does not currently work, see #314).
+   * @param {object} [options] - Optional settings. `waitForConfirmation`
+   *   resolves the call only once every transaction of the batch is committed,
+   *   and rejects if the node discards one, if no stored transaction can be
+   *   attributed to the batch (`Batch confirmation found no transactions to
+   *   wait for`), or when `timeout` (default 60000 ms, 0 for none) runs out
+   *   first. A sync or query already in flight still finishes first.
    *   Every transaction is proven inside the batch primitive by the client's
    *   built-in local prover, so `proverUrl` does not apply; the V1 batch API has
    *   no per-call prover override.
@@ -743,48 +791,111 @@ export class TransactionsResource {
       );
     });
 
-    const blockNumber = await this.#inner.submitNewTransactionBatch(wasmItems);
-
+    // The batch primitive returns no transaction ids. While waiting, one chain
+    // slot reads every stored row, submits, and reads again; the new rows for
+    // these items' accounts are the ones to wait for, in any status. So is a
+    // discarded row that the submission reopened: a retried batch can have the
+    // same ids as the discarded one it replaces.
     if (options?.waitForConfirmation) {
-      await this.#waitForBlock(blockNumber, options);
+      let blockNumber;
+      let before;
+      let after;
+      if (typeof this.#inner._submitNewTransactionBatchForWait === "function") {
+        ({ blockNumber, before, after } =
+          await this.#inner._submitNewTransactionBatchForWait(wasmItems));
+      } else {
+        // Node has no chain slot to hold: read, submit and read directly. A
+        // sync between the calls could change a row, which the browser slot
+        // rules out. A reopened id that is discarded again in that window is
+        // left out, and the empty-list throw covers it when it was the only one.
+        before = await this.#inner.getTransactions(
+          wasm.TransactionFilter.all()
+        );
+        blockNumber = await this.#inner.submitNewTransactionBatch(wasmItems);
+        after = await this.#inner.getTransactions(wasm.TransactionFilter.all());
+      }
+      const accounts = new Set(
+        items.map((item) => resolveAccountRef(item.account, wasm).toString())
+      );
+      const beforeById = new Map(
+        (before ?? []).map((tx) => [tx.id().toHex(), tx])
+      );
+      const isDiscarded = (tx) => tx.transactionStatus?.()?.isDiscarded();
+      const batchTxIds = (after ?? [])
+        .filter((tx) => {
+          if (!accounts.has(tx.accountId().toString())) return false;
+          const prior = beforeById.get(tx.id().toHex());
+          return !prior || (isDiscarded(prior) && !isDiscarded(tx));
+        })
+        .map((tx) => tx.id().toHex());
+      await this.#waitForBatch(batchTxIds, options);
+      return { blockNumber };
     }
 
+    const blockNumber = await this.#inner.submitNewTransactionBatch(wasmItems);
     return { blockNumber };
   }
 
   /**
-   * Polls until the local sync height reaches `blockNumber` or the timeout
-   * expires. The Rust V1 batch API returns only a block number — there are no
-   * per-tx ids to poll on, so we wait on the chain height instead.
+   * Polls until every transaction in `txIds` is committed, a transaction is
+   * discarded, or the timeout expires. The batch counterpart of `waitFor`.
    *
-   * This does not currently work: `syncStateWithTimeout` below does not exist,
-   * so the call throws, the bare catch swallows it, and nothing here advances
-   * the height — the loop times out unless the client is already at or past
-   * `blockNumber`. Even once that is fixed the guarantee is weaker than it
-   * looks, since `blockNumber` is the tip as of submission rather than the
-   * batch's commit block. See https://github.com/0xMiden/web-sdk/issues/314.
+   * `txIds` are the batch accounts' new records in any status, plus a
+   * discarded record this submission reopened. A discarded id still rejects,
+   * and an empty list throws: a non-empty batch always records a row.
+   * The batch primitive returns no ids, so a transaction that
+   * another client instance on the same store writes for one of these accounts
+   * during the submission cannot be told apart and is waited for as well.
    *
-   * @param {number} blockNumber - The block height to wait for.
-   * @param {object} [opts] - Polling options (timeout, interval).
+   * The block number the submission returned is not used: it is the node's
+   * chain tip as of submission, which the client has usually reached already.
+   *
+   * @param {string[]} txIds - Transaction ids to wait for, as hex.
+   * @param {object} [opts] - Polling options (timeout, interval). A finite
+   *   `timeout` ends the wait between polls at the deadline. A sync or query
+   *   already in flight still finishes first.
    */
-  async #waitForBlock(blockNumber, opts) {
+  async #waitForBatch(txIds, opts) {
+    if (txIds.length === 0) {
+      throw new Error("Batch confirmation found no transactions to wait for");
+    }
+
     const timeout = opts?.timeout ?? 60_000;
     const interval = opts?.interval ?? 5_000;
     const start = Date.now();
+    const wasm = await this.#getWasm();
 
     while (true) {
       if (timeout > 0 && Date.now() - start >= timeout) {
         throw new Error(
-          `Batch confirmation timed out after ${timeout}ms (waiting for block ${blockNumber})`
+          `Batch confirmation timed out after ${timeout}ms ` +
+            `(waiting for ${txIds.length} transaction(s))`
         );
       }
       try {
-        await this.#inner.syncStateWithTimeout(0);
+        // Chain-only sync, as in waitFor: confirmation needs only on-chain
+        // state, and polling survives an unavailable note transport endpoint.
+        await this.#inner.syncChain();
       } catch {
-        // sync may fail transiently; continue polling
+        // Sync may fail transiently; continue polling
       }
-      const height = await this.#inner.getSyncHeight();
-      if (height >= blockNumber) return;
+
+      // Recreate filter each iteration: WASM consumes it by value
+      const filter = wasm.TransactionFilter.ids(
+        txIds.map((hex) => wasm.TransactionId.fromHex(hex))
+      );
+      const txs = (await this.#inner.getTransactions(filter)) ?? [];
+
+      let committed = 0;
+      for (const tx of txs) {
+        const status = tx.transactionStatus?.();
+        if (status?.isDiscarded()) {
+          throw new Error(`Batch transaction rejected: ${tx.id().toHex()}`);
+        }
+        if (status?.isCommitted()) committed += 1;
+      }
+      if (committed === txIds.length) return;
+
       await waitBeforeNextPoll(start, timeout, interval);
     }
   }
@@ -1129,6 +1240,38 @@ export class TransactionsResource {
     return { accountId, request };
   }
 
+  async #buildXReserveBurnRequest(opts, wasm) {
+    if (typeof opts.amount === "number" && !Number.isSafeInteger(opts.amount)) {
+      throw new Error(
+        "withdrawUsdcx: amount must be a safe integer when given as a number; pass a bigint above 2^53 - 1"
+      );
+    }
+    const recipientHex = opts.destinationRecipient;
+    if (
+      typeof recipientHex !== "string" ||
+      !/^0x[0-9a-fA-F]{64}$/.test(recipientHex)
+    ) {
+      throw new Error(
+        "withdrawUsdcx: destinationRecipient must be a 0x-prefixed 32-byte hex string"
+      );
+    }
+    const accountId = resolveAccountRef(opts.account, wasm);
+    const faucetId = resolveAccountRef(opts.token, wasm);
+    const recipient = Uint8Array.from(
+      recipientHex.slice(2).match(/../g),
+      (byte) => parseInt(byte, 16)
+    );
+
+    const request = await this.#inner.newXReserveBurnTransactionRequest(
+      accountId,
+      faucetId,
+      BigInt(opts.amount),
+      opts.destinationDomain,
+      recipient
+    );
+    return { accountId, request };
+  }
+
   async #buildConsumeRequest(opts, wasm) {
     const accountId = resolveAccountRef(opts.account, wasm);
     const noteInputs = Array.isArray(opts.notes) ? opts.notes : [opts.notes];
@@ -1276,6 +1419,9 @@ export class TransactionsResource {
     return input;
   }
 
+  // Submits exactly `request`: scripts it declares through withExpectedNtxScripts
+  // are not registered here (the native submit does, this pipeline does not), so
+  // a caller submits newRegisterNoteScriptsTransactionRequest first.
   async #submitOrSubmitWithProver(accountId, request, perCallProver, anchor) {
     const result = anchor
       ? await this.#inner.executeTransactionAt(accountId, request, anchor)
@@ -1288,7 +1434,11 @@ export class TransactionsResource {
     );
     const txId = result.id();
     const height = await this.#inner.submitProvenTransaction(proven, result);
-    await this.#inner.applyTransaction(result, height);
+    try {
+      await this.#inner.applyTransaction(result, height);
+    } catch (applyError) {
+      throw applyAfterSubmitError(applyError, txId, height);
+    }
     return { txId, result };
   }
 }
@@ -1443,13 +1593,28 @@ class TransactionSubmission {
    *
    * Browser stores require the stored account to match the execution input;
    * a mismatch rejects before changing account state or transaction history.
-   * Check network status before resubmitting after a local apply failure.
+   * The node already accepted the transaction, so a local apply failure
+   * rejects with `code: "ApplyTransactionAfterSubmitFailed"`, `transactionId`,
+   * `submissionHeight` and the original error as `cause`. Do not resubmit.
    *
    * @returns {Promise<TransactionStoreUpdate>} The pre-apply store update.
+   * @throws An error with `code` `"ApplyTransactionAfterSubmitFailed"` when the
+   *   local store update fails.
    */
   async apply() {
     this.#client.assertNotTerminated();
-    return await this.#inner.applyTransaction(this.#result, this.#blockNumber);
+    try {
+      return await this.#inner.applyTransaction(
+        this.#result,
+        this.#blockNumber
+      );
+    } catch (applyError) {
+      throw applyAfterSubmitError(
+        applyError,
+        this.#result.id(),
+        this.#blockNumber
+      );
+    }
   }
 
   /**

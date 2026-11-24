@@ -98,6 +98,60 @@ const initialSyncState: SyncState = {
   error: null,
 };
 
+/**
+ * Change-detection key for a note record: its ID plus its state.
+ *
+ * A note keeps the same ID for its whole lifecycle (expected, committed,
+ * processing, consumed), so comparing IDs alone hides an in-place status
+ * change and leaves the old record in the store. Returns `null` when the ID
+ * cannot be read, and just the ID when the state cannot be read.
+ */
+function noteKey(record: InputNoteRecord): string | null {
+  let id: string;
+  try {
+    // `id()` is `NoteId | undefined`; `!` lets the `.toString()` of
+    // `undefined` fall into the catch (mirroring how every other id-bearing
+    // throw is handled here).
+    id = record.id()!.toString();
+  } catch {
+    return null;
+  }
+  try {
+    return `${id}:${String(record.state())}`;
+  } catch {
+    return id;
+  }
+}
+
+function sameNoteKeys<T>(
+  prev: readonly T[],
+  next: readonly T[],
+  keyOf: (item: T) => string | null
+): boolean {
+  const prevKeys = new Set<string>();
+  for (const item of prev) {
+    const key = keyOf(item);
+    if (key) prevKeys.add(key);
+  }
+  const nextKeys = new Set<string>();
+  for (const item of next) {
+    const key = keyOf(item);
+    if (key) nextKeys.add(key);
+  }
+  return (
+    prevKeys.size === nextKeys.size &&
+    [...prevKeys].every((key) => nextKeys.has(key))
+  );
+}
+
+function consumableNoteKey(record: ConsumableNoteRecord): string | null {
+  try {
+    return noteKey(record.inputNoteRecord());
+  } catch {
+    return null;
+  }
+}
+
 function freshCachedState() {
   return {
     sync: { ...initialSyncState },
@@ -212,28 +266,10 @@ export const useMidenStore = create<MidenStoreState>()((set, get) => ({
 
   setNotesIfChanged: (notes, filterKey) =>
     set((state) => {
-      const safeId = (n: InputNoteRecord): string | null => {
-        try {
-          return n.id()!.toString();
-        } catch {
-          return null;
-        }
-      };
       const prevNotes = state.notesByFilter.get(filterKey) ?? [];
-      const prevIds = new Set<string>();
-      for (const n of prevNotes) {
-        const id = safeId(n);
-        if (id) prevIds.add(id);
-      }
-      const newIds = new Set<string>();
-      for (const n of notes) {
-        const id = safeId(n);
-        if (id) newIds.add(id);
-      }
       if (
         state.notesByFilter.has(filterKey) &&
-        prevIds.size === newIds.size &&
-        [...prevIds].every((id) => newIds.has(id))
+        sameNoteKeys(prevNotes, notes, noteKey)
       ) {
         return {};
       }
@@ -270,28 +306,10 @@ export const useMidenStore = create<MidenStoreState>()((set, get) => ({
 
   setConsumableNotesIfChanged: (consumableNotes, accountIdKey) =>
     set((state) => {
-      const safeId = (n: ConsumableNoteRecord): string | null => {
-        try {
-          return n.inputNoteRecord().id()!.toString();
-        } catch {
-          return null;
-        }
-      };
       const prevNotes = state.consumableNotesByAccount.get(accountIdKey) ?? [];
-      const prevIds = new Set<string>();
-      for (const n of prevNotes) {
-        const id = safeId(n);
-        if (id) prevIds.add(id);
-      }
-      const newIds = new Set<string>();
-      for (const n of consumableNotes) {
-        const id = safeId(n);
-        if (id) newIds.add(id);
-      }
       if (
         state.consumableNotesByAccount.has(accountIdKey) &&
-        prevIds.size === newIds.size &&
-        [...prevIds].every((id) => newIds.has(id))
+        sameNoteKeys(prevNotes, consumableNotes, consumableNoteKey)
       ) {
         return {};
       }

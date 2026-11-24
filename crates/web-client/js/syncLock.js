@@ -14,7 +14,13 @@
  *   `runUnderLock` and `coalesceRun`, for every call that writes the chain MMR.
  *   It coalesces in a registry of its own client, so a sync joins only a
  *   pending run of the same sync on that client, never another client's, and
- *   only while no other call has been queued on that client since the run
+ *   only while no other call has been queued on that client since the run.
+ *   A joiner shares the run it joins, including a run that holds the lock and
+ *   never settles
+ * - A run stays joinable for `MAX_JOIN_AGE_MS`. The wait bound starts when
+ *   the call is made and is `LOCK_WAIT_TIMEOUT_MS`, on the in-process
+ *   fallback as well as the Web Lock, so one sync that never settles cannot
+ *   capture every later sync or leave its waiters hanging
  */
 
 /**
@@ -28,12 +34,37 @@ export function hasWebLocks() {
   );
 }
 
+// How long a run stays joinable. A caller arriving later starts a run of its
+// own, queued behind the lock, instead of waiting on one that may be stuck.
+export const MAX_JOIN_AGE_MS = 5 * 60 * 1000;
+
+// How long a call waits, from when it is made, before it rejects. The bound
+// covers the in-process fallback as well as the Web Lock. Aborting a request
+// affects only a waiter, never a holder.
+export const LOCK_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * Rejection for a call whose wait for the sync lock of `dbId` ran out.
+ *
+ * @param {string} dbId
+ * @param {number} waitTimeoutMs
+ * @returns {Error}
+ */
+export function lockWaitError(dbId, waitTimeoutMs) {
+  return new Error(
+    `Timed out after ${waitTimeoutMs} ms waiting for the sync lock of ${dbId}`
+  );
+}
+
 // Coalesce map keyed by `${dbId}:${methodId}` -> in-flight promise, used by
 // `withSyncLock`. A WebClient passes `coalesceRun` a map of its own instead.
 const inFlight = new Map();
 
 // The `epoch()` each run registered with one was started in; see `coalesceRun`.
 const startedIn = new WeakMap();
+
+// When each registered run started, for `MAX_JOIN_AGE_MS`.
+const startedAt = new WeakMap();
 
 // Per-dbId promise tail used to serialize cross-method calls when Web Locks
 // are unavailable. Each new task chains onto the current tail so different
@@ -59,31 +90,89 @@ function coalesceKey(dbId, methodId) {
  * cross-method borrows would throw "recursive use of an object detected
  * which would lead to unsafe aliasing in rust".
  *
- * Every call runs its own `fn`, queued behind the current holder; see
- * `withSyncLock` for the coalescing variant.
+ * Every call runs its own `fn`, queued behind the current holder, unless the
+ * wait bound has already run out; see `withSyncLock` for the coalescing
+ * variant. The bound starts when this call is made and covers the in-process
+ * fallback as well as the Web Lock. Work whose wait timed out never runs, and
+ * a holder that has started is not aborted.
  *
  * @param {string} dbId
  * @param {() => Promise<T>} fn
+ * @param {number} [waitTimeoutMs] - How long this call waits, from when it is
+ *   made, before rejecting. Covers the in-process fallback as well as the
+ *   Web Lock.
  * @returns {Promise<T>}
  * @template T
  */
-export function runUnderLock(dbId, fn) {
+export function runUnderLock(dbId, fn, waitTimeoutMs = LOCK_WAIT_TIMEOUT_MS) {
   if (!hasWebLocks()) {
+    // The caller rejects at the deadline. The queue slot stays until its
+    // turn, so a later call cannot overlap the holder, and this does not
+    // settle the previous tail.
+    let timedOut = false;
+    let resolveCaller = () => {};
+    let rejectCaller = () => {};
+    const caller = new Promise((resolve, reject) => {
+      resolveCaller = resolve;
+      rejectCaller = reject;
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      rejectCaller(lockWaitError(dbId, waitTimeoutMs));
+    }, waitTimeoutMs);
+
     const prev = fallbackTails.get(dbId) ?? Promise.resolve();
-    const next = prev.catch(() => {}).then(fn);
-    const guarded = next.catch(() => {});
+    const slot = prev
+      .catch(() => {})
+      .then(() => {
+        // Already-settled tail: this microtask runs before the timer, so a
+        // free lock still calls fn. A timer that has fired skips fn.
+        if (timedOut) return;
+        clearTimeout(timer);
+        return fn();
+      });
+    const guarded = slot.catch(() => {});
     fallbackTails.set(dbId, guarded);
     guarded.then(() => {
       // Drop the slot only if no successor chained onto this tail.
       if (fallbackTails.get(dbId) === guarded) fallbackTails.delete(dbId);
     });
-    return next;
+    slot.then(resolveCaller, rejectCaller);
+    return caller;
   }
-  return navigator.locks.request(
-    `miden-sync-${dbId}`,
-    { mode: "exclusive" },
-    fn
-  );
+
+  let timedOut = false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, waitTimeoutMs);
+  // Chrome 69 to 97 and Firefox 96 reject an aborted request with a fresh
+  // AbortError and leave `signal.reason` unset, so the flag is the signal.
+  const rejection = (error) => {
+    clearTimeout(timer);
+    if (timedOut) return lockWaitError(dbId, waitTimeoutMs);
+    return error;
+  };
+  const callback = () => {
+    clearTimeout(timer);
+    if (timedOut) throw lockWaitError(dbId, waitTimeoutMs);
+    return fn();
+  };
+
+  let request;
+  try {
+    request = navigator.locks.request(
+      `miden-sync-${dbId}`,
+      { mode: "exclusive", signal: controller.signal },
+      callback
+    );
+  } catch (error) {
+    return Promise.reject(rejection(error));
+  }
+  return Promise.resolve(request).catch((error) => {
+    throw rejection(error);
+  });
 }
 
 /**
@@ -91,10 +180,12 @@ export function runUnderLock(dbId, fn) {
  *
  * The first caller's `start()` begins the run, and it stays registered in
  * `registry` until it settles; a caller arriving meanwhile with the same
- * registry gets the same promise and starts nothing. With `epoch`, a caller
- * joins only while `epoch()` still returns what it returned once the run had
- * started; otherwise it starts a run of its own, which replaces that one in
- * the registry. `start` takes the lock itself, if it needs one.
+ * registry gets the same promise and starts nothing. A joiner shares the run
+ * it joins, including a run that holds the lock and never settles. With
+ * `epoch`, a caller joins only while `epoch()` still returns what it returned
+ * once the run had started; otherwise it starts a run of its own, which
+ * replaces that one in the registry. `start` takes the lock itself, if it
+ * needs one.
  *
  * @param {string} dbId - Database ID
  * @param {string} methodId - Method identifier (see MethodName constants)
@@ -103,17 +194,30 @@ export function runUnderLock(dbId, fn) {
  *   Defaults to the module-wide one `withSyncLock` uses.
  * @param {() => number} [epoch] - Moves once a joiner would no longer settle
  *   after every call made before it. Omitted, a run is joinable until it
- *   settles.
+ *   settles or outlives `maxJoinAgeMs`.
+ * @param {number} [maxJoinAgeMs] - A run older than this is not joined.
  * @returns {Promise<T>}
  * @template T
  */
-export function coalesceRun(dbId, methodId, start, registry = inFlight, epoch) {
+export function coalesceRun(
+  dbId,
+  methodId,
+  start,
+  registry = inFlight,
+  epoch,
+  maxJoinAgeMs = MAX_JOIN_AGE_MS
+) {
   const key = coalesceKey(dbId, methodId);
 
   let work = registry.get(key);
-  if (!work || (epoch && startedIn.get(work) !== epoch())) {
+  if (
+    !work ||
+    (epoch && startedIn.get(work) !== epoch()) ||
+    Date.now() - startedAt.get(work) > maxJoinAgeMs
+  ) {
     work = start();
     registry.set(key, work);
+    startedAt.set(work, Date.now());
     if (epoch) startedIn.set(work, epoch());
     // Swallow on the derived promise so a rejection here doesn't surface as
     // an unhandled rejection; the caller still sees the error through `work`.
@@ -154,7 +258,8 @@ export function coalesceRun(dbId, methodId, start, registry = inFlight, epoch) {
  *   `@miden-sdk/react`'s `runExclusive`, which `MidenProvider` holds across
  *   its init sync, or an application mutex around `_withInnerWebClient`.
  *
- * Every client on the store then stops.
+ * Every client on the store stalls until the waiting store-locked call's bound
+ * runs out and it rejects.
  *
  * @param {string} dbId - Database ID
  * @param {string} methodId - Method identifier (see MethodName constants)

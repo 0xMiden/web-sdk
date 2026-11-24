@@ -152,7 +152,7 @@ function App() {
   return (
     <MidenProvider
       config={{
-        // RPC endpoint (defaults to testnet). You can also use 'devnet' or 'testnet'.
+        // RPC endpoint (defaults to testnet). You can also use 'mainnet', 'devnet' or 'testnet'.
         rpcUrl: 'devnet',
 
         // Optional: the faucet the chain mints its fee asset from, bech32 or hex.
@@ -180,7 +180,7 @@ function App() {
         // See "Keystore Callback Timeouts" below.
         callbackTimeoutMs: 120000,
 
-        // Optional: prover selection ('local' | 'devnet' | 'testnet' | URL)
+        // Optional: prover selection ('local' | 'mainnet' | 'devnet' | 'testnet' | URL)
         // prover: 'local',
       }}
       // Optional: Custom loading component
@@ -972,38 +972,6 @@ round-trip. The hook itself never serializes the requests: the WASM `BatchItem`
 constructor takes the `TransactionRequest` by reference. A client running a
 Web Worker serializes each request once to hand the batch to the worker.
 
-#### `useInternalTransfer()`
-
-Create a P2ID note and immediately consume it. This is useful for transfers
-between accounts you control (e.g., public → private), since the receiver must
-be available in the local client to consume the note.
-It abstracts the two-transaction flow and keeps both steps tied to a single UI
-action. You don't have to juggle temporary note IDs or manual syncs.
-
-```tsx
-import { useInternalTransfer } from '@miden-sdk/react';
-
-function InternalTransferButton() {
-  const { transfer, isLoading, stage } = useInternalTransfer();
-
-  const handleTransfer = async () => {
-    await transfer({
-      from: '0xsender...',
-      to: '0xrecipient...',
-      assetId: '0xtoken...',
-      amount: 50n,
-      noteType: 'public',
-    });
-  };
-
-  return (
-    <button onClick={handleTransfer} disabled={isLoading}>
-      {isLoading ? `Transferring (${stage})...` : 'Transfer'}
-    </button>
-  );
-}
-```
-
 #### `useWaitForCommit()`
 
 Wait for a transaction to be committed. Useful for gating UI transitions,
@@ -1028,8 +996,11 @@ function WaitForTx({ txId }: { txId: string }) {
 #### `useTransactionHistory()`
 
 Query transaction history and get live state for a single transaction. You can
-pass a single ID, multiple IDs, or a custom `TransactionFilter`. Results refresh
-after each successful sync by default.
+pass a single ID, multiple IDs, or a custom filter. Results refresh
+after each successful sync by default. Pass a custom filter as a factory, e.g.
+`filter: () => TransactionFilter.uncommitted()` defined at module scope: a
+`TransactionFilter` instance is consumed by the first fetch, so a refetch with
+it fails.
 It hides the filter plumbing and provides a single-record convenience view.
 The hook keeps lists fresh on sync so you don't wire manual refreshes.
 
@@ -2212,9 +2183,6 @@ import type {
   BatchItemInput,
   BatchOptions,
   BatchResult,
-  InternalTransferOptions,
-  InternalTransferChainOptions,
-  InternalTransferResult,
   WaitForCommitOptions,
   WaitForNotesOptions,
   MintOptions,

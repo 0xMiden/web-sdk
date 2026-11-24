@@ -236,6 +236,9 @@ export const createMockTransactionRequest = () => ({
   authArg: vi.fn(() => undefined),
   feeConversionSalt: vi.fn(() => undefined),
   blockNumbers: vi.fn((): number[] => []),
+  ignoresInvalidInputNotes: vi.fn(() => false),
+  expectedNtxScripts: vi.fn(() => []),
+  accountCodeUpgrade: vi.fn(() => undefined),
   adviceMap: vi.fn(() => ({}) as unknown as AdviceMap),
   extendAdviceMap: vi.fn(
     () => createMockTransactionRequest() as unknown as TransactionRequest
@@ -243,6 +246,7 @@ export const createMockTransactionRequest = () => ({
   withAuthArgs: vi.fn(
     () => createMockTransactionRequest() as unknown as TransactionRequest
   ),
+  equals: vi.fn(() => true),
   serialize: vi.fn(() => new Uint8Array()),
   free: vi.fn(),
   [Symbol.dispose]: vi.fn(),

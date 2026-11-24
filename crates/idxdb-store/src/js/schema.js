@@ -137,7 +137,7 @@ var Table;
     Table["PswapLineages"] = "pswapLineages";
     Table["ChainAnchors"] = "chainAnchors";
 })(Table || (Table = {}));
-/** Scope of a row of the `settings` table, which version 11 removes. The versions before it read
+/** Scope of a row of the `settings` table, which version 14 removes. The versions before it read
  *  it, and so does the import of a dump that still has the table. */
 export const SETTING_SCOPE_CLIENT = 0;
 export const SETTING_SCOPE_USER = 1;
@@ -151,7 +151,7 @@ export async function readClientVersion(clientConfig) {
     return record ? textDecoder.decode(record.value) : null;
 }
 /**
- * Splits the rows of the `settings` table, which version 11 removes, into the rows of the tables
+ * Splits the rows of the `settings` table, which version 14 removes, into the rows of the tables
  * that replace it. The user rows go to `userSettings`. Of the client rows, only the client
  * version and the protocol configurations go to `clientConfig`.
  */
@@ -169,7 +169,7 @@ export function splitLegacySettings(rows) {
     };
 }
 // What a store held before its first sync while `blockchainCheckpoint` existed: the chain
-// checkpoint at the genesis block. Every cutover so far runs before version 12, which moves the
+// checkpoint at the genesis block. Every cutover so far runs before version 15, which moves the
 // row to `chainAnchors`.
 function seedFreshStore(tx) {
     return tx
@@ -177,7 +177,7 @@ function seedFreshStore(tx) {
         .put({ id: 1, blockNum: 0, partialBlockchainPeaks: new Uint8Array() });
 }
 /**
- * The rows of `chainAnchors` for a store whose `blockchainCheckpoint` table, which version 13
+ * The rows of `chainAnchors` for a store whose `blockchainCheckpoint` table, which version 16
  * removes, held `checkpoint`: the genesis anchor and the anchor of the checkpoint.
  */
 export function anchorsFromCheckpoint(checkpoint) {
@@ -203,7 +203,7 @@ export function anchorsFromCheckpoint(checkpoint) {
 // meanwhile waits and then finds it upgraded. A fresh database runs no upgrade callbacks.
 function clearStoreStampedBelow(threshold) {
     return async (tx) => {
-        // Every cutover so far runs before version 10, while the stamp is a client row of `settings`.
+        // Every cutover so far runs before version 13, while the stamp is a client row of `settings`.
         const record = await tx
             .table(Table.Settings)
             .get([SETTING_SCOPE_CLIENT, CLIENT_VERSION_SETTING_KEY]);
@@ -404,13 +404,51 @@ export class MidenDatabase {
             .upgrade((tx) => tx
             .table(Table.Settings)
             .delete([SETTING_SCOPE_CLIENT, RPC_LIMITS_SETTING_KEY]));
-        // v10 (first miden-client after 0.18): split `settings`, as SQLite migration 5 does. The user
+        // v10 (#525): prune note-source tags whose notes are no longer inclusion-pending.
+        // Sync used to delete note-source tags only for committed input notes, so a
+        // note that went expected -> consumed during catch-up (common for fast-filled
+        // PSWAP orders) left its tag row forever and the account kept tracking the
+        // shared pair tag. sqlite-store already deletes once `!is_inclusion_pending`.
+        // This upgrade cleans already-leaked rows; sync now matches that rule going
+        // forward. Keep a tag while an Expected (0) or Unverified (1) input note
+        // still needs it; leave account/subscription sourced tags alone.
+        this.dexie
+            .version(10)
+            .stores({})
+            .upgrade(async (tx) => {
+            const pendingInputNoteCommitments = new Set(await tx.inputNotes
+                .where("stateDiscriminant")
+                .anyOf([0, 1])
+                .primaryKeys());
+            await tx.tags
+                .filter((tag) => !!tag.sourceNoteId &&
+                !pendingInputNoteCommitments.has(tag.sourceNoteId))
+                .delete();
+        });
+        // v11 (#267): index-only, so Dexie builds it without an upgrade hook. Serves the
+        // key-only unspent-nullifier read; a row without a nullifier is left out of the index.
+        this.dexie.version(11).stores({
+            [Table.InputNotes]: indexes("detailsCommitment", "noteId", "nullifier", "scriptRoot", "stateDiscriminant", "[consumedBlockHeight+consumedTxOrder+detailsCommitment]", "[stateDiscriminant+nullifier]"),
+        });
+        // v12 (#267): index-only, so Dexie builds them without an upgrade hook. The consumer-first
+        // consumption index replaces the v11 one, which no read uses any more (a note with no
+        // consumer is left out of it). `codeRoot` lets account-history pruning ask whether a root is
+        // still referenced instead of scanning three tables; `[tag+sourceNoteId+sourceAccountId]`
+        // serves the exact tag lookup.
+        this.dexie.version(12).stores({
+            [Table.InputNotes]: indexes("detailsCommitment", "noteId", "nullifier", "scriptRoot", "stateDiscriminant", "[consumerAccountId+consumedBlockHeight+consumedTxOrder+detailsCommitment]", "[stateDiscriminant+nullifier]"),
+            [Table.LatestAccountHeaders]: indexes("&id", "accountCommitment", "codeRoot"),
+            [Table.HistoricalAccountHeaders]: indexes("&accountCommitment", "id", "[id+replacedAtNonce]", "codeRoot"),
+            [Table.ForeignAccountCode]: indexes("accountId", "codeRoot"),
+            [Table.Tags]: indexes("id++", "tag", "sourceNoteId", "sourceAccountId", "[tag+sourceNoteId+sourceAccountId]"),
+        });
+        // v13 (first miden-client after 0.18): split `settings`, as SQLite migration 5 does. The user
         // rows move to `userSettings`. Of the client rows, the protocol configurations and the client
         // version move to `clientConfig`. The client fetches or rebuilds the other client rows again.
         // The PSWAP rows are dropped, as SQLite migration 4 drops them. PSWAP lineages get a store of
         // their own.
         this.dexie
-            .version(10)
+            .version(13)
             .stores({
             [Table.ClientConfig]: indexes("key"),
             [Table.UserSettings]: indexes("key"),
@@ -422,14 +460,14 @@ export class MidenDatabase {
             await tx.userSettings.bulkPut(userSettings);
             await tx.clientConfig.bulkPut(clientConfig);
         });
-        // v11: drop `settings`, after v10 copied the rows that it keeps.
-        this.dexie.version(11).stores({ [Table.Settings]: null });
-        // v12: keep the chain MMR peaks of every sync height, as the SQLite
+        // v14: drop `settings`, after v13 copied the rows that it keeps.
+        this.dexie.version(14).stores({ [Table.Settings]: null });
+        // v15: keep the chain MMR peaks of every sync height, as the SQLite
         // `chain_anchors` table does. `blockchainCheckpoint` held one row with the peaks at the
         // current sync height. That row moves to `chainAnchors`, keyed by block number, next to the
         // genesis row that every store has. The sync height is the highest block number in the table.
         this.dexie
-            .version(12)
+            .version(15)
             .stores({ [Table.ChainAnchors]: indexes("blockNum") })
             .upgrade(async (tx) => {
             const checkpoint = (await tx
@@ -437,8 +475,8 @@ export class MidenDatabase {
                 .get(1));
             await tx.chainAnchors.bulkPut(anchorsFromCheckpoint(checkpoint));
         });
-        // v13: drop `blockchainCheckpoint`, after v12 moved its row.
-        this.dexie.version(13).stores({ [Table.BlockchainCheckpoint]: null });
+        // v16: drop `blockchainCheckpoint`, after v15 moved its row.
+        this.dexie.version(16).stores({ [Table.BlockchainCheckpoint]: null });
         this.accountCodes = this.dexie.table(Table.AccountCode);
         this.latestAccountStorages = this.dexie.table(Table.LatestAccountStorage);
         this.historicalAccountStorages = this.dexie.table(Table.HistoricalAccountStorage);

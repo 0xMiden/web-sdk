@@ -98,7 +98,7 @@ import { WalletAdapterNetwork } from "@miden-sdk/miden-wallet-adapter-base";
 
 <MidenFiSignerProvider
   appName="My App"                                        // optional: passed to MidenWalletAdapter
-  network={WalletAdapterNetwork.Testnet}                  // WalletAdapterNetwork enum: Devnet | Testnet | Localnet
+  network={WalletAdapterNetwork.Testnet}                  // WalletAdapterNetwork enum: Mainnet | Devnet | Testnet | Localnet
   autoConnect                                             // reconnect on mount. Default: false
   storageMode="public"                                    // "private" | "public". Default: "public"
   customComponents={[myComponent]}                        // optional: custom AccountComponents
@@ -145,7 +145,7 @@ The [frontend template](https://github.com/0xMiden/frontend-template) (last veri
 - **Provider order is INVERTED: `MidenProvider` runs OUTSIDE `MidenFiSignerProvider`** - see `src/providers.tsx`. This is the opposite of the canonical signer-outer / Miden-inner nesting at the top of this skill, and it is deliberate. In v0.15 and still in 0.16, when a signer provider is an *ancestor* of `MidenProvider`, `MidenProvider` treats it as its external keystore and does NOT create the `WebClient` until the signer connects (the init effect sees `signerIsConnected === false` and returns early before building the client). With a wallet that hasn't connected - or any environment without the extension - the app would hang on "Initializing…" and even public reads couldn't run. The template never signs *through* `MidenProvider` (it signs its only write, the counter increment, through the local `WebClient` rather than the wallet), so it runs `MidenProvider` in local-keystore mode (no signer ancestor → it initializes immediately, reads work pre-connect) and keeps `MidenFiSignerProvider` *inside*, purely for the connect button and the wallet's `requestTransaction`. `MidenFiSignerProvider` works standalone (it provides its own `WalletContext` + `SignerContext`; no `MultiSignerProvider` needed). Use this inversion only when you do not sign through `MidenProvider`; if external-keystore signing IS the goal, keep the canonical signer-outer order so `MidenProvider` picks up the signer's `signCb`/`accountConfig`.
 - **Wallet button uses `useMidenFiWallet()` + `WalletReadyState`** - see `src/components/AppContent.tsx`. The button gates on `wallet?.readyState` (rendering a disabled "Install MidenFi Wallet" state unless `readyState` is `Installed` or `Loadable`) so it can show install state before the extension is detected. `useSigner().connect()` would silently fall through to the adapter's `window.open(adapter.url, ...)` install fallback; gating on `readyState` avoids that path.
 - **The counter increment is a local two-transaction flow, not a wallet-signed tx** - see `src/hooks/useIncrementCounter.ts`. It does not use the wallet at all. It creates a throwaway local sender (`client.newWallet(...)`), publishes a plain increment note as that sender's own output note (`TransactionRequestBuilder().withOwnOutputNotes(...)`), then consumes the note *as the counter* (`await client.newConsumeTransactionRequest([note], counterAccountId)` - since 0.16 this is async and requires the consuming account, because it reads the chain's fee parameters to decide whether to attach fee conversion info; the 0.15 form `newConsumeTransactionRequest([note])` no longer compiles). Both transactions are submitted by the local `WebClient` via `submitNewTransactionWithProver(accountId, request, prover)` (remote prover), never by the wallet, so `useWaitForCommit` doesn't apply and the template polls the counter's storage map instead. This mirrors the project-template `increment_count` reference.
-  - **The note APIs in that hook (use as the reference):** the JS `NoteMetadata` constructor is attachment-less - `new NoteMetadata(sender, noteType, tag)`. Build the note with `new Note(new NoteAssets(), metadata, recipient)`. The increment note carries no attachment and uses tag `0`; the counter is a plain **public `NoAuth`** account, so anyone can consume the note against it with no signature. (Attachments still exist for other uses - `NoteAttachment.fromWord(scheme, word)` / `fromWords(scheme, words)`, read back via `.toWords()`, or `createNoteAttachment(...)` - but the increment does not need one. Network-execution targeting DOES exist on 0.16: a `Public` note carrying a `NetworkAccountTarget` attachment is auto-consumed by the operator. The target must be an account built from `AccountComponent.createNetworkAuthComponents` with the chain's fee faucet (`client.feeFaucetId()`), committed on-chain at the transaction's reference block, allowlisting and pricing the note's script root; see `useCreateNetworkNote` in the React SDK. A target built with any other fee faucet fails silently: the node never consumes its notes. Targeting a plain wallet fails with `account procedure ... is not in the account procedure index map`.)
+  - **The note APIs in that hook (use as the reference):** the JS `NoteMetadata` constructor is attachment-less - `new NoteMetadata(sender, noteType, tag)`. Build the note with `new Note(new NoteAssets(), metadata, recipient)`. The increment note carries no attachment and uses tag `0`; the counter is a plain **public `NoAuth`** account, so anyone can consume the note against it with no signature. (Attachments still exist for other uses - `NoteAttachment.fromWord(scheme, word)` / `fromWords(scheme, words)`, read back via `.toWords()`, or `createNoteAttachment(...)` - but the increment does not need one. Network-execution targeting DOES exist on 0.16: a `Public` note carrying a `NetworkAccountTarget` attachment is auto-consumed by the operator. The target must be an account built from `AccountComponent.createNetworkAuthComponents` with the chain's fee faucet (`client.feeFaucetId()`, the faucet `client.protocolConfig()` names), committed on-chain at the transaction's reference block, allowlisting and pricing the note's script root; see `useCreateNetworkNote` in the React SDK. A target built with any other fee faucet fails silently: the node never consumes its notes. Targeting a plain wallet fails with `account procedure ... is not in the account procedure index map`.)
   - **Two hard requirements (don't regress):** (1) the client runs with `useWorker: false` on `MidenProvider`. The default worker shim keeps a separate in-memory SMT forest per thread; consuming against an *imported* (not locally-created) account applies a delta transaction whose apply step looks the account up in the executing (worker) forest, which never contains the late-imported counter, so it fails with `account data wasn't found` ([web-sdk#222](https://github.com/0xMiden/web-sdk/issues/222)). One thread means one forest, which fixes it. (2) Submits go through the remote prover (`submitNewTransactionWithProver`) so the worker-less single thread only pays local execution, not minutes of local proving. The increment was verified working end-to-end on testnet on v0.15; there is no `INCREMENT_ONCHAIN_BLOCKED` flag. Re-verify against the template's current lockfile before relying on that, and note the `newConsumeTransactionRequest` signature change above.
 
 ## Unified Signer Interface
@@ -239,13 +239,16 @@ The two shipped providers are the best worked examples of this contract: read `p
 external-keystore client. There are two paths.
 
 **Fast path - `importAccountId` is set.** The builder is skipped and `client.importAccountById()`
-runs. It tolerates exactly two machine-readable error codes and rethrows everything else
+runs. It tolerates exactly three machine-readable error codes and rethrows everything else
 (`signerAccount.ts:85-89`):
 
 - `ACCOUNT_NOT_FOUND_ON_CHAIN` - a brand-new account not yet registered on-chain. The dApp still
   renders, but **the account is not tracked locally**, so `useAccount` returns `null` and no
   transaction can be built against it until a later `importAccountById` succeeds. `syncState()`
   only refreshes accounts the store already tracks; it never discovers one by ID.
+- `ACCOUNT_IS_PRIVATE` - the wallet's account is private (Bread's default), so it cannot be imported
+  from the network. Handled like a fresh account: the provider is ready and `signerAccountId` is
+  set, but the account is not tracked locally.
 - `ACCOUNT_ALREADY_TRACKED` - already imported locally; harmless.
 
 **Slow path - build from the commitment** (`signerAccount.ts:105-123`):
@@ -262,7 +265,7 @@ new AccountBuilder(seed)
   .withAuthComponent(
     AccountComponent.createAuthComponentFromCommitment(
       commitmentWord,
-      ecdsaAuthScheme  // see the AuthScheme trap below
+      ecdsaAuthScheme  // see the AuthScheme note below
     )
   )
   .storageMode(config.storageMode)
@@ -280,7 +283,7 @@ Note the hard-coded ECDSA-K256/Keccak auth scheme: an external signer's commitme
 as an ECDSA key, not Falcon. The value is the numeric WASM enum, read from the wasm module that the
 package's `getWasmOrThrow()` returns, never from the frozen string const the package exports as
 `AuthScheme` (that const has no `AuthEcdsaK256Keccak` member). If the wasm enum lacks the value,
-initialization throws instead of building an account - see "The `AuthScheme` trap" under Guarded
+initialization throws instead of building an account - see "The `AuthScheme` note" under Guarded
 Multisig below.
 
 **`withAuthComponent` validates nothing.** Its body is `with_component` verbatim
@@ -384,6 +387,7 @@ If the signer backs a guarded multisig account (a set of approvers plus a guardi
 
 ```tsx
 import {
+  AuthScheme,
   createAuthGuardedMultisig,
   AuthGuardedMultisigConfig,
 } from "@miden-sdk/miden-sdk";
@@ -396,7 +400,7 @@ const config = new AuthGuardedMultisigConfig(
   approvers,                       // Word[]
   2,                               // defaultThreshold
   guardian,                        // Word
-  authScheme                       // see the AuthScheme trap below
+  AuthScheme.ECDSA                 // or AuthScheme.Falcon; see the AuthScheme note below
 );
 
 // Optional: tighten the threshold for specific procedures.
@@ -411,19 +415,19 @@ const accountConfig: SignerAccountConfig = {
 };
 ```
 
-**The `AuthScheme` trap.** `@miden-sdk/miden-sdk` exports TWO different things under that
-name, and the one you get from the browser entry is not the enum this constructor wants.
-The package's own `AuthScheme` is a frozen string const, `{ Falcon: "falcon", ECDSA:
-"ecdsa" }`, and it **shadows** the wasm-bindgen enum of the same name. So
-`AuthScheme.AuthRpoFalcon512` evaluates to `undefined`, and the constructor fails when it
-tries to convert it.
-
-On Node the wasm class is re-exported under the non-colliding alias `AuthSchemeNative`, so
-`AuthSchemeNative.AuthRpoFalcon512` works there. The browser entry has no such escape
-hatch, which is why the SDK's own browser test harness restores it by hand
-(`window.AuthScheme = wasm.AuthScheme`). In a browser app, obtain the enum from the wasm
-namespace yourself rather than from the package's named export, and verify the value is
-not `undefined` before passing it.
+**The `AuthScheme` note.** `@miden-sdk/miden-sdk` exports TWO different things under that
+name. The package's own `AuthScheme` is a frozen string const, `{ Falcon: "falcon", ECDSA:
+"ecdsa" }`, and it **shadows** the wasm-bindgen enum of the same name, so
+`AuthScheme.AuthRpoFalcon512` and `AuthScheme.AuthEcdsaK256Keccak` evaluate to `undefined`.
+Pass the string const: `new AuthGuardedMultisigConfig(...)` and
+`AccountComponent.createAuthComponentFromCommitment(commitment, scheme)` resolve
+`AuthScheme.ECDSA` and `AuthScheme.Falcon` to the enum themselves, on both the browser and
+the Node entry. A numeric enum value (`1` for ECDSA, `2` for Falcon, or Node's
+`AuthSchemeNative.AuthEcdsaK256Keccak`) still passes through. A missing scheme throws
+`requires an auth scheme` rather than defaulting to Falcon, so an `undefined` read from the
+wrong `AuthScheme` cannot silently pick the other scheme. SDK versions before this change
+reject the strings with `invalid enum value passed` (browser) or `Failed to convert napi
+value into enum` (Node).
 
 
 **Build it with `createAuthGuardedMultisig`, the supported way to install the standard guarded multisig.** The client recognises an auth component only by its procedure root. If the account's auth procedure matches no standard component, for example MASM that differs from the bundled standard source, the client treats it as having no recognised auth component, declines to attach fee conversion info, and **every transaction from the account fails on a fee-charging chain**. Nothing warns you at account-creation time; the failure arrives later, at the first send.
@@ -506,7 +510,7 @@ import { AccountBuilder, AccountComponent, AccountStorageMode, NoteScriptFee } f
 
 // Returns AccountComponent[] - the auth component plus the components backing
 // its fee policy. Install ALL of them.
-const feeFaucetId = await client.feeFaucetId(); // must be the chain's - see below
+const feeFaucetId = await client.feeFaucetId(); // the faucet client.protocolConfig() names - see below
 const components = AccountComponent.createNetworkAuthComponents(
   [new NoteScriptFee(myNoteScript.root(), 0n)],  // NoteScriptFee[] - must be non-empty
   feeFaucetId,                                   // AccountId - the chain's fee faucet; fees are in its asset
@@ -537,10 +541,11 @@ Four rules bite, all enforced in
   advice inputs.
 
 A fifth is enforced only by the node, and silently: **the fee faucet must be the chain's own**
-(`client.feeFaucetId()`). Since 0.17 the node's network-transaction builder refuses to execute for
-an account whose fee asset differs from the chain's protocol configuration. The client is not told;
-notes sent to the account are simply never consumed, and only the node's log names the cause. The
-fee asset is fixed when the account is built, so an account built with another faucet is rebuilt.
+(`client.feeFaucetId()`, the faucet `client.protocolConfig()` names). Since 0.17 the node's
+network-transaction builder refuses to execute for an account whose fee asset differs from the
+chain's protocol configuration. The client is not told; notes sent to the account are simply never
+consumed, and only the node's log names the cause. The fee asset is fixed when the account is
+built, so an account built with another faucet is rebuilt.
 
 Reuse the *same* compiled note script for the account allowlist and for the note, so the roots
 match. Targeting a plain wallet instead of a network account fails with `account procedure ... is

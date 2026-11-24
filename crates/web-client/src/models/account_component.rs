@@ -60,11 +60,11 @@ impl NoteScriptFee {
     /// Obtain the root via `NoteScript.root()`. An amount of `0` is a valid price and is what an
     /// account that charges nothing for a note uses.
     #[js_export(constructor)]
-    pub fn new(script_root: &Word, amount: JsU64) -> NoteScriptFee {
-        NoteScriptFee {
+    pub fn new(script_root: &Word, amount: JsU64) -> Result<NoteScriptFee, JsErr> {
+        Ok(NoteScriptFee {
             script_root: script_root.clone(),
-            amount: js_u64_to_u64(amount),
-        }
+            amount: js_u64_to_u64(amount)?,
+        })
     }
 
     /// Returns the note script root this fee applies to.
@@ -278,11 +278,11 @@ impl AccountComponent {
     /// priced by construction. A fee of zero is valid; a script root the account does not price
     /// at all aborts fee estimation rather than being treated as free. Fees are denominated in
     /// the fungible asset issued by `feeFaucetId`, which must be the chain's own fee faucet -
-    /// `client.feeFaucetId()`. The node's network-transaction builder refuses to execute for a
-    /// network account whose fee asset differs from the chain's protocol configuration, and the
-    /// client is not told: notes sent to such an account are simply never consumed. The fee
-    /// asset is fixed when the account is built, so an account built with another faucet has to
-    /// be rebuilt.
+    /// `client.feeFaucetId()`, the faucet `client.protocolConfig()` names. The node's
+    /// network-transaction builder refuses to execute for a network account whose fee asset
+    /// differs from the chain's protocol configuration, and the client is not told: notes sent to
+    /// such an account are simply never consumed. The fee asset is fixed when the account is
+    /// built, so an account built with another faucet has to be rebuilt.
     ///
     /// Returns the auth component together with the components backing its fee policy. Every one
     /// of them must be installed on the account: pass each to `AccountBuilder.withComponent`.

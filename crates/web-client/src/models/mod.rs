@@ -64,6 +64,7 @@ pub mod consumable_note_record;
 pub mod endpoint;
 pub mod eth_address;
 pub mod executed_transaction;
+pub mod fee_sponsorship_note;
 pub mod felt;
 pub mod fetched_account;
 pub mod foreign_account;
@@ -100,10 +101,13 @@ pub mod output_note;
 pub mod output_note_record;
 pub mod output_note_state;
 pub mod output_notes;
+pub mod p2id_note;
+pub mod p2ide_note;
 pub mod package;
 pub mod partial_note;
 pub mod poseidon2;
 pub mod program;
+pub mod protocol_config;
 pub mod proven_transaction;
 pub mod provers;
 pub mod pswap_lineage_record;
@@ -114,7 +118,9 @@ pub mod signing_inputs;
 pub mod sparse_merkle_path;
 pub mod storage_map;
 pub mod storage_map_info;
+pub mod storage_map_witness;
 pub mod storage_slot;
+pub mod swap_note;
 pub mod sync_summary;
 pub mod token_symbol;
 pub mod transaction_args;
@@ -139,6 +145,7 @@ declare_js_miden_arrays! {
     (crate::models::foreign_account::ForeignAccount) -> ForeignAccountArray,
     (crate::models::note_recipient::NoteRecipient) -> NoteRecipientArray,
     (crate::models::note::Note) -> NoteArray,
+    (crate::models::note_script::NoteScript) -> NoteScriptArray,
     (crate::models::output_note::OutputNote) -> OutputNoteArray,
     (crate::models::storage_slot::StorageSlot) -> StorageSlotArray,
     (crate::models::transaction_script_inputs::TransactionScriptInputPair) -> TransactionScriptInputPairArray,

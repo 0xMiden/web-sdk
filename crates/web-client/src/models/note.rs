@@ -1,8 +1,25 @@
 use js_export_macro::js_export;
 use miden_client::agglayer::B2AggNote;
-use miden_client::asset::Asset as NativeAsset;
+use miden_client::asset::{
+    Asset as NativeAsset,
+    AssetAmount,
+    FungibleAsset as NativeFungibleAsset,
+};
 use miden_client::block::BlockNumber as NativeBlockNumber;
-use miden_client::note::{Note as NativeNote, NoteAssets as NativeNoteAssets, P2idNote, P2ideNote};
+use miden_client::note::{
+    FeeSponsorshipNote as NativeFeeSponsorshipNote,
+    Note as NativeNote,
+    NoteAssets as NativeNoteAssets,
+    NoteId as NativeNoteId,
+    P2idNote,
+    P2ideNote,
+};
+use miden_client::usdcx::note::xreserve_burn::XReserveBurnNote;
+use miden_client::usdcx::xreserve::encoding::{
+    CircleDomain,
+    ForeignChainAddress,
+    XReserveBurnItems,
+};
 use miden_client::{Felt as NativeFelt, Word as NativeWord};
 use miden_objects::proto;
 use miden_protocol::crypto::rand::RandomCoin;
@@ -11,6 +28,7 @@ use rand::RngExt;
 use super::NoteType;
 use super::account_id::AccountId;
 use super::eth_address::EthAddress;
+use super::fungible_asset::FungibleAsset;
 use super::note_assets::NoteAssets;
 use super::note_attachment::NoteAttachment;
 use super::note_id::NoteId;
@@ -19,7 +37,7 @@ use super::note_recipient::NoteRecipient;
 use super::note_script::NoteScript;
 use super::word::Word;
 use crate::js_error_with_context;
-use crate::platform::{JsBytes, JsErr};
+use crate::platform::{JsBytes, JsErr, from_str_err, js_u64_to_u64};
 use crate::utils::{decode_message, encode_message};
 
 /// A note bundles public metadata with private details: assets, script, inputs, and a serial number
@@ -78,6 +96,15 @@ impl Note {
     /// unchanged.
     pub fn commitment(&self) -> Word {
         self.0.id().as_word().into()
+    }
+
+    /// Returns the commitment to the note's details (recipient + assets), without metadata.
+    ///
+    /// This is the value wallets use for B2AGG exit hashing. It is not the note ID:
+    /// `note.id()` / `note.commitment()` also commit the metadata.
+    #[js_export(js_name = "detailsCommitment")]
+    pub fn details_commitment(&self) -> Word {
+        self.0.details_commitment().as_word().into()
     }
 
     /// Returns the public metadata associated with the note.
@@ -169,6 +196,51 @@ impl Note {
         Ok(native_note.into())
     }
 
+    /// Builds a fee-sponsorship note bound to `feature_note_id` and tagged for `target`.
+    ///
+    /// The note carries exactly one fungible fee asset. `target` must be a public account (network
+    /// note routing). `reclaimer` defaults to `sender` when omitted; in browser WASM passing
+    /// `reclaimer` (`Option<AccountId>`) consumes the caller's `AccountId` wrapper even on error
+    /// because `wasm-bindgen` does not support `Option<&T>`. `reclaim_height` must be `> 0` when
+    /// set (`undefined`/`None` disables reclaim, `0` is rejected) and enables reclaim at or after
+    /// that block.
+    ///
+    /// Binding `feature_note_id` is how sponsorship attaches to a supported feature note
+    /// (`BURN`, `CLAIM`, `B2AGG`, …): whoever may consume that feature note may take this
+    /// sponsorship in the same transaction.
+    #[js_export(js_name = "createFeeSponsorshipNote")]
+    pub fn create_fee_sponsorship_note(
+        sender: &AccountId,
+        target: &AccountId,
+        feature_note_id: &NoteId,
+        asset: &FungibleAsset,
+        reclaimer: Option<AccountId>,
+        reclaim_height: Option<u32>,
+    ) -> Result<Self, JsErr> {
+        if matches!(reclaim_height, Some(0)) {
+            return Err(from_str_err(
+                "create fee sponsorship note: reclaim_height must be greater than 0",
+            ));
+        }
+
+        let native_asset: NativeFungibleAsset = asset.into();
+        let native_feature_id: NativeNoteId = feature_note_id.into();
+
+        let native_note: NativeNote = NativeFeeSponsorshipNote::builder()
+            .sender(sender.into())
+            .target_account(target.into())
+            .feature_note_id(native_feature_id)
+            .asset(native_asset)
+            .maybe_reclaimer(reclaimer.map(Into::into))
+            .maybe_reclaim_height(reclaim_height.map(NativeBlockNumber::from))
+            .serial_number(rand::rng().random::<NativeWord>())
+            .build()
+            .map_err(|err| js_error_with_context(err, "create fee sponsorship note"))?
+            .into();
+
+        Ok(native_note.into())
+    }
+
     /// Builds a B2AGG (Bridge-to-AggLayer) note that bridges the given assets out to another
     /// network via the `AggLayer`.
     ///
@@ -200,6 +272,32 @@ impl Note {
             &mut rng,
         )
         .map_err(|err| js_error_with_context(err, "create b2agg note"))?;
+
+        Ok(native_note.into())
+    }
+
+    /// Builds the public xReserve burn note that withdraws `amount` `USDCx` issued by `faucet_id`
+    /// to `destination_recipient` (32 bytes) on the Circle `destination_domain`.
+    ///
+    /// The note carries the fixed `BURN` tag Circle's attester discovers it by and is consumed by
+    /// the faucet, which must be a public account.
+    #[js_export(js_name = "createXReserveBurnNote")]
+    pub fn create_xreserve_burn_note(
+        sender: &AccountId,
+        faucet_id: &AccountId,
+        amount: JsU64,
+        destination_domain: u32,
+        destination_recipient: Vec<u8>,
+    ) -> Result<Self, JsErr> {
+        let items = xreserve_burn_items(destination_domain, destination_recipient)?;
+        let amount = AssetAmount::new(js_u64_to_u64(amount)?)
+            .map_err(|err| js_error_with_context(err, "create xreserve burn note"))?;
+        let coin_seed: [u64; 4] = rand::random();
+        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
+
+        let native_note =
+            XReserveBurnNote::create(sender.into(), faucet_id.into(), amount, items, &mut rng)
+                .map_err(|err| js_error_with_context(err, "create xreserve burn note"))?;
 
         Ok(native_note.into())
     }
@@ -291,3 +389,17 @@ impl From<&crate::models::miden_arrays::NoteArray> for Vec<NativeNote> {
 }
 
 impl_napi_from_value!(Note);
+
+/// Validates the xReserve withdrawal destination shared by the note and request builders.
+pub(crate) fn xreserve_burn_items(
+    destination_domain: u32,
+    destination_recipient: Vec<u8>,
+) -> Result<XReserveBurnItems, JsErr> {
+    let recipient: [u8; 32] = destination_recipient
+        .try_into()
+        .map_err(|_| from_str_err("destination recipient must be exactly 32 bytes"))?;
+    Ok(XReserveBurnItems {
+        dest_domain: CircleDomain::new(destination_domain),
+        dest_recipient: ForeignChainAddress::new(recipient),
+    })
+}

@@ -366,7 +366,7 @@ request; in the browser build it consumes the `Felt`s it is given.
 | `ChainAnchor.deserialize(bytes)` | `ChainAnchor` | Static; rebuild on the receiving side |
 | `blockNum()` | `u32` | Number of the anchored reference block |
 | `commitment()` | `Word` | Commitment of the anchored reference block |
-| `blockHeader()` | `BlockHeader` | The anchored reference block header, which also carries `verificationBaseFee()` and `protocolConfigCommitment()`. The fee faucet moved into the protocol configuration in 0.17; read it with `client.feeFaucetId()` |
+| `blockHeader()` | `BlockHeader` | The anchored reference block header, which also carries `verificationBaseFee()` and `protocolConfigCommitment()`. The fee faucet moved into the protocol configuration in 0.17; read it with `client.feeFaucetId()`, or the whole configuration with `client.protocolConfig()`, whose `commitment()` is this `protocolConfigCommitment()` |
 | `free()` | void | Release the partial blockchain it carries |
 
 ### `TransactionSummary`

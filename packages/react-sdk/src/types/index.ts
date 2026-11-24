@@ -65,6 +65,7 @@ export type {
 
 export type RpcUrlConfig =
   | string
+  | "mainnet"
   | "devnet"
   | "testnet"
   | "localhost"
@@ -74,6 +75,7 @@ export type RpcUrlConfig =
 export type ProverTarget =
   | "local"
   | "localhost"
+  | "mainnet"
   | "devnet"
   | "testnet"
   | string
@@ -96,13 +98,14 @@ export type ProverConfig =
     };
 
 export type ProverUrls = {
+  mainnet?: string;
   devnet?: string;
   testnet?: string;
 };
 
 // Provider configuration
 export interface MidenConfig {
-  /** RPC node URL or network name (devnet/testnet/localhost). Defaults to testnet. */
+  /** RPC node URL or network name (mainnet/devnet/testnet/localhost). Defaults to testnet. */
   rpcUrl?: RpcUrlConfig;
   /** Note transport URL for streaming notes. */
   noteTransportUrl?: string;
@@ -138,7 +141,7 @@ export interface MidenConfig {
   autoSyncInterval?: number;
   /** Initial seed for deterministic RNG (must be 32 bytes if provided) */
   seed?: Uint8Array;
-  /** Transaction prover selection (local/devnet/testnet or a remote URL). */
+  /** Transaction prover selection (local/mainnet/devnet/testnet or a remote URL). */
   prover?: ProverConfig;
   /** Optional override URLs for network provers. */
   proverUrls?: ProverUrls;
@@ -292,8 +295,15 @@ export interface TransactionHistoryOptions {
   id?: string | TransactionId;
   /** List of transaction IDs to look up. */
   ids?: Array<string | TransactionId>;
-  /** Custom transaction filter (overrides id/ids). */
-  filter?: TransactionFilter;
+  /**
+   * Custom transaction filter (overrides id/ids). Prefer a factory such as
+   * `() => TransactionFilter.uncommitted()`: the hook calls it for every
+   * fetch. A `TransactionFilter` instance is consumed by the first fetch, so
+   * a later refetch (e.g. after a sync) fails with
+   * `null pointer passed to rust`. Keep either form referentially stable
+   * (module scope or `useCallback`); a new value refetches.
+   */
+  filter?: TransactionFilter | (() => TransactionFilter);
   /** Refresh after provider syncs. Default: true */
   refreshOnSync?: boolean;
 }

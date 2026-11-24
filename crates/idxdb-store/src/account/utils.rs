@@ -4,17 +4,14 @@ use alloc::vec::Vec;
 
 use miden_client::account::{
     Account,
-    AccountCode,
     AccountHeader,
     AccountId,
     AccountPatch,
-    AccountStorage,
     Address,
     StorageSlotContent,
     StorageSlotName,
     StorageSlotType,
 };
-use miden_client::asset::AssetVault;
 use miden_client::store::{AccountStatus, StoreError};
 use miden_client::{Felt, Word};
 use miden_client_core::store::ClientAccountType;
@@ -28,88 +25,47 @@ use super::js_bindings::{
     JsVaultAsset,
     idxdb_apply_account_patch,
     idxdb_apply_full_account_state,
-    idxdb_upsert_account_code,
-    idxdb_upsert_account_record,
-    idxdb_upsert_account_storage,
-    idxdb_upsert_storage_map_entries,
-    idxdb_upsert_vault_assets,
+    idxdb_insert_account,
 };
 use crate::account::js_bindings::idxdb_insert_account_address;
 use crate::account::models::{AccountRecordIdxdbObject, AddressIdxdbObject};
 use crate::bytes::{FromStoreBytes, ToStoreBytes};
 use crate::sync::JsAccountUpdate;
 
-pub async fn upsert_account_code(db_id: &str, account_code: &AccountCode) -> Result<(), JsValue> {
-    let root = account_code.commitment().to_string();
-    let code = encode(account_code);
-
-    let promise = idxdb_upsert_account_code(db_id, root, code);
-    JsFuture::from(promise).await?;
-
-    Ok(())
-}
-
-pub async fn upsert_account_storage(
+/// Writes code, storage, vault, header and address in one `IndexedDB` transaction.
+pub async fn insert_account(
     db_id: &str,
-    account_id: &AccountId,
-    account_storage: &AccountStorage,
+    account: &Account,
+    initial_address: Address,
+    client_account_type: ClientAccountType,
 ) -> Result<(), JsValue> {
     let mut slots = vec![];
     let mut maps = vec![];
-    for slot in account_storage.slots() {
+    for slot in account.storage().slots() {
         slots.push(JsStorageSlot::from_slot(slot));
         if let StorageSlotContent::Map(map) = slot.content() {
             maps.extend(JsStorageMapEntry::from_map(map, slot.name().as_str()));
         }
     }
+    let assets: Vec<JsVaultAsset> =
+        account.vault().assets().map(|asset| JsVaultAsset::from_asset(&asset)).collect();
 
-    let account_id_str = account_id.to_string();
-    JsFuture::from(idxdb_upsert_account_storage(db_id, account_id_str.clone(), slots)).await?;
-    JsFuture::from(idxdb_upsert_storage_map_entries(db_id, account_id_str, maps)).await?;
-
-    Ok(())
-}
-
-pub async fn upsert_account_asset_vault(
-    db_id: &str,
-    account_id: &AccountId,
-    asset_vault: &AssetVault,
-) -> Result<(), JsValue> {
-    let js_assets: Vec<JsVaultAsset> =
-        asset_vault.assets().map(|asset| JsVaultAsset::from_asset(&asset)).collect();
-
-    let promise = idxdb_upsert_vault_assets(db_id, account_id.to_string(), js_assets);
-    JsFuture::from(promise).await?;
-
-    Ok(())
-}
-
-pub async fn upsert_account_record(
-    db_id: &str,
-    account: &Account,
-    client_account_type: ClientAccountType,
-) -> Result<(), JsValue> {
-    let account_id_str = account.id().to_string();
-    let code_root = account.code().commitment().to_string();
-    let storage_root = account.storage().to_commitment().to_string();
-    let vault_root = account.vault().root().to_string();
-    let committed = account.is_public();
-    let nonce = account.nonce().to_string();
-    let account_seed = account.seed().map(|seed| seed.to_store_bytes());
-    let commitment = account.to_commitment().to_string();
-    let watched = matches!(client_account_type, ClientAccountType::Watched);
-
-    let promise = idxdb_upsert_account_record(
+    let promise = idxdb_insert_account(
         db_id,
-        account_id_str,
-        code_root,
-        storage_root,
-        vault_root,
-        nonce,
-        committed,
-        commitment,
-        account_seed,
-        watched,
+        account.id().to_string(),
+        account.code().commitment().to_string(),
+        encode(account.code()),
+        slots,
+        maps,
+        assets,
+        account.storage().to_commitment().to_string(),
+        account.vault().root().to_string(),
+        account.nonce().to_string(),
+        account.is_public(),
+        account.to_commitment().to_string(),
+        account.seed().map(|seed| seed.to_store_bytes()),
+        matches!(client_account_type, ClientAccountType::Watched),
+        initial_address.to_store_bytes(),
     );
     JsFuture::from(promise).await?;
 

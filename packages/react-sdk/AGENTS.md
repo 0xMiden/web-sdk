@@ -46,9 +46,9 @@ rejects `feeFaucetId()` and asks you to sync first.
 ```tsx
 <MidenProvider
   config={{
-    rpcUrl: "testnet",          // "devnet" | "testnet" | "localhost" | "local" | custom URL
+    rpcUrl: "testnet",          // "mainnet" | "devnet" | "testnet" | "localhost" | "local" | custom URL
     feeFaucetId: FEE_FAUCET,    // optional: what feeFaucetId() reports before the first sync
-    prover: "testnet",          // "local" | "localhost" | "devnet" | "testnet" | URL
+    prover: "testnet",          // "local" | "localhost" | "mainnet" | "devnet" | "testnet" | URL
                                 //   | { url, timeoutMs }
                                 //   | { primary, fallback, disableFallback?, onFallback? }
     autoSyncInterval: 15000,    // ms, set to 0 to disable. Default: 15000
@@ -95,6 +95,7 @@ UI thread is not competing with WASM anyway.
 
 | Network | Use When |
 |---------|----------|
+| `mainnet` | Production, with real funds |
 | `devnet` | Development, testing with fake tokens |
 | `testnet` | Pre-production testing |
 | `localhost` | Local node at `http://localhost:57291` |
@@ -168,6 +169,9 @@ so a bare string throws a runtime `TypeError`.
 
 Metadata is read from the node the provider's client was created against
 (`client.endpoint()`), so nothing is fetched until the provider is ready.
+Reads from a previous client or cache generation cannot repopulate the cache
+after a reset. The current client can fetch the same asset while an old read
+is still pending.
 
 ## Writing Data (Mutation Hooks)
 
@@ -245,13 +249,14 @@ queue, so nothing re-sends the note unless you do; see
 
 ### Send to Multiple Recipients
 ```tsx
-const { multiSend } = useMultiSend();
+const { sendMany } = useMultiSend();
 
-await multiSend({
+await sendMany({
   from: senderAccountId,
+  assetId,
   recipients: [
-    { to: recipient1, assetId, amount: 500n },
-    { to: recipient2, assetId, amount: 300n },
+    { to: recipient1, amount: 500n },
+    { to: recipient2, amount: 300n },
   ],
 });
 ```
@@ -736,7 +741,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | `useExportNote()` | `exportNote(...)` | serialized note bytes |
 | `useImportStore()` / `useExportStore()` | store import/export | bytes / `void` |
 | `useSend()` | `send({ from, to, assetId, amount, noteType })` | `SendResult` (with `txId`, `note`) |
-| `useMultiSend()` | `multiSend({ from, recipients })` | `TransactionResult` |
+| `useMultiSend()` | `sendMany({ from, assetId, recipients })` | `TransactionResult` |
 | `useBatch()` | `batch({ items })` - items are `{ account, request }` pairs | `BatchResult` (with `blockNumber`) |
 | `useMint()` | `mint({ faucetId, to, amount })` | `TransactionResult` |
 | `useBridge()` | `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress })` | `TransactionResult` (emits an AggLayer B2AGG bridge-out note) |

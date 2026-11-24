@@ -19,6 +19,7 @@
     "check:attw": "pnpm --filter @miden-sdk/miden-sdk --filter @miden-sdk/react --filter @miden-sdk/vite-plugin --filter @miden-sdk/telemetry-sentry --filter @miden-sdk/telemetry-otel --workspace-concurrency=1 exec attw --pack .",
     "check:publint:adopted": "./scripts/check-adopted-publish.sh publint",
     "check:attw:adopted": "./scripts/check-adopted-publish.sh attw",
+    "check:consumer-imports": "node scripts/check-consumer-imports.mjs",
     "check:publish": "pnpm run build:web-client && pnpm run build:react-sdk && pnpm run build:vite-plugin && pnpm run build:telemetry-sentry && pnpm run build:telemetry-otel && pnpm run check:publint && pnpm run check:attw"
   },
   "dependencies": {

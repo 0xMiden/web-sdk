@@ -2509,6 +2509,7 @@ dependencies = [
  "js-export-macro",
  "js-sys",
  "miden-client",
+ "miden-client-core",
  "miden-client-proto",
  "miden-client-sqlite-store",
  "miden-idxdb-store",

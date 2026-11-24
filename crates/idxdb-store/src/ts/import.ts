@@ -72,9 +72,9 @@ export async function transformForImport(obj: any): Promise<any> {
 const CLIENT_CONFIG_TABLE = "clientConfig";
 const USER_SETTINGS_TABLE = "userSettings";
 const CHAIN_ANCHORS_TABLE = "chainAnchors";
-// The table that schema version 11 removed.
+// The table that schema version 14 removed.
 const LEGACY_SETTINGS_TABLE = "settings";
-// The table that schema version 13 removed.
+// The table that schema version 16 removed.
 const LEGACY_CHECKPOINT_TABLE = "blockchainCheckpoint";
 
 // An import writes rows without the upgrade() callbacks an open runs, so it takes only a dump this
@@ -82,7 +82,7 @@ const LEGACY_CHECKPOINT_TABLE = "blockchainCheckpoint";
 // the client running in this realm (the version the store was opened with; with none recorded the
 // newer check is skipped). Anything else is refused before the target is cleared.
 async function refuseUnkeptDump(dbJson: any, runningVersion: string | null) {
-  // The stamp is a `clientConfig` row. A dump taken before schema version 10 has it as a client
+  // The stamp is a `clientConfig` row. A dump taken before schema version 13 has it as a client
   // row of `settings`.
   const rowsOf = (table: string): any[] =>
     Array.isArray(dbJson[table]) ? dbJson[table] : [];
@@ -147,8 +147,8 @@ export async function forceImportStore(dbId: string, jsonStr: string) {
       await Promise.all(db.dexie.tables.map((t) => t.clear()));
 
       for (const tableName of jsonTableNames) {
-        // A dump taken before schema version 10 keeps its settings in one table. Its rows are
-        // split as the version 10 upgrade splits them, which also drops the rows that the
+        // A dump taken before schema version 13 keeps its settings in one table. Its rows are
+        // split as the version 13 upgrade splits them, which also drops the rows that the
         // earlier upgrades delete.
         if (
           tableName === LEGACY_SETTINGS_TABLE &&
@@ -163,8 +163,8 @@ export async function forceImportStore(dbId: string, jsonStr: string) {
           continue;
         }
 
-        // A dump taken before schema version 12 keeps the peaks of its sync height in one
-        // checkpoint row. It becomes the anchors that the version 12 upgrade derives from it.
+        // A dump taken before schema version 15 keeps the peaks of its sync height in one
+        // checkpoint row. It becomes the anchors that the version 15 upgrade derives from it.
         if (
           tableName === LEGACY_CHECKPOINT_TABLE &&
           !dbTableNames.includes(tableName)

@@ -96,13 +96,25 @@ export function useTransactionHistory(
     }
   }, [client, isReady, filter, rawIds, idsHex]);
 
+  // MidenProvider stores `lastSyncTime` before it sets the client, so the hook
+  // becomes ready on a commit that already carries a stamp. One effect keeps
+  // that commit to one fetch: a caller's `TransactionFilter` instance is
+  // consumed by the first `getTransactions` call.
+  const startedRef = useRef<{ stamp: number | null; refetch: unknown } | null>(
+    null
+  );
   useEffect(() => {
-    if (!isReady) return;
-    refetch();
-  }, [isReady, refetch]);
-
-  useEffect(() => {
-    if (!isReady || !refreshOnSync || !lastSyncTime) return;
+    if (!isReady) {
+      startedRef.current = null;
+      return;
+    }
+    const started = startedRef.current;
+    const stamp =
+      refreshOnSync && lastSyncTime ? lastSyncTime : (started?.stamp ?? null);
+    if (started && started.stamp === stamp && started.refetch === refetch) {
+      return;
+    }
+    startedRef.current = { stamp, refetch };
     refetch();
   }, [isReady, lastSyncTime, refreshOnSync, refetch]);
 
@@ -146,7 +158,9 @@ function buildFilter(
   idsHex: string[] | null
 ): FilterBuildResult {
   if (filter) {
-    return { filter };
+    // A factory runs per fetch; a caller's instance would be consumed by the
+    // first `getTransactions` call.
+    return { filter: typeof filter === "function" ? filter() : filter };
   }
 
   if (!ids || ids.length === 0) {

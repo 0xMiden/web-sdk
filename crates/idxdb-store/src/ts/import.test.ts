@@ -50,7 +50,7 @@ function stampRow(version: string) {
   };
 }
 
-// A dump as a store before schema version 10 exported it: the settings are rows of one
+// A dump as a store before schema version 13 exported it: the settings are rows of one
 // `settings` table, the sync height is one `blockchainCheckpoint` row, and the tables that
 // replaced them are absent.
 async function legacyDump(
@@ -264,7 +264,7 @@ describe("forceImportStore", () => {
     expect(codesAfter.map((c) => c.root)).not.toContain("root-b-old");
   });
 
-  it("splits the settings table of a dump taken before schema version 10", async () => {
+  it("splits the settings table of a dump taken before schema version 13", async () => {
     const row = (scope: number, key: string, byte: number) => ({
       scope,
       key,
@@ -306,7 +306,7 @@ describe("forceImportStore", () => {
     ]);
   });
 
-  it("turns the checkpoint of a dump taken before schema version 12 into chain anchors", async () => {
+  it("turns the checkpoint of a dump taken before schema version 15 into chain anchors", async () => {
     const peaks = new Uint8Array([1, 2, 3]);
     const jsonStr = await legacyDump(
       [{ scope: SETTING_SCOPE_CLIENT, ...stampRow(CLIENT_VERSION) }],
@@ -326,7 +326,7 @@ describe("forceImportStore", () => {
     ["stamped below the baseline", "0.16.2", /older than 0\.17\.0/],
     ["with no stamp", null, /no client version stamp/],
   ])(
-    "refuses a dump taken before schema version 10 %s",
+    "refuses a dump taken before schema version 13 %s",
     async (_, stamp, reason) => {
       const jsonStr = await legacyDump(
         stamp === null

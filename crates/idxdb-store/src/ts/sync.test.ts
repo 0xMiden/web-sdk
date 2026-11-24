@@ -11,6 +11,7 @@ import {
   applyStateSync,
   discardTransactions,
 } from "./sync.js";
+import { recordReads } from "./test-utils.js";
 
 // ---------------------------------------------------------------------------
 // Test DB helpers
@@ -448,6 +449,29 @@ describe("sync", () => {
       const remaining = await db.tags.toArray();
       expect(remaining).toHaveLength(1);
       expect(remaining[0].sourceNoteId).toBe("note-2");
+    });
+
+    it("looks the tag up through the [tag+sourceNoteId+sourceAccountId] index", async () => {
+      const dbId = await openTestDb();
+      const tagBytes = new Uint8Array([0x07]);
+      await addNoteTag(dbId, tagBytes, "note-1", "acct-1");
+      await addNoteTag(dbId, tagBytes, "note-2", "acct-1");
+
+      const recorder = recordReads();
+      try {
+        await removeNoteTag(dbId, tagBytes, "note-1", "acct-1");
+      } finally {
+        recorder.stop();
+      }
+
+      const tagReads = recorder.reads.filter((r) => r.store === "tags");
+      expect(tagReads.length).toBeGreaterThan(0);
+      expect(
+        tagReads.every(
+          (r) => r.ranged && r.index === "[tag+sourceNoteId+sourceAccountId]"
+        )
+      ).toBe(true);
+      expect(await getDatabase(dbId).tags.count()).toBe(1);
     });
 
     it("uses empty string for sourceNoteId/sourceAccountId when undefined is passed", async () => {

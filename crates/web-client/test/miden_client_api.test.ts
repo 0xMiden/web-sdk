@@ -219,6 +219,28 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     }
   );
 
+  mockTest(
+    "accounts.import of a private id reports ACCOUNT_IS_PRIVATE",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const wallet = await client.accounts.create();
+        let code = null;
+        try {
+          await client.accounts.import(wallet.id().toString());
+        } catch (error) {
+          code = error.code ?? null;
+        }
+        return {
+          isPublic: wallet.id().isPublic(),
+          code,
+        };
+      });
+      expect(result.isPublic).toBe(false);
+      expect(result.code).toBe("ACCOUNT_IS_PRIVATE");
+    }
+  );
+
   mockTest("accounts.list returns created accounts", async ({ page }) => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.createMock();
@@ -1638,6 +1660,49 @@ nodeTest.describe("MidenClient API - Integration", () => {
       });
 
       expect(result.beforeSync).toBe(result.configured);
+      expect(result.reported).toBe(result.configured);
+    }
+  );
+
+  // The read follows the network the client talks to: nothing before the first
+  // sync, then the configuration that node's blocks commit to.
+  nodeTest(
+    "protocolConfig rejects before the first sync and reports the node's fee faucet after it",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.create({
+          rpcUrl: window.rpcUrl,
+          storeName: "miden_client_api_protocol_config_test",
+        });
+
+        let beforeSync = null;
+        try {
+          await client.protocolConfig();
+        } catch (err) {
+          beforeSync = String(err?.message ?? err);
+        }
+
+        await client.sync();
+
+        const canonical = (id) => {
+          try {
+            return window.AccountId.fromBech32(id).toString();
+          } catch {
+            return window.AccountId.fromHex(id).toString();
+          }
+        };
+
+        const config = await client.protocolConfig();
+        return {
+          beforeSync,
+          configured: canonical(window.feeFaucetId),
+          reported: config.feeFaucetId().toString(),
+        };
+      });
+
+      expect(result.beforeSync).toContain(
+        "the network's protocol configuration is not known yet"
+      );
       expect(result.reported).toBe(result.configured);
     }
   );

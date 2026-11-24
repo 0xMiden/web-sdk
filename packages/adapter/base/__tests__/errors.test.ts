@@ -20,6 +20,7 @@ import {
   WalletWindowClosedError,
   WalletDecryptionNotAllowedError,
   WalletPrivateDataPermissionError,
+  WalletStorageUnsupportedError,
   WalletDecryptionError,
   WalletRecordsError,
   WalletTransactionError,
@@ -50,6 +51,10 @@ const errorClasses = [
   {
     Class: WalletPrivateDataPermissionError,
     name: "WalletPrivateDataPermissionError",
+  },
+  {
+    Class: WalletStorageUnsupportedError,
+    name: "WalletStorageUnsupportedError",
   },
   { Class: WalletDecryptionError, name: "WalletDecryptionError" },
   { Class: WalletRecordsError, name: "WalletRecordsError" },
