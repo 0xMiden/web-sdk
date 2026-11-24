@@ -102,6 +102,15 @@ describe("createNoteAttachment", () => {
       createNoteAttachment([1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n])
     ).not.toThrow();
   });
+
+  it("rejects a value outside 0..2^64 instead of storing it modulo 2^64", () => {
+    expect(() => createNoteAttachment([2n ** 64n + 5n])).toThrow(
+      /outside the u64 range/
+    );
+    expect(() =>
+      createNoteAttachment([1n, 2n, 3n, 4n, 2n ** 64n + 5n])
+    ).toThrow(/outside the u64 range/);
+  });
 });
 
 describe("emptyAttachment", () => {
