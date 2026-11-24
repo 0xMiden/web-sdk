@@ -1,21 +1,27 @@
 // @ts-nocheck
 import { test, expect } from "./test-setup";
 
-test("ignoreInvalidInputNotes lets a consume batch skip an already-consumed note", async ({
+test("ignoreInvalidInputNotes lets a consume batch skip a note the account cannot consume", async ({
   run,
 }) => {
   const result = await run(async ({ client, sdk, helpers }) => {
     const { wallet, faucet } = await helpers.setupWalletAndFaucet();
-    const first = await helpers.mockMint(wallet.id(), faucet.id());
-    const second = await helpers.mockMint(wallet.id(), faucet.id());
-    await helpers.mockConsume(wallet.id(), first.createdNoteId);
+    const other = await client.newWallet(
+      sdk.AccountStorageMode.private(),
+      sdk.AuthScheme.AuthRpoFalcon512
+    );
+    const mine = await helpers.mockMint(wallet.id(), faucet.id());
+    const foreign = await helpers.mockMint(other.id(), faucet.id());
 
+    // The foreign note is targeted at another account, so consuming it fails in the kernel.
     const noteAndArgs = async () => {
-      const spent = (await client.getInputNote(first.createdNoteId)).toNote();
-      const live = (await client.getInputNote(second.createdNoteId)).toNote();
+      const foreignNote = (
+        await client.getInputNote(foreign.createdNoteId)
+      ).toNote();
+      const ownNote = (await client.getInputNote(mine.createdNoteId)).toNote();
       return new sdk.NoteAndArgsArray([
-        new sdk.NoteAndArgs(spent),
-        new sdk.NoteAndArgs(live),
+        new sdk.NoteAndArgs(foreignNote),
+        new sdk.NoteAndArgs(ownNote),
       ]);
     };
 
@@ -47,14 +53,14 @@ test("ignoreInvalidInputNotes lets a consume batch skip an already-consumed note
         .inputNotes()
         .notes()
         .map((n) => n.id().toString()),
-      live: second.createdNoteId,
+      own: mine.createdNoteId,
     };
   });
   expect(result.strictFlag).toBe(false);
   expect(result.lenientFlag).toBe(true);
   expect(result.restoredFlag).toBe(true);
   expect(result.strictError).not.toBeNull();
-  expect(result.consumed).toEqual([result.live]);
+  expect(result.consumed).toEqual([result.own]);
 });
 
 test("withAccountCodeUpgrade and buildAccountCodeUpgrade carry the new code", async ({
