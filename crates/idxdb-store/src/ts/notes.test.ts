@@ -407,9 +407,12 @@ describe("getInputNoteAfter index use", () => {
           after?.txOrder,
           after?.detailsCommitment
         );
-      await page();
-      await page(2, 3);
-      await page(undefined, 2, cursor);
+      const ids = async (...args: Parameters<typeof page>) =>
+        ((await page(...args)) ?? []).map((n) => n.createdAt);
+      // A range that left the consumer would surface an "other-" note here.
+      expect(await ids()).toEqual(["mine-1"]);
+      expect(await ids(2, 3)).toEqual(["mine-2"]);
+      expect(await ids(undefined, 2, cursor)).toEqual(["mine-2"]);
     } finally {
       recorder.stop();
     }
