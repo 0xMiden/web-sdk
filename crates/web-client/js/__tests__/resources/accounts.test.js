@@ -121,6 +121,37 @@ describe("AccountsResource", () => {
       expect(result).toBe("newFaucetResult");
     });
 
+    it.each([
+      ["above 2^53 - 1", Number.MAX_SAFE_INTEGER + 2],
+      ["fractional", 1.5],
+    ])("rejects a maxSupply number that is %s", async (_l, maxSupply) => {
+      const resource = makeResource();
+      await expect(
+        resource.create({
+          type: 0,
+          storage: "public",
+          auth: "falcon",
+          symbol: "USD",
+          decimals: 2,
+          maxSupply,
+        })
+      ).rejects.toThrow(/amount must be a safe integer/);
+      expect(inner.newFaucet).not.toHaveBeenCalled();
+    });
+
+    it("forwards a bigint maxSupply above 2^53 - 1 exactly", async () => {
+      const resource = makeResource();
+      await resource.create({
+        type: 0,
+        storage: "public",
+        auth: "falcon",
+        symbol: "USD",
+        decimals: 2,
+        maxSupply: 9007199254740993n,
+      });
+      expect(inner.newFaucet.mock.calls[0][5]).toBe(9007199254740993n);
+    });
+
     it("falls back to symbol when name is omitted", async () => {
       const resource = makeResource();
       await resource.create({

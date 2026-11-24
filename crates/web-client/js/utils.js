@@ -474,6 +474,16 @@ function checkRetryOption(name, value, cap) {
   }
 }
 
+// BigInt() rounds an unsafe number silently, so reject one before any WASM call.
+export function toAmount(amount, method) {
+  if (typeof amount === "number" && !Number.isSafeInteger(amount)) {
+    throw new Error(
+      `${method}: amount must be a safe integer when given as a number; pass a bigint above 2^53 - 1`
+    );
+  }
+  return BigInt(amount);
+}
+
 // The live clients on each store, keyed by the id the store lock uses, and how
 // many clients have opened each store while it has a live one, which numbers
 // them. Kept on the realm, not the module: the ST and MT builds, and any
