@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import {
-  captureClientCurrency,
   useMidenStore,
   useNotesStore,
   useSyncStateStore,
   useNoteFirstSeenStore,
 } from "../store/MidenStore";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import { isStandardPayment, NoteFilter } from "@miden-sdk/miden-sdk";
 import type { InputNoteRecord } from "@miden-sdk/miden-sdk";
 import type {
@@ -68,6 +68,7 @@ export function useNoteStream(
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const latestRequestRef = useRef(0);
   const handledIdsRef = useRef<Set<string>>(new Set());
   const [handledVersion, setHandledVersion] = useState(0);
 
@@ -90,13 +91,11 @@ export function useNoteStream(
     return new Set(excludeIdsKey.split("\0"));
   }, [excludeIdsKey]);
 
-  const latestRequestRef = useRef(0);
-
   // Fetch notes from client
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
 
-    const isCurrent = captureClientCurrency(client);
+    const isCurrent = captureClientReadGuard(client);
     if (!isCurrent()) return;
 
     const request = ++latestRequestRef.current;
@@ -110,7 +109,7 @@ export function useNoteStream(
       if (!isCurrent()) return;
       setNotesIfChanged(fetched, status);
     } catch (err) {
-      if (!isCurrent()) return;
+      if (!isCurrent() || latestRequestRef.current !== request) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
       // Only a newer fetch can take ownership of this instance's loading flag.

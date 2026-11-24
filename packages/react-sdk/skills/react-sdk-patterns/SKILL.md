@@ -55,6 +55,9 @@ import { MidenProvider } from "@miden-sdk/react";
     proverTimeoutMs: 10000,     // optional: remote-prover request timeout
     proverUrls: { testnet: "...", devnet: "..." },  // optional: override network prover URLs
     seed: seedBytes,            // optional: 32-byte Uint8Array for a deterministic RNG
+    callbackTimeoutMs: 120000,  // optional: connected-signer callback wait in ms; unset leaves sign unlimited,
+                                //   so a stalled signer holds the batch and later worker calls.
+                                //   Contract: https://github.com/0xMiden/web-sdk/blob/main/packages/react-sdk/README.md#keystore-callback-timeouts
   }}
   loadingComponent={<Loading />}  // shown during WASM init
   errorComponent={(error) => <Error error={error} />}  // function form receives the Error; a static element does not
@@ -180,7 +183,7 @@ const meta = assetMetadata.get(faucetId);
 // meta.decimals - 8
 ```
 
-Pass an array even for a single asset - the hook calls `.filter` on its argument, so a bare string throws a runtime `TypeError`.
+Pass an array even for a single asset - the hook calls `.filter` on its argument, so a bare string throws a runtime `TypeError`. Metadata is read from the node the provider's client was created against (`client.endpoint()`), so nothing is fetched until the provider is ready.
 
 ### useTransactionHistory(options?)
 ```tsx
@@ -201,7 +204,7 @@ A note on `ids`: the hook uses `TransactionFilter.ids(...)` only when every entr
 ## Mutation Hooks
 
 Each returns its own action function plus `error` and `reset`. The families differ in their loading/progress fields:
-- **Transaction hooks** (`useSend`, `useMultiSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`, `usePswapCancel`, `usePswapCancelByOrder`, `useTransaction`) expose `isLoading` and `stage` (a `TransactionStage`).
+- **Transaction hooks** (`useSend`, `useMultiSend`, `useBatch`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`, `usePswapCancel`, `usePswapCancelByOrder`, `useTransaction`) expose `isLoading` and `stage` (a `TransactionStage`).
 - **Account create/import hooks** (`useCreateWallet`, `useCreateFaucet`, `useImportAccount`) expose `isCreating` (or `isImporting` for the latter) and have **no** `stage`.
 - **Everything else names its own busy flag**: `useChainAnchor().isCapturing`, `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting`.
 
@@ -260,7 +263,7 @@ const account = await importAccount({
 });
 ```
 
-This hook calls `assertSignerConnected()` before doing anything else. With a signer provider mounted but **disconnected** it throws `"Signer is disconnected. Reconnect your wallet to perform transactions."` It is a no-op in local-keystore mode (`signerConnected === null`) and when the signer is connected. `useImportAccount` and `useMultiSend` are the **only two** hooks that make this check - do not assume the other mutation hooks guard it for you.
+This hook calls `assertSignerConnected()` before doing anything else. With a signer provider mounted but **disconnected** it throws `"Signer is disconnected. Reconnect your wallet to perform transactions."` It is a no-op in local-keystore mode (`signerConnected === null`) and when the signer is connected. `useImportAccount`, `useMultiSend` and `useBatch` are the **only three** hooks that make this check - do not assume the other mutation hooks guard it for you.
 
 ### useSend()
 ```tsx
@@ -319,6 +322,20 @@ await sendMany({
 ```
 
 Resolves to `{ transactionId }`, not `{ txId, note }`. Like `useImportAccount`, it calls `assertSignerConnected()` first and throws on a mounted-but-disconnected signer.
+
+### useBatch()
+```tsx
+const { batch, result, isLoading, stage, error, reset } = useBatch();
+const { blockNumber } = await batch({
+  items: [
+    { account: alice, request: sendReq },     // pre-built TransactionRequest
+    { account: bob, request: consumeReq },    // may consume a note an earlier item produced
+  ],
+  skipSync: false,         // optional: skip the auto-sync before submitting
+});
+```
+
+Submits every item as one atomic batch: every tx lands or none does. Each item pairs a tracked local account with a pre-built `TransactionRequest`; items may span accounts, and push order must respect producer-before-consumer. Resolves to `{ blockNumber }`, the node's chain tip as of submission (not the block the batch commits in), with no per-tx ids. Each tx is proven inside the batch primitive by the client's built-in local prover, so `MidenProvider`'s `prover` setting and its fallback do not apply, and `stage` goes `"executing"` -> `"submitting"` -> `"complete"` without ever reporting `"proving"`. In the browser the batch runs in the client's Web Worker, so the page stays responsive while it proves; with `useWorker: false`, or without `Worker` support, it proves on the calling thread and blocks the page until it settles, so keep batches small there. Through the worker, `sign` waits without a limit unless `callbackTimeoutMs` sets one, so a stalled signer holds the batch and later worker calls; set a finite timeout as the [complete contract](https://github.com/0xMiden/web-sdk/blob/main/packages/react-sdk/README.md#keystore-callback-timeouts) shows. A second `batch()` while one is in flight throws a `MidenError` with `code: "BATCH_BUSY"`. Like `useMultiSend`, it calls `assertSignerConnected()` and throws on a mounted-but-disconnected signer. The hook declares no fee conversion salt, so build a multisig item's request from `client.feeAwareTransactionRequestBuilder(account)`.
 
 ### useMint()
 ```tsx
@@ -610,7 +627,7 @@ import { MidenError, wrapWasmError } from "@miden-sdk/react";
 import type { CodedError, MidenErrorCode, WasmErrorCode } from "@miden-sdk/react";
 ```
 
-- `MidenErrorCode` is the **closed** union assigned by this package: `"WASM_CLASS_MISMATCH" | "WASM_POINTER_CONSUMED" | "WASM_NOT_INITIALIZED" | "WASM_SYNC_REQUIRED" | "SEND_BUSY" | "OPERATION_BUSY" | "STALE_CLIENT" | "UNKNOWN"`. Every `MidenError` carries one, defaulting to `"UNKNOWN"`.
+- `MidenErrorCode` is the **closed** union assigned by this package: `"WASM_CLASS_MISMATCH" | "WASM_POINTER_CONSUMED" | "WASM_NOT_INITIALIZED" | "WASM_SYNC_REQUIRED" | "SEND_BUSY" | "OPERATION_BUSY" | "BATCH_BUSY" | "STALE_CLIENT" | "UNKNOWN"`. Every `MidenError` carries one, defaulting to `"UNKNOWN"`.
 - `WasmErrorCode` is the union assigned by the Rust client and thrown out of WASM: `"INVALID_CHAIN_ANCHOR" | "TRANSACTION_ALREADY_AUTHORIZED"`. These are not `MidenError`s.
 - `CodedError = Error & { readonly code?: MidenErrorCode | WasmErrorCode | (string & {}) }`. The **`(string & {})` arm is open on purpose**: a code from a newer client stays assignable while the known ones keep autocomplete. So `switch` on `code`, but always leave a default branch - the union is not exhaustive of what you can receive.
 
@@ -638,7 +655,7 @@ formatAssetAmount(1000000n, 8)       // "0.01"
 parseAssetAmount("0.01", 8)           // 1000000n
 const summary = getNoteSummary(note); // { id, assets, sender } | null
 formatNoteSummary(summary);           // "1.5 TEST from mtst1..."
-toBech32AccountId("0x1234...");       // "mtst1..." (testnet HRP; defaults to testnet)
+toBech32AccountId("0x1234...");       // "mtst1..." on testnet; the hex ID when the network is unknown
 ```
 
 `getNoteSummary(note, getAssetMetadata?)` takes a `ConsumableNoteRecord | InputNoteRecord` and returns `NoteSummary | null` - **`null`** when the note's id is missing or anything in the read throws, i.e. for a note whose id or metadata is not ready yet. Guard before formatting.
@@ -649,7 +666,7 @@ toBech32AccountId("0x1234...");       // "mtst1..." (testnet HRP; defaults to te
 
 `waitForWalletDetection(adapter, timeoutMs = 5000)` resolves once the adapter's `readyState` reaches `"Installed"` and otherwise rejects with `"Wallet extension not detected within <n>ms."` Its `WalletAdapterLike` argument is a duck type (`{ readyState: string; on/off("readyStateChange", cb) }`) with no dependency on any wallet-adapter package, so it works against any adapter and against a plain fake object.
 
-The HRP is inferred from the configured `rpcUrl` and defaults to testnet: mainnet=`mm`, testnet=`mtst` (default), devnet=`mdev` - there is no `miden` HRP. See `frontend-pitfalls` FP5 for the trap in that inference.
+The HRP is inferred from the client's `endpoint()`, the URL of the node it was created against (testnet when no `rpcUrl` is configured): mainnet=`mm`, testnet=`mtst`, devnet=`mdev`, and a local node gets `mdev` too - there is no `miden` HRP. Before the provider has a client, and for an endpoint naming none of those networks, the helpers return the hex ID. See `frontend-pitfalls` FP5 for the trap in that inference.
 
 ## Direct Client Access
 
@@ -673,7 +690,7 @@ await runExclusive(async () => {
 - **No protocol `AssetId` / `AssetClass` / `AssetVaultKey` type.** Every `assetId` in this package is a faucet (token) account reference - `asset.faucetId().toString()`. Do not "fix" these names to protocol ones.
 - **No `mutable` wallet option and no `storageMode: "network"`.** `CreateWalletOptions` is exactly `{ storageMode?, authScheme?, initSeed? }`.
 
-> **The package's own `README.md` and `ReactSDK.Arena.Findings.md` are stale - do not treat them as authoritative.** The README still documents a `mutable: true` wallet option and `storageMode: 'network'`, neither of which exists in `src/types/index.ts`. The Arena findings file is a proposal document and describes an API that was never shipped in that shape. `src/types/index.ts` plus the hook bodies are the source of truth, and the package's `AGENTS.md` (which ships alongside this skill) is kept current.
+> **The package's own `README.md` and `ReactSDK.Arena.Findings.md` are stale - do not treat them as authoritative.** The README still documents a `mutable: true` wallet option and `storageMode: 'network'`, neither of which exists in `src/types/index.ts`. Its "Keystore Callback Timeouts" section is the exception: it is the complete `callbackTimeoutMs` contract. The Arena findings file is a proposal document and describes an API that was never shipped in that shape. `src/types/index.ts` plus the hook bodies are the source of truth, and the package's `AGENTS.md` (which ships alongside this skill) is kept current.
 
 ## Type Imports
 
@@ -686,6 +703,7 @@ import type {
   QueryResult, MutationResult, TransactionStage, AccountRef,
   AccountsResult, AccountResult, AssetBalance, NotesFilter, NotesResult, NoteSummary,
   SendOptions, SendResult, MultiSendOptions, MultiSendRecipient,
+  BatchItemInput, BatchOptions, BatchResult,
   MintOptions, ConsumeOptions, SwapOptions, BridgeOptions,
   CreateNetworkNoteOptions, NetworkNoteResult,
   PswapCreateOptions, PswapConsumeOptions, PswapCancelOptions,

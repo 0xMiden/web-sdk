@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
-import { captureClientCurrency, useMidenStore } from "../store/MidenStore";
+import { useMidenStore } from "../store/MidenStore";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import {
   AccountStorageMode,
   isConsumableNow,
@@ -141,7 +142,7 @@ export function useSessionAccount(
     }
 
     assertSignerConnected(signerConnected);
-    const isClientCurrent = captureClientCurrency(client);
+    const isClientCurrent = captureClientReadGuard(client);
     const isCurrent = () =>
       mountedRef.current &&
       identityRef.current === identity &&
@@ -344,7 +345,12 @@ async function waitAndConsume(
       return;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        Math.max(0, Math.min(pollIntervalMs, deadline - Date.now()))
+      )
+    );
     if (!isCurrent()) return;
   }
 

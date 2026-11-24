@@ -344,6 +344,655 @@ describe("MidenFiSignerProvider", () => {
       expect(mockAdapter.connect).toHaveBeenCalledTimes(1);
     });
 
+    it("autoConnect does not retry a rejected connection", async () => {
+      const onError = vi.fn();
+      const rejection = new Error("User rejected the connection");
+      mockAdapter = createMockAdapter({ readyState: "Installed" });
+      mockAdapter.connect.mockImplementation(async () => {
+        // Park a runaway retry loop so a regression fails the assertion
+        // below instead of timing out the test.
+        if (mockAdapter.connect.mock.calls.length > 5) {
+          return new Promise(() => {});
+        }
+        mockAdapter.emit("error", rejection);
+        throw rejection;
+      });
+      render(
+        <MidenFiSignerProvider autoConnect={true} onError={onError}>
+          <div />
+        </MidenFiSignerProvider>
+      );
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await flushPromises();
+        });
+      }
+
+      expect(mockAdapter.connect).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledWith(rejection);
+    });
+
+    it("autoConnect failure keeps a lone wallet selected without disconnecting", async () => {
+      const onError = vi.fn();
+      const rejection = new Error("User rejected the connection");
+      mockAdapter = createMockAdapter({ readyState: "Installed" });
+      mockAdapter.connect.mockImplementation(async () => {
+        if (mockAdapter.connect.mock.calls.length > 5) {
+          return new Promise(() => {});
+        }
+        mockAdapter.emit("error", rejection);
+        throw rejection;
+      });
+      const removeItem = vi.spyOn(Storage.prototype, "removeItem");
+      try {
+        const { result } = renderHook(() => useMidenFiWallet(), {
+          wrapper: ({ children }) => (
+            <MidenFiSignerProvider autoConnect={true} onError={onError}>
+              {children}
+            </MidenFiSignerProvider>
+          ),
+        });
+        for (let i = 0; i < 5; i++) {
+          await act(async () => {
+            await flushPromises();
+          });
+        }
+
+        expect(mockAdapter.connect).toHaveBeenCalledTimes(1);
+        expect(mockAdapter.disconnect).not.toHaveBeenCalled();
+        expect(removeItem).not.toHaveBeenCalledWith("walletName");
+        expect(localStorage.getItem("walletName")).toBe(
+          JSON.stringify("Bread Wallet")
+        );
+        expect(result.current.wallet?.adapter.name).toBe("Bread Wallet");
+      } finally {
+        removeItem.mockRestore();
+      }
+    });
+
+    it("select() retries autoConnect for the already-selected lone wallet", async () => {
+      const onError = vi.fn();
+      const rejection = new Error("User rejected the connection");
+      mockAdapter = createMockAdapter({ readyState: "Installed" });
+      mockAdapter.connect.mockImplementation(async () => {
+        if (mockAdapter.connect.mock.calls.length > 5) {
+          return new Promise(() => {});
+        }
+        mockAdapter.emit("error", rejection);
+        throw rejection;
+      });
+      const { result } = renderHook(() => useMidenFiWallet(), {
+        wrapper: ({ children }) => (
+          <MidenFiSignerProvider autoConnect={true} onError={onError}>
+            {children}
+          </MidenFiSignerProvider>
+        ),
+      });
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await flushPromises();
+        });
+      }
+      expect(mockAdapter.connect).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        result.current.select("Bread Wallet" as any);
+        await flushPromises();
+      });
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await flushPromises();
+        });
+      }
+
+      expect(mockAdapter.connect).toHaveBeenCalledTimes(2);
+      expect(onError).toHaveBeenCalledTimes(2);
+    });
+
+    it("multi-wallet autoConnect failure clears the selection and select() retries", async () => {
+      const onError = vi.fn();
+      const rejection = new Error("User rejected the connection");
+      const adapterA = createMockAdapter({
+        name: "Wallet A",
+        readyState: "Installed",
+      });
+      adapterA.connect.mockImplementation(async () => {
+        if (adapterA.connect.mock.calls.length > 5) {
+          return new Promise(() => {});
+        }
+        adapterA.emit("error", rejection);
+        throw rejection;
+      });
+      const adapterB = createMockAdapter({ name: "Wallet B" });
+      const wallets = [adapterA, adapterB];
+      localStorage.setItem("walletName", JSON.stringify("Wallet A"));
+
+      const { result } = renderHook(() => useMidenFiWallet(), {
+        wrapper: ({ children }) => (
+          <MidenFiSignerProvider
+            wallets={wallets as any}
+            autoConnect={true}
+            onError={onError}
+          >
+            {children}
+          </MidenFiSignerProvider>
+        ),
+      });
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await flushPromises();
+        });
+      }
+
+      expect(adapterA.connect).toHaveBeenCalledTimes(1);
+      expect(result.current.wallet).toBeNull();
+      expect(localStorage.getItem("walletName")).toBeNull();
+
+      await act(async () => {
+        result.current.select("Wallet A" as any);
+        await flushPromises();
+      });
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await flushPromises();
+        });
+      }
+
+      expect(adapterA.connect).toHaveBeenCalledTimes(2);
+    });
+
+    it("sole-wallet select() followed by rejected connect() does not re-trigger autoConnect or disconnect", async () => {
+      const onError = vi.fn();
+      const rejection = new Error("User rejected the connection");
+      mockAdapter = createMockAdapter({ readyState: "Installed" });
+      mockAdapter.connect.mockImplementation(async () => {
+        if (mockAdapter.connect.mock.calls.length > 5) {
+          return new Promise(() => {});
+        }
+        mockAdapter.emit("error", rejection);
+        throw rejection;
+      });
+
+      const { result } = renderHook(() => useMidenFiWallet(), {
+        wrapper: ({ children }) => (
+          <MidenFiSignerProvider autoConnect={true} onError={onError}>
+            {children}
+          </MidenFiSignerProvider>
+        ),
+      });
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await flushPromises();
+        });
+      }
+      expect(mockAdapter.connect).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        result.current.select("Bread Wallet" as any);
+        await expect(result.current.connect()).rejects.toThrow(
+          "User rejected the connection"
+        );
+      });
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await flushPromises();
+        });
+      }
+
+      expect(mockAdapter.connect).toHaveBeenCalledTimes(2);
+      expect(mockAdapter.disconnect).not.toHaveBeenCalled();
+    });
+
+    it("disconnecting a sole wallet with autoConnect does not immediately reconnect", async () => {
+      mockAdapter = createMockAdapter({ readyState: "Installed" });
+      mockAdapter.connect.mockImplementation(async () => {
+        if (mockAdapter.connect.mock.calls.length > 5) {
+          return new Promise(() => {});
+        }
+        mockAdapter.connected = true;
+        mockAdapter.address = "mtst1testaddress";
+        mockAdapter.publicKey = new Uint8Array(32);
+        mockAdapter.emit("connect", "mtst1testaddress");
+      });
+      mockAdapter.disconnect.mockImplementation(async () => {
+        mockAdapter.connected = false;
+        mockAdapter.address = null;
+        mockAdapter.publicKey = null;
+        mockAdapter.emit("disconnect");
+      });
+
+      const { result } = renderHook(() => useMidenFiWallet(), {
+        wrapper: ({ children }) => (
+          <MidenFiSignerProvider autoConnect={true}>
+            {children}
+          </MidenFiSignerProvider>
+        ),
+      });
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await flushPromises();
+        });
+      }
+      expect(mockAdapter.connect).toHaveBeenCalledTimes(1);
+      expect(result.current.connected).toBe(true);
+
+      await act(async () => {
+        await result.current.disconnect();
+      });
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await flushPromises();
+        });
+      }
+
+      expect(mockAdapter.disconnect).toHaveBeenCalledTimes(1);
+      expect(mockAdapter.connect).toHaveBeenCalledTimes(1);
+      expect(result.current.connected).toBe(false);
+    });
+
+    it("stale autoConnect rejection after switching wallets does not clear the new selection", async () => {
+      let rejectFirst!: (err: Error) => void;
+      const adapterA = createMockAdapter({
+        name: "Wallet A",
+        readyState: "Installed",
+      });
+      adapterA.connect.mockImplementation(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectFirst = reject;
+          })
+      );
+      const adapterB = createMockAdapter({
+        name: "Wallet B",
+        readyState: "Installed",
+      });
+      const wallets = [adapterA, adapterB];
+      localStorage.setItem("walletName", JSON.stringify("Wallet A"));
+
+      const { result } = renderHook(() => useMidenFiWallet(), {
+        wrapper: ({ children }) => (
+          <MidenFiSignerProvider wallets={wallets as any} autoConnect={true}>
+            {children}
+          </MidenFiSignerProvider>
+        ),
+      });
+      await act(async () => {
+        await flushPromises();
+      });
+      expect(adapterA.connect).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        result.current.select("Wallet B" as any);
+        await flushPromises();
+      });
+      expect(adapterB.connect).not.toHaveBeenCalled();
+
+      await act(async () => {
+        rejectFirst(new Error("aborted"));
+        await flushPromises();
+      });
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await flushPromises();
+        });
+      }
+
+      expect(adapterB.connect).toHaveBeenCalledTimes(1);
+      expect(result.current.wallet?.adapter.name).toBe("Wallet B");
+      expect(localStorage.getItem("walletName")).toBe(
+        JSON.stringify("Wallet B")
+      );
+    });
+
+    it("wallets expanding mid-autoConnect preserves rejection cleanup and listener stability", async () => {
+      let rejectFirst!: (err: Error) => void;
+      const adapterA = createMockAdapter({
+        name: "Wallet A",
+        readyState: "Installed",
+      });
+      adapterA.connect.mockImplementation(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectFirst = reject;
+          })
+      );
+      const adapterB = createMockAdapter({
+        name: "Wallet B",
+        readyState: "Installed",
+      });
+      let currentWallets: any[] = [adapterA];
+
+      const { result, rerender } = renderHook(() => useMidenFiWallet(), {
+        wrapper: ({ children }) => (
+          <MidenFiSignerProvider
+            wallets={currentWallets as any}
+            autoConnect={true}
+          >
+            {children}
+          </MidenFiSignerProvider>
+        ),
+      });
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await flushPromises();
+        });
+      }
+      expect(adapterA.connect).toHaveBeenCalledTimes(1);
+
+      currentWallets = [adapterA, adapterB];
+      await act(async () => {
+        rerender();
+        await flushPromises();
+      });
+      expect(
+        adapterA.off.mock.calls.filter(([event]) => event === "disconnect")
+      ).toHaveLength(0);
+
+      await act(async () => {
+        rejectFirst(new Error("rejected after wallets expanded"));
+        await flushPromises();
+      });
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await flushPromises();
+        });
+      }
+
+      expect(result.current.wallet).toBeNull();
+      expect(localStorage.getItem("walletName")).toBeNull();
+    });
+
+    it("StrictMode remount and mid-flight prop update preserve autoConnect rejection cleanup", async () => {
+      let rejectFirst!: (err: Error) => void;
+      const adapterA = createMockAdapter({
+        name: "Wallet A",
+        readyState: "Installed",
+      });
+      adapterA.connect.mockImplementation(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectFirst = reject;
+          })
+      );
+      const adapterB = createMockAdapter({ name: "Wallet B" });
+      const wallets = [adapterA, adapterB];
+      let permission = "None" as any;
+      localStorage.setItem("walletName", JSON.stringify("Wallet A"));
+
+      const { result, rerender } = renderHook(() => useMidenFiWallet(), {
+        wrapper: ({ children }) => (
+          <React.StrictMode>
+            <MidenFiSignerProvider
+              wallets={wallets as any}
+              autoConnect={true}
+              privateDataPermission={permission}
+            >
+              {children}
+            </MidenFiSignerProvider>
+          </React.StrictMode>
+        ),
+      });
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await flushPromises();
+        });
+      }
+      expect(adapterA.connect).toHaveBeenCalledTimes(1);
+
+      permission = "UponRequest";
+      await act(async () => {
+        rerender();
+        await flushPromises();
+      });
+
+      await act(async () => {
+        rejectFirst(new Error("rejected after StrictMode and prop update"));
+        await flushPromises();
+      });
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await flushPromises();
+        });
+      }
+
+      expect(adapterA.connect).toHaveBeenCalledTimes(1);
+      expect(result.current.wallet).toBeNull();
+      expect(localStorage.getItem("walletName")).toBeNull();
+    });
+
+    it("same-wallet select during in-flight autoConnect does not orphan rejection cleanup", async () => {
+      let rejectFirst!: (err: Error) => void;
+      const adapterA = createMockAdapter({
+        name: "Wallet A",
+        readyState: "Installed",
+      });
+      adapterA.connect.mockImplementation(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectFirst = reject;
+          })
+      );
+      const adapterB = createMockAdapter({ name: "Wallet B" });
+      localStorage.setItem("walletName", JSON.stringify("Wallet A"));
+
+      const { result } = renderHook(() => useMidenFiWallet(), {
+        wrapper: ({ children }) => (
+          <MidenFiSignerProvider
+            wallets={[adapterA, adapterB] as any}
+            autoConnect={true}
+          >
+            {children}
+          </MidenFiSignerProvider>
+        ),
+      });
+      await act(async () => {
+        await flushPromises();
+      });
+      expect(adapterA.connect).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        result.current.select("Wallet A" as any);
+        await flushPromises();
+      });
+
+      await act(async () => {
+        rejectFirst(new Error("rejected after same-wallet select"));
+        await flushPromises();
+      });
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await flushPromises();
+        });
+      }
+
+      expect(result.current.wallet).toBeNull();
+      expect(localStorage.getItem("walletName")).toBeNull();
+    });
+
+    it("outgoing adapter disconnect during select render lag does not clear new selection", async () => {
+      const adapterA = createMockAdapter({
+        name: "Wallet A",
+        readyState: "Installed",
+      });
+      const adapterB = createMockAdapter({
+        name: "Wallet B",
+        readyState: "Installed",
+      });
+      localStorage.setItem("walletName", JSON.stringify("Wallet A"));
+
+      const { result } = renderHook(() => useMidenFiWallet(), {
+        wrapper: ({ children }) => (
+          <MidenFiSignerProvider
+            wallets={[adapterA, adapterB] as any}
+            autoConnect={false}
+          >
+            {children}
+          </MidenFiSignerProvider>
+        ),
+      });
+      await act(async () => {
+        await flushPromises();
+      });
+      expect(result.current.wallet?.adapter.name).toBe("Wallet A");
+
+      await act(async () => {
+        result.current.select("Wallet B" as any);
+        adapterA.emit("disconnect");
+        await flushPromises();
+      });
+
+      expect(result.current.wallet?.adapter.name).toBe("Wallet B");
+      expect(localStorage.getItem("walletName")).toBe(
+        JSON.stringify("Wallet B")
+      );
+    });
+
+    it("selecting an Installed wallet during pending disconnect defers autoConnect until settled", async () => {
+      let resolveDisconnect!: () => void;
+      const adapterA = createMockAdapter({
+        name: "Wallet A",
+        readyState: "Installed",
+        connected: true,
+        address: "mtst1a",
+        publicKey: new Uint8Array(32),
+      });
+      adapterA.disconnect.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveDisconnect = resolve;
+          })
+      );
+      const adapterB = createMockAdapter({
+        name: "Wallet B",
+        readyState: "Installed",
+      });
+      localStorage.setItem("walletName", JSON.stringify("Wallet A"));
+
+      const { result } = renderHook(() => useMidenFiWallet(), {
+        wrapper: ({ children }) => (
+          <MidenFiSignerProvider
+            wallets={[adapterA, adapterB] as any}
+            autoConnect={true}
+          >
+            {children}
+          </MidenFiSignerProvider>
+        ),
+      });
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await flushPromises();
+        });
+      }
+
+      let disconnectPromise!: Promise<void>;
+      await act(async () => {
+        disconnectPromise = result.current.disconnect();
+        adapterA.connected = false;
+        adapterA.emit("disconnect");
+        result.current.select("Wallet B" as any);
+        await flushPromises();
+      });
+      expect(adapterB.connect).not.toHaveBeenCalled();
+
+      await act(async () => {
+        resolveDisconnect();
+        await disconnectPromise;
+        await flushPromises();
+      });
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await flushPromises();
+        });
+      }
+
+      expect(adapterB.connect).toHaveBeenCalledTimes(1);
+      expect(result.current.wallet?.adapter.name).toBe("Wallet B");
+    });
+
+    it("stale manual connect and disconnect rejections after switching wallets do not clear the new selection", async () => {
+      let rejectConnect!: (err: Error) => void;
+      let rejectDisconnect!: (err: Error) => void;
+      const adapterA = createMockAdapter({
+        name: "Wallet A",
+        readyState: "Installed",
+      });
+      adapterA.connect.mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectConnect = reject;
+          })
+      );
+      const adapterB = createMockAdapter({
+        name: "Wallet B",
+        readyState: "Installed",
+      });
+      localStorage.setItem("walletName", JSON.stringify("Wallet A"));
+
+      const { result } = renderHook(() => useMidenFiWallet(), {
+        wrapper: ({ children }) => (
+          <MidenFiSignerProvider
+            wallets={[adapterA, adapterB] as any}
+            autoConnect={false}
+          >
+            {children}
+          </MidenFiSignerProvider>
+        ),
+      });
+      await act(async () => {
+        await flushPromises();
+      });
+
+      let connectPromise!: Promise<void>;
+      await act(async () => {
+        connectPromise = result.current.connect();
+        result.current.select("Wallet B" as any);
+        await flushPromises();
+      });
+
+      await act(async () => {
+        rejectConnect(new Error("stale connect failure"));
+        await expect(connectPromise).rejects.toThrow("stale connect failure");
+        await flushPromises();
+      });
+
+      expect(result.current.wallet?.adapter.name).toBe("Wallet B");
+      expect(localStorage.getItem("walletName")).toBe(
+        JSON.stringify("Wallet B")
+      );
+
+      await act(async () => {
+        result.current.select("Wallet A" as any);
+        await flushPromises();
+      });
+
+      adapterA.disconnect.mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectDisconnect = reject;
+          })
+      );
+      let disconnectPromise!: Promise<void>;
+      await act(async () => {
+        disconnectPromise = result.current.disconnect();
+        result.current.select("Wallet B" as any);
+        await flushPromises();
+      });
+
+      await act(async () => {
+        rejectDisconnect(new Error("stale disconnect failure"));
+        await expect(disconnectPromise).rejects.toThrow(
+          "stale disconnect failure"
+        );
+        await flushPromises();
+      });
+
+      expect(result.current.wallet?.adapter.name).toBe("Wallet B");
+      expect(localStorage.getItem("walletName")).toBe(
+        JSON.stringify("Wallet B")
+      );
+    });
+
     it("autoConnect does not connect a Loadable wallet", async () => {
       mockAdapter = createMockAdapter({ readyState: "Loadable" });
       render(

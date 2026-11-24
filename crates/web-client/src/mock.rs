@@ -69,6 +69,7 @@ impl WebClient {
         let protocol_config = mock_rpc_api.protocol_config();
         self.setup_client(
             mock_rpc_api.clone(),
+            None,
             store,
             keystore,
             rng,
@@ -133,6 +134,7 @@ impl WebClient {
         let protocol_config = mock_rpc_api.protocol_config();
         self.setup_client(
             mock_rpc_api.clone(),
+            None,
             store,
             keystore,
             rng,

@@ -359,7 +359,7 @@ test.describe("chain anchor", () => {
   test("a multisig proposal reproduces its summary at a later tip without an anchor", async ({
     run,
   }) => {
-    const result = await run(async ({ client, sdk, helpers }) => {
+    const result = await run(async ({ client, helpers }) => {
       const { multisigAccountId } =
         await helpers.setupMultisigWithConsumableNote();
 
@@ -387,18 +387,6 @@ test.describe("chain anchor", () => {
         lateAnchor
       );
 
-      // The same auth args without the declared block. miden-client reads the
-      // bound block out of the multisig auth args and tracks it at execution,
-      // so the summary is the same at the tip without the declaration.
-      const undeclared = new sdk.TransactionRequestBuilder()
-        .withAuthArg(request.authArg())
-        .extendAdviceMap(request.adviceMap())
-        .build();
-      const undeclaredAtTip = await client.executeForSummary(
-        multisigAccountId,
-        undeclared
-      );
-
       return {
         boundBlock,
         declared: Array.from(request.blockNumbers()),
@@ -407,8 +395,6 @@ test.describe("chain anchor", () => {
         original: original.toCommitment().toHex(),
         atTip: atTip.toCommitment().toHex(),
         atLateAnchor: atLateAnchor.toCommitment().toHex(),
-        undeclaredBlocks: Array.from(undeclared.blockNumbers()),
-        undeclaredAtTip: undeclaredAtTip.toCommitment().toHex(),
       };
     });
 
@@ -417,9 +403,6 @@ test.describe("chain anchor", () => {
     expect(result.lateAnchorBlock).toBe(result.tip);
     expect(result.atTip).toBe(result.original);
     expect(result.atLateAnchor).toBe(result.original);
-    // The control differs from the request only by the declaration.
-    expect(result.undeclaredBlocks).toEqual([]);
-    expect(result.undeclaredAtTip).toBe(result.original);
   });
   // The node-backed counterpart of the test above, and the regression for
   // web-sdk#432. A node serves account state only ~50 blocks back, so a

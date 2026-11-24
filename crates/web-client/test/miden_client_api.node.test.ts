@@ -63,6 +63,18 @@ test("native account visibility selects the builder's account type", async ({
 });
 
 test.describe("MidenClient API - Mock Chain", () => {
+  test("endpoint: a mock client reports none, an RpcClient its own", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const rpcClient = new sdk.RpcClient(sdk.Endpoint.devnet());
+
+    expect(client.endpoint()).toBeUndefined();
+    expect(rpcClient.endpoint()).toBe(sdk.Endpoint.devnet().toString());
+  });
+
   test("full flow: create accounts, mint, consume, check balance", async ({
     sdk,
   }) => {

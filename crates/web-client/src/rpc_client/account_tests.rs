@@ -135,6 +135,7 @@ fn account_fixture(
             vault_details: Some(proto::AccountVaultDetails {
                 too_many_assets: oversize_vault,
                 assets: if oversize_vault { vec![] } else { vec![asset.into()] },
+                partial_vault: None,
             }),
         }),
     };

@@ -69,8 +69,9 @@ export function App() {
 ```
 
 `network`, `privateDataPermission` and `allowedPrivateData` belong on the
-provider. `connect()` takes no arguments in practice: the provider's `connect`
-ignores anything passed to it and forwards its own props to the adapter.
+provider. `connect()` takes no arguments in practice for `WalletProvider` and
+`MidenFiSignerProvider`: each provider's `connect` ignores anything passed to
+it and forwards its own props to the adapter.
 
 ### B. The wallet holds the key, your app drives `MidenClient`
 
@@ -105,8 +106,18 @@ with `importAccountId`, `accountType` (default
 `"RegularAccountImmutableCode"`), `storageMode` (`"private" | "public"`,
 default `"public"`) and `customComponents`.
 
-Read wallet state inside it with `useMidenFiWallet()`, which throws if it is
-rendered outside the provider, or with `useWallet()` from the same package.
+Read wallet state inside it with `useMidenFiWallet()`, or with `useWallet()`
+from the same package. `useMidenFiWallet()` returns the private context when
+that value is non-empty. When the private context is empty, the hook accepts
+the exported `WalletContext` value only if `createAccount` is a function, so
+a package `WalletContext.Provider` whose value includes `createAccount`
+satisfies the hook. A plain `WalletProvider` still throws
+`useMidenFiWallet must be used within MidenFiSignerProvider`. On that
+exported-context fallback, `connect` forwards `privateDataPermission`,
+`network`, and optional `allowedPrivateData`, and rejects with
+`useMidenFiWallet connect requires privateDataPermission and network` when
+either required argument is omitted.
+The fallback `connect` keeps the identity of the canonical `connect` it forwards to, so a rerender that passes the same function does not rerun an effect that depends on `connect`.
 
 ## The readiness lifecycle
 
@@ -126,8 +137,10 @@ With `WalletProvider` you must select first or `connect()` throws
 `WalletNotSelectedError`.
 
 If `readyState` is neither `Installed` nor `Loadable`, the provider's
-`connect()` clears the stored name, opens `adapter.url` in a new tab (the
-extension's store listing) and throws `WalletNotReadyError`.
+`connect()` clears the stored name (except in single-wallet
+`MidenFiSignerProvider`, which keeps the sole wallet selected), opens
+`adapter.url` in a new tab (the extension's store listing), and throws
+`WalletNotReadyError`.
 
 While `Loadable`, `MidenWalletAdapter.openInBread()` navigates the current tab
 to `getBreadOpenLink()`, which is `BREAD_OPEN_LINK_BASE` with the page URL
@@ -149,9 +162,13 @@ state that selects Bread and calls `openInBread()` from inside the tap;
 opening the modal with a `Loadable` Bread selected connects nothing.
 
 `autoConnect` is off by default. When on, it connects as soon as a stored
-wallet resolves to an `Installed` adapter, and clears the stored name if that
-fails. It never connects a `Loadable` one, which would hand off to its app on
-page load. It never rethrows; the failure reaches you through `onError` only.
+wallet resolves to an `Installed` adapter; `WalletProvider` and multi-wallet
+`MidenFiSignerProvider` clear the stored name if that fails, whereas
+single-wallet `MidenFiSignerProvider` keeps the sole wallet selected in
+`localStorage` and suppresses `autoConnect` retries until `select()` is called
+explicitly (while manual `connect()` still works). It never connects a
+`Loadable` one, which would hand off to its app on page load. It never rethrows;
+the failure reaches you through `onError` only.
 
 Connecting twice is deliberately not a no-op. A second `connect()` re-drives
 the handshake so a dApp whose JS context survived a park and restore gets its

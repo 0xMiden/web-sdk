@@ -297,6 +297,30 @@ export interface ClientOptions {
     sign: SignCallback;
   };
   /**
+   * How long, in milliseconds, the client waits for each `keystore` callback
+   * (`getKey`, `insertKey`, `sign`) before the call that needed it fails with
+   * `Callback <id> timed out after <n>ms`.
+   *
+   * Applies only when the callbacks run through the Web Worker (the browser
+   * default; see `useWorker`). Left unset, `sign` waits without a limit, since
+   * it can wait on a person approving in a wallet or on a hardware device, and
+   * `getKey` and `insertKey` time out after 30 seconds. A positive value applies
+   * to all three callbacks, rounded up to a whole millisecond, and `0` removes
+   * the limit for all three. Throws a `TypeError` at creation for a negative,
+   * non-finite, non-number, or greater-than-2147483647 value.
+   *
+   * Without a limit, a stalled `sign` holds its batch or transaction and leaves
+   * later worker calls in the queue; set a finite value if a signer can stall.
+   * See https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
+   *
+   * Under the Web Worker, a callback that throws counts as a failure whatever
+   * it throws: an `Error`, a string, an object such as `{ code: 4001 }`, or
+   * `null`. Cyclic causes are reported as a finite cause chain, and unreadable
+   * thrown properties use a safe fallback message. A failed `sign` fails the
+   * call with an error that includes the thrown value's message.
+   */
+  callbackTimeoutMs?: number;
+  /**
    * Enable the Web Worker shim that runs WASM calls off the main thread.
    * Defaults to `true` — leave it that way in browsers/extensions so the UI
    * stays responsive while WASM is busy.
@@ -647,14 +671,18 @@ export interface ConsumeAllOptions extends TransactionOptions {
 }
 
 /**
- * A single operation inside a transaction batch. The shape mirrors the
- * singular options types (`SendOptions`, `MintOptions`, ...) minus the
- * `account` field — the executing account is set once at the batch level
- * and shared by every operation (V1 single-account constraint).
+ * A single operation inside a transaction batch. Each shape carries the
+ * request-building fields of its singular options type (`SendOptions`,
+ * `MintOptions`, ...) and none of the per-submission ones. Each operation
+ * specifies which local account executes it via `account`; a batch may mix
+ * operations across any combination of local accounts. Neither `prover`,
+ * `waitForConfirmation` and `timeout` nor `returnNote`, which selects a
+ * different request shape, has any per-operation meaning.
  */
 export type BatchOperation =
   | {
       kind: "send";
+      account: AccountRef;
       to: AccountRef;
       token: AccountRef;
       amount: number | bigint;
@@ -664,16 +692,19 @@ export type BatchOperation =
     }
   | {
       kind: "mint";
+      account: AccountRef;
       to: AccountRef;
       amount: number | bigint;
       type?: NoteVisibility;
     }
   | {
       kind: "consume";
+      account: AccountRef;
       notes: NoteInput | NoteInput[];
     }
   | {
       kind: "swap";
+      account: AccountRef;
       offer: Asset;
       request: Asset;
       type?: NoteVisibility;
@@ -681,6 +712,7 @@ export type BatchOperation =
     }
   | {
       kind: "execute";
+      account: AccountRef;
       script: TransactionScript;
       foreignAccounts?: (
         | AccountRef
@@ -690,18 +722,24 @@ export type BatchOperation =
   | {
       /** Escape hatch for pre-built TransactionRequests. */
       kind: "custom";
+      account: AccountRef;
       request: TransactionRequest;
     };
 
 export interface BatchOptions {
-  /** The account executing every operation in the batch (single-account in V1). */
-  account: AccountRef;
   /** Operations to execute atomically as a batch. Must be non-empty. */
   operations: BatchOperation[];
   /**
-   * Wait until the batch's block has been observed in the local sync height.
-   * Differs from singular `waitForConfirmation`: the V1 batch API returns
-   * only a block number, so we poll chain height rather than per-tx status.
+   * Poll until the local sync height reaches the block number returned by the
+   * submission.
+   *
+   * Does not currently work on a batch: the poll's sync step calls a method
+   * that does not exist, so it cannot advance the height and the call throws
+   * `Batch confirmation timed out` unless the client is already at or past
+   * that height. Even once fixed it would be a weak signal, since the number
+   * is the tip as of submission rather than the batch's commit block. See
+   * https://github.com/0xMiden/web-sdk/issues/314. Sync and check
+   * `transactions.list()` or the account nonce instead.
    */
   waitForConfirmation?: boolean;
   /** Wall-clock polling timeout for `waitForConfirmation` (default 60_000ms). */
@@ -709,7 +747,10 @@ export interface BatchOptions {
 }
 
 export interface BatchSubmitResult {
-  /** The block number the batch was accepted into. */
+  /**
+   * The node's chain tip as of submission — not the block the batch commits
+   * in. Sync to learn where it landed.
+   */
   blockNumber: number;
 }
 
@@ -970,7 +1011,12 @@ export type WaitStatus = "pending" | "submitted" | "committed";
 export interface WaitOptions {
   /** Wall-clock polling timeout in ms (default: 60_000). Set to 0 to disable timeout and poll indefinitely. */
   timeout?: number;
-  /** Polling interval in ms (default: 5_000). */
+  /**
+   * Polling interval in ms (default: 5_000). When `timeout` is set, the wait
+   * between polls ends at the timeout, so `waitFor` gives up at the deadline
+   * rather than up to one interval later. A sync or query already in flight
+   * still finishes first.
+   */
   interval?: number;
   onProgress?: (status: WaitStatus) => void;
 }
@@ -1482,19 +1528,26 @@ export interface TransactionsResource {
   ): Promise<TransactionSubmission>;
 
   /**
-   * Execute a heterogeneous batch of operations against a single account.
-   * Each operation is built, proven individually and as a batch, and all
-   * operations are submitted atomically — either every tx in the batch
-   * lands or none does.
-   *
-   * V1 supports only same-account batches (mirrors the underlying Rust
-   * `Client::new_transaction_batch()` constraint).
+   * Execute a heterogeneous batch of operations across one or more local
+   * accounts. Each operation specifies its executing `account`. Each
+   * operation is proven individually as it is added, then a single batch
+   * proof is produced over all of them and submitted as one batch; the node
+   * commits them together or not at all. Every proof runs inside the batch
+   * primitive on the client's built-in local prover, so `proverUrl` does not
+   * apply to batches.
+   * In the browser the batch is forwarded to the client's Web Worker, so the
+   * page's main thread stays responsive; without a worker (`useWorker: false`,
+   * or no `Worker` in the environment), and on a mock client, it proves on the
+   * calling thread and blocks it until it settles.
+   * Through the worker, `sign` waits without a limit unless `callbackTimeoutMs`
+   * sets one, so a stalled signer holds the batch and later worker calls. See
+   * https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
    *
    * The named operations attach fee conversion info themselves; a request you
    * supply through the `custom` operation is subject to the fee checks
    * described on {@link submitBatch}, which this delegates to.
    *
-   * @param options - Batch options including the account and operations.
+   * @param options - Batch options including the operations array.
    */
   batch(options: BatchOptions): Promise<BatchSubmitResult>;
 
@@ -1513,17 +1566,27 @@ export interface TransactionsResource {
    * {@link MidenClient.feeAwareTransactionRequestBuilder}, or pass a finished
    * one through {@link MidenClient.withFeeAwareAuth} before batching it.
    *
-   * The account's code is read once for the whole batch, not once per request,
-   * since a batch is single-account by contract.
+   * @param items - Per-tx (account, request) pairs (must be non-empty).
+   * @param options - Optional batch settings (timeout, and `waitForConfirmation`,
+   *   which does not currently work, see its own documentation and #314).
+   *   There is no prover option: every transaction is proven inside the batch
+   *   primitive by the client's built-in local prover, and `proverUrl` does not
+   *   apply.
+   *   In the browser the batch runs in the client's Web Worker where it has
+   *   one; see {@link batch} for when it runs in-thread instead.
    *
-   * @param account - The account executing every transaction in the batch.
-   * @param requests - Pre-built transaction requests (must be non-empty).
-   * @param options - Optional batch settings (waitForConfirmation, timeout, prover).
+   *   With an external keystore and a worker, signing happens at push time
+   *   and this wrapper treats a failed push as fatal, so one failed or timed
+   *   out signature callback fails the whole batch. `sign` has no time limit
+   *   unless `callbackTimeoutMs` sets one, so a stalled signer holds the batch
+   *   and later worker calls. See
+   *   https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
+   *   Relatedly, `lastAuthError()` reads the main-thread instance, so it does
+   *   not report a forwarded batch's auth error.
    */
   submitBatch(
-    account: AccountRef,
-    requests: TransactionRequest[],
-    options?: Omit<BatchOptions, "account" | "operations">
+    items: { account: AccountRef; request: TransactionRequest }[],
+    options?: Omit<BatchOptions, "operations">
   ): Promise<BatchSubmitResult>;
 
   /** Execute a program (view call) and return the resulting stack output. */
@@ -2066,6 +2129,20 @@ export declare class MidenClient {
   storeIdentifier(): Promise<string>;
 
   /**
+   * Returns the URL of the node this client was created against, e.g.
+   * `"https://rpc.devnet.miden.io"`.
+   *
+   * The value is fixed at creation and read synchronously. `rpcUrl` shorthands
+   * are already resolved, and a client created without `rpcUrl` reports the
+   * testnet endpoint it defaulted to. A mock client ({@link MidenClient.createMock})
+   * talks to no node and returns `undefined`.
+   *
+   * Use it to point a standalone `RpcClient` at the same node:
+   * `new RpcClient(new Endpoint(client.endpoint()!))`.
+   */
+  endpoint(): string | undefined;
+
+  /**
    * Returns a `TransactionRequestBuilder` that already declares a fee
    * conversion salt where the account that will execute the request needs one.
    *
@@ -2088,9 +2165,9 @@ export declare class MidenClient {
    * - **A custom auth procedure that reads conversion info** — miden-client
    *   does not recognise the component and commits nothing, so the transaction
    *   aborts in the VM with `ERR_FEE_CONVERSION_INFO_MISSING`. Attach the
-   *   commitment yourself with `TransactionRequestBuilder.withAuthArg` plus
-   *   `extendAdviceMap`, or on a finished request with
-   *   `request.withAuthArgs(preimage)`.
+   *   auth args yourself with `TransactionRequestBuilder.withAuthArgs`, which
+   *   sets the commitment and adds its advice-map preimage, or on a finished
+   *   request with `request.withAuthArgs(preimage)`.
    *
    * The `new*TransactionRequest` constructors declare it, and so does every
    * `client.transactions` operation that builds its own request — but the ones
@@ -2123,11 +2200,11 @@ export declare class MidenClient {
    * height when it built the request; below it execution fails with
    * "requested block N is after transaction reference block M" until it syncs.
    *
-   * Calling `withAuthArg` on the result clears what this declared, and vice
+   * Calling `withAuthArgs` on the result clears what this declared, and vice
    * versa: miden-client keeps the two mutually exclusive, so whichever is
    * called last wins rather than producing an error.
    *
-   * Do not call `withFeeConversionSalt` or `withAuthArg` on the builder this
+   * Do not call `withFeeConversionSalt` or `withAuthArgs` on the builder this
    * returns for a multisig. The two setters clear each other, so either one
    * discards the three-word auth args this already set and the transaction
    * aborts in the auth procedure. Pass `feeConversionSalt` in `options`.

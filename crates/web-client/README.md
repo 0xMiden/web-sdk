@@ -774,35 +774,44 @@ the asset back in the vault. See the [non-fungible asset guide](../../docs/exter
 
 ### Batch Operations
 
-Submit multiple operations against a single account as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally; you don't have to assemble or serialize them yourself.
+Submit multiple operations across one or more local accounts as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally; you don't have to assemble or serialize them yourself.
+
+The guarantee comes from the node's `SubmitProvenTxBatch` RPC contract: "All transactions in this batch will be considered atomic, and be committed together or not all." Two things it does *not* mean. The transactions still have to build on the current mempool state under the normal submission rules — `miden-client`'s RPC trait spells that out on the same endpoint — so atomicity governs how the batch commits, not whether the node accepts it. And locally, the batch's store updates are applied in one step whose failure is reported separately (see below).
 
 ```typescript
 const { blockNumber } = await client.transactions.batch({
-  account: wallet,
   operations: [
-    { kind: "send", to: alice, token: dagToken, amount: 50n, type: "public" },
-    { kind: "send", to: bob,   token: dagToken, amount: 30n, type: "public" },
-    { kind: "consume", notes: pendingNotes },
+    { kind: "send", account: alice, to: bob, token: dagToken, amount: 50n, type: "public" },
+    { kind: "send", account: alice, to: carol, token: dagToken, amount: 30n, type: "public" },
+    { kind: "consume", account: bob, notes: pendingNotes },
   ],
-  waitForConfirmation: true,
+  // waitForConfirmation is currently broken for batches — see below.
 });
-console.log(`Batch landed in block ${blockNumber}`);
+// The node's chain tip as of submission, not the block the batch commits in.
+console.log(`Batch submitted at chain tip ${blockNumber}`);
 ```
 
-Operations are discriminated by `kind`: `"send"`, `"mint"`, `"consume"`, `"swap"`, `"execute"`, and `"custom"` (escape hatch for a pre-built `TransactionRequest`). The shape of each operation mirrors the singular options object (`SendOptions`, `MintOptions`, …) minus the `account` field, which is set once at the batch level.
+Operations are discriminated by `kind`: `"send"`, `"mint"`, `"consume"`, `"swap"`, `"execute"`, and `"custom"` (escape hatch for a pre-built `TransactionRequest`). Each operation specifies its executing `account`; a batch may mix any combination of tracked local accounts, and a later transaction may consume a note produced by an earlier one in the same batch. Beyond `account`, each operation carries the request-building fields of its singular options object (`SendOptions`, `MintOptions`, …) and none of the per-submission ones: neither `prover`, `waitForConfirmation` and `timeout` nor `returnNote`, which selects a different request shape, has any per-operation meaning.
 
-V1 supports only same-account batches — every operation must execute against the `account` passed at the top level. Mixing accounts in one batch is not supported.
+A batch runs in the client's Web Worker where it has one, so the page keeps painting while every transaction and the batch itself are proven; with `useWorker: false`, or where no `Worker` exists, it proves on the calling thread and blocks it. Through the worker, a batch with an external keystore signs with no time limit unless `callbackTimeoutMs` sets one, so a stalled `sign` holds the batch and later worker calls in the queue; see [Keystore Callback Timeouts](#keystore-callback-timeouts). Mock clients always batch on the main thread. On a mock client, call `proveBlock()` after a batch and before submitting anything else: a submitted batch is not part of the serialized mock chain, so a later mock submit that round-trips through the worker would adopt a chain that never saw it. A mock batch also proves for real whether you ask it to or not: the mock client's dummy-prover shortcut applies only when no prover was passed, and the batch builder bypasses it entirely, so budget more time for a mock batch than for other mock submits. A batch is also always proven locally: the batch API takes no prover, so `ClientOptions.proverUrl` applies to `submit()` but not here. The batch proof itself is always local; the per-transaction proofs use the Rust client's configured prover, which this crate never sets.
 
-For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders:
+For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders. Pass an array of `{ account, request }` pairs:
 
 ```typescript
-const { blockNumber } = await client.transactions.submitBatch(wallet, [
-  request1,
-  request2,
+const { blockNumber } = await client.transactions.submitBatch([
+  { account: alice, request: request1 },
+  { account: bob, request: request2 },
 ]);
 ```
 
-The V1 batch primitive returns only the block number — there are no per-tx ids in the result. `waitForConfirmation` polls local sync height until it reaches `blockNumber` (rather than per-tx polling like singular `send` / `consume`).
+The batch primitive returns only a block number. There are no per-tx ids in the result, and the number is the node's chain tip as of submission, not the block the batch commits in. Even were it the commit block, `waitForConfirmation` would confirm only that the client had caught up to it, not that the batch committed. `waitForConfirmation` on a batch does not currently work: its poll calls a sync method that does not exist, so the poll cannot advance the height itself and the call throws `Batch confirmation timed out` unless the client is already at or past that height. Tracked in [#314](https://github.com/0xMiden/web-sdk/issues/314); prefer syncing and checking `client.transactions.list()` yourself. The batch's own effects are already in the local store when the call returns, so what you are waiting for is chain inclusion:
+
+```typescript
+await client.sync();
+const txs = await client.transactions.list();
+```
+
+One more failure mode worth handling: the node can accept a batch and the local store update still fail, which surfaces as a rejected promise whose message contains `batch was accepted at block N but building store updates failed` (or `applying to the store failed`). The node has taken the batch in that case, so retrying would submit it twice; sync instead.
 
 ### Manual Transaction Lifecycle
 
@@ -846,7 +855,7 @@ The argument is the account that will **execute** the request — the one whose 
 
 To set the salt yourself — which co-signers must do when they need to agree on it without transporting the proposer's bytes — pass it to `feeAwareTransactionRequestBuilder`, together with the block the summary binds: `client.feeAwareTransactionRequestBuilder(multisig, { feeConversionSalt: salt, boundBlockNum: block })`. Both are bound by the summary, so two parties who disagree on either can never derive the same one. Each call consumes the `Word`: it is moved across the WASM boundary, so a second build needs a freshly constructed one, and a spent handle arrives as "no salt given" rather than as an error. A co-signer who has the proposer's serialized request needs neither — it carries the auth argument and its advice-map preimage.
 
-Do **not** reach for `builder.withFeeConversionSalt(salt)` on that builder. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive, and miden-client enforces that by having each setter clear the other, so calling it discards the three-word multisig auth args the builder already carries and the transaction aborts in the auth procedure. On a bare `new TransactionRequestBuilder()` the setter is still a declaration rather than a commitment — `request.feeConversionSalt()` reports it back, `request.authArg()` stays empty, and it survives serialization — which is what a single-sig or custom-auth caller wants. For a custom auth procedure that reads `AUTH_ARGS` as conversion info, compute the commitment yourself and attach it with `withAuthArg` plus `extendAdviceMap` — setting an auth argument opts the request out of the client's fee machinery, which commits only when the request carries none. Declaring a salt against such an account instead is rejected with `FeeConversionInfoUnsupported`.
+Do **not** reach for `builder.withFeeConversionSalt(salt)` on that builder. `withAuthArgs` and `withFeeConversionSalt` are mutually exclusive, and miden-client enforces that by having each setter clear the other, so calling it discards the three-word multisig auth args the builder already carries and the transaction aborts in the auth procedure. On a bare `new TransactionRequestBuilder()` the setter is still a declaration rather than a commitment — `request.feeConversionSalt()` reports it back, `request.authArg()` stays empty, and it survives serialization — which is what a single-sig or custom-auth caller wants. For a custom auth procedure that reads `AUTH_ARGS` as conversion info, attach the auth args yourself with `withAuthArgs`, which sets the commitment and adds its advice-map preimage — setting an auth argument opts the request out of the client's fee machinery, which commits only when the request carries none. Declaring a salt against such an account instead is rejected with `FeeConversionInfoUnsupported`.
 
 When another party built the request, such as a dApp that gives a finished request to a wallet, set the multisig auth args on it with `client.withFeeAwareAuth(request, multisig, options?)`. A request that declares a salt executes on a multisig as it is, because miden-client derives the auth args from the salt, but it binds them to the reference block of each execution and sets no approval expiration. `withFeeAwareAuth` returns a copy with the same auth argument and advice-map preimage that `feeAwareTransactionRequestBuilder` declares, keeps every other field, and returns the request unchanged, auth argument and all, for an account that is not a multisig. When `feeConversionSalt` is omitted, it uses the salt that the request declares, or draws one. miden-client tracks the bound block when it executes the request, so the request executes at the tip with no anchor; an anchor from `chainAnchorForRequest` does not track the bound block, and a co-signer cannot read it from `request.blockNumbers()`, so it syncs before previewing the copy. For a multisig it refuses a request that already has an auth argument (`AUTH_ALREADY_SET`).
 
@@ -1055,6 +1064,20 @@ const { account } = builder.build();
 
 The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional third argument (`TransactionScript.root()`). Deploying the account needs an effect: since 0.17 the auth component asserts the transaction consumed an input note, created an output note, or changed account state before it pays the fee, so an empty transaction aborts. Consume a note the account allowlists, or run an allowlisted transaction script that changes its state. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
 
+### Read the Client's Node URL
+
+`client.endpoint()` returns the URL of the node the client was created against, synchronously. Shorthands are resolved, a client created without `rpcUrl` reports the testnet endpoint, and a mock client returns `undefined`. Use it to aim a standalone `RpcClient` at the same node; `rpc.endpoint()` reports the URL an `RpcClient` was built with:
+
+```typescript
+import { Endpoint, RpcClient } from "@miden-sdk/miden-sdk";
+
+const client = await MidenClient.createDevnet();
+client.endpoint(); // "https://rpc.devnet.miden.io"
+
+const rpc = new RpcClient(new Endpoint(client.endpoint()!));
+const header = await rpc.getBlockHeaderByNumber(100, false);
+```
+
 ### Verify a signBytes signature
 
 `domainSeparatedSignCommitment` computes the commitment a wallet signs for a
@@ -1086,6 +1109,30 @@ import {
 await MidenClient.ready();
 publicKey.verify(domainSeparatedSignCommitment(data, kind), signature);
 ```
+
+### Keystore Callback Timeouts
+
+Under the Web Worker, `keystore` callbacks run on the main thread and the worker waits for each one. `ClientOptions.callbackTimeoutMs` sets that wait. A callback that outlasts it fails the call that needed it with `Callback <id> timed out after <n>ms`.
+
+| `callbackTimeoutMs` | `sign` | `getKey` and `insertKey` |
+|---|---|---|
+| Unset | No limit | 30 seconds |
+| `0` | No limit | No limit |
+| Positive | That value | That value |
+
+A positive value applies to all three callbacks, and a fraction rounds up to a whole millisecond. A negative, non-finite or non-number value, or one above `2147483647`, throws `TypeError` at creation. Callbacks use this timeout only through the Web Worker: with `useWorker: false`, or where no `Worker` exists, it sets no limit on them.
+
+`sign` has no limit by default because it can wait on a person approving in a wallet or on a hardware device. The cost is that a stalled `sign` never fails on its own. The worker runs one call at a time, so it holds its batch or transaction and leaves later worker calls in the queue. If a signer can stall, set a finite timeout:
+
+```typescript
+const client = await MidenClient.create({
+  rpcUrl: "testnet",
+  keystore: { getKey, insertKey, sign },
+  callbackTimeoutMs: 120000, // Fail any callback that takes over two minutes.
+});
+```
+
+A batch signs while it is built, so one failed or timed out `sign` fails the whole batch.
 
 ### Cleanup
 

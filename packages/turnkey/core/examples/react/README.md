@@ -95,7 +95,7 @@ export const fromTurnkeySig = (sig: { r: string; s: string; v: string }) => {
 
   sigBuff.set(rBytes, 1); // r value
   sigBuff.set(sBytes, 33); // s value
-  sigBuff[65] = parseInt(sig.v); // v value
+  sigBuff[65] = parseInt(sig.v, 16); // v value
 
   return sigBuff;
 };

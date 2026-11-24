@@ -145,7 +145,8 @@ export interface MidenConfig {
   /** Default timeout for remote prover requests in milliseconds. */
   proverTimeoutMs?: number | bigint;
   /**
-   * Enable the Web Worker shim that runs WASM calls off the main thread.
+   * Enable the Web Worker shim that runs WASM calls, batch submission
+   * (`useBatch`) included, off the main thread.
    * Defaults to `true` — leave it that way in browsers/extensions so the UI
    * stays responsive while WASM is busy.
    *
@@ -160,6 +161,26 @@ export interface MidenConfig {
    *   isn't competing with the WASM thread anyway.
    */
   useWorker?: boolean;
+  /**
+   * How long, in milliseconds, the client waits for each `keystore` callback
+   * (`getKey`, `insertKey`, `sign`) before the call that needed it fails with
+   * `Callback <id> timed out after <n>ms`.
+   *
+   * Applies only when a signer is connected and the callbacks run through the
+   * Web Worker (the browser default; see `useWorker`). Left unset, `sign` waits
+   * without a limit, since it can wait on a person approving in a wallet or
+   * on a hardware device, and `getKey` and `insertKey` time out after 30
+   * seconds. A positive value applies to all three callbacks, rounded up to a
+   * whole millisecond, and `0` removes the limit for all three. A negative,
+   * non-finite, non-number, or greater-than-2147483647 value fails client
+   * creation with `TypeError`. The value is read when that client is
+   * constructed.
+   *
+   * Without a limit, a stalled `sign` holds its batch or transaction and leaves
+   * later worker calls in the queue; set a finite value if a signer can stall.
+   * See https://github.com/0xMiden/web-sdk/blob/main/packages/react-sdk/README.md#keystore-callback-timeouts
+   */
+  callbackTimeoutMs?: number;
 }
 
 // Provider state
@@ -403,6 +424,29 @@ export interface MultiSendOptions {
   noteType?: NoteVisibility;
   /** Skip auto-sync before send. Default: false */
   skipSync?: boolean;
+}
+
+/** A single (account, request) pair for {@link BatchOptions.items}. */
+export interface BatchItemInput {
+  /** Local account that executes this transaction. */
+  account: AccountRef;
+  /** Pre-built `TransactionRequest`. */
+  request: TransactionRequest;
+}
+
+export interface BatchOptions {
+  /** Per-tx `(account, request)` pairs. Must be non-empty. */
+  items: BatchItemInput[];
+  /** Skip auto-sync before submit. Default: false */
+  skipSync?: boolean;
+}
+
+export interface BatchResult {
+  /**
+   * The node's chain tip as of submission, not the block the batch commits in.
+   * Sync to learn where it landed.
+   */
+  blockNumber: number;
 }
 
 export interface WaitForCommitOptions {

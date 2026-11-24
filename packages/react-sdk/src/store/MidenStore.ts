@@ -139,13 +139,22 @@ export const useMidenStore = create<MidenStoreState>()((set, get) => ({
   ...freshState(),
 
   setClient: (client, clientStoreName = null) =>
-    set({
+    set((state) => ({
       client,
       clientStoreName: client === null ? null : clientStoreName,
       isReady: client !== null,
       isInitializing: false,
       initError: null,
-    }),
+      // A replaced client's account-list, account-detail, sync and note reads
+      // publish nothing, so its shared loading and syncing flags end with it.
+      ...(state.client === client
+        ? {}
+        : {
+            isLoadingAccounts: false,
+            isLoadingNotes: false,
+            sync: { ...state.sync, isSyncing: false },
+          }),
+    })),
 
   setInitializing: (isInitializing) => set({ isInitializing }),
 
@@ -370,14 +379,6 @@ export const useMidenStore = create<MidenStoreState>()((set, get) => ({
       syncToken: state.syncToken + 1,
     })),
 }));
-
-export function captureClientCurrency(client: WebClient): () => boolean {
-  const { cacheGeneration } = useMidenStore.getState();
-  return () => {
-    const state = useMidenStore.getState();
-    return state.client === client && state.cacheGeneration === cacheGeneration;
-  };
-}
 
 const EMPTY_INPUT_NOTES: InputNoteRecord[] = [];
 const EMPTY_CONSUMABLE_NOTES: ConsumableNoteRecord[] = [];
