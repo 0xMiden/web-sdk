@@ -24,6 +24,7 @@ import type {
   InputNoteRecord,
   OutputNoteRecord,
   ConsumableNoteRecord,
+  NoteConsumability,
   NoteId,
   NoteInclusionProof,
   NoteFile,
@@ -1867,6 +1868,26 @@ export interface NotesResource {
   listConsumable(options?: {
     account?: AccountRef;
   }): Promise<ConsumableNoteRecord[]>;
+
+  /**
+   * Screen a note the client has not imported, with the screener sync uses.
+   * The note is not stored.
+   *
+   * Returns one {@link NoteConsumability} per account that can consume the
+   * note now, after a block, or with authorization. The screener drops
+   * accounts that can never consume the note, and accounts that cannot
+   * consume it under the current conditions, so an empty array means no
+   * screened account can consume it now. It is also empty when the client
+   * tracks no accounts, so it does not mean never consumable.
+   *
+   * @param note - The note to screen.
+   * @param options - Optional account to screen against; it must be in the
+   *   client's store. Omit to screen against every tracked account.
+   */
+  screen(
+    note: Note,
+    options?: { account?: AccountRef }
+  ): Promise<NoteConsumability[]>;
 
   /**
    * Import a note from a {@link NoteFile}.
