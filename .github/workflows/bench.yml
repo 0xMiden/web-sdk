@@ -530,14 +530,21 @@ jobs:
       # No fallback exists for this one — a missing head dist means no benchmark
       # at all — so the cap is here to make the failure legible and leave the
       # summary step time to run, not to degrade to something lesser.
-      - name: Build head MT dist (full release profile)
+      - name: Build the exact regression source
         timeout-minutes: 30
         shell: bash
+        env:
+          MIDEN_FAST_BUILD: "true"
         run: |
           set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF_NAME" = ci/479-migration-red
+          sdk_sha=8d39d4759379c2383923a21421bb1ecf3c5e2e2e
+          git diff --exit-code "$sdk_sha" -- . ':(exclude).github/workflows/bench.yml'
+          mkdir -p "$RUNNER_TEMP/report"
+          printf '%s\n' "$sdk_sha" | tee "$RUNNER_TEMP/report/sdk-sha.txt"
           pnpm --filter @miden-sdk/miden-sdk run build-rust-client-js
-          pnpm --filter @miden-sdk/miden-sdk run build-mt
-          mv crates/web-client/dist/mt "$RUNNER_TEMP/dist-head"
+          pnpm --filter @miden-sdk/miden-sdk run build-st
 
       # Capped because it sits between the head build and the benchmark, so a
       # slow or hanging browser download ate the benchmark's window directly and
@@ -555,7 +562,26 @@ jobs:
       # that never binds. Sized to leave the summary and upload steps room, and
       # kept in sync with BENCH_BUDGET_MINUTES below, which the producer uses to
       # clamp its own deadlines so the in-page diagnostic wins the race.
+      - name: Run both expected-failure migration regressions
+        timeout-minutes: 8
+        shell: bash
+        env:
+          TEST_MIDEN_NETWORK: localhost
+          TEST_MIDEN_RPC_URL: http://localhost:57291
+        run: |
+          set -uo pipefail
+          pnpm --filter web_store exec vitest run --maxWorkers 2 ts/import.test.ts -t "discards the cached transaction encryption key" 2>&1 | tee "$RUNNER_TEMP/report/backup-cache-red.txt"
+          cache=$?
+          pnpm --filter @miden-sdk/miden-sdk exec playwright test test/protocol_config.test.ts --project=ci-shard-2-sync-and-state --workers=1 --retries=0 -g "reads protocol configurations preserved from the legacy store" 2>&1 | tee "$RUNNER_TEMP/report/protocol-config-red.txt"
+          browser=$?
+          if test -f crates/web-client/playwright-report/results.json; then
+            cp crates/web-client/playwright-report/results.json "$RUNNER_TEMP/report/protocol-config-red.json"
+          fi
+          printf 'backup cache exit: %s\nprotocol config exit: %s\n' "$cache" "$browser" | tee "$RUNNER_TEMP/report/exit-status.txt"
+          (( cache == 0 && browser == 0 ))
+
       - name: Run benchmark
+        if: github.event_name != 'workflow_dispatch'
         # Both the runner's cap and the producer's clamp come from one number.
         # They were two literals nine lines apart with nothing checking them, and
         # drift in one direction is silent AND regressive: lowering the cap
