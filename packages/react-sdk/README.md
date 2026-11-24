@@ -34,6 +34,7 @@ React hooks library for the Miden Web Client. Provides a simple, ergonomic inter
 - **Session Wallets** - `useSessionAccount()` manages the create-fund-consume lifecycle for temporary wallets
 - **AggLayer Bridge-Out** - `useBridge()` emits a B2AGG note to bridge a fungible asset out to another network via the AggLayer
 - **USDCx Withdrawal** - `useWithdrawUsdcx()` emits a Circle xReserve burn note that releases USDC on the destination chain
+- **AggLayer Claim** - `useClaimAggLayerDeposit()` emits the CLAIM note that asks the bridge to mint an inbound deposit
 - **Network Notes** - `useCreateNetworkNote()` creates custom-script network notes
 - **Concurrency Safety** - Transaction hooks prevent double-sends with built-in concurrency guards
 - **Auto Pre-Sync** - Transaction hooks sync before executing by default (opt out with `skipSync`)
@@ -1172,10 +1173,29 @@ await withdrawUsdcx({
 ```
 
 A `destinationRecipient` that is not a 0x-prefixed 32-byte hex string throws
-before the note is built. There is no hook for claiming an inbound AggLayer
-deposit yet: build the CLAIM note with `Note.createClaimNote(...)` from
-`@miden-sdk/miden-sdk` and submit it as an own output note with `useTransaction`,
-declaring the bridge account as a foreign account.
+before the note is built.
+
+#### `useClaimAggLayerDeposit()`
+
+Claim an inbound AggLayer deposit. The hook builds the public CLAIM note with
+`Note.createClaimNote(...)`, submits it as the sender with the bridge account
+declared as a foreign account, and resolves to `{ txId, note }`. The bridge
+consumes the note and mints the deposit.
+
+```tsx
+const { claimAggLayerDeposit, isLoading, stage } = useClaimAggLayerDeposit();
+
+const { txId, note } = await claimAggLayerDeposit({
+  from: senderAccountId,
+  bridgeAccount: bridgeAccountId,
+  proof, // ClaimProofData from the AggLayer claimAsset data
+  leaf, // ClaimLeafData from the same data
+  scale: 10, // the faucet's decimal scale
+});
+```
+
+A `scale` that is not an integer from 0 to 18 throws before the note is built;
+the Miden amount is `floor(leaf amount / 10^scale)`.
 
 #### `useConsume()`
 
