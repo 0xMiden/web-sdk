@@ -18,25 +18,43 @@ const REPLACEMENT = /storeName/;
 
 describe("raw store dump deprecation", () => {
   it.each([
-    ["exportStore", "export declare function exportStore("],
-    ["importStore", "export declare function importStore("],
+    [
+      "exportStore",
+      "export declare function exportStore(",
+      ["accounts.export", "notes.export"],
+    ],
+    [
+      "importStore",
+      "export declare function importStore(",
+      ["accounts.import", "notes.import"],
+    ],
   ])(
     "%s is @deprecated in the declarations and names its replacement",
-    (_n, anchor) => {
+    (_n, anchor, typed) => {
       const doc = docBefore(read("../types/api-types.d.ts"), anchor);
       expect(doc).toMatch(/@deprecated/);
       expect(doc).toMatch(REPLACEMENT);
+      for (const api of typed) expect(doc).toContain(api);
     }
   );
 
   it.each([
-    ["useExportStore", "export function useExportStore("],
-    ["useImportStore", "export function useImportStore("],
-  ])("%s is @deprecated and names its replacement", (name, anchor) => {
+    [
+      "useExportStore",
+      "export function useExportStore(",
+      ["useExportNote", "accounts.export"],
+    ],
+    [
+      "useImportStore",
+      "export function useImportStore(",
+      ["useImportNote", "useImportAccount"],
+    ],
+  ])("%s is @deprecated and names its replacement", (name, anchor, typed) => {
     const source = read(`../../../../packages/react-sdk/src/hooks/${name}.ts`);
     const doc = docBefore(source, anchor);
     expect(doc).toMatch(/@deprecated/);
     expect(doc).toMatch(REPLACEMENT);
+    for (const api of typed) expect(doc).toContain(api);
   });
 
   it.each([
