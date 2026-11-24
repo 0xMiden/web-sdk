@@ -2,12 +2,50 @@ import type {
   ConsumableNoteRecord,
   InputNoteRecord,
   Note,
+  NoteConsumability,
   NoteInput,
   WasmWebClient as WebClient,
 } from "@miden-sdk/miden-sdk";
 import type { AssetMetadata, NoteAsset, NoteSummary } from "../types";
 import { toBech32AccountId } from "./accountBech32";
 import { formatAssetAmount } from "./amounts";
+
+/** How React presents a note-screener result for an inbox row. */
+export type ConsumabilityPresentation =
+  | { kind: "now" }
+  | { kind: "after"; afterBlock: number }
+  | { kind: "never" };
+
+/**
+ * Maps `NoteConsumability` entries from `screenNote` / `listConsumable` into
+ * the three inbox states: immediately consumable, locked until a block, or
+ * never (empty / no matching account). Does not change auto-consume
+ * eligibility — callers still combine with `isStandardPayment` /
+ * `isConsumableNow` for `listAvailable`-style filters.
+ */
+export const getConsumabilityPresentation = (
+  entries: NoteConsumability[],
+  accountIdHex?: string
+): ConsumabilityPresentation => {
+  const relevant = accountIdHex
+    ? entries.filter((entry) => entry.accountId().toString() === accountIdHex)
+    : entries;
+  if (relevant.length === 0) {
+    return { kind: "never" };
+  }
+  for (const entry of relevant) {
+    if (entry.consumptionStatus().isConsumableNow()) {
+      return { kind: "now" };
+    }
+  }
+  const afterBlocks = relevant
+    .map((entry) => entry.consumptionStatus().consumableAfterBlock())
+    .filter((block): block is number => block != null);
+  if (afterBlocks.length > 0) {
+    return { kind: "after", afterBlock: Math.min(...afterBlocks) };
+  }
+  return { kind: "never" };
+};
 
 /**
  * Resolve a `NoteInput` (hex string | NoteId | InputNoteRecord | Note) to a

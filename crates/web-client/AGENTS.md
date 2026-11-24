@@ -280,6 +280,37 @@ Each decoder also exposes `sender()`, `serialNumber()`, `noteType()` and
 (`not a P2ID note`), when its storage does not decode, or, for `SwapNote`, when
 it does not carry exactly one asset.
 
+`PswapNote`, `MintNote` and `BurnNote` follow the same `tryFromNote` shape for
+the remaining standard scripts. A MINT note carries no assets (the asset to mint
+lives in storage); a BURN note carries exactly the asset to burn.
+
+```typescript
+import { BurnNote, MintNote, NoteScript, PswapNote } from "@miden-sdk/miden-sdk";
+
+if (root === NoteScript.pswap().root().toHex()) {
+  const pswap = PswapNote.tryFromNote(note);
+  pswap.offeredAsset();
+  pswap.requestedFaucetId();
+} else if (root === NoteScript.mint().root().toHex()) {
+  const mint = MintNote.tryFromNote(note);
+  mint.asset(); // embedded in storage
+  mint.faucetId();
+} else if (root === NoteScript.burn().root().toHex()) {
+  const burn = BurnNote.tryFromNote(note);
+  burn.asset();
+  burn.faucetId();
+}
+```
+
+## Screen a note before import
+
+`WebClient.screenNote` / `screenNoteForAccount` and `notes.screen({ note, account? })`
+run the upstream note screener against a note the client may not have imported
+yet. They return the same `NoteConsumability` entries as `getConsumableNotes`
+(immediately consumable or locked until a block). Empty means no screened
+account can consume it (including never-consumable). Auto-consume eligibility
+(`listAvailable` / `isStandardPayment`) is unchanged.
+
 ## Going deeper
 
 - Narrative documentation and the full generated API reference:

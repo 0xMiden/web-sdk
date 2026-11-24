@@ -164,7 +164,12 @@ export {
   ensureAccountBech32,
 } from "./utils/accountBech32";
 export { formatAssetAmount, parseAssetAmount } from "./utils/amounts";
-export { getNoteSummary, formatNoteSummary } from "./utils/notes";
+export {
+  getNoteSummary,
+  formatNoteSummary,
+  getConsumabilityPresentation,
+} from "./utils/notes";
+export type { ConsumabilityPresentation } from "./utils/notes";
 export { normalizeAccountId, accountIdsEqual } from "./utils/accountId";
 export {
   readNoteAttachment,

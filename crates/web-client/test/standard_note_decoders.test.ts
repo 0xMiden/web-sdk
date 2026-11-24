@@ -336,4 +336,83 @@ test.describe("standard note decoders", () => {
     expect(result.twoAssetsError).toMatch(/exactly one offered asset/);
     expect(result.noAssetsError).toMatch(/exactly one offered asset/);
   });
+
+  test("BurnNote.tryFromNote decodes the asset and rejects other notes", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk }) => {
+      function errorOf(fn) {
+        try {
+          fn();
+          return null;
+        } catch (err) {
+          return String(err?.message ?? err);
+        }
+      }
+
+      await client.syncState();
+      const sender = await client.newWallet(
+        sdk.AccountStorageMode.public(),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const faucet = await client.newFaucet(
+        sdk.AccountStorageMode.public(),
+        false,
+        "BRN",
+        "BRN",
+        8,
+        sdk.u64(1_000_000),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const vaultAsset = sdk.VaultAsset.fungible(faucet.id(), sdk.u64(9));
+      const storageFelts = [
+        ...vaultAsset.vaultKey().toFelts(),
+        ...vaultAsset.intoWord().toFelts(),
+      ];
+      const burn = new sdk.Note(
+        new sdk.NoteAssets([new sdk.FungibleAsset(faucet.id(), sdk.u64(9))]),
+        new sdk.NoteMetadata(
+          sender.id(),
+          sdk.NoteType.Public,
+          sdk.NoteTag.withAccountTarget(faucet.id())
+        ),
+        new sdk.NoteRecipient(
+          new sdk.Word(sdk.u64Array([1, 2, 3, 4])),
+          sdk.NoteScript.burn(),
+          new sdk.NoteStorage(new sdk.FeltArray(storageFelts))
+        )
+      );
+      const p2id = sdk.Note.createP2IDNote(
+        sender.id(),
+        sender.id(),
+        new sdk.NoteAssets([new sdk.FungibleAsset(faucet.id(), sdk.u64(1))]),
+        sdk.NoteType.Public,
+        new sdk.NoteAttachment()
+      );
+      const decoded = sdk.BurnNote.tryFromNote(burn);
+      return {
+        faucet: decoded.faucetId().toString(),
+        expectedFaucet: faucet.id().toString(),
+        amount: Number(
+          decoded.asset().kind() === "fungible"
+            ? decoded.asset().intoWord().toU64s()[0]
+            : -1
+        ),
+        sender: decoded.sender().toString(),
+        expectedSender: sender.id().toString(),
+        roundTripId: decoded.intoNote().id().toString(),
+        originalId: burn.id().toString(),
+        wrongScriptError: errorOf(() => sdk.BurnNote.tryFromNote(p2id)),
+        mintWrongScript: errorOf(() => sdk.MintNote.tryFromNote(p2id)),
+        pswapWrongScript: errorOf(() => sdk.PswapNote.tryFromNote(p2id)),
+      };
+    });
+
+    expect(result.faucet).toBe(result.expectedFaucet);
+    expect(result.sender).toBe(result.expectedSender);
+    expect(result.roundTripId).toBe(result.originalId);
+    expect(result.wrongScriptError).toMatch(/not a BURN note/);
+    expect(result.mintWrongScript).toMatch(/not a MINT note/);
+    expect(result.pswapWrongScript).toMatch(/PSWAP|pswap|decode PSWAP/i);
+  });
 });

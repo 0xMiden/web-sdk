@@ -61,6 +61,8 @@ function makeInner() {
     getInputNote: vi.fn(),
     getOutputNotes: vi.fn(),
     getConsumableNotes: vi.fn(),
+    screenNote: vi.fn(),
+    screenNoteForAccount: vi.fn(),
     importNoteFile: vi.fn(),
     exportNoteFile: vi.fn(),
     fetchPrivateNotes: vi.fn(),
@@ -415,6 +417,38 @@ describe("NotesResource", () => {
       const resource = makeResource();
       await resource.listConsumable({ account: "mBech32Account" });
       expect(wasm.AccountId.fromBech32).toHaveBeenCalledWith("mBech32Account");
+    });
+  });
+
+  describe("screen", () => {
+    const note = { id: () => "0xnote" };
+
+    it("requires note", async () => {
+      const resource = makeResource();
+      await expect(resource.screen({})).rejects.toThrow(
+        "notes.screen requires note"
+      );
+    });
+
+    it("screens every tracked account when account is omitted", async () => {
+      const entries = [{ accountId: () => ({ toString: () => ACC }) }];
+      inner.screenNote.mockResolvedValue(entries);
+      const resource = makeResource();
+      await expect(resource.screen({ note })).resolves.toEqual(entries);
+      expect(inner.screenNote).toHaveBeenCalledWith(note);
+      expect(inner.screenNoteForAccount).not.toHaveBeenCalled();
+    });
+
+    it("screens a single account when account is provided", async () => {
+      const entries = [];
+      inner.screenNoteForAccount.mockResolvedValue(entries);
+      const resource = makeResource();
+      await expect(
+        resource.screen({ note, account: "mBech32Account" })
+      ).resolves.toEqual(entries);
+      expect(wasm.AccountId.fromBech32).toHaveBeenCalledWith("mBech32Account");
+      expect(inner.screenNoteForAccount).toHaveBeenCalled();
+      expect(inner.screenNote).not.toHaveBeenCalled();
     });
   });
 

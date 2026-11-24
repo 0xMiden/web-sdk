@@ -141,7 +141,10 @@ const fakeNative = vi.hoisted(() => {
     Word,
     BasicFungibleFaucetComponent,
     FeeSponsorshipNote,
+    BurnNote: class BurnNote {},
+    MintNote: class MintNote {},
     P2ideNote,
+    PswapNote: class PswapNote {},
     SwapNote,
     TransactionRequestBuilder,
     NoteStorage,
@@ -163,7 +166,10 @@ vi.mock("../node/loader.js", () => ({
     Word: fakeNative.Word,
     BasicFungibleFaucetComponent: fakeNative.BasicFungibleFaucetComponent,
     FeeSponsorshipNote: fakeNative.FeeSponsorshipNote,
+    BurnNote: fakeNative.BurnNote,
+    MintNote: fakeNative.MintNote,
     P2ideNote: fakeNative.P2ideNote,
+    PswapNote: fakeNative.PswapNote,
     SwapNote: fakeNative.SwapNote,
     TransactionRequestBuilder: fakeNative.TransactionRequestBuilder,
     NoteStorage: fakeNative.NoteStorage,
@@ -333,6 +339,12 @@ describe("Node napi boundary", () => {
     const swap = new nodeIndex.SwapNote();
     expect(swap.paybackTarget()).toBeUndefined();
     expect(swap.paybackRecipient()).toBeUndefined();
+  });
+
+  it("exports the PswapNote, MintNote and BurnNote decoders", () => {
+    expect(nodeIndex.PswapNote).toBeTypeOf("function");
+    expect(nodeIndex.MintNote).toBeTypeOf("function");
+    expect(nodeIndex.BurnNote).toBeTypeOf("function");
   });
 
   it("keeps the NoteScript.p2id and p2ide aliases", () => {

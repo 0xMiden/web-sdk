@@ -63,6 +63,32 @@ export class NotesResource {
     return await this.#inner.getConsumableNotes(accountId);
   }
 
+  /**
+   * Screens a note the client may not have imported yet.
+   *
+   * Returns the same `NoteConsumability` entries as `listConsumable`:
+   * immediately consumable and block-locked statuses. Empty when no screened
+   * account can consume the note (including never-consumable). With
+   * `account`, only that account is tried; without it, every tracked account
+   * is. Auto-consume eligibility (`listAvailable` / `isStandardPayment`) is
+   * unchanged — callers still apply those filters themselves.
+   *
+   * @param {{ note: import("../types/api-types.js").Note, account?: import("../types/api-types.js").AccountRef }} opts
+   * @returns {Promise<import("../types/api-types.js").NoteConsumability[]>}
+   */
+  async screen(opts) {
+    this.#client.assertNotTerminated();
+    if (!opts?.note) {
+      throw new Error("notes.screen requires note");
+    }
+    if (opts.account == null) {
+      return await this.#inner.screenNote(opts.note);
+    }
+    const wasm = await this.#getWasm();
+    const accountId = resolveAccountRef(opts.account, wasm);
+    return await this.#inner.screenNoteForAccount(accountId, opts.note);
+  }
+
   async import(noteFile) {
     this.#client.assertNotTerminated();
     return await this.#inner.importNoteFile(noteFile);

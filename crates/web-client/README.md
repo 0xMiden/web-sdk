@@ -771,6 +771,10 @@ Each decoder also exposes `sender()`, `serialNumber()`, `noteType()` and
 (`not a P2ID note`), when its storage does not decode, or, for `SwapNote`, when
 it does not carry exactly one asset.
 
+`PswapNote`, `MintNote` and `BurnNote` follow the same shape for the remaining
+standard scripts. Screen a note before import with `notes.screen({ note })` or
+`client.screenNote(note)` (optional `account` / `screenNoteForAccount`).
+
 ### Check Balance
 
 ```typescript

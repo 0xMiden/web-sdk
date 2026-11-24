@@ -1,6 +1,60 @@
 import { describe, it, expect, vi } from "vitest";
-import { getNoteSummary, formatNoteSummary } from "../../utils/notes";
+import {
+  getNoteSummary,
+  formatNoteSummary,
+  getConsumabilityPresentation,
+} from "../../utils/notes";
 import type { NoteSummary } from "../../types";
+
+const consumability = (opts: {
+  account: string;
+  now?: boolean;
+  after?: number | null;
+}) =>
+  ({
+    accountId: () => ({ toString: () => opts.account }),
+    consumptionStatus: () => ({
+      isConsumableNow: () => opts.now === true,
+      consumableAfterBlock: () =>
+        opts.after === undefined ? null : opts.after,
+    }),
+  }) as never;
+
+describe("getConsumabilityPresentation", () => {
+  it("returns never for an empty screener result", () => {
+    expect(getConsumabilityPresentation([])).toEqual({ kind: "never" });
+  });
+
+  it("prefers immediately consumable over locked", () => {
+    expect(
+      getConsumabilityPresentation([
+        consumability({ account: "0xa", after: 10 }),
+        consumability({ account: "0xa", now: true }),
+      ])
+    ).toEqual({ kind: "now" });
+  });
+
+  it("returns the earliest locked height when nothing is consumable now", () => {
+    expect(
+      getConsumabilityPresentation([
+        consumability({ account: "0xa", after: 40 }),
+        consumability({ account: "0xb", after: 12 }),
+      ])
+    ).toEqual({ kind: "after", afterBlock: 12 });
+  });
+
+  it("filters to the requested account", () => {
+    expect(
+      getConsumabilityPresentation(
+        [
+          consumability({ account: "0xa", now: true }),
+          consumability({ account: "0xb", after: 9 }),
+        ],
+        "0xb"
+      )
+    ).toEqual({ kind: "after", afterBlock: 9 });
+  });
+});
 
 const makeAsset = (faucetHex: string, amount: bigint) => ({
   faucetId: vi.fn(() => ({ toString: () => faucetHex })),
