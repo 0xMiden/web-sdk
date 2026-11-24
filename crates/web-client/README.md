@@ -1086,6 +1086,37 @@ const { account } = builder.build();
 
 The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional third argument (`TransactionScript.root()`). Deploying the account needs an effect: since 0.17 the auth component asserts the transaction consumed an input note, created an output note, or changed account state before it pays the fee, so an empty transaction aborts. Consume a note the account allowlists, or run an allowlisted transaction script that changes its state. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
 
+#### Fee Sponsorship Notes
+
+Use `createFeeSponsorshipNote` (or `Note.createFeeSponsorshipNote`) to attach a fee-sponsorship note to a feature note (`featureNoteId`) targeted at a **public** account (`to` must be public for network note routing). `reclaimer` defaults to the sponsor (`from`). Omit `reclaimAfter` / `reclaimHeight` to disable reclaim, or pass a positive 32-bit integer (`0` is rejected). Standalone `createFeeSponsorshipNote` clones an `AccountId` passed as `reclaimer`, while `Note.createFeeSponsorshipNote` consumes a passed `reclaimer` `AccountId` in browser WASM. Decode an existing note with `FeeSponsorshipNote.tryFromNote`:
+
+```typescript
+import {
+  FeeSponsorshipNote,
+  FungibleAsset,
+  createFeeSponsorshipNote,
+} from "@miden-sdk/miden-sdk";
+
+const note = createFeeSponsorshipNote({
+  from: sponsorAccountId,
+  to: targetNetworkAccountId,
+  featureNoteId: featureNote.id(),
+  asset: new FungibleAsset(feeFaucetId, 1_000n),
+  reclaimer: reclaimerAccountId, // optional; defaults to `from`
+  reclaimAfter: 100, // optional positive 32-bit integer (> 0; 0 is rejected)
+});
+
+const decoded = FeeSponsorshipNote.tryFromNote(note);
+decoded.featureNoteId();
+decoded.sender();
+decoded.reclaimer();
+decoded.reclaimHeight(); // number | undefined
+decoded.asset();
+decoded.tag();
+decoded.serialNumber();
+decoded.intoNote();
+```
+
 ### Read the Client's Node URL
 
 `client.endpoint()` returns the URL of the node the client was created against, synchronously. Shorthands are resolved, a client created without `rpcUrl` reports the testnet endpoint, and a mock client returns `undefined`. Use it to aim a standalone `RpcClient` at the same node; `rpc.endpoint()` reports the URL an `RpcClient` was built with:

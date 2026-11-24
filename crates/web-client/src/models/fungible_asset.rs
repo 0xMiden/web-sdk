@@ -151,4 +151,16 @@ impl From<&FungibleAssetNative> for FungibleAsset {
     }
 }
 
+impl From<&FungibleAsset> for FungibleAssetNative {
+    fn from(fungible_asset: &FungibleAsset) -> Self {
+        fungible_asset.0
+    }
+}
+
+impl From<FungibleAsset> for FungibleAssetNative {
+    fn from(fungible_asset: FungibleAsset) -> Self {
+        fungible_asset.0
+    }
+}
+
 impl_napi_from_value!(FungibleAsset);

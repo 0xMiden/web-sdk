@@ -43,6 +43,7 @@ import type {
   AdviceInputs,
   FeltArray,
   ForeignAccount,
+  FungibleAsset,
   PswapLineageRecord,
 } from "./crates/miden_client_web";
 
@@ -2371,6 +2372,48 @@ export declare function createP2IDNote(
 export declare function createP2IDENote(
   options: P2IDEOptions
 ): ReturnType<WasmModule["Note"]["createP2IDENote"]>;
+
+/** Options for {@link createFeeSponsorshipNote}. */
+export interface FeeSponsorshipNoteOptions {
+  /** Sponsor account paying the fee. */
+  from: AccountRef;
+  /**
+   * Target account the bound feature note routes to. Must be a public account
+   * because fee-sponsorship notes are network-routed.
+   */
+  to: AccountRef;
+  /** Id of the feature note this sponsorship note binds to. */
+  featureNoteId: NoteId;
+  /** Single fungible fee asset carried by the sponsorship note. */
+  asset: FungibleAsset;
+  /**
+   * Account allowed to reclaim the fee if `reclaimAfter` is set. Defaults to
+   * the sponsor (`from`). Passing an `AccountId` instance to
+   * {@link createFeeSponsorshipNote} clones it so the caller's handle is
+   * preserved.
+   */
+  reclaimer?: AccountRef;
+  /**
+   * Optional block height at which `reclaimer` can reclaim the note. Omit or
+   * leave `undefined` to disable reclaim; when set, must be a positive 32-bit
+   * integer (`> 0`).
+   */
+  reclaimAfter?: number;
+}
+
+/**
+ * Creates a fee-sponsorship note bound to a feature note id.
+ *
+ * Binds the note to `options.featureNoteId`, routes to the public target
+ * `options.to`, and defaults `options.reclaimer` to the sponsor (`options.from`).
+ * Unlike `Note.createFeeSponsorshipNote`, which consumes a passed `reclaimer`
+ * `AccountId` in browser WASM, this standalone helper clones `AccountId`
+ * inputs to preserve the caller's handle. Omit `options.reclaimAfter` to
+ * disable reclaim, or pass a positive 32-bit integer (`> 0`).
+ */
+export declare function createFeeSponsorshipNote(
+  options: FeeSponsorshipNoteOptions
+): ReturnType<WasmModule["Note"]["createFeeSponsorshipNote"]>;
 
 /**
  * Builds (without submitting) a Public custom-script note carrying a

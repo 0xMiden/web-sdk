@@ -163,6 +163,10 @@ function createNodeSdkWrapper(): any {
     standalone._setWasm(sdk);
     return standalone.domainSeparatedSignCommitment(data, kind);
   };
+  sdk.createFeeSponsorshipNote = (opts: any) => {
+    standalone._setWasm(sdk);
+    return standalone.createFeeSponsorshipNote(opts);
+  };
   return sdk;
 }
 
