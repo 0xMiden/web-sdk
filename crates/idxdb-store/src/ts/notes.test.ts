@@ -392,18 +392,24 @@ describe("getInputNoteAfter index use", () => {
 
     const recorder = recordReads();
     try {
-      await collectAllNoteIds(dbId, CONSUMED_STATES, CONSUMER);
-      await collectAllNoteIds(dbId, CONSUMED_STATES, CONSUMER, 2, 3);
-      await getInputNoteAfter(
-        dbId,
-        CONSUMED_STATES,
-        CONSUMER,
-        undefined,
-        2,
-        cursor.blockHeight,
-        cursor.txOrder,
-        cursor.detailsCommitment
-      );
+      const page = (
+        blockStart?: number,
+        blockEnd?: number,
+        after?: typeof cursor
+      ) =>
+        getInputNoteAfter(
+          dbId,
+          CONSUMED_STATES,
+          CONSUMER,
+          blockStart,
+          blockEnd,
+          after?.blockHeight,
+          after?.txOrder,
+          after?.detailsCommitment
+        );
+      await page();
+      await page(2, 3);
+      await page(undefined, 2, cursor);
     } finally {
       recorder.stop();
     }
