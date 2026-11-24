@@ -12,7 +12,7 @@ export const DEFAULT_FAUCET_URLS = Object.freeze({
 });
 
 /** Browser `setTimeout` / `setInterval` upper bound (i32 max). */
-export const MAX_TIMER_MS = 2_147_483_647;
+const MAX_TIMER_MS = 2_147_483_647;
 
 const CONSUMED_STATES = new Set([
   "ConsumedAuthenticatedLocal",
@@ -322,14 +322,14 @@ export function fundingInvalid(message) {
   return err;
 }
 
-export function fundingTimeout(stage) {
+function fundingTimeout(stage) {
   const err = new Error(`funding timed out while waiting for ${stage}`);
   err.code = "FundingTimeout";
   err.stage = stage;
   return err;
 }
 
-export function fundingHttp(status, body) {
+function fundingHttp(status, body) {
   const err = new Error(
     `faucet request failed: HTTP ${status}${body ? `: ${body}` : ""}`
   );
