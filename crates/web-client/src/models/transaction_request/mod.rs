@@ -45,10 +45,10 @@ impl TransactionRequest {
 
     /// Returns whether `other` has the same fields as this request.
     ///
-    /// This compares the request's structure, not its serialized bytes. A `MerkleStore` serializes
-    /// the entries beyond its empty-subtree defaults in hash-map order, so two requests with every
-    /// field equal can serialize differently, for example after a `deserialize`. Use this to check
-    /// that a request kept its fields through a copy or a transport.
+    /// This compares the request's structure, not its serialized bytes. Bytes that list the same
+    /// fields or Merkle store nodes in another order decode to an equal request, so two requests
+    /// with every field equal can differ in bytes. Use this to check that a request kept its
+    /// fields through a copy or a transport.
     pub fn equals(&self, other: &TransactionRequest) -> bool {
         self.0 == other.0
     }

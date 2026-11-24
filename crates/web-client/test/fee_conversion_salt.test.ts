@@ -878,48 +878,68 @@ test.describe("TransactionRequest.equals", () => {
           .withFeeConversionSalt(salt(n))
           .build();
 
-      // The builder has no Merkle store setter, so splice entries into the
-      // serialized bytes. In an untouched request the store's u64 count is
-      // the first run of eight zero bytes, between two 0x01 empty lengths.
+      // The builder has no Merkle store setter, so add the store nodes to the
+      // encoded request. An untouched request is a single `v1` field (1)
+      // holding a `TransactionRequestV1`. Protobuf merges a message field that
+      // appears twice, so a second `merkle_store` field (9) appended to `v1`
+      // adds its nodes to the request's empty store.
       const base = new Uint8Array(
         new sdk.TransactionRequestBuilder().build().serialize()
       );
-      let at = 0;
-      while (base.slice(at, at + 8).some((b) => b !== 0)) at++;
-      if (base[at - 1] !== 1 || base[at + 8] !== 1) {
-        throw new Error("unexpected TransactionRequest layout");
+      let v1Length = 0;
+      let v1Start = 1;
+      for (let shift = 0; ; shift += 7) {
+        const byte = base[v1Start++];
+        v1Length |= (byte & 0x7f) << shift;
+        if (!(byte & 0x80)) break;
       }
+      if (base[0] !== 0x0a || v1Start + v1Length !== base.length) {
+        throw new Error("unexpected TransactionRequest encoding");
+      }
+      const v1 = Array.from(base.slice(v1Start));
 
-      // A (key, left, right) entry: three words of four u64 limbs each.
-      const entry = (n) => {
-        const bytes = new Uint8Array(96);
-        [1, 2, 3].forEach((w, k) => {
-          bytes[k * 32] = n;
-          [8, 16, 24].forEach((o) => {
-            bytes[k * 32 + o] = w;
-          });
-        });
-        return bytes;
+      const varint = (n) => {
+        const out = [];
+        for (; n > 0x7f; n >>>= 7) out.push((n & 0x7f) | 0x80);
+        out.push(n);
+        return out;
       };
+      // A length-delimited field: its tag, its length, then its bytes.
+      const field = (number, bytes) => [
+        (number << 3) | 2,
+        ...varint(bytes.length),
+        ...bytes,
+      ];
+      // A `Word` message, whose `encoded` field holds four u64 limbs.
+      const word = (limbs) => {
+        const encoded = new Array(32).fill(0);
+        limbs.forEach((limb, k) => {
+          encoded[k * 8] = limb;
+        });
+        return field(1, encoded);
+      };
+      // A `MerkleStoreNode`: its `value`, `left` and `right` words.
+      const node = (n) => [
+        ...field(1, word([n, 1, 1, 1])),
+        ...field(2, word([n, 2, 2, 2])),
+        ...field(3, word([n, 3, 3, 3])),
+      ];
       const request = (ids) => {
-        const out = new Uint8Array(base.length + ids.length * 96);
-        out.set(base.slice(0, at));
-        out[at] = ids.length;
-        ids.forEach((n, k) => out.set(entry(n), at + 8 + k * 96));
-        out.set(base.slice(at + 8), at + 8 + ids.length * 96);
-        return sdk.TransactionRequest.deserialize(out);
+        const store = ids.flatMap((n) => field(1, node(n)));
+        const bytes = new Uint8Array(field(1, [...v1, ...field(9, store)]));
+        return { bytes, request: sdk.TransactionRequest.deserialize(bytes) };
       };
 
       const ids = Array.from({ length: 64 }, (_, k) => k + 1);
       const forward = request(ids);
       const reversed = request([...ids].reverse());
       const missing = request(ids.slice(1));
-      const a = forward.serialize();
-      const b = reversed.serialize();
+      const a = forward.bytes;
+      const b = reversed.bytes;
       return {
-        sameEntries: forward.equals(reversed),
+        sameEntries: forward.request.equals(reversed.request),
         bytesDiffer: a.length === b.length && a.some((v, k) => v !== b[k]),
-        missingEntry: forward.equals(missing),
+        missingEntry: forward.request.equals(missing.request),
         sameSalt: withSalt(1).equals(withSalt(1)),
         otherSalt: withSalt(1).equals(withSalt(9)),
       };

@@ -1305,6 +1305,11 @@ export interface AccountsResource {
    * note tag. Sync keeps the account's commitment, nonce and storage current,
    * but notes addressed to it are not pulled.
    *
+   * The account is fetched at the client's sync height, so call `sync()` after
+   * the account is created and before watching it. A client that has never
+   * synced asks for the account at the genesis block, whose state the node has
+   * usually pruned.
+   *
    * @param accountId - The public account to watch.
    */
   importWatched(accountId: AccountRef): Promise<Account>;

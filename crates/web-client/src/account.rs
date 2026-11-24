@@ -22,6 +22,11 @@ impl WebClient {
     ///
     /// Sync keeps the account's commitment, nonce and storage current but pulls none of the
     /// notes addressed to it.
+    ///
+    /// The account is fetched at the client's sync height and checked against the block header the
+    /// client synced, so sync after the account is created and before importing it. A client
+    /// that has never synced asks for the account at the genesis block, whose state the node has
+    /// usually pruned.
     #[js_export(js_name = "importWatchedAccountById")]
     pub async fn import_watched_account_by_id(&self, account_id: &AccountId) -> Result<(), JsErr> {
         let mut guard = self.get_mut_inner().await;

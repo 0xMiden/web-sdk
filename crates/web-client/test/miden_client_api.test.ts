@@ -1664,25 +1664,17 @@ nodeTest.describe("MidenClient API - Integration", () => {
     }
   );
 
-  // The read follows the network the client talks to: nothing before the first
-  // sync, then the configuration that node's blocks commit to.
+  // The read follows the network the client talks to: creation stores the
+  // genesis block and the configuration it commits to, and each sync stores the
+  // configuration of the blocks it reaches.
   nodeTest(
-    "protocolConfig rejects before the first sync and reports the node's fee faucet after it",
+    "protocolConfig reports the node's fee faucet from creation and after a sync",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
         const client = await window.MidenClient.create({
           rpcUrl: window.rpcUrl,
           storeName: "miden_client_api_protocol_config_test",
         });
-
-        let beforeSync = null;
-        try {
-          await client.protocolConfig();
-        } catch (err) {
-          beforeSync = String(err?.message ?? err);
-        }
-
-        await client.sync();
 
         const canonical = (id) => {
           try {
@@ -1692,18 +1684,22 @@ nodeTest.describe("MidenClient API - Integration", () => {
           }
         };
 
-        const config = await client.protocolConfig();
+        const beforeSync = (await client.protocolConfig())
+          .feeFaucetId()
+          .toString();
+        await client.sync();
+        const afterSync = (await client.protocolConfig())
+          .feeFaucetId()
+          .toString();
         return {
-          beforeSync,
           configured: canonical(window.feeFaucetId),
-          reported: config.feeFaucetId().toString(),
+          beforeSync,
+          afterSync,
         };
       });
 
-      expect(result.beforeSync).toContain(
-        "the network's protocol configuration is not known yet"
-      );
-      expect(result.reported).toBe(result.configured);
+      expect(result.beforeSync).toBe(result.configured);
+      expect(result.afterSync).toBe(result.configured);
     }
   );
 
