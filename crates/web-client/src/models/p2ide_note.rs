@@ -17,7 +17,8 @@ use crate::platform::{JsErr, from_str_err};
 /// reclaim height and an optional timelock.
 ///
 /// Recovered from an existing [`Note`] via [`P2ideNote::try_from_note`].
-#[js_export]
+// Named explicitly: napi would otherwise export `P2IdeNote`.
+#[js_export(js_name = "P2ideNote")]
 #[derive(Clone)]
 pub struct P2ideNote {
     note: NativeNote,

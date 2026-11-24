@@ -16,7 +16,8 @@ use crate::platform::{JsErr, from_str_err};
 /// Decoded view of a standard P2ID (pay-to-id) note.
 ///
 /// Recovered from an existing [`Note`] via [`P2idNote::try_from_note`].
-#[js_export]
+// Named explicitly: napi would otherwise export `P2IdNote`.
+#[js_export(js_name = "P2idNote")]
 #[derive(Clone)]
 pub struct P2idNote {
     note: NativeNote,
