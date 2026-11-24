@@ -284,6 +284,7 @@ export const NoteRecipient = /* @__PURE__ */ _reexport("NoteRecipient");
 export const NoteRecipientArray =
   /* @__PURE__ */ _reexport("NoteRecipientArray");
 export const NoteScript = /* @__PURE__ */ _reexport("NoteScript");
+export const NoteScriptArray = /* @__PURE__ */ _reexport("NoteScriptArray");
 export const NoteScriptFee = /* @__PURE__ */ _reexport("NoteScriptFee");
 export const NoteStorage = /* @__PURE__ */ _reexport("NoteStorage");
 export const NoteSyncBlock = /* @__PURE__ */ _reexport("NoteSyncBlock");

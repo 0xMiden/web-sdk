@@ -405,6 +405,7 @@ export const NODE_ARRAY_TYPES = Object.freeze([
   "NoteDetailsAndTagArray",
   "NoteIdAndArgsArray",
   "NoteRecipientArray",
+  "NoteScriptArray",
   "OutputNoteArray",
   "StorageSlotArray",
   "TransactionScriptInputPairArray",

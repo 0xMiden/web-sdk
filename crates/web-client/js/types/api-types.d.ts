@@ -820,6 +820,9 @@ export interface TransactionProof {
   /**
    * Submit the proof to the network, then persist with
    * {@link TransactionSubmission.apply}. Does NOT persist locally on its own.
+   * It registers no script the request declared through
+   * `withExpectedNtxScripts`; submit `newRegisterNoteScriptsTransactionRequest`
+   * first.
    */
   submit(): Promise<TransactionSubmission>;
 }
@@ -1453,6 +1456,11 @@ export interface TransactionsResource {
    * {@link MidenClient.withFeeAwareAuth}. Raises the same fee errors
    * {@link executeRequest} does.
    *
+   * The request is submitted as given: scripts it declares through
+   * `withExpectedNtxScripts` are not registered, so submit
+   * `newRegisterNoteScriptsTransactionRequest` first. `executeRequest` and the
+   * staged `prove` and `submit` calls behave the same.
+   *
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
    * @param options - Optional transaction options (prover, confirmation, anchor).
@@ -1508,6 +1516,10 @@ export interface TransactionsResource {
    * const submitted = await proven.submit();
    * await submitted.apply();
    * ```
+   *
+   * No stage registers the scripts the request declares through
+   * `withExpectedNtxScripts`; submit `newRegisterNoteScriptsTransactionRequest`
+   * first.
    *
    * {@link submit} runs every stage in one call. The stages are not atomic as a
    * group: awaiting other mutating calls on the same account between them can

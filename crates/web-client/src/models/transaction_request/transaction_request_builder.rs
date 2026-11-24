@@ -1,9 +1,11 @@
 use js_export_macro::js_export;
+use miden_client::account::AccountCode as NativeAccountCode;
 use miden_client::block::BlockNumber;
 use miden_client::note::{
     Note as NativeNote,
     NoteDetails as NativeNoteDetails,
     NoteRecipient as NativeNoteRecipient,
+    NoteScript as NativeNoteScript,
     NoteTag as NativeNoteTag,
 };
 use miden_client::transaction::{
@@ -19,6 +21,7 @@ use miden_protocol::WORD_SIZE;
 use miden_protocol::crypto::SequentialCommit;
 
 use crate::js_error_with_context;
+use crate::models::account_code::AccountCode;
 use crate::models::advice_map::AdviceMap;
 use crate::models::felt::felt_array_to_native_vec;
 use crate::models::foreign_account::ForeignAccount;
@@ -30,8 +33,10 @@ use crate::models::miden_arrays::{
     NoteArray,
     NoteDetailsAndTagArray,
     NoteRecipientArray,
+    NoteScriptArray,
 };
 use crate::models::note_recipient::NoteRecipient;
+use crate::models::note_script::NoteScript;
 use crate::models::transaction_request::TransactionRequest;
 use crate::models::transaction_request::note_and_args::{NoteAndArgs, NoteArgs};
 use crate::models::transaction_request::note_details_and_tag::NoteDetailsAndTag;
@@ -232,6 +237,57 @@ impl TransactionRequestBuilder {
         let native_salt: NativeWord = salt.into();
         self.builder = self.builder.clone().fee_conversion_salt(native_salt);
         self.clone()
+    }
+
+    /// Makes execution skip input notes that are no longer consumable instead of failing. The
+    /// skipped notes are dropped without an error, so the transaction consumes only the rest.
+    /// Execution screens at most 20 input notes this way and fails with `invalid input note count`
+    /// above that, so split a larger batch across requests.
+    #[js_export(js_name = "ignoreInvalidInputNotes")]
+    pub fn ignore_invalid_input_notes(&mut self) -> Self {
+        self.builder = self.builder.clone().ignore_invalid_input_notes();
+        self.clone()
+    }
+
+    /// Declares the note scripts the network executes for this request, and the request carries
+    /// them through serialization. The web client submits exactly the request it is given, so it
+    /// registers nothing: submit `newRegisterNoteScriptsTransactionRequest` from the same sender
+    /// first for every custom script the node does not know yet. The node resolves standard
+    /// scripts itself, so they need no registration.
+    #[js_export(js_name = "withExpectedNtxScripts")]
+    pub fn with_expected_ntx_scripts(&mut self, scripts: NoteScriptArray) -> Self {
+        let items: Vec<NoteScript> = scripts.into();
+        let native_scripts: Vec<NativeNoteScript> = items.into_iter().map(Into::into).collect();
+        self.builder = self.builder.clone().expected_ntx_scripts(native_scripts);
+        self.clone()
+    }
+
+    /// Gives `code` to the transaction as the new code of the executing account, through the
+    /// advice map. It neither initializes the upgrade nor changes the transaction script; use
+    /// `buildAccountCodeUpgrade` when the transaction only upgrades the code.
+    #[js_export(js_name = "withAccountCodeUpgrade")]
+    pub fn with_account_code_upgrade(&mut self, code: &AccountCode) -> Self {
+        let native_code: NativeAccountCode = code.into();
+        self.builder = self.builder.clone().account_code_upgrade(native_code);
+        self.clone()
+    }
+
+    /// Finalizes the builder into a request that upgrades the executing account to `code`. The
+    /// account needs the `UpgradeManager` component with `AuthControlled` authority. The upgrade
+    /// keeps the storage, so `code` must use the same storage layout. The request replaces any
+    /// custom script and script argument, and fails if own output notes or an expiration delta
+    /// are set.
+    #[js_export(js_name = "buildAccountCodeUpgrade")]
+    pub fn build_account_code_upgrade(
+        &self,
+        code: &AccountCode,
+    ) -> Result<TransactionRequest, JsErr> {
+        let native_code: NativeAccountCode = code.into();
+        self.builder
+            .clone()
+            .build_account_code_upgrade(native_code)
+            .map(TransactionRequest)
+            .map_err(|err| js_error_with_context(err, "failed to build account code upgrade"))
     }
 
     /// Finalizes the builder into a `TransactionRequest`.
