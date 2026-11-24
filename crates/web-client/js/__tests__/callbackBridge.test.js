@@ -96,7 +96,12 @@ describe("the production WebClient worker bridge", () => {
 
   async function initialize(worker) {
     await worker.emit({ loaded: true });
-    await Promise.resolve();
+    // classic INIT resolves the WASM URL asynchronously (#286)
+    await vi.waitFor(() => {
+      expect(
+        worker.messages.some(({ action }) => action === WorkerAction.INIT)
+      ).toBe(true);
+    });
   }
 
   async function connectWorker(worker, wasm) {
@@ -514,7 +519,7 @@ describe("the production WebClient worker bridge", () => {
   });
 
   it.each([0, 120000, 2147483647])(
-    "posts callbackTimeoutMs %s as the last INIT argument",
+    "posts callbackTimeoutMs %s as INIT arg 12 (before optional classic wasmUrl)",
     async (callbackTimeoutMs) => {
       vi.stubGlobal("Worker", RecordingWorker);
       vi.spyOn(console, "log").mockImplementation(() => {});
@@ -525,7 +530,8 @@ describe("the production WebClient worker bridge", () => {
       const init = worker.messages.find(
         ({ action }) => action === WorkerAction.INIT
       );
-      expect(init.args).toHaveLength(13);
+      // args[13] is the classic-worker WASM URL override (#286); may be set or undefined
+      expect(init.args).toHaveLength(14);
       expect(init.args[0]).toBe("https://rpc.example");
       expect(init.args[4]).toBe(false);
       expect(init.args[5]).toBe(false);

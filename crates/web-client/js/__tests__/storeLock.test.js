@@ -23,7 +23,10 @@ const fakeWasm = vi.hoisted(() => {
   return wasm;
 });
 vi.mock("../../Cargo.toml", () => ({}));
-vi.mock("../wasm.js", () => ({ default: async () => fakeWasm }));
+vi.mock("../wasm.js", () => ({
+  default: async () => fakeWasm,
+  resolveWasmUrl: async () => undefined,
+}));
 
 import { AsyncLock } from "../asyncLock.js";
 import { MidenClient } from "../client.js";
