@@ -711,6 +711,27 @@ describe("MidenWalletAdapter", () => {
       );
     });
 
+    it("does not emit connect when an accountChange listener disconnects synchronously", async () => {
+      const { adapter, mockWallet } = await createConnectedAdapter();
+      const order: string[] = [];
+      let pending: Promise<void> | undefined;
+      adapter.on("accountChange", () => {
+        order.push("accountChange");
+        pending = adapter.disconnect();
+      });
+      adapter.on("connect", (address) => order.push(`connect:${address}`));
+      adapter.on("disconnect", () => order.push("disconnect"));
+
+      mockWallet.address = "0xsecondaddress";
+      mockWallet.publicKey = new Uint8Array([4, 5, 6]);
+      mockWallet.emit("accountChange", { address: "0xsecondaddress" });
+
+      expect(order).toEqual(["accountChange"]);
+      expect(adapter.address).toBeNull();
+      await pending;
+      expect(order).toEqual(["accountChange", "disconnect"]);
+    });
+
     it("does not emit accountChange on the initial connect or on revocation", async () => {
       const mockWallet = createMockWallet();
       (window as any).midenWallet = mockWallet;
