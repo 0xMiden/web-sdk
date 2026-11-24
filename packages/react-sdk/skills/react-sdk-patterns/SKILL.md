@@ -34,6 +34,7 @@ import { MidenProvider } from "@miden-sdk/react";
 <MidenProvider
   config={{
     rpcUrl: "testnet",          // "mainnet" | "devnet" | "testnet" | "localhost" | "local" | custom URL
+    network: "mainnet",         // optional: "mainnet" | "testnet" | "devnet", address prefix; wins over the rpcUrl inference
     prover: "testnet",          // "local" | "localhost" | "mainnet" | "devnet" | "testnet" | URL
                                 //   | { url, timeoutMs }
                                 //   | { primary, fallback, disableFallback?, onFallback? }
@@ -674,7 +675,7 @@ formatAssetAmount(1000000n, 8)       // "0.01"
 parseAssetAmount("0.01", 8)           // 1000000n
 const summary = getNoteSummary(note); // { id, assets, sender } | null
 formatNoteSummary(summary);           // "1.5 TEST from mtst1..."
-toBech32AccountId("0x1234...");       // "mtst1..." on testnet; the hex ID when the network is unknown
+toBech32AccountId("0x1234...");       // "mtst1..." on testnet; "mm1..." when the endpoint names no network
 ```
 
 `getNoteSummary(note, getAssetMetadata?)` takes a `ConsumableNoteRecord | InputNoteRecord` and returns `NoteSummary | null` - **`null`** when the note's id is missing or anything in the read throws, i.e. for a note whose id or metadata is not ready yet. Guard before formatting.
@@ -685,7 +686,7 @@ toBech32AccountId("0x1234...");       // "mtst1..." on testnet; the hex ID when 
 
 `waitForWalletDetection(adapter, timeoutMs = 5000)` resolves once the adapter's `readyState` reaches `"Installed"` and otherwise rejects with `"Wallet extension not detected within <n>ms."` Its `WalletAdapterLike` argument is a duck type (`{ readyState: string; on/off("readyStateChange", cb) }`) with no dependency on any wallet-adapter package, so it works against any adapter and against a plain fake object.
 
-The HRP is inferred from the client's `endpoint()`, the URL of the node it was created against (testnet when no `rpcUrl` is configured): mainnet=`mm`, testnet=`mtst`, devnet=`mdev`, and a local node gets `mdev` too - there is no `miden` HRP. Before the provider has a client, and for an endpoint naming none of those networks, the helpers return the hex ID. See `frontend-pitfalls` FP5 for the trap in that inference.
+The HRP is inferred from the client's `endpoint()`, the URL of the node it was created against (testnet when no `rpcUrl` is configured): mainnet=`mm`, testnet=`mtst`, devnet=`mdev`, and a local node gets `mdev` too - there is no `miden` HRP. An endpoint naming none of those networks, such as a custom mainnet RPC host, is mainnet; `config.network` (`"mainnet" | "testnet" | "devnet"`) overrides the inference. Before the provider has a client, the helpers return the hex ID. See `frontend-pitfalls` FP5 for the trap in that inference.
 
 ## Direct Client Access
 

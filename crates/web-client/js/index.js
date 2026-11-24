@@ -16,7 +16,7 @@ import { emitObservation, hasObserver, setObserver } from "./observability.js";
 import { assertBatchItems } from "./utils.js";
 import { MidenClient } from "./client.js";
 import { CompilerResource } from "./resources/compiler.js";
-import { validateNoteTransportRetryOptions } from "./utils.js";
+import { claimStore, validateNoteTransportRetryOptions } from "./utils.js";
 import {
   createP2IDNote,
   createP2IDENote,
@@ -1170,6 +1170,9 @@ class WebClient {
    *   retry; see the constructor.
    * @param {number | undefined} [callbackTimeoutMs] - How long to wait for external keystore
    *   callbacks. Invalid values reject before WASM initialization.
+   * @param {boolean} [exclusive=false] - Refuse a store another live client has open, and make
+   *   every other open of this store refuse until this client terminates. Without it, opening
+   *   an open store warns naming the client that has it.
    */
   static async createClient(
     rpcUrl,
@@ -1182,7 +1185,8 @@ class WebClient {
     feeFaucetId,
     noteTransportMaxRetries,
     noteTransportRetryIntervalMs,
-    callbackTimeoutMs
+    callbackTimeoutMs,
+    exclusive = false
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -1216,6 +1220,7 @@ class WebClient {
         rpcUrl,
         network
       );
+      instance._releaseStore = claimStore(instance._openedStoreName, exclusive);
       await wasmWebClient.createClient(
         rpcUrl,
         noteTransportUrl,
@@ -1261,6 +1266,7 @@ class WebClient {
    * @param {number | undefined} [noteTransportRetryIntervalMs] - Delay before the first such
    *   retry; see the constructor.
    * @param {number | undefined} [callbackTimeoutMs] - See the constructor.
+   * @param {boolean} [exclusive=false] - See `createClient`.
    */
   static async createClientWithExternalKeystore(
     rpcUrl,
@@ -1276,7 +1282,8 @@ class WebClient {
     feeFaucetId,
     noteTransportMaxRetries,
     noteTransportRetryIntervalMs,
-    callbackTimeoutMs
+    callbackTimeoutMs,
+    exclusive = false
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -1310,6 +1317,7 @@ class WebClient {
         rpcUrl,
         storeName
       );
+      instance._releaseStore = claimStore(instance._openedStoreName, exclusive);
       await wasmWebClient.createClientWithExternalKeystore(
         rpcUrl,
         noteTransportUrl,
@@ -2039,10 +2047,11 @@ class WebClient {
    * of these calls have settled. Calling it again is harmless.
    *
    * The release and the rejections are browser-only: on the Node.js binding
-   * WasmWebClient.terminate() is a no-op.
+   * WasmWebClient.terminate() releases only the store's ownership claim.
    */
   terminate() {
     this._terminated = true;
+    this._releaseStore?.();
     if (this.worker) {
       this.worker.terminate();
       // The stopped worker answers nothing, so a call still waiting on it

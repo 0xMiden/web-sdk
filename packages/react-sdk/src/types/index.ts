@@ -63,6 +63,9 @@ export type {
   SignerContextValue,
 } from "../context/SignerContext";
 
+/** Networks that have their own bech32 address prefix. */
+export type MidenNetwork = "mainnet" | "testnet" | "devnet";
+
 export type RpcUrlConfig =
   | string
   | "mainnet"
@@ -107,6 +110,11 @@ export type ProverUrls = {
 export interface MidenConfig {
   /** RPC node URL or network name (mainnet/devnet/testnet/localhost). Defaults to testnet. */
   rpcUrl?: RpcUrlConfig;
+  /**
+   * Network whose bech32 prefix account addresses use. Wins over the network
+   * inferred from `rpcUrl`; without it a URL naming no network is mainnet.
+   */
+  network?: MidenNetwork;
   /** Note transport URL for streaming notes. */
   noteTransportUrl?: string;
   /**

@@ -208,6 +208,7 @@ export const BasicFungibleFaucetComponent = /* @__PURE__ */ _reexport(
 );
 export const BatchItem = /* @__PURE__ */ _reexport("BatchItem");
 export const BlockHeader = /* @__PURE__ */ _reexport("BlockHeader");
+export const BurnNote = /* @__PURE__ */ _reexport("BurnNote");
 export const ChainAnchor = /* @__PURE__ */ _reexport("ChainAnchor");
 export const ClaimLeafData = /* @__PURE__ */ _reexport("ClaimLeafData");
 export const ClaimProofData = /* @__PURE__ */ _reexport("ClaimProofData");
@@ -314,6 +315,7 @@ export const ProvenTransaction = /* @__PURE__ */ _reexport("ProvenTransaction");
 export const PswapLineageRecord =
   /* @__PURE__ */ _reexport("PswapLineageRecord");
 export const PswapLineageState = /* @__PURE__ */ _reexport("PswapLineageState");
+export const PswapNote = /* @__PURE__ */ _reexport("PswapNote");
 export const PublicKey = /* @__PURE__ */ _reexport("PublicKey");
 export const RpcClient = /* @__PURE__ */ _reexport("RpcClient");
 export const RpcTransactionRecord = /* @__PURE__ */ _reexport(

@@ -131,6 +131,13 @@ Account witnesses refresh when another client changes that state, preserving
 untouched vault assets and storage maps. This does not fetch new chain state;
 continue to sync before relying on on-chain balances.
 
+**One client per store.** Two live clients on one store do not coordinate.
+Opening a store another live client in the realm has open (the same IndexedDB
+name in the browser, the same SQLite file on Node.js) logs a `console.warn`
+naming that client as `client #N`. `MidenClient.create({ ..., exclusive: true })`
+makes the open throw instead, naming the owner, and refuses every later open of
+the store while that client lives. `terminate()` releases the store.
+
 For browser stores, `apply` requires the stored account to match the
 transaction's execution input. A mismatch rejects before changing account state
 or transaction history. A submitted transaction is already accepted by the node when
@@ -279,6 +286,31 @@ Each decoder also exposes `sender()`, `serialNumber()`, `noteType()` and
 `intoNote()`. `tryFromNote` throws when the note runs another script
 (`not a P2ID note`), when its storage does not decode, or, for `SwapNote`, when
 it does not carry exactly one asset.
+
+`PswapNote` and `BurnNote` decode a partial-fill swap order and a burn the same
+way:
+
+```typescript
+import { BurnNote, NoteScript, PswapNote } from "@miden-sdk/miden-sdk";
+
+if (root === NoteScript.pswap().root().toHex()) {
+  const pswap = PswapNote.tryFromNote(note);
+  pswap.offeredAsset(); // FungibleAsset on offer
+  pswap.requestedAsset(); // FungibleAsset asked for the whole offer
+  pswap.minFillStep(); // smallest fill, 0 when unbounded
+  pswap.creatorAccountId(); // receives every payback
+  pswap.orderId(); // decimal string, as PswapLineageRecord.orderId()
+  pswap.parentDepth(); // 0 for the original order, +1 per remainder
+} else if (root === NoteScript.burn().root().toHex()) {
+  const burn = BurnNote.tryFromNote(note);
+  burn.asset(); // what the faucet burns
+  burn.faucetId(); // the faucet that consumes the note
+}
+```
+
+A BURN note whose storage does not hold exactly the asset it carries is
+rejected, as the BURN script rejects it at consume time. A PSWAP note with more than one
+attachment is rejected too.
 
 ## Going deeper
 
