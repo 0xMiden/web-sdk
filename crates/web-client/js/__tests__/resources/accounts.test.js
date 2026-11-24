@@ -6,6 +6,7 @@ function makeWasm(overrides = {}) {
     accountType: vi.fn().mockReturnThis(),
     storageMode: vi.fn().mockReturnThis(),
     withAuthComponent: vi.fn().mockReturnThis(),
+    withNoAuthComponent: vi.fn().mockReturnThis(),
     withComponent: vi.fn().mockReturnThis(),
     build: vi.fn().mockReturnValue({ account: { id: () => "builtAccountId" } }),
   };
@@ -271,6 +272,43 @@ describe("AccountsResource", () => {
           components: [],
         })
       ).rejects.toThrow("Contract creation requires an 'auth'");
+    });
+
+    it("creates a NoAuth contract with auth: 'none'", async () => {
+      const comp1 = callableComponent();
+      const resource = makeResource();
+      const seed = new Uint8Array(32).fill(3);
+      const result = await resource.create({
+        seed,
+        auth: "none",
+        components: [comp1],
+      });
+      const builderInstance = wasm.AccountBuilder.mock.results[0].value;
+      expect(wasm.AccountBuilder).toHaveBeenCalledWith(seed);
+      expect(builderInstance.withNoAuthComponent).toHaveBeenCalledTimes(1);
+      expect(builderInstance.withAuthComponent).not.toHaveBeenCalled();
+      expect(
+        wasm.AccountComponent.createAuthComponentFromSecretKey
+      ).not.toHaveBeenCalled();
+      expect(builderInstance.withComponent).toHaveBeenCalledWith(comp1);
+      expect(inner.newAccount).toHaveBeenCalledWith(
+        expect.objectContaining({ id: expect.any(Function) }),
+        false
+      );
+      expect(inner.newAccountWithSecretKey).not.toHaveBeenCalled();
+      expect(result).toEqual({ id: expect.any(Function) });
+    });
+
+    it("still requires a non-auth procedure for a NoAuth contract", async () => {
+      const resource = makeResource();
+      await expect(
+        resource.create({
+          seed: new Uint8Array(32),
+          auth: "none",
+          components: [],
+        })
+      ).rejects.toThrow("at least one non-auth procedure");
+      expect(inner.newAccount).not.toHaveBeenCalled();
     });
 
     it("creates immutable contract", async () => {

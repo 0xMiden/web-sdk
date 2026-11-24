@@ -15,6 +15,7 @@ import type {
   TransactionRequestBuilder,
   TransactionResult,
   TransactionStoreUpdate,
+  ProtocolConfig,
   ProvenTransaction,
   TransactionSummary,
   ChainAnchor,
@@ -42,6 +43,7 @@ import type {
   AdviceInputs,
   FeltArray,
   ForeignAccount,
+  FungibleAsset,
   PswapLineageRecord,
 } from "./crates/miden_client_web";
 
@@ -193,7 +195,9 @@ export interface MidenObservation {
   /**
    * Milliseconds from when the call's turn on its client's queue started
    * until it settled; time queued behind the same client's earlier calls is
-   * not counted.
+   * not counted. A store-locked call that times out before its turn starts
+   * has no turn, so it reports 0, delivered when it rejects, and the wait it
+   * spent queued is not counted.
    */
   durationMs: number;
   /**
@@ -210,28 +214,37 @@ export interface MidenObservation {
 export interface ClientOptions {
   /**
    * RPC endpoint. Accepts shorthands or a raw URL:
+   * - `"mainnet"` — Miden mainnet RPC (`https://rpc.mainnet.miden.io`)
    * - `"testnet"` — Miden testnet RPC (`https://rpc.testnet.miden.io`)
    * - `"devnet"` — Miden devnet RPC (`https://rpc.devnet.miden.io`)
    * - `"localhost"` / `"local"` — local node (`http://localhost:57291`)
    * - any other string — treated as a raw RPC endpoint URL
    * Defaults to the SDK testnet RPC if omitted.
    */
-  rpcUrl?: "testnet" | "devnet" | "localhost" | "local" | (string & {});
+  rpcUrl?:
+    | "mainnet"
+    | "testnet"
+    | "devnet"
+    | "localhost"
+    | "local"
+    | (string & {});
   /**
    * Note transport endpoint. Accepts shorthands or a raw URL:
+   * - `"mainnet"` — Miden mainnet transport (`https://transport.mainnet.miden.io`)
    * - `"testnet"` — Miden testnet transport (`https://transport.miden.io`)
    * - `"devnet"` — Miden devnet transport (`https://transport.devnet.miden.io`)
    * - any other string — treated as a raw note transport endpoint URL
    */
-  noteTransportUrl?: "testnet" | "devnet" | (string & {});
+  noteTransportUrl?: "mainnet" | "testnet" | "devnet" | (string & {});
   /**
    * Prover to use for transactions. Accepts shorthands or a raw URL:
    * - `"local"` — local (in-browser) prover
+   * - `"mainnet"` — Miden mainnet remote prover (`https://tx-prover.mainnet.miden.io`)
    * - `"devnet"` — Miden devnet remote prover
    * - `"testnet"` — Miden testnet remote prover
    * - any other string — treated as a raw remote prover URL
    */
-  proverUrl?: "local" | "devnet" | "testnet" | (string & {});
+  proverUrl?: "local" | "mainnet" | "devnet" | "testnet" | (string & {});
   /** Hashed to 32 bytes via SHA-256. */
   seed?: string | Uint8Array;
   /** Store isolation key. */
@@ -388,8 +401,9 @@ export type NoteInput = string | NoteId | Note | InputNoteRecord;
 
 /**
  * Create a wallet, faucet, or contract. A faucet sets `type:
- * FaucetType.FungibleFaucet`, a contract passes `components`, and a wallet is
- * the default (neither). Visibility comes from `storage`.
+ * FaucetType.FungibleFaucet`, a contract passes `components` with `auth` as an
+ * `AuthSecretKey` or `"none"` (no key stored), and a wallet is the default
+ * (neither). Visibility comes from `storage`.
  */
 export type CreateAccountOptions =
   | WalletCreateOptions
@@ -417,8 +431,12 @@ export interface FaucetCreateOptions {
 export interface ContractCreateOptions {
   /** Raw 32-byte seed (Uint8Array). Required. */
   seed: Uint8Array;
-  /** Auth secret key. Required. */
-  auth: AuthSecretKey;
+  /**
+   * Auth secret key, or `"none"` to build a NoAuth contract that anyone can
+   * call without a signature (no key is generated or stored). Required: an
+   * omitted `auth` is rejected rather than defaulting to NoAuth.
+   */
+  auth: AuthSecretKey | "none";
   /**
    * Pre-compiled AccountComponent instances. Required for contracts: at least
    * one must export a non-auth (`@account_procedure`) procedure, or
@@ -730,19 +748,22 @@ export interface BatchOptions {
   /** Operations to execute atomically as a batch. Must be non-empty. */
   operations: BatchOperation[];
   /**
-   * Poll until the local sync height reaches the block number returned by the
-   * submission.
+   * Resolve only once every transaction of the batch is committed. The call
+   * syncs the chain and polls the transactions the submission recorded, and
+   * rejects with `Batch transaction rejected: <id>` if the node discards one,
+   * with `Batch confirmation found no transactions to wait for` when no stored
+   * transaction can be attributed to the batch, or with
+   * `Batch confirmation timed out` when `timeout` runs out first.
    *
-   * Does not currently work on a batch: the poll's sync step calls a method
-   * that does not exist, so it cannot advance the height and the call throws
-   * `Batch confirmation timed out` unless the client is already at or past
-   * that height. Even once fixed it would be a weak signal, since the number
-   * is the tip as of submission rather than the batch's commit block. See
-   * https://github.com/0xMiden/web-sdk/issues/314. Sync and check
-   * `transactions.list()` or the account nonce instead.
+   * The returned `blockNumber` is still the node's chain tip as of submission,
+   * not the block the batch committed in.
    */
   waitForConfirmation?: boolean;
-  /** Wall-clock polling timeout for `waitForConfirmation` (default 60_000ms). */
+  /**
+   * Wall-clock polling timeout for `waitForConfirmation` in milliseconds
+   * (default 60_000). Set to 0 to poll until the batch is committed or
+   * discarded. A sync or query already in flight still finishes first.
+   */
   timeout?: number;
 }
 
@@ -820,10 +841,13 @@ export interface TransactionSubmission {
    *
    * Browser stores require the stored account to match the execution input;
    * a mismatch rejects before changing account state or transaction history.
-   * The network may already have accepted the transaction, so check its status
-   * before submitting again after a local apply failure.
+   * The node already accepted the transaction, so a local apply failure
+   * rejects with `code: "ApplyTransactionAfterSubmitFailed"`, `transactionId`,
+   * `submissionHeight` and the original error as `cause`. Do not resubmit.
    *
    * @returns The pre-apply store update.
+   * @throws An error with `code` `"ApplyTransactionAfterSubmitFailed"` when the
+   *   local store update fails.
    */
   apply(): Promise<TransactionStoreUpdate>;
   /**
@@ -1110,6 +1134,13 @@ export interface MockOptions {
   seed?: string | Uint8Array;
   serializedMockChain?: Uint8Array;
   serializedNoteTransport?: Uint8Array;
+  /**
+   * IndexedDB database name for this mock client. Defaults to `mock_client_db`.
+   * Use a distinct name when a second mock client in the same origin must not
+   * share store state with another live mock (otherwise `syncState` can fail
+   * genesis tip validation).
+   */
+  storeName?: string;
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1137,7 +1168,12 @@ export interface AccountsResource {
    * value as `type`; use `storage`.
    *
    * @param options - Account creation options. A faucet sets `type`, a
-   * contract passes `components`, and a wallet is the default.
+   * contract passes `components`, and a wallet is the default. A contract also
+   * needs a raw 32-byte `seed` and `auth`. `auth` is an `AuthSecretKey` stored
+   * with the account, or `"none"` for a NoAuth contract that anyone can call
+   * and that stores no key. Omitting `auth` is rejected and does not default
+   * to NoAuth. `"none"` is only valid on a contract; wallet and faucet `auth`
+   * stays `AuthScheme.Falcon` or `AuthScheme.ECDSA`.
    * @throws TypeError naming `FaucetType`, before creating anything, for an
    * unrecognised `type`, for faucet fields (`name`, `symbol`, `decimals`,
    * `maxSupply`) without a faucet type, for `components` on a faucet, and for a
@@ -1567,8 +1603,8 @@ export interface TransactionsResource {
    * one through {@link MidenClient.withFeeAwareAuth} before batching it.
    *
    * @param items - Per-tx (account, request) pairs (must be non-empty).
-   * @param options - Optional batch settings (timeout, and `waitForConfirmation`,
-   *   which does not currently work, see its own documentation and #314).
+   * @param options - Optional batch settings (`waitForConfirmation` and its
+   *   `timeout`, see {@link BatchOptions}).
    *   There is no prover option: every transaction is proven inside the batch
    *   primitive by the client's built-in local prover, and `proverUrl` does not
    *   apply.
@@ -2021,25 +2057,23 @@ export declare class MidenClient {
   /**
    * Creates and initializes a new MidenClient.
    *
-   * Every non-mock client must name the chain's fee faucet in
-   * {@link ClientOptions.feeFaucetId} while the SDK carries a default for no
-   * network; without it creation fails with an error saying so.
+   * {@link ClientOptions.feeFaucetId} is optional: the client receives the
+   * chain's protocol configuration, which names the fee asset, from the node
+   * when it syncs.
    */
   static create(options?: ClientOptions): Promise<MidenClient>;
   /**
    * Creates a client preconfigured for testnet (rpc, prover, note transport, autoSync).
-   *
-   * Still needs {@link ClientOptions.feeFaucetId}: the preconfigured defaults
-   * cover the endpoints, not the chain's fee asset.
    */
   static createTestnet(options?: ClientOptions): Promise<MidenClient>;
   /**
    * Creates a client preconfigured for devnet (rpc, prover, note transport, autoSync).
-   *
-   * Still needs {@link ClientOptions.feeFaucetId}: the preconfigured defaults
-   * cover the endpoints, not the chain's fee asset.
    */
   static createDevnet(options?: ClientOptions): Promise<MidenClient>;
+  /**
+   * Creates a client preconfigured for mainnet (rpc, prover, note transport, autoSync).
+   */
+  static createMainnet(options?: ClientOptions): Promise<MidenClient>;
   /** Creates a mock client for testing. */
   static createMock(options?: MockOptions): Promise<MidenClient>;
   /**
@@ -2087,15 +2121,15 @@ export declare class MidenClient {
    */
   waitForIdle(): Promise<void>;
   /**
-   * Returns the raw JS value that the most recent sign-callback invocation
-   * threw, or `null` if the last sign call succeeded (or no call has
-   * happened yet). Useful for recovering structured metadata (e.g. a
-   * `reason: 'locked'` property) that the kernel-level `auth::request`
-   * diagnostic would otherwise erase.
+   * Returns the latest raw sign callback rejection or readable external `getKey`
+   * failure string. Returns `null` after a successful sign or `getKey` callback,
+   * or when `executeTransaction` starts. Raw sign values preserve structured metadata
+   * such as `reason: 'locked'`. Transaction errors include any missing readable
+   * callback detail on both the direct and worker paths.
    *
    * Meaningful only with `useWorker: false` (the worker shim's keystore
    * lives in the worker WASM instance, so this reads `null` there). On
-   * the Node.js binding it always returns `null` — signing goes through
+   * the Node.js binding it always returns `null` - signing goes through
    * the filesystem keystore, never a JS callback.
    */
   lastAuthError(): unknown;
@@ -2124,6 +2158,17 @@ export declare class MidenClient {
    * the mock chain's own, and rejects when neither is set.
    */
   feeFaucetId(): Promise<AccountId>;
+
+  /**
+   * Returns the protocol configuration of the connected network, including its
+   * fee asset, so a dApp need not hardcode it per network.
+   *
+   * The client receives the configuration from the node when it syncs, so this
+   * rejects until the first sync has stored it. Mock clients are seeded with
+   * their chain's configuration. {@link ProtocolConfig.feeFaucetId} agrees with
+   * {@link MidenClient.feeFaucetId} once synced.
+   */
+  protocolConfig(): Promise<ProtocolConfig>;
 
   /** Returns the identifier of the underlying store (e.g. IndexedDB database name, file path). */
   storeIdentifier(): Promise<string>;
@@ -2327,6 +2372,48 @@ export declare function createP2IDNote(
 export declare function createP2IDENote(
   options: P2IDEOptions
 ): ReturnType<WasmModule["Note"]["createP2IDENote"]>;
+
+/** Options for {@link createFeeSponsorshipNote}. */
+export interface FeeSponsorshipNoteOptions {
+  /** Sponsor account paying the fee. */
+  from: AccountRef;
+  /**
+   * Target account the bound feature note routes to. Must be a public account
+   * because fee-sponsorship notes are network-routed.
+   */
+  to: AccountRef;
+  /** Id of the feature note this sponsorship note binds to. */
+  featureNoteId: NoteId;
+  /** Single fungible fee asset carried by the sponsorship note. */
+  asset: FungibleAsset;
+  /**
+   * Account allowed to reclaim the fee if `reclaimAfter` is set. Defaults to
+   * the sponsor (`from`). Passing an `AccountId` instance to
+   * {@link createFeeSponsorshipNote} clones it so the caller's handle is
+   * preserved.
+   */
+  reclaimer?: AccountRef;
+  /**
+   * Optional block height at which `reclaimer` can reclaim the note. Omit or
+   * leave `undefined` to disable reclaim; when set, must be a positive 32-bit
+   * integer (`> 0`).
+   */
+  reclaimAfter?: number;
+}
+
+/**
+ * Creates a fee-sponsorship note bound to a feature note id.
+ *
+ * Binds the note to `options.featureNoteId`, routes to the public target
+ * `options.to`, and defaults `options.reclaimer` to the sponsor (`options.from`).
+ * Unlike `Note.createFeeSponsorshipNote`, which consumes a passed `reclaimer`
+ * `AccountId` in browser WASM, this standalone helper clones `AccountId`
+ * inputs to preserve the caller's handle. Omit `options.reclaimAfter` to
+ * disable reclaim, or pass a positive 32-bit integer (`> 0`).
+ */
+export declare function createFeeSponsorshipNote(
+  options: FeeSponsorshipNoteOptions
+): ReturnType<WasmModule["Note"]["createFeeSponsorshipNote"]>;
 
 /**
  * Builds (without submitting) a Public custom-script note carrying a

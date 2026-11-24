@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { useMidenStore } from "../../store/MidenStore";
 
 // Shared mocks hoisted above vi.mock so the factory can reference them
@@ -87,6 +87,86 @@ describe("useAssetMetadata", () => {
     });
     expect(mockGetAccountDetails).toHaveBeenCalled();
     expect(mockFromAccount).toHaveBeenCalledWith(mockAccount);
+  });
+
+  it("discards metadata resolved after the cache is reset", async () => {
+    let resolveOld!: (value: { account: () => { id: string } }) => void;
+    const oldResponse = new Promise<{ account: () => { id: string } }>(
+      (resolve) => {
+        resolveOld = resolve;
+      }
+    );
+    let resolveNew!: (value: { account: () => { id: string } }) => void;
+    const newResponse = new Promise<{ account: () => { id: string } }>(
+      (resolve) => {
+        resolveNew = resolve;
+      }
+    );
+    mockGetAccountDetails
+      .mockReturnValueOnce(oldResponse)
+      .mockReturnValue(newResponse);
+    mockFromAccount.mockImplementation((account: { id: string }) => ({
+      symbol: () => ({ toString: () => account.id.toUpperCase() }),
+      decimals: () => 8,
+    }));
+
+    const { result } = renderHook(() => useAssetMetadata(["0xreset"]));
+    await act(async () => {
+      useMidenStore.getState().resetInMemoryState();
+    });
+    try {
+      await act(async () => {
+        resolveOld({ account: () => ({ id: "old" }) });
+        await oldResponse;
+      });
+      expect(result.current.assetMetadata.has("0xreset")).toBe(false);
+    } finally {
+      await act(async () => {
+        resolveNew({ account: () => ({ id: "new" }) });
+        await newResponse;
+      });
+    }
+
+    await waitFor(() => {
+      expect(result.current.assetMetadata.get("0xreset")?.symbol).toBe("NEW");
+    });
+  });
+
+  it("starts a new client's read without waiting for the previous client", async () => {
+    let resolveOld!: (value: { account: () => { id: string } }) => void;
+    const oldResponse = new Promise<{ account: () => { id: string } }>(
+      (resolve) => {
+        resolveOld = resolve;
+      }
+    );
+    mockGetAccountDetails
+      .mockReturnValueOnce(oldResponse)
+      .mockResolvedValue({ account: () => ({ id: "new" }) });
+    mockFromAccount.mockImplementation((account: { id: string }) => ({
+      symbol: () => ({ toString: () => account.id.toUpperCase() }),
+      decimals: () => 8,
+    }));
+
+    const { result } = renderHook(() => useAssetMetadata(["0xswitch"]));
+    await act(async () => {
+      useMidenStore.getState().setClient({
+        endpoint: () => "https://rpc.devnet.miden.io",
+      } as never);
+    });
+
+    try {
+      await waitFor(() => {
+        expect(result.current.assetMetadata.get("0xswitch")?.symbol).toBe(
+          "NEW"
+        );
+      });
+    } finally {
+      await act(async () => {
+        resolveOld({ account: () => ({ id: "old" }) });
+        await oldResponse;
+      });
+    }
+    expect(result.current.assetMetadata.get("0xswitch")?.symbol).toBe("NEW");
   });
 
   it("should store fallback metadata when account is not found", async () => {

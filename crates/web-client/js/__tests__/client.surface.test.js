@@ -204,3 +204,40 @@ describe("MidenClient declared surface", () => {
     ).toEqual([]);
   });
 });
+
+// A public method is documented on every consumer surface the repository
+// requires, and typedoc renders a WASM return type only when the curated entry
+// exports it. Each listed file is one that tells a reader how to get the fee
+// asset, so it names `protocolConfig()` beside `feeFaucetId()`.
+const REPO_ROOT = new URL("../../../../", import.meta.url);
+const PROTOCOL_CONFIG_DOCS = [
+  "README.md",
+  "crates/web-client/README.md",
+  "crates/web-client/AGENTS.md",
+  "crates/web-client/skills/web-client-usage/SKILL.md",
+  "crates/web-client/skills/chain-anchored-execution/SKILL.md",
+  "crates/web-client/skills/signer-integration/SKILL.md",
+  "crates/web-client/skills/frontend-pitfalls/SKILL.md",
+  "crates/web-client/src/models/account_component.rs",
+  "docs/external/src/web-client/library/network-notes.md",
+  "docs/external/src/web-client/library/transactions.md",
+];
+
+describe("protocolConfig documentation", () => {
+  it("docs-entry exports ProtocolConfig", () => {
+    const entry = readFileSync(
+      new URL("../types/docs-entry.d.ts", import.meta.url),
+      "utf8"
+    );
+    expect(entry).toMatch(/^\s*ProtocolConfig,/m);
+  });
+
+  it.each(PROTOCOL_CONFIG_DOCS)(
+    "protocolConfig is documented on every required surface: %s",
+    (file) => {
+      expect(readFileSync(new URL(file, REPO_ROOT), "utf8")).toContain(
+        "protocolConfig("
+      );
+    }
+  );
+});

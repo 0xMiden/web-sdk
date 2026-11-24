@@ -95,7 +95,6 @@ const { blockNumber } = await client.transactions.batch({
     { kind: "send", account: alice, to: carol, token: dagToken, amount: 30n, type: "public" },
     { kind: "consume", account: bob, notes: pendingNotes },
   ],
-  // waitForConfirmation is currently broken for batches — see below.
 });
 // The node's chain tip as of submission, not the block the batch commits in.
 console.log(`Batch submitted at chain tip ${blockNumber}`);
@@ -143,9 +142,16 @@ This is the plural counterpart of `client.transactions.submit(account, request)`
 
 ### `waitForConfirmation` semantics
 
-The batch primitive returns only a block number, so there are no per-tx ids to poll, and that number is the node's chain tip at submission, per the caveat above. Even were it the commit block, reaching it would confirm only that the client had caught up, not that the batch committed. `waitForConfirmation` on a batch does not currently work: its poll calls a sync method that does not exist, so the poll cannot advance the height itself and the call throws `Batch confirmation timed out` unless the client is already at or past that height. Tracked in [#314](https://github.com/0xMiden/web-sdk/issues/314); prefer syncing and checking `client.transactions.list()` yourself. The `timeout` option still applies; default is 60 seconds.
+The batch primitive returns only a block number, and that number is the node's chain tip at submission, per the caveat above, so reaching it says nothing about the batch. With `waitForConfirmation: true` the call instead follows the transactions the submission recorded in the local store: it syncs the chain and resolves once every one of them is committed. It rejects with `Batch transaction rejected: <id>` if the node discards one, and with `Batch confirmation timed out` when `timeout` runs out first; the default is 60 seconds, and `0` polls until the batch settles.
 
-The batch's own effects are already in the local store when the call returns, so what you are waiting for is chain inclusion:
+```typescript
+await client.transactions.batch({
+  operations,
+  waitForConfirmation: true,
+});
+```
+
+The batch's own effects are already in the local store when the call returns, so without the option what you are waiting for is chain inclusion:
 
 ```typescript
 await client.sync();
@@ -188,8 +194,12 @@ continue to sync before relying on on-chain balances.
 
 For browser stores, `apply` requires the stored account to match the
 transaction's execution input. A mismatch rejects before changing account state
-or transaction history. A submitted transaction may already be on-chain when
-local apply fails; check its status before submitting again.
+or transaction history. A submitted transaction is already accepted by the node when
+local apply fails, so `apply` and the single-transaction `transactions.*` helpers
+(which apply after submitting) reject with `code: "ApplyTransactionAfterSubmitFailed"`,
+`transactionId`, `submissionHeight` and the original error as `cause`. A batch whose
+local update fails after the node accepted it rejects with the same `code` and the
+accepted block in its message, without those fields. Do not submit it again.
 
 ## Pinning How Input Notes Are Consumed
 
@@ -224,7 +234,7 @@ So how much of this you have to think about depends on the account:
 - **Multisig, smart multisig and guarded multisig** — miden-client refuses to guess the salt, and the transaction fails with `FeeConversionInfoRequired` naming the component. Declaring a salt is what makes those accounts work at all.
 - **A custom auth procedure that reads conversion info** — miden-client does not recognise the component, commits nothing, and the transaction hits the VM abort above. Attach the commitment yourself; see [Custom auth procedures](#custom-auth-procedures).
 
-Whether any of this applies is a property of the chain, and `BlockHeader.verificationBaseFee()` is how you ask. A block header is reachable from a chain anchor; the fee asset itself comes from the client, since 0.17 keeps it in the protocol configuration rather than in the header:
+Whether any of this applies is a property of the chain, and `BlockHeader.verificationBaseFee()` is how you ask. A block header is reachable from a chain anchor; the fee asset itself comes from the client, since 0.17 keeps it in the protocol configuration rather than in the header (`client.protocolConfig()` returns that configuration, whose `commitment()` is the header's `protocolConfigCommitment()`):
 
 ```typescript
 const anchor = await client.transactions.captureAnchor(request);

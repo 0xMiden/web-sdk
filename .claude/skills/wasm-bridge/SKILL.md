@@ -33,7 +33,10 @@ type aliases and helpers so most code is written once. Key aliases:
   carrying a stable machine-readable `code` (see
   [Error Handling](#error-handling-across-the-boundary)).
 - `JsU64`: `u64` on browser, `napi::bindgen_prelude::BigInt` on nodejs; both
-  surface as a JS `BigInt`. Convert with `js_u64_to_u64` / `u64_to_js_u64`.
+  surface as a JS `BigInt`. `js_export` types a browser argument as `js_sys::BigInt`
+  (and a `Vec<JsU64>` argument element-wise as `js_sys::BigInt`). Convert with
+  `js_u64_to_u64`, which returns a `Result` and rejects values outside `0..2^64`
+  (propagate with `?`), and `u64_to_js_u64`.
 - `JsBytes`: `js_sys::Uint8Array` on browser, `napi::bindgen_prelude::Buffer`
   on nodejs. Convert with `bytes_to_js` / `js_to_bytes` (`js_to_bytes` is
   platform-agnostic; only `bytes_to_js` splits).
@@ -67,7 +70,7 @@ The public API is exposed with the custom `#[js_export]` proc-macro from the
 the dual `wasm_bindgen` (browser) and `napi` (Node.js) annotations from one
 attribute, forwarding `constructor` / `js_name` / `getter`. When a signature
 contains `JsU64`, the macro splits the impl per platform, replacing `JsU64` with
-`u64` (browser) or `BigInt` (nodejs), so `JsU64` is resolved by the macro and
+`js_sys::BigInt` for arguments and `u64` for returns (browser) or `BigInt` (nodejs), so `JsU64` is resolved by the macro and
 does not need to be imported in the annotated module. Raw `#[wasm_bindgen]` is
 reserved for browser-only members (e.g. synchronous getters that cannot be async).
 
@@ -164,23 +167,27 @@ This:
 2. Extracts an `ErrorHint` from `ClientError` via `hint_from_error` if available.
 3. Browser path: attaches `help` (the hint) and `code` (from `code_from_error`,
    which maps the few `ClientError` variants JS callers branch on, e.g.
-   `ACCOUNT_NOT_FOUND_ON_CHAIN`, `ACCOUNT_ALREADY_TRACKED`) as properties on the
+   `ACCOUNT_NOT_FOUND_ON_CHAIN`, `ACCOUNT_ALREADY_TRACKED`, `ACCOUNT_IS_PRIVATE`) as properties on the
    JS `Error` via `Reflect::set`.
 4. Node.js path: returns `napi::Error::from_reason(...)` with the help inlined
-   into the message.
+   into the message. A post-submit failure (`post_submit_code`) is prefixed
+   `"ApplyTransactionAfterSubmitFailed: "`; other mapped codes stay unprefixed.
 
 ### The named error codes
 
 JS callers branch on a `code`, never on message text, so the vocabulary is a
-public contract. Two primitives produce one, and between them they emit exactly
-four codes today:
+public contract. Two primitives produce one. These are the transaction and
+account codes (the registration codes `code_from_error` also maps are not
+listed):
 
 | Code | Produced by | Raised when |
 |---|---|---|
 | `ACCOUNT_NOT_FOUND_ON_CHAIN` | `code_from_error` (`lib.rs:672-682`) | `ClientError::AccountNotFoundOnChain` |
 | `ACCOUNT_ALREADY_TRACKED` | `code_from_error` | `ClientError::AccountAlreadyTracked` |
+| `ACCOUNT_IS_PRIVATE` | `code_from_error` | `ClientError::AccountIsPrivate` |
 | `TRANSACTION_ALREADY_AUTHORIZED` | `from_str_err_with_code` | `executeForSummary` / `executeForSummaryAt` produced no summary because the transaction was already fully authorized (`new_transactions.rs:611`, `:649`) |
 | `INVALID_CHAIN_ANCHOR` | `from_str_err_with_code` | `ClientError::ChainAnchorError`, routed through `map_anchor_err` (`new_transactions.rs:910`) |
+| `ApplyTransactionAfterSubmitFailed` | `post_submit_code` (via `code_from_error`) and `js_post_submit_error` | The node accepted the transaction or batch but the local store update failed: `ClientError::ApplyTransactionAfterSubmitFailed`, the two `BatchBuilderError::BatchSubmitted*` variants, and every failure inside `applyTransaction`. Never resubmit. The JS resource helpers and `TransactionSubmission.apply()` raise it with `transactionId`, `submissionHeight` and `cause` |
 
 `code_from_error` recurses through `err.source()`, so a code survives being
 wrapped. It maps typed `ClientError` variants only, and is reachable **only**
