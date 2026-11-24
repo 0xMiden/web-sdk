@@ -537,7 +537,7 @@ jobs:
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = workflow_dispatch
           test "$GITHUB_REF_NAME" = ci/479-wasm-release
-          sdk_sha=4d76543d3c7409f109865fdf2474a2cfd058ed02
+          sdk_sha=722d5d69aee6425f58dcada3194033be519a3463
           git diff --exit-code "$sdk_sha" -- . ':(exclude).github/workflows/bench.yml'
           mkdir -p "$RUNNER_TEMP/report"
           printf '%s\n' "$sdk_sha" | tee "$RUNNER_TEMP/report/sdk-sha.txt"
