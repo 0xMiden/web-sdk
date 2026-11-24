@@ -115,8 +115,9 @@ const AUTH_SCHEME_ARG_INDEX = new Map([
  * - BigInt/Uint8Array args normalized
  * - AuthScheme args resolved against `rawSdk.AuthScheme`, as the browser
  *   WebClient resolves them against the wasm enum
+ * - terminate() calls `releaseStore`, when given
  */
-export function wrapClient(rawClient, storeName, rawSdk) {
+export function wrapClient(rawClient, storeName, rawSdk, releaseStore) {
   return new Proxy(rawClient, {
     get(target, prop) {
       if (prop === "syncState") {
@@ -137,9 +138,10 @@ export function wrapClient(rawClient, storeName, rawSdk) {
       if (prop === "storeIdentifier") {
         return () => target.storeIdentifier?.() ?? storeName ?? "unknown";
       }
-      // terminate is a no-op on Node.js (no Web Worker to terminate)
+      // There is no Web Worker to stop on Node.js; terminate only releases
+      // the store's claim (see `claimStore`).
       if (prop === "terminate") {
-        return () => {};
+        return () => releaseStore?.();
       }
       // onStateChanged is browser-only (uses BroadcastChannel)
       if (prop === "onStateChanged") {

@@ -473,3 +473,55 @@ function checkRetryOption(name, value, cap) {
     );
   }
 }
+
+// The live clients on each store, keyed by the id the store lock uses, and how
+// many clients have opened each store while it has a live one, which numbers
+// them. Kept on the realm, not the module: the ST and MT builds, and any
+// duplicate copy of the package, each evaluate this file but share one store.
+const registry = (globalThis[Symbol.for("miden.web-sdk.storeOwnership")] ??= {
+  clients: new Map(),
+  counts: new Map(),
+});
+const storeClients = registry.clients;
+const storeOpenCounts = registry.counts;
+
+/**
+ * Records a client opening `storeId` and returns the function that releases
+ * it; releasing twice is harmless. When a live client already has the store
+ * open this warns naming it, or throws when either client asked for
+ * exclusive use, recording nothing.
+ * @param {string} storeId - The store lock id of the store being opened.
+ * @param {boolean} [exclusive] - Refuse a store that is already open, and
+ *   make later opens of it refuse while this client lives.
+ * @returns {() => void} Releases the store.
+ */
+export function claimStore(storeId, exclusive = false) {
+  const live = storeClients.get(storeId) ?? [];
+  const owner = live.find((client) => client.exclusive) ?? live[0];
+  if (owner) {
+    const held = `Store "${storeId}" is already open in client #${owner.number} of that store (numbered in the order clients opened it)`;
+    if (exclusive || owner.exclusive) {
+      throw new Error(
+        owner.exclusive
+          ? `${held}, which holds it exclusively; terminate it first`
+          : `${held}; terminate it before opening the store exclusively`
+      );
+    }
+    console.warn(
+      `${held}. The two clients do not coordinate; terminate one, or pass exclusive: true to refuse the second open.`
+    );
+  }
+  const number = (storeOpenCounts.get(storeId) ?? 0) + 1;
+  storeOpenCounts.set(storeId, number);
+  const entry = { number, exclusive: exclusive === true };
+  storeClients.set(storeId, [...live, entry]);
+  return () => {
+    const rest = (storeClients.get(storeId) ?? []).filter((c) => c !== entry);
+    if (rest.length > 0) {
+      storeClients.set(storeId, rest);
+    } else {
+      storeClients.delete(storeId);
+      storeOpenCounts.delete(storeId);
+    }
+  };
+}

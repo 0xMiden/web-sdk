@@ -251,6 +251,14 @@ export interface ClientOptions {
   /** Store isolation key. */
   storeName?: string;
   /**
+   * Refuse to share the store. Opening a store that another live client in
+   * this realm has open warns by default, naming that client; with
+   * `exclusive: true` the open throws instead, and while this client lives
+   * every other open of its store throws too. `terminate()` releases the
+   * store. Defaults to `false`.
+   */
+  exclusive?: boolean;
+  /**
    * Faucet of the chain's fee asset, as a bech32 address or a hex account ID.
    *
    * Optional. Miden 0.17 moved the fee asset out of the block header and into the protocol
@@ -2436,8 +2444,8 @@ export declare class MidenClient {
   /**
    * Terminates the client, then resolves once its wasm client is freed and its
    * store connection released, so the store can be deleted or reopened once
-   * this settles. On the Node.js binding it releases nothing and resolves at
-   * once.
+   * this settles. On the Node.js binding it releases only the store's
+   * ownership claim and resolves at once.
    * A store handle you obtain yourself, such as an AccountReader from
    * `accountReader`, keeps the connection open until you free it.
    */

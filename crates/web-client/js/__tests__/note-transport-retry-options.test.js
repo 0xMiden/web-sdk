@@ -292,7 +292,7 @@ describe("MidenClient.create forwards the retry options", () => {
       noteTransportRetryIntervalMs: 100,
     });
     const [args] = calls.createClient;
-    expect(args).toHaveLength(10);
+    expect(args).toHaveLength(12);
     expect(args[7]).toBe("0xfee");
     expect(args[8]).toBe(2);
     expect(args[9]).toBe(100);
@@ -308,7 +308,7 @@ describe("MidenClient.create forwards the retry options", () => {
       noteTransportRetryIntervalMs: 60_000,
     });
     const [args] = calls.createClientWithExternalKeystore;
-    expect(args).toHaveLength(14);
+    expect(args).toHaveLength(15);
     expect(args[10]).toBe("0xfee");
     expect(args[11]).toBe(0);
     expect(args[12]).toBe(60_000);
