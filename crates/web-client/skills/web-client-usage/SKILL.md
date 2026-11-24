@@ -547,6 +547,38 @@ public metadata, the registry's approved script and inputs, and
 must be public. A tag alone does not make a network note. Consume the returned P2ID note to put
 the asset back in the vault. The amount-based `send` helper remains fungible-only.
 
+## Fee Sponsorship Notes
+
+Use standalone `createFeeSponsorshipNote` (or `Note.createFeeSponsorshipNote`)
+to build a fee-sponsorship note bound to `featureNoteId` and routed to a
+**public** `to` account (`to` must be public for network routing). `reclaimer`
+defaults to the sponsor (`from`). Omit `reclaimAfter` / `reclaimHeight` to
+disable reclaim; when set, it must be a positive 32-bit integer (`0` is
+rejected). Prefer `createFeeSponsorshipNote` when passing an `AccountId`
+`reclaimer` because standalone clones it, whereas `Note.createFeeSponsorshipNote`
+consumes a passed `reclaimer` `AccountId` in browser WASM even on error.
+
+```typescript
+const sponsorship = createFeeSponsorshipNote({
+  from: sponsorId,
+  to: publicTargetId,
+  featureNoteId: featureNote.id(),
+  asset: new FungibleAsset(feeFaucetId, 1_000n),
+  reclaimer: reclaimerId, // optional; defaults to `from`
+  reclaimAfter: 100, // optional positive 32-bit integer (> 0; 0 is rejected)
+});
+
+const decoded = FeeSponsorshipNote.tryFromNote(sponsorship);
+decoded.featureNoteId();
+decoded.sender();
+decoded.reclaimer();
+decoded.reclaimHeight(); // number | undefined
+decoded.asset();
+decoded.tag();
+decoded.serialNumber();
+decoded.intoNote();
+```
+
 ## Account Creation
 
 ```typescript

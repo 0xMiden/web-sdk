@@ -42,6 +42,14 @@ const fakeNative = vi.hoisted(() => {
       return null;
     }
   }
+  class FeeSponsorshipNote {
+    constructor(height = null) {
+      this._height = height;
+    }
+    reclaimHeight() {
+      return this._height;
+    }
+  }
   class TransactionRequestBuilder {
     withOwnOutputNotes(notes) {
       received.push(notes);
@@ -107,6 +115,7 @@ const fakeNative = vi.hoisted(() => {
     Account,
     Word,
     BasicFungibleFaucetComponent,
+    FeeSponsorshipNote,
     TransactionRequestBuilder,
     NoteStorage,
     SigningInputs,
@@ -126,6 +135,7 @@ vi.mock("../node/loader.js", () => ({
     Account: fakeNative.Account,
     Word: fakeNative.Word,
     BasicFungibleFaucetComponent: fakeNative.BasicFungibleFaucetComponent,
+    FeeSponsorshipNote: fakeNative.FeeSponsorshipNote,
     TransactionRequestBuilder: fakeNative.TransactionRequestBuilder,
     NoteStorage: fakeNative.NoteStorage,
     SigningInputs: fakeNative.SigningInputs,
@@ -252,6 +262,13 @@ describe("Node napi boundary", () => {
     expect(faucet.description()).toBeUndefined();
     expect(faucet.logoUri()).toBeUndefined();
     expect(faucet.externalLink()).toBeUndefined();
+  });
+
+  it("reads FeeSponsorshipNote.reclaimHeight() as undefined when unset and preserves positive numbers", () => {
+    expect(
+      new nodeIndex.FeeSponsorshipNote(null).reclaimHeight()
+    ).toBeUndefined();
+    expect(new nodeIndex.FeeSponsorshipNote(42).reclaimHeight()).toBe(42);
   });
 
   it("keeps the NoteScript.p2id and p2ide aliases", () => {
