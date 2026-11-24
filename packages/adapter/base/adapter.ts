@@ -11,6 +11,12 @@ export { EventEmitter };
 
 export interface WalletAdapterEvents {
   connect(address: string, allowedPrivateData?: AllowedPrivateData): void;
+  /**
+   * The wallet switched to another valid account while connected. Fires
+   * before the `connect` that refreshes existing listeners. Revocation is
+   * reported through `disconnect`, never through this event.
+   */
+  accountChange(address: string, publicKey: Uint8Array | null): void;
   disconnect(): void;
   error(error: WalletError): void;
   readyStateChange(readyState: WalletReadyState): void;
