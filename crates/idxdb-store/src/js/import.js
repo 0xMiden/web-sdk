@@ -47,6 +47,7 @@ export async function transformForImport(obj) {
 const CLIENT_CONFIG_TABLE = "clientConfig";
 const USER_SETTINGS_TABLE = "userSettings";
 const CHAIN_ANCHORS_TABLE = "chainAnchors";
+const TRANSACTION_ENCRYPTION_KEY = "transaction_encryption_key";
 // The table that schema version 14 removed.
 const LEGACY_SETTINGS_TABLE = "settings";
 // The table that schema version 16 removed.
@@ -124,7 +125,11 @@ export async function forceImportStore(dbId, jsonStr) {
                     continue;
                 }
                 const records = dbJson[tableName];
-                const transformedRecords = await Promise.all(records.map(transformForImport));
+                // The next submission must fetch and verify the network key after a restore.
+                const importableRecords = tableName === CLIENT_CONFIG_TABLE
+                    ? records.filter((row) => row?.key !== TRANSACTION_ENCRYPTION_KEY)
+                    : records;
+                const transformedRecords = await Promise.all(importableRecords.map(transformForImport));
                 await table.bulkPut(transformedRecords);
             }
             // The dump brought its own stamp; the store now belongs to the running client, as after an

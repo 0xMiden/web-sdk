@@ -72,6 +72,7 @@ export async function transformForImport(obj: any): Promise<any> {
 const CLIENT_CONFIG_TABLE = "clientConfig";
 const USER_SETTINGS_TABLE = "userSettings";
 const CHAIN_ANCHORS_TABLE = "chainAnchors";
+const TRANSACTION_ENCRYPTION_KEY = "transaction_encryption_key";
 // The table that schema version 14 removed.
 const LEGACY_SETTINGS_TABLE = "settings";
 // The table that schema version 16 removed.
@@ -187,10 +188,15 @@ export async function forceImportStore(dbId: string, jsonStr: string) {
           continue;
         }
 
-        const records = dbJson[tableName];
+        const records: any[] = dbJson[tableName];
+        // The next submission must fetch and verify the network key after a restore.
+        const importableRecords =
+          tableName === CLIENT_CONFIG_TABLE
+            ? records.filter((row) => row?.key !== TRANSACTION_ENCRYPTION_KEY)
+            : records;
 
         const transformedRecords = await Promise.all(
-          records.map(transformForImport)
+          importableRecords.map(transformForImport)
         );
 
         await table.bulkPut(transformedRecords);
