@@ -145,6 +145,7 @@ function makeWasm(overrides = {}) {
     Note: {
       createP2IDNote: vi.fn().mockReturnValue("p2idNote"),
       withAttachments: vi.fn().mockReturnValue("networkNote"),
+      createClaimNote: vi.fn().mockReturnValue("claimNote"),
     },
     NoteAssets: vi.fn().mockReturnValue("noteAssets"),
     FungibleAsset: vi.fn().mockReturnValue("fungibleAsset"),
@@ -1001,6 +1002,60 @@ describe("TransactionsResource", () => {
     });
   });
 
+  describe("claimAggLayerDeposit", () => {
+    const claimOpts = (overrides = {}) => ({
+      account: "0xsender",
+      bridgeAccount: "0xbridge",
+      proof: "proofData",
+      leaf: "leafData",
+      scale: 10,
+      ...overrides,
+    });
+
+    it("submits the CLAIM note as the sender with the bridge declared", async () => {
+      const { resource, inner, wasm } = makeResource();
+      const result = await resource.claimAggLayerDeposit(claimOpts());
+
+      // Pin the argument order: a bridge/sender swap targets the wrong account.
+      expect(wasm.Note.createClaimNote).toHaveBeenCalledWith(
+        "proofData",
+        "leafData",
+        10,
+        expect.objectContaining({ hex: "0xbridge" }),
+        expect.objectContaining({ hex: "0xsender" })
+      );
+      const [executing] = inner.feeAwareTransactionRequestBuilder.mock.calls[0];
+      expect(executing.hex).toBe("0xsender");
+      const [outputs] = lastBuilder.withOwnOutputNotes.mock.calls[0];
+      expect(outputs._items).toEqual(["claimNote"]);
+      const [declared] = lastBuilder.withForeignAccounts.mock.calls[0];
+      expect(declared.pushed).toHaveLength(1);
+      expect(wasm.ForeignAccount.public.mock.calls[0][0].hex).toBe("0xbridge");
+      expect(inner.executeTransaction.mock.calls[0][0].hex).toBe("0xsender");
+      expect(result.note).toBe("claimNote");
+      expect(result.txId).toBeDefined();
+      expect(result.result).toBeDefined();
+    });
+
+    it.each([
+      ["fractional", 1.5],
+      ["negative", -1],
+      ["above 18", 19],
+      ["NaN", NaN],
+      ["a string", "10"],
+    ])(
+      "rejects a scale that is %s before any WASM call",
+      async (_label, scale) => {
+        const { resource, wasm } = makeResource();
+        await expect(
+          resource.claimAggLayerDeposit(claimOpts({ scale }))
+        ).rejects.toThrow(/scale must be an integer from 0 to 18/);
+        expect(wasm.AccountId.fromHex).not.toHaveBeenCalled();
+        expect(wasm.Note.createClaimNote).not.toHaveBeenCalled();
+      }
+    );
+  });
+
   describe("consume", () => {
     it("builds consume request for note IDs and submits", async () => {
       const { resource, inner } = makeResource();
@@ -1760,6 +1815,7 @@ describe("TransactionsResource", () => {
       "mint",
       "bridge",
       "withdrawUsdcx",
+      "claimAggLayerDeposit",
       "consume",
       "consumeAll",
       "swap",
