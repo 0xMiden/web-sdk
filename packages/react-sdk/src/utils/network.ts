@@ -48,6 +48,9 @@ export function resolveNetworkName(
   if (url.includes("devnet") || url.includes("mdev")) {
     return "devnet";
   }
+  if (url.includes("mainnet")) {
+    return "mainnet";
+  }
   if (url.includes("testnet") || url.includes("mtst")) {
     return "testnet";
   }
