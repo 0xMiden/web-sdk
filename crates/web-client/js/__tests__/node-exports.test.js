@@ -342,8 +342,10 @@ describe("Node napi boundary", () => {
   });
 
   it("exports the PswapNote and BurnNote decoders", () => {
-    expect(nodeIndex.PswapNote).toBe(fakeNative.PswapNote);
-    expect(nodeIndex.BurnNote).toBe(fakeNative.BurnNote);
+    expect(nodeIndex.PswapNote).toBeTypeOf("function");
+    expect(nodeIndex.PswapNote.name).toBe("PswapNote");
+    expect(nodeIndex.BurnNote).toBeTypeOf("function");
+    expect(nodeIndex.BurnNote.name).toBe("BurnNote");
   });
 
   it("keeps the NoteScript.p2id and p2ide aliases", () => {

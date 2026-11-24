@@ -583,7 +583,7 @@ test.describe("standard note decoders", () => {
     expect(result.roundTripId).toBe(result.originalId);
     expect(result.wrongScriptError).toMatch(/not a BURN note/);
     expect(result.mismatchError).toMatch(/does not match/);
-    expect(result.shortStorageError).toMatch(/decode BURN note/);
+    expect(result.shortStorageError).toMatch(/expected 8 storage items/);
     expect(result.twoAssetsError).toMatch(/exactly one asset/);
   });
 });
