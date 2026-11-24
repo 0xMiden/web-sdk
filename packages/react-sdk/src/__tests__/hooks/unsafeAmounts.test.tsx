@@ -36,7 +36,13 @@ beforeEach(() => {
   });
 });
 
+// useMultiSend and useCreateNetworkNote never reach submitNewTransaction on
+// this path, so the builder and the execute/prove/submit steps count too.
 function expectNothingSubmitted() {
+  expect(client.feeAwareTransactionRequestBuilder).not.toHaveBeenCalled();
+  expect(client.executeTransaction).not.toHaveBeenCalled();
+  expect(client.proveTransaction).not.toHaveBeenCalled();
+  expect(client.submitProvenTransaction).not.toHaveBeenCalled();
   expect(client.submitNewTransaction).not.toHaveBeenCalled();
   expect(client.submitNewTransactionWithProver).not.toHaveBeenCalled();
 }

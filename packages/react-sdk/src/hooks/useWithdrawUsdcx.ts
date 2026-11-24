@@ -33,8 +33,9 @@ export interface UseWithdrawUsdcxResult {
  *
  * Returns `{ withdrawUsdcx, result, isLoading, stage, error, reset }`.
  * `withdrawUsdcx` resolves to a `TransactionResult` (`{ transactionId }`) and
- * rejects on failure, including an unsafe number amount or a recipient that
- * is not 32 bytes of 0x-prefixed hex.
+ * rejects on failure, including an unsafe number amount, a
+ * `destinationDomain` that is not a u32 integer or a recipient that is not 32
+ * bytes of 0x-prefixed hex.
  *
  * @example
  * ```tsx
@@ -69,6 +70,13 @@ export function useWithdrawUsdcx(): UseWithdrawUsdcxResult {
 
       try {
         const amount = toAmount(options.amount, "withdrawUsdcx");
+        const domain = options.destinationDomain;
+        // The wasm parameter is a u32, which wraps or zeroes anything else.
+        if (!Number.isInteger(domain) || domain < 0 || domain > 0xffffffff) {
+          throw new Error(
+            "withdrawUsdcx: destinationDomain must be an integer from 0 to 4294967295"
+          );
+        }
         const recipientHex = options.destinationRecipient;
         if (
           typeof recipientHex !== "string" ||
@@ -91,7 +99,7 @@ export function useWithdrawUsdcx(): UseWithdrawUsdcxResult {
             senderId,
             faucetId,
             amount,
-            options.destinationDomain,
+            domain,
             recipient
           );
 
