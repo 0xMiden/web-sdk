@@ -317,17 +317,19 @@ if (root === NoteScript.mint().root().toHex()) {
   mint.faucetId(); // the faucet that consumes the note
   mint.tag(); // tag of the minted note
   mint.recipientDigest(); // private minted note: its recipient, else undefined
-  mint.recipientScriptRoot(); // public minted note: script root, serial number
+  mint.recipientScriptRoot(); // public minted note: its script root,
+  mint.recipientSerialNumber(); // serial number
   mint.recipientStorage(); // and storage, else undefined
 }
 ```
 
-To screen a note before importing it, pass it to the client. Each entry is a
-`NoteConsumability`, as `ConsumableNoteRecord.noteConsumability()` lists them:
+To screen a note before importing it, pass it to `client.notes.screen`. Each
+entry is a `NoteConsumability`, as `ConsumableNoteRecord.noteConsumability()`
+lists them:
 
 ```typescript
-const all = await client.getNoteConsumability(note); // every tracked account
-const mine = await client.getNoteConsumabilityForAccount(note, wallet.id());
+const all = await client.notes.screen(note); // every tracked account
+const mine = await client.notes.screen(note, { account: wallet });
 for (const entry of mine) {
   const status = entry.consumptionStatus();
   status.isConsumableNow(); // consumable at the last synced block
@@ -337,7 +339,9 @@ for (const entry of mine) {
 
 The screener leaves out accounts that can never consume the note, and accounts
 that cannot consume it under the current conditions, so an empty array means
-no screened account can consume it. Screening does not import the note.
+no screened account can consume it now: read it as never consumable. Screening
+does not import the note. The low-level `WebClient` exposes the same screen as
+`getNoteConsumability(note)` and `getNoteConsumabilityForAccount(note, accountId)`.
 
 ## Going deeper
 
