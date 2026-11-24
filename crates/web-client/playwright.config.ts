@@ -94,6 +94,7 @@ const ciShardProjects = process.env.CI
           "test/allowlist.test.ts",
           "test/account_file.test.ts",
           "test/account_reader.test.ts",
+          "test/account_witness.test.ts",
           "test/new_account.test.ts",
           "test/multisig_component.test.ts",
           "test/key.test.ts",

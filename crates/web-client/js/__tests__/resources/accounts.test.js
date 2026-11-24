@@ -45,6 +45,10 @@ function makeInner(overrides = {}) {
     getAccounts: vi.fn().mockResolvedValue(["acc1", "acc2"]),
     importAccountById: vi.fn().mockResolvedValue(undefined),
     importAccountFile: vi.fn().mockResolvedValue(undefined),
+    importWatchedAccountById: vi.fn().mockResolvedValue(undefined),
+    trackAccountWitness: vi.fn().mockResolvedValue(true),
+    untrackAccountWitness: vi.fn().mockResolvedValue(true),
+    trackedAccountWitnesses: vi.fn().mockResolvedValue([]),
     importPublicAccountFromSeed: vi.fn().mockResolvedValue("seedImportResult"),
     exportAccountFile: vi.fn().mockResolvedValue("exportedFile"),
     insertAccountAddress: vi.fn().mockResolvedValue(undefined),
@@ -665,6 +669,76 @@ describe("AccountsResource", () => {
       // Need to give it something that resolveAccountRef will handle as AccountId pass-through
       await resource.import(plainId);
       expect(inner.importAccountById).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe("importWatched", () => {
+    it("imports watch-only by ref and returns the stored account", async () => {
+      inner.getAccount.mockResolvedValue("watched");
+      const resource = makeResource();
+      const result = await resource.importWatched("0xaccHex");
+      expect(wasm.AccountId.fromHex).toHaveBeenCalledWith("0xaccHex");
+      expect(inner.importWatchedAccountById).toHaveBeenCalledOnce();
+      expect(inner.importAccountById).not.toHaveBeenCalled();
+      expect(result).toBe("watched");
+    });
+  });
+
+  describe("account witness tracking", () => {
+    it("trackWitness forwards the resolved id and returns the flag", async () => {
+      inner.trackAccountWitness.mockResolvedValue(false);
+      const resource = makeResource();
+      await expect(resource.trackWitness("0xaccHex")).resolves.toBe(false);
+      expect(inner.trackAccountWitness).toHaveBeenCalledOnce();
+      expect(client.assertNotTerminated).toHaveBeenCalledOnce();
+    });
+
+    it("untrackWitness forwards the resolved id and returns the flag", async () => {
+      const resource = makeResource();
+      await expect(resource.untrackWitness("0xaccHex")).resolves.toBe(true);
+      expect(inner.untrackAccountWitness).toHaveBeenCalledOnce();
+    });
+
+    it("trackedWitnesses returns the stored ids as an array", async () => {
+      inner.trackedAccountWitnesses.mockResolvedValue(["a", "b"]);
+      const resource = makeResource();
+      await expect(resource.trackedWitnesses()).resolves.toEqual(["a", "b"]);
+    });
+  });
+
+  describe("getStorageMapWitness", () => {
+    it("reads the witness through a reader and frees it", async () => {
+      const reader = {
+        getStorageMapWitness: vi.fn().mockResolvedValue("witness"),
+        free: vi.fn(),
+      };
+      inner.accountReader.mockReturnValue(reader);
+      const resource = makeResource();
+      const result = await resource.getStorageMapWitness(
+        "0xaccHex",
+        "slot::name",
+        "key"
+      );
+      expect(reader.getStorageMapWitness).toHaveBeenCalledWith(
+        "slot::name",
+        "key"
+      );
+      expect(reader.free).toHaveBeenCalledOnce();
+      expect(result).toBe("witness");
+    });
+
+    it("frees the reader when the read rejects", async () => {
+      const failure = new Error("no slot");
+      const reader = {
+        getStorageMapWitness: vi.fn().mockRejectedValue(failure),
+        free: vi.fn(),
+      };
+      inner.accountReader.mockReturnValue(reader);
+      const resource = makeResource();
+      await expect(
+        resource.getStorageMapWitness("0xaccHex", "s", "k")
+      ).rejects.toBe(failure);
+      expect(reader.free).toHaveBeenCalledOnce();
     });
   });
 
