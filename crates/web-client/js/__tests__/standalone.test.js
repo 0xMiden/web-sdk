@@ -651,3 +651,33 @@ describe("domainSeparatedSignCommitment docs", () => {
     }
   });
 });
+
+describe("createFeeSponsorshipNote docs", () => {
+  const repo = new URL("../../../../", import.meta.url);
+  it.each([
+    "crates/web-client/README.md",
+    "crates/web-client/AGENTS.md",
+    "crates/web-client/skills/web-client-usage/SKILL.md",
+    "docs/external/src/web-client/library/network-notes.md",
+  ])("%s documents the fee-sponsorship API", (path) => {
+    const text = readFileSync(new URL(path, repo), "utf8");
+    for (const fact of [
+      "createFeeSponsorshipNote",
+      "Note.createFeeSponsorshipNote",
+      "FeeSponsorshipNote.tryFromNote",
+      "featureNoteId",
+      "reclaimer",
+      "reclaimAfter",
+      "reclaimHeight",
+      "public",
+      "0 is rejected",
+      "sender",
+      "asset",
+      "tag",
+      "serialNumber",
+      "intoNote",
+    ]) {
+      expect(text).toContain(fact);
+    }
+  });
+});
