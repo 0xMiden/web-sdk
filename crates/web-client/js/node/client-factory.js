@@ -81,7 +81,7 @@ export function createWasmWebClient(rawSdk, options) {
       const dir = dbPath
         ? path.dirname(dbPath)
         : options?.dataDir
-          ? path.join(options.dataDir, storeName || "default")
+          ? path.resolve(options.dataDir, storeName || "default")
           : storeName
             ? defaultDataDir(storeName)
             : createTempDir("client");
