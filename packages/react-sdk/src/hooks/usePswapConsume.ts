@@ -8,6 +8,7 @@ import type {
 import { parseAccountId } from "../utils/accountParsing";
 import { resolveNoteInput } from "../utils/notes";
 import { runExclusiveDirect } from "../utils/runExclusive";
+import { toAmount } from "../utils/amounts";
 
 export interface UsePswapConsumeResult {
   /** Fill (consume) an existing partial-swap (PSWAP) note */
@@ -65,8 +66,11 @@ export function usePswapConsume(): UsePswapConsumeResult {
         throw new Error("Miden client is not ready");
       }
 
-      const fillAmount = BigInt(options.fillAmount);
-      const noteFillAmount = BigInt(options.noteFillAmount ?? 0);
+      const fillAmount = toAmount(options.fillAmount, "pswapConsume");
+      const noteFillAmount = toAmount(
+        options.noteFillAmount ?? 0,
+        "pswapConsume"
+      );
       if (fillAmount <= 0n) {
         throw new Error("fillAmount must be greater than 0");
       }

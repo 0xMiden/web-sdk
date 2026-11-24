@@ -9,6 +9,7 @@ import { DEFAULTS } from "../types";
 import { parseAccountId } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
 import { getNoteType } from "../utils/noteFilters";
+import { toAmount } from "../utils/amounts";
 
 export interface UseSwapResult {
   /** Create an atomic swap offer */
@@ -91,9 +92,9 @@ export function useSwap(): UseSwapResult {
           const txRequest = await client.newSwapTransactionRequest(
             accountIdObj,
             offeredFaucetIdObj,
-            BigInt(options.offeredAmount),
+            toAmount(options.offeredAmount, "swap"),
             requestedFaucetIdObj,
-            BigInt(options.requestedAmount),
+            toAmount(options.requestedAmount, "swap"),
             noteType,
             paybackNoteType
           );
