@@ -57,6 +57,7 @@ export {
   RpcTransactionRecord,
   StorageMapPatchEntry,
   StorageMapSlotPatch,
+  StorageMapWitness,
   StoragePatchOperation,
   StorageValueSlotPatch,
   SyncSummary,
