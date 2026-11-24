@@ -684,7 +684,11 @@ export interface WithdrawUsdcxOptions extends TransactionOptions {
   account: AccountRef;
   /** USDCx faucet ID. It consumes the note and burns the asset; it must be a public account. */
   token: AccountRef;
-  /** Amount of USDCx to withdraw. */
+  /**
+   * Amount of USDCx to withdraw. A `number` must be a safe integer; any other
+   * `number` throws before a burn note is built, so pass a `bigint` above
+   * `2 ** 53 - 1`.
+   */
   amount: number | bigint;
   /** Circle domain of the destination chain (for example 6 for Arbitrum). */
   destinationDomain: number;

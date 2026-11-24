@@ -341,8 +341,8 @@ export class TransactionsResource {
 
   /**
    * Withdraws USDCx through Circle xReserve by emitting one public burn note
-   * that the USDCx faucet consumes. The recipient is validated before any WASM
-   * call.
+   * that the USDCx faucet consumes. The amount and the recipient are validated
+   * before any WASM call.
    */
   async withdrawUsdcx(opts) {
     rejectUnexpectedAnchor(opts, "withdrawUsdcx", "submit()");
@@ -1241,6 +1241,11 @@ export class TransactionsResource {
   }
 
   async #buildXReserveBurnRequest(opts, wasm) {
+    if (typeof opts.amount === "number" && !Number.isSafeInteger(opts.amount)) {
+      throw new Error(
+        "withdrawUsdcx: amount must be a safe integer when given as a number; pass a bigint above 2^53 - 1"
+      );
+    }
     const recipientHex = opts.destinationRecipient;
     if (
       typeof recipientHex !== "string" ||

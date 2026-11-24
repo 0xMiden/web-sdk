@@ -897,7 +897,7 @@ const { txId } = await client.transactions.withdrawUsdcx({
   token: usdcxFaucet, // public USDCx faucet; consumes and burns the note
   amount: 1_000_000n,
   destinationDomain: 6, // Circle domain id
-  destinationRecipient: "0x" + "00".repeat(12) + "abc...", // 32-byte hex
+  destinationRecipient: "0x0000000000000000000000001111111111111111111111111111111111111111", // 32-byte hex
 });
 ```
 
