@@ -7,7 +7,9 @@ const read = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8");
 function docBefore(source, anchor) {
   const at = source.indexOf(anchor);
   expect(at, `${anchor} not found`).toBeGreaterThan(-1);
-  return source.slice(source.lastIndexOf("/**", at), at);
+  const end = source.lastIndexOf("*/", at);
+  expect(source.slice(end + 2, at).trim(), `${anchor} has no JSDoc`).toBe("");
+  return source.slice(source.lastIndexOf("/**", end), end + 2);
 }
 
 const REPLACEMENT = /storeName/;
