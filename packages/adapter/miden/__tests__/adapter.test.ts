@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, expectTypeOf, vi, beforeEach } from "vitest";
 import {
   EventEmitter,
   WalletNotConnectedError,
@@ -8,6 +8,9 @@ import {
   WalletConnectionError,
   PrivateDataPermission,
   WalletAdapterNetwork,
+  AllowedPrivateData,
+  WalletPrivateDataPermissionError,
+  WalletStorageUnsupportedError,
 } from "@miden-sdk/miden-wallet-adapter-base";
 
 // Mock @miden-sdk/miden-sdk before importing adapter
@@ -18,7 +21,7 @@ vi.mock("@miden-sdk/miden-sdk", () => ({
 }));
 
 import { Note } from "@miden-sdk/miden-sdk";
-import { MidenWalletAdapter } from "../adapter";
+import { MidenWalletAdapter, type MidenWallet } from "../adapter";
 
 function createMockWallet(overrides: Record<string, any> = {}) {
   return Object.assign(new EventEmitter(), {
@@ -161,6 +164,10 @@ describe("MidenWalletAdapter", () => {
       {
         name: "createAccount",
         call: (a) => a.createAccount(),
+      },
+      {
+        name: "requestStorage",
+        call: (a) => a.requestStorage({ slotName: "miden::slot" }),
       },
     ];
 
@@ -369,6 +376,22 @@ describe("MidenWalletAdapter", () => {
       expect(sig).toEqual(new Uint8Array([9, 8, 7]));
     });
 
+    it("signBytes returns the signature alone when the wallet also returns signedCommitment", async () => {
+      const { adapter, mockWallet } = await createConnectedAdapter();
+      mockWallet.signBytes.mockResolvedValueOnce({
+        signature: new Uint8Array([9, 8, 7]),
+        signedCommitment: new Uint8Array([1, 2, 3]),
+      });
+      const sig = await adapter.signBytes(new Uint8Array([1, 2]), "word");
+      expect(sig).toEqual(new Uint8Array([9, 8, 7]));
+    });
+
+    it("types signedCommitment on the provider's signBytes result", () => {
+      expectTypeOf<
+        Awaited<ReturnType<MidenWallet["signBytes"]>>
+      >().toHaveProperty("signedCommitment");
+    });
+
     it("importPrivateNote returns noteId", async () => {
       const { adapter } = await createConnectedAdapter();
       const noteId = await adapter.importPrivateNote(new Uint8Array([1]));
@@ -475,6 +498,25 @@ describe("MidenWalletAdapter", () => {
       expect(adapter.connected).toBe(true);
       expect(adapter.connecting).toBe(false);
       expect(connectHandler).toHaveBeenCalledWith("0xmockaddress");
+    });
+
+    it("asks the wallet for mainnet as the network name it accepts", async () => {
+      const mockWallet = createMockWallet();
+      (window as any).midenWallet = mockWallet;
+
+      const adapter = new MidenWalletAdapter();
+      adapter.readyState = WalletReadyState.Installed;
+
+      await adapter.connect(
+        PrivateDataPermission.UponRequest,
+        WalletAdapterNetwork.Mainnet
+      );
+
+      expect(mockWallet.connect).toHaveBeenCalledWith(
+        PrivateDataPermission.UponRequest,
+        "mainnet",
+        undefined
+      );
     });
 
     it("throws WalletConnectionError if wallet has no address after connect", async () => {
@@ -651,6 +693,164 @@ describe("MidenWalletAdapter", () => {
           amount: 1,
         })
       ).rejects.toThrow(WalletTransactionError);
+    });
+  });
+
+  describe("account change event", () => {
+    it("emits accountChange before connect with the refreshed address and key", async () => {
+      const { adapter, mockWallet } = await createConnectedAdapter();
+      const order: string[] = [];
+      const changeHandler = vi.fn(() => order.push("accountChange"));
+      adapter.on("accountChange", changeHandler);
+      adapter.on("connect", () => order.push("connect"));
+
+      mockWallet.address = "0xsecondaddress";
+      mockWallet.publicKey = new Uint8Array([4, 5, 6]);
+      mockWallet.emit("accountChange", { address: "0xsecondaddress" });
+
+      expect(order).toEqual(["accountChange", "connect"]);
+      expect(changeHandler).toHaveBeenCalledWith(
+        "0xsecondaddress",
+        new Uint8Array([4, 5, 6])
+      );
+    });
+
+    it("does not emit connect when an accountChange listener disconnects synchronously", async () => {
+      const { adapter, mockWallet } = await createConnectedAdapter();
+      const order: string[] = [];
+      let pending: Promise<void> | undefined;
+      adapter.on("accountChange", () => {
+        order.push("accountChange");
+        pending = adapter.disconnect();
+      });
+      adapter.on("connect", (address) => order.push(`connect:${address}`));
+      adapter.on("disconnect", () => order.push("disconnect"));
+
+      mockWallet.address = "0xsecondaddress";
+      mockWallet.publicKey = new Uint8Array([4, 5, 6]);
+      mockWallet.emit("accountChange", { address: "0xsecondaddress" });
+
+      expect(order).toEqual(["accountChange"]);
+      expect(adapter.address).toBeNull();
+      await pending;
+      expect(order).toEqual(["accountChange", "disconnect"]);
+    });
+
+    it("does not emit accountChange on the initial connect or on revocation", async () => {
+      const mockWallet = createMockWallet();
+      (window as any).midenWallet = mockWallet;
+      const adapter = new MidenWalletAdapter();
+      adapter.readyState = WalletReadyState.Installed;
+      const changeHandler = vi.fn();
+      adapter.on("accountChange", changeHandler);
+
+      await adapter.connect(
+        PrivateDataPermission.UponRequest,
+        WalletAdapterNetwork.Testnet
+      );
+      Object.assign(mockWallet, { address: undefined, publicKey: undefined });
+      mockWallet.emit("accountChange", null);
+
+      expect(changeHandler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("storage reads", () => {
+    const request = { slotName: "miden::slot" };
+
+    async function connectWith(
+      allowed: AllowedPrivateData | undefined,
+      overrides: Record<string, any> = {}
+    ) {
+      const mockWallet = createMockWallet({
+        requestStorage: vi.fn().mockResolvedValue({ value: "0xabc" }),
+        ...overrides,
+      });
+      (window as any).midenWallet = mockWallet;
+      const adapter = new MidenWalletAdapter();
+      adapter.readyState = WalletReadyState.Installed;
+      await adapter.connect(
+        PrivateDataPermission.UponRequest,
+        WalletAdapterNetwork.Testnet,
+        allowed
+      );
+      return { adapter, mockWallet };
+    }
+
+    it("reads through the wallet when storage access was granted", async () => {
+      const { adapter, mockWallet } = await connectWith(
+        AllowedPrivateData.Storage
+      );
+      expect(adapter.supportsStorageReads).toBe(true);
+      await expect(adapter.requestStorage(request)).resolves.toBe("0xabc");
+      expect((mockWallet as any).requestStorage).toHaveBeenCalledWith(request);
+    });
+
+    it("rejects without calling the wallet when storage was not granted", async () => {
+      const { adapter, mockWallet } = await connectWith(
+        AllowedPrivateData.Assets
+      );
+      expect(adapter.supportsStorageReads).toBe(false);
+      await expect(adapter.requestStorage(request)).rejects.toThrow(
+        WalletPrivateDataPermissionError
+      );
+      expect((mockWallet as any).requestStorage).not.toHaveBeenCalled();
+    });
+
+    it("rejects as unsupported when the wallet lacks the method", async () => {
+      const { adapter } = await connectWith(AllowedPrivateData.Storage, {
+        requestStorage: undefined,
+      });
+      expect(adapter.supportsStorageReads).toBe(false);
+      await expect(adapter.requestStorage(request)).rejects.toThrow(
+        WalletStorageUnsupportedError
+      );
+    });
+
+    it("reports an unsupported wallet before checking the grant", async () => {
+      const { adapter } = await connectWith(AllowedPrivateData.Assets, {
+        requestStorage: undefined,
+      });
+      await expect(adapter.requestStorage(request)).rejects.toThrow(
+        WalletStorageUnsupportedError
+      );
+    });
+
+    it("replaces the grant when connecting again without disconnecting", async () => {
+      const { adapter } = await connectWith(AllowedPrivateData.Storage);
+      await adapter.connect(
+        PrivateDataPermission.UponRequest,
+        WalletAdapterNetwork.Testnet,
+        AllowedPrivateData.Assets
+      );
+      expect(adapter.supportsStorageReads).toBe(false);
+      await expect(adapter.requestStorage(request)).rejects.toThrow(
+        WalletPrivateDataPermissionError
+      );
+    });
+
+    it("wraps a wallet rejection such as revoked consent", async () => {
+      const { adapter } = await connectWith(AllowedPrivateData.Storage, {
+        requestStorage: vi.fn().mockRejectedValue(new Error("revoked")),
+      });
+      await expect(adapter.requestStorage(request)).rejects.toThrow(
+        WalletTransactionError
+      );
+    });
+
+    it("rejects after disconnect and forgets the grant on reconnect", async () => {
+      const { adapter } = await connectWith(AllowedPrivateData.Storage);
+      await adapter.disconnect();
+      expect(adapter.supportsStorageReads).toBe(false);
+      await expect(adapter.requestStorage(request)).rejects.toThrow(
+        WalletNotConnectedError
+      );
+
+      await adapter.connect(
+        PrivateDataPermission.UponRequest,
+        WalletAdapterNetwork.Testnet
+      );
+      expect(adapter.supportsStorageReads).toBe(false);
     });
   });
 });

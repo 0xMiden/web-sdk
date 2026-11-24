@@ -33,8 +33,9 @@ import { MidenProvider } from "@miden-sdk/react";
 
 <MidenProvider
   config={{
-    rpcUrl: "testnet",          // "devnet" | "testnet" | "localhost" | "local" | custom URL
-    prover: "testnet",          // "local" | "localhost" | "devnet" | "testnet" | URL
+    rpcUrl: "testnet",          // "mainnet" | "devnet" | "testnet" | "localhost" | "local" | custom URL
+    network: "mainnet",         // optional: "mainnet" | "testnet" | "devnet", address prefix; wins over the rpcUrl inference
+    prover: "testnet",          // "local" | "localhost" | "mainnet" | "devnet" | "testnet" | URL
                                 //   | { url, timeoutMs }
                                 //   | { primary, fallback, disableFallback?, onFallback? }
     autoSyncInterval: 15000,    // ms, set to 0 to disable. Default: 15000
@@ -55,6 +56,9 @@ import { MidenProvider } from "@miden-sdk/react";
     proverTimeoutMs: 10000,     // optional: remote-prover request timeout
     proverUrls: { testnet: "...", devnet: "..." },  // optional: override network prover URLs
     seed: seedBytes,            // optional: 32-byte Uint8Array for a deterministic RNG
+    callbackTimeoutMs: 120000,  // optional: connected-signer callback wait in ms; unset leaves sign unlimited,
+                                //   so a stalled signer holds the batch and later worker calls.
+                                //   Contract: https://github.com/0xMiden/web-sdk/blob/main/packages/react-sdk/README.md#keystore-callback-timeouts
   }}
   loadingComponent={<Loading />}  // shown during WASM init
   errorComponent={(error) => <Error error={error} />}  // function form receives the Error; a static element does not
@@ -67,6 +71,7 @@ Keep the `config` object's identity stable: define it outside the component, or 
 
 | Network | rpcUrl | Use When |
 |---------|--------|----------|
+| Mainnet | `"mainnet"` | Production, with real funds |
 | Testnet | `"testnet"` | Recommended for new projects - primary development network |
 | Devnet | `"devnet"` | Early-access testing (may lag feature parity with testnet) |
 | Localhost | `"localhost"` | Local node at `http://localhost:57291` |
@@ -82,6 +87,7 @@ The package exports 37 hooks from `src/hooks/`, plus the context accessors `useM
 | Hook | Kind | Notes |
 |------|------|-------|
 | `useBridge()` | transaction | AggLayer bridge-out. `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress, skipSync? })` |
+| `useWithdrawUsdcx()` | transaction | Circle xReserve USDCx withdrawal. `withdrawUsdcx({ from, faucetId, amount, destinationDomain, destinationRecipient, skipSync? })`; `destinationRecipient` is 0x-prefixed 32-byte hex. No claim hook exists for inbound AggLayer deposits: use `Note.createClaimNote` with `useTransaction` |
 | `useCreateNetworkNote()` | transaction | see "Network Notes" below |
 | `usePswapCreate/Consume/Cancel/CancelByOrder()` | transaction | see "PSWAP" below |
 | `usePswapLineages/LineagesFor/Lineage()` | query | tracked PSWAP lineages |
@@ -128,7 +134,9 @@ const { account, assets, getBalance, isLoading, error, refetch } = useAccount(ac
 ```tsx
 const { notes, consumableNotes, noteSummaries, consumableNoteSummaries, isLoading, error, refetch } = useNotes();
 // notes - InputNoteRecord[] (filtered ONLY by `status`)
-// consumableNotes - ConsumableNoteRecord[] (filtered ONLY by `accountId`)
+// consumableNotes - ConsumableNoteRecord[] (filtered ONLY by `accountId`): payments
+//   (P2ID and P2IDE notes) consumable now; another trader's public PSWAP order and
+//   any other script are left out, because consuming one can spend from the account
 // noteSummaries - NoteSummary[] (id, assets, sender) - also filtered by `sender` and `excludeIds`
 // consumableNoteSummaries - NoteSummary[] - also filtered by `sender` and `excludeIds`
 
@@ -142,6 +150,18 @@ const { consumableNotes } = useNotes({ accountId: "0x..." });
 const { noteSummaries, consumableNoteSummaries } = useNotes({ sender: "0x..." });
 // `excludeIds` filters only the summary arrays:
 const { noteSummaries, consumableNoteSummaries } = useNotes({ excludeIds: ["0xnote1", "0xnote2"] });
+```
+
+### useNoteConsumability(note, options?)
+```tsx
+const { status, consumability, isLoading, error, refetch } = useNoteConsumability(note, { accountId });
+// status - null until screened, then
+//   { kind: "immediately" } | { kind: "afterBlock", blockHeight } | { kind: "never" }
+// An empty screen of tracked accounts is "never"; with no tracked account, status stays null.
+// Re-screens after each sync; keyed on note.id(), so a rebuilt Note object does not re-screen.
+// Presentation only: claim from useNotes().consumableNotes, never from status === "immediately",
+// which also matches another trader's PSWAP order.
+// getNoteConsumabilityStatus(record.noteConsumability(), accountIdHex?) gives the same status for a record.
 ```
 
 ### useNoteStream(options?)
@@ -160,6 +180,8 @@ const { notes } = useNoteStream({ excludeIds: new Set(["0xnote1"]) });
 const { notes } = useNoteStream({ amountFilter: (amount) => amount > 100n });
 ```
 
+A streamed note is any input note in the status, not necessarily a payment. Check `note.standardPayment` (true only for a P2ID or P2IDE payment) before treating it as incoming funds or consuming it: consuming runs the note's script, which can also spend from the account.
+
 ### useSyncState()
 ```tsx
 const { syncHeight, isSyncing, lastSyncTime, sync, error } = useSyncState();
@@ -176,7 +198,11 @@ const meta = assetMetadata.get(faucetId);
 // meta.decimals - 8
 ```
 
-Pass an array even for a single asset - the hook calls `.filter` on its argument, so a bare string throws a runtime `TypeError`.
+Pass an array even for a single asset - the hook calls `.filter` on its argument, so a bare string throws a runtime `TypeError`. Metadata is read from the node the provider's client was created against (`client.endpoint()`), so nothing is fetched until the provider is ready.
+
+Metadata reads started before a client replacement or cache reset are discarded.
+A pending read from the old client does not block the current client's request
+for the same asset.
 
 ### useTransactionHistory(options?)
 ```tsx
@@ -186,18 +212,32 @@ const { records, record, status, isLoading, error, refetch } = useTransactionHis
 //   id      - string | TransactionId. Populates `record` and `status`.
 //   ids     - Array<string | TransactionId>. `record` and `status` are populated only
 //             when exactly one id was supplied; with several they stay null.
-//   filter  - a raw TransactionFilter. It OVERRIDES id/ids entirely: when `filter`
-//             is set the hook queries with it and applies no local id narrowing.
+//   filter  - () => TransactionFilter (preferred) or a TransactionFilter. It OVERRIDES
+//             id/ids entirely: when `filter` is set the hook queries with it and
+//             applies no local id narrowing.
 //   refreshOnSync - re-fetch after every provider sync. Default: true
 //                   (only `refreshOnSync: false` turns it off).
 ```
+
+Pass `filter` as a factory: `getTransactions` takes its filter by value, so a `TransactionFilter` instance is consumed by the first fetch and the next refetch (after a sync, by default) fails with `null pointer passed to rust`. The factory is called for every fetch. Keep it referentially stable - define it at module scope or wrap it in `useCallback` - because a new `filter` value triggers a refetch:
+
+```tsx
+const uncommitted = () => TransactionFilter.uncommitted();
+
+function PendingTxs() {
+  const { records } = useTransactionHistory({ filter: uncommitted });
+  // ...
+}
+```
+
+`id` / `ids` need no such care: the hook reads each `TransactionId`'s hex once and builds fresh handles for every fetch, so the caller's handles stay usable.
 
 A note on `ids`: the hook uses `TransactionFilter.ids(...)` only when every entry is a real `TransactionId`. A list containing any hex string falls back to `TransactionFilter.all()` plus a local hex comparison, so it fetches everything and filters in JS.
 
 ## Mutation Hooks
 
 Each returns its own action function plus `error` and `reset`. The families differ in their loading/progress fields:
-- **Transaction hooks** (`useSend`, `useMultiSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`, `usePswapCancel`, `usePswapCancelByOrder`, `useTransaction`) expose `isLoading` and `stage` (a `TransactionStage`).
+- **Transaction hooks** (`useSend`, `useMultiSend`, `useBatch`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useWithdrawUsdcx`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`, `usePswapCancel`, `usePswapCancelByOrder`, `useTransaction`) expose `isLoading` and `stage` (a `TransactionStage`).
 - **Account create/import hooks** (`useCreateWallet`, `useCreateFaucet`, `useImportAccount`) expose `isCreating` (or `isImporting` for the latter) and have **no** `stage`.
 - **Everything else names its own busy flag**: `useChainAnchor().isCapturing`, `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting`.
 
@@ -256,7 +296,7 @@ const account = await importAccount({
 });
 ```
 
-This hook calls `assertSignerConnected()` before doing anything else. With a signer provider mounted but **disconnected** it throws `"Signer is disconnected. Reconnect your wallet to perform transactions."` It is a no-op in local-keystore mode (`signerConnected === null`) and when the signer is connected. `useImportAccount` and `useMultiSend` are the **only two** hooks that make this check - do not assume the other mutation hooks guard it for you.
+This hook calls `assertSignerConnected()` before doing anything else. With a signer provider mounted but **disconnected** it throws `"Signer is disconnected. Reconnect your wallet to perform transactions."` It is a no-op in local-keystore mode (`signerConnected === null`) and when the signer is connected. `useImportAccount`, `useMultiSend` and `useBatch` are the **only three** hooks that make this check - do not assume the other mutation hooks guard it for you.
 
 ### useSend()
 ```tsx
@@ -267,8 +307,6 @@ await send({
   assetId: faucetId,       // token faucet ID
   amount: 1000n,           // bigint!
   noteType: "private",     // "private" | "public". Default: "private"
-  recallHeight: 100,       // optional: sender can reclaim after this block
-  timelockHeight: 50,      // optional: recipient can consume after this block
   sendAll: true,           // optional: send entire balance (ignores amount)
   attachment: [1n, 2n],    // optional: arbitrary data attached to the note
   returnNote: true,        // optional: populate result.note with the built Note, e.g. for
@@ -280,6 +318,8 @@ await send({
 `amount` is optional in the type (it is ignored when `sendAll: true`) and accepts `bigint | number`, but pass `bigint` - a `number` silently loses precision above `Number.MAX_SAFE_INTEGER`.
 
 **Combining `attachment` with `recallHeight` or `timelockHeight` throws**, before anything is built: `"recallHeight and timelockHeight are not supported when attachment is provided"`. The attachment path constructs the P2ID note by hand and has nowhere to put either height. Pick one or the other.
+
+`returnNote: true` has the same limit: with `recallHeight` or `timelockHeight` it throws `"recallHeight and timelockHeight are not supported when returnNote is true"`, matching `MidenClient.transactions.send({ returnNote })`. An `attachment` is carried on the returned note.
 
 **Private notes need an explicit delivery push, and the hook does it for you.** For `noteType: "private"` `useSend` waits for the transaction to commit and then calls `client.sendPrivateOutputNote(noteId, recipientAddress)` to hand the note details to the recipient over the note-transport layer. That call reads the inclusion proof sync stored on the output note and throws if this client has not synced past the commitment. The same push happens in `useMultiSend` (once per private recipient, after one shared commit wait) and in `useTransaction` when `privateNoteTarget` is set. Without it a private note is **never delivered** - the recipient has no way to learn it exists. A public note needs no such push. If you hand-roll a private send through `useTransaction`, either pass `privateNoteTarget` or make the `sendPrivateOutputNote` call yourself.
 
@@ -316,6 +356,20 @@ await sendMany({
 
 Resolves to `{ transactionId }`, not `{ txId, note }`. Like `useImportAccount`, it calls `assertSignerConnected()` first and throws on a mounted-but-disconnected signer.
 
+### useBatch()
+```tsx
+const { batch, result, isLoading, stage, error, reset } = useBatch();
+const { blockNumber } = await batch({
+  items: [
+    { account: alice, request: sendReq },     // pre-built TransactionRequest
+    { account: bob, request: consumeReq },    // may consume a note an earlier item produced
+  ],
+  skipSync: false,         // optional: skip the auto-sync before submitting
+});
+```
+
+Submits every item as one atomic batch: every tx lands or none does. Each item pairs a tracked local account with a pre-built `TransactionRequest`; items may span accounts, and push order must respect producer-before-consumer. Resolves to `{ blockNumber }`, the node's chain tip as of submission (not the block the batch commits in), with no per-tx ids. Each tx is proven inside the batch primitive by the client's built-in local prover, so `MidenProvider`'s `prover` setting and its fallback do not apply, and `stage` goes `"executing"` -> `"submitting"` -> `"complete"` without ever reporting `"proving"`. In the browser the batch runs in the client's Web Worker, so the page stays responsive while it proves; with `useWorker: false`, or without `Worker` support, it proves on the calling thread and blocks the page until it settles, so keep batches small there. Through the worker, `sign` waits without a limit unless `callbackTimeoutMs` sets one, so a stalled signer holds the batch and later worker calls; set a finite timeout as the [complete contract](https://github.com/0xMiden/web-sdk/blob/main/packages/react-sdk/README.md#keystore-callback-timeouts) shows. A second `batch()` while one is in flight throws a `MidenError` with `code: "BATCH_BUSY"`. Like `useMultiSend`, it calls `assertSignerConnected()` and throws on a mounted-but-disconnected signer. The hook declares no fee conversion salt, so build a multisig item's request from `client.feeAwareTransactionRequestBuilder(account)`.
+
 ### useMint()
 ```tsx
 const { mint, result, isLoading, stage, error, reset } = useMint();
@@ -335,6 +389,8 @@ await consume({
   notes: [noteId1, noteId2],   // accepts: hex string IDs, NoteId, InputNoteRecord, or Note
 });
 ```
+
+Consuming runs each note's script. A P2ID or P2IDE payment moves its assets into the account, and a note running another script can also move assets out. Check `isStandardPayment(record)` first when the note's origin is unknown.
 
 ### useSwap()
 ```tsx
@@ -392,6 +448,7 @@ await waitForCommit(result.txId, {  // useSend returns { txId, note }; other hoo
 ### useWaitForNotes()
 ```tsx
 const { waitForConsumableNotes } = useWaitForNotes();
+// Resolves with payments (P2ID and P2IDE notes) only, like useNotes().consumableNotes
 await waitForConsumableNotes({
   accountId: myAccountId,
   minCount: 1,         // Default: 1
@@ -572,7 +629,7 @@ import { WalletAdapterNetwork } from "@miden-sdk/miden-wallet-adapter-base";
 </MultiSignerProvider>
 ```
 
-`MidenFiSignerProvider`'s `network` prop is the **`WalletAdapterNetwork` enum** from `@miden-sdk/miden-wallet-adapter-base` (`Devnet | Testnet | Localnet`), not a raw string. It is a TypeScript string enum, so `network="testnet"` does not type-check even though the member's value is `"testnet"`.
+`MidenFiSignerProvider`'s `network` prop is the **`WalletAdapterNetwork` enum** from `@miden-sdk/miden-wallet-adapter-base` (`Mainnet | Devnet | Testnet | Localnet`), not a raw string. It is a TypeScript string enum, so `network="testnet"` does not type-check even though the member's value is `"testnet"`.
 
 ```tsx
 const { signers, activeSigner, connectSigner, disconnectSigner } = useMultiSigner() ?? {};
@@ -603,7 +660,7 @@ import { MidenError, wrapWasmError } from "@miden-sdk/react";
 import type { CodedError, MidenErrorCode, WasmErrorCode } from "@miden-sdk/react";
 ```
 
-- `MidenErrorCode` is the **closed** union assigned by this package: `"WASM_CLASS_MISMATCH" | "WASM_POINTER_CONSUMED" | "WASM_NOT_INITIALIZED" | "WASM_SYNC_REQUIRED" | "SEND_BUSY" | "OPERATION_BUSY" | "STALE_CLIENT" | "UNKNOWN"`. Every `MidenError` carries one, defaulting to `"UNKNOWN"`.
+- `MidenErrorCode` is the **closed** union assigned by this package: `"WASM_CLASS_MISMATCH" | "WASM_POINTER_CONSUMED" | "WASM_NOT_INITIALIZED" | "WASM_SYNC_REQUIRED" | "SEND_BUSY" | "OPERATION_BUSY" | "BATCH_BUSY" | "STALE_CLIENT" | "UNKNOWN"`. Every `MidenError` carries one, defaulting to `"UNKNOWN"`.
 - `WasmErrorCode` is the union assigned by the Rust client and thrown out of WASM: `"INVALID_CHAIN_ANCHOR" | "TRANSACTION_ALREADY_AUTHORIZED"`. These are not `MidenError`s.
 - `CodedError = Error & { readonly code?: MidenErrorCode | WasmErrorCode | (string & {}) }`. The **`(string & {})` arm is open on purpose**: a code from a newer client stays assignable while the known ones keep autocomplete. So `switch` on `code`, but always leave a default branch - the union is not exhaustive of what you can receive.
 
@@ -631,7 +688,7 @@ formatAssetAmount(1000000n, 8)       // "0.01"
 parseAssetAmount("0.01", 8)           // 1000000n
 const summary = getNoteSummary(note); // { id, assets, sender } | null
 formatNoteSummary(summary);           // "1.5 TEST from mtst1..."
-toBech32AccountId("0x1234...");       // "mtst1..." (testnet HRP; defaults to testnet)
+toBech32AccountId("0x1234...");       // "mtst1..." on testnet; "mm1..." when the endpoint names no network
 ```
 
 `getNoteSummary(note, getAssetMetadata?)` takes a `ConsumableNoteRecord | InputNoteRecord` and returns `NoteSummary | null` - **`null`** when the note's id is missing or anything in the read throws, i.e. for a note whose id or metadata is not ready yet. Guard before formatting.
@@ -642,7 +699,7 @@ toBech32AccountId("0x1234...");       // "mtst1..." (testnet HRP; defaults to te
 
 `waitForWalletDetection(adapter, timeoutMs = 5000)` resolves once the adapter's `readyState` reaches `"Installed"` and otherwise rejects with `"Wallet extension not detected within <n>ms."` Its `WalletAdapterLike` argument is a duck type (`{ readyState: string; on/off("readyStateChange", cb) }`) with no dependency on any wallet-adapter package, so it works against any adapter and against a plain fake object.
 
-The HRP is inferred from the configured `rpcUrl` and defaults to testnet: mainnet=`mm`, testnet=`mtst` (default), devnet=`mdev` - there is no `miden` HRP. See `frontend-pitfalls` FP5 for the trap in that inference.
+The HRP is inferred from the client's `endpoint()`, the URL of the node it was created against (testnet when no `rpcUrl` is configured): mainnet=`mm`, testnet=`mtst`, devnet=`mdev`, and a local node gets `mdev` too - there is no `miden` HRP. An endpoint naming none of those networks, such as a custom mainnet RPC host, is mainnet; `config.network` (`"mainnet" | "testnet" | "devnet"`) overrides the inference. Before the provider has a client, the helpers return the hex ID. See `frontend-pitfalls` FP5 for the trap in that inference.
 
 ## Direct Client Access
 
@@ -657,7 +714,7 @@ await runExclusive(async () => {
 });
 ```
 
-**The built-in hooks route their own client calls through `runExclusive` too.** 22 files under `src/hooks/` pull it out of `useMiden()` and wrap their multi-call work, using the pattern `const runExclusiveSafe = runExclusive ?? runExclusiveDirect;` so they still serialize when no provider-supplied lock is available: `useSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useTransaction`, `usePreview`, `useChainAnchor`, `useCreateWallet`, `useCreateFaucet`, `useExecuteProgram`, `useCreateNetworkNote`, `useMultiSend`, `useWaitForNotes`, the four export/import hooks and all four PSWAP transaction hooks. Use it for your own multi-step sequences for the same reason they do - the client serializes each individual forwarded call, not your group of them (see `frontend-pitfalls` FP2, which also names the raw-bound `SYNC_METHODS` that serialize themselves not at all).
+**The built-in hooks route their own client calls through `runExclusive` too.** 22 files under `src/hooks/` pull it out of `useMiden()` and wrap their multi-call work, using the pattern `const runExclusiveSafe = runExclusive ?? runExclusiveDirect;` so they still serialize when no provider-supplied lock is available: `useSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useWithdrawUsdcx`, `useTransaction`, `usePreview`, `useChainAnchor`, `useCreateWallet`, `useCreateFaucet`, `useExecuteProgram`, `useCreateNetworkNote`, `useMultiSend`, `useWaitForNotes`, the four export/import hooks and all four PSWAP transaction hooks. Use it for your own multi-step sequences for the same reason they do - the client serializes each individual forwarded call, not your group of them (see `frontend-pitfalls` FP2, which also names the raw-bound `SYNC_METHODS` that serialize themselves not at all).
 
 ## Non-Surface: Do Not Invent These
 
@@ -666,7 +723,7 @@ await runExclusive(async () => {
 - **No protocol `AssetId` / `AssetClass` / `AssetVaultKey` type.** Every `assetId` in this package is a faucet (token) account reference - `asset.faucetId().toString()`. Do not "fix" these names to protocol ones.
 - **No `mutable` wallet option and no `storageMode: "network"`.** `CreateWalletOptions` is exactly `{ storageMode?, authScheme?, initSeed? }`.
 
-> **The package's own `README.md` and `ReactSDK.Arena.Findings.md` are stale - do not treat them as authoritative.** The README still documents a `mutable: true` wallet option and `storageMode: 'network'`, neither of which exists in `src/types/index.ts`. The Arena findings file is a proposal document and describes an API that was never shipped in that shape. `src/types/index.ts` plus the hook bodies are the source of truth, and the package's `AGENTS.md` (which ships alongside this skill) is kept current.
+> **The package's own `README.md` and `ReactSDK.Arena.Findings.md` are stale - do not treat them as authoritative.** The README still documents a `mutable: true` wallet option and `storageMode: 'network'`, neither of which exists in `src/types/index.ts`. Its "Keystore Callback Timeouts" section is the exception: it is the complete `callbackTimeoutMs` contract. The Arena findings file is a proposal document and describes an API that was never shipped in that shape. `src/types/index.ts` plus the hook bodies are the source of truth, and the package's `AGENTS.md` (which ships alongside this skill) is kept current.
 
 ## Type Imports
 
@@ -679,7 +736,8 @@ import type {
   QueryResult, MutationResult, TransactionStage, AccountRef,
   AccountsResult, AccountResult, AssetBalance, NotesFilter, NotesResult, NoteSummary,
   SendOptions, SendResult, MultiSendOptions, MultiSendRecipient,
-  MintOptions, ConsumeOptions, SwapOptions, BridgeOptions,
+  BatchItemInput, BatchOptions, BatchResult,
+  MintOptions, ConsumeOptions, SwapOptions, BridgeOptions, WithdrawUsdcxOptions,
   CreateNetworkNoteOptions, NetworkNoteResult,
   PswapCreateOptions, PswapConsumeOptions, PswapCancelOptions,
   PswapCancelByOrderOptions, PswapLineagesResult, PswapLineageResult,

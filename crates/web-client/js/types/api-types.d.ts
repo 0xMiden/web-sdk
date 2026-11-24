@@ -9,12 +9,14 @@ import type {
   AccountCode,
   AssetVault,
   Word,
+  StorageMapWitness,
   Felt,
   TransactionId,
   TransactionRequest,
   TransactionRequestBuilder,
   TransactionResult,
   TransactionStoreUpdate,
+  ProtocolConfig,
   ProvenTransaction,
   TransactionSummary,
   ChainAnchor,
@@ -22,6 +24,7 @@ import type {
   InputNoteRecord,
   OutputNoteRecord,
   ConsumableNoteRecord,
+  NoteConsumability,
   NoteId,
   NoteInclusionProof,
   NoteFile,
@@ -42,6 +45,7 @@ import type {
   AdviceInputs,
   FeltArray,
   ForeignAccount,
+  FungibleAsset,
   PswapLineageRecord,
 } from "./crates/miden_client_web";
 
@@ -193,7 +197,9 @@ export interface MidenObservation {
   /**
    * Milliseconds from when the call's turn on its client's queue started
    * until it settled; time queued behind the same client's earlier calls is
-   * not counted.
+   * not counted. A store-locked call that times out before its turn starts
+   * has no turn, so it reports 0, delivered when it rejects, and the wait it
+   * spent queued is not counted.
    */
   durationMs: number;
   /**
@@ -333,32 +339,49 @@ export interface ClientOptions extends NoteAcquisitionOptions {
   indexedDb?: IndexedDbOptions;
   /**
    * RPC endpoint. Accepts shorthands or a raw URL:
+   * - `"mainnet"` — Miden mainnet RPC (`https://rpc.mainnet.miden.io`)
    * - `"testnet"` — Miden testnet RPC (`https://rpc.testnet.miden.io`)
    * - `"devnet"` — Miden devnet RPC (`https://rpc.devnet.miden.io`)
    * - `"localhost"` / `"local"` — local node (`http://localhost:57291`)
    * - any other string — treated as a raw RPC endpoint URL
    * Defaults to the SDK testnet RPC if omitted.
    */
-  rpcUrl?: "testnet" | "devnet" | "localhost" | "local" | (string & {});
+  rpcUrl?:
+    | "mainnet"
+    | "testnet"
+    | "devnet"
+    | "localhost"
+    | "local"
+    | (string & {});
   /**
    * Note transport endpoint. Accepts shorthands or a raw URL:
+   * - `"mainnet"` — Miden mainnet transport (`https://transport.mainnet.miden.io`)
    * - `"testnet"` — Miden testnet transport (`https://transport.miden.io`)
    * - `"devnet"` — Miden devnet transport (`https://transport.devnet.miden.io`)
    * - any other string — treated as a raw note transport endpoint URL
    */
-  noteTransportUrl?: "testnet" | "devnet" | (string & {});
+  noteTransportUrl?: "mainnet" | "testnet" | "devnet" | (string & {});
   /**
    * Prover to use for transactions. Accepts shorthands or a raw URL:
    * - `"local"` — local (in-browser) prover
+   * - `"mainnet"` — Miden mainnet remote prover (`https://tx-prover.mainnet.miden.io`)
    * - `"devnet"` — Miden devnet remote prover
    * - `"testnet"` — Miden testnet remote prover
    * - any other string — treated as a raw remote prover URL
    */
-  proverUrl?: "local" | "devnet" | "testnet" | (string & {});
+  proverUrl?: "local" | "mainnet" | "devnet" | "testnet" | (string & {});
   /** Hashed to 32 bytes via SHA-256. */
   seed?: string | Uint8Array;
   /** Store isolation key. */
   storeName?: string;
+  /**
+   * Refuse to share the store. Opening a store that another live client in
+   * this realm has open warns by default, naming that client; with
+   * `exclusive: true` the open throws instead, and while this client lives
+   * every other open of its store throws too. `terminate()` releases the
+   * store. Defaults to `false`.
+   */
+  exclusive?: boolean;
   /**
    * Faucet of the chain's fee asset, as a bech32 address or a hex account ID.
    *
@@ -420,6 +443,30 @@ export interface ClientOptions extends NoteAcquisitionOptions {
     sign: SignCallback;
   };
   /**
+   * How long, in milliseconds, the client waits for each `keystore` callback
+   * (`getKey`, `insertKey`, `sign`) before the call that needed it fails with
+   * `Callback <id> timed out after <n>ms`.
+   *
+   * Applies only when the callbacks run through the Web Worker (the browser
+   * default; see `useWorker`). Left unset, `sign` waits without a limit, since
+   * it can wait on a person approving in a wallet or on a hardware device, and
+   * `getKey` and `insertKey` time out after 30 seconds. A positive value applies
+   * to all three callbacks, rounded up to a whole millisecond, and `0` removes
+   * the limit for all three. Throws a `TypeError` at creation for a negative,
+   * non-finite, non-number, or greater-than-2147483647 value.
+   *
+   * Without a limit, a stalled `sign` holds its batch or transaction and leaves
+   * later worker calls in the queue; set a finite value if a signer can stall.
+   * See https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
+   *
+   * Under the Web Worker, a callback that throws counts as a failure whatever
+   * it throws: an `Error`, a string, an object such as `{ code: 4001 }`, or
+   * `null`. Cyclic causes are reported as a finite cause chain, and unreadable
+   * thrown properties use a safe fallback message. A failed `sign` fails the
+   * call with an error that includes the thrown value's message.
+   */
+  callbackTimeoutMs?: number;
+  /**
    * Enable the Web Worker shim that runs WASM calls off the main thread.
    * Defaults to `true` — leave it that way in browsers/extensions so the UI
    * stays responsive while WASM is busy.
@@ -472,7 +519,7 @@ export type AccountRef = string | Account | AccountHeader | AccountId;
 export interface Asset {
   /** Token identifier (faucet account ID). */
   token: AccountRef;
-  /** Auto-converted to bigint internally. */
+  /** Auto-converted to bigint internally. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
 }
 
@@ -487,8 +534,9 @@ export type NoteInput = string | NoteId | Note | InputNoteRecord;
 
 /**
  * Create a wallet, faucet, or contract. A faucet sets `type:
- * FaucetType.FungibleFaucet`, a contract passes `components`, and a wallet is
- * the default (neither). Visibility comes from `storage`.
+ * FaucetType.FungibleFaucet`, a contract passes `components` with `auth` as an
+ * `AuthSecretKey` or `"none"` (no key stored), and a wallet is the default
+ * (neither). Visibility comes from `storage`.
  */
 export type CreateAccountOptions =
   | WalletCreateOptions
@@ -508,6 +556,7 @@ export interface FaucetCreateOptions {
   name?: string;
   symbol: string;
   decimals: number;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   maxSupply: number | bigint;
   storage?: StorageMode;
   auth?: AuthSchemeType;
@@ -516,8 +565,12 @@ export interface FaucetCreateOptions {
 export interface ContractCreateOptions {
   /** Raw 32-byte seed (Uint8Array). Required. */
   seed: Uint8Array;
-  /** Auth secret key. Required. */
-  auth: AuthSecretKey;
+  /**
+   * Auth secret key, or `"none"` to build a NoAuth contract that anyone can
+   * call without a signature (no key is generated or stored). Required: an
+   * omitted `auth` is rejected rather than defaulting to NoAuth.
+   */
+  auth: AuthSecretKey | "none";
   /**
    * Pre-compiled AccountComponent instances. Required for contracts: at least
    * one must export a non-auth (`@account_procedure`) procedure, or
@@ -658,6 +711,7 @@ export interface SendOptionsDefault extends TransactionOptions {
   account: AccountRef;
   to: AccountRef;
   token: AccountRef;
+  /** Amount to send. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   type?: NoteVisibility;
   returnNote?: false;
@@ -671,6 +725,7 @@ export interface SendOptionsReturnNote extends TransactionOptions {
   account: AccountRef;
   to: AccountRef;
   token: AccountRef;
+  /** Amount to send. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   type?: NoteVisibility;
   returnNote: true;
@@ -738,7 +793,7 @@ export interface MintOptions extends TransactionOptions {
   account: AccountRef;
   /** Recipient account. */
   to: AccountRef;
-  /** Amount to mint. */
+  /** Amount to mint. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   /** Note visibility. Defaults to "public". */
   type?: NoteVisibility;
@@ -751,12 +806,32 @@ export interface BridgeOptions extends TransactionOptions {
   bridgeAccount: AccountRef;
   /** Faucet / token ID of the fungible asset to bridge. */
   token: AccountRef;
-  /** Amount of the asset to bridge. */
+  /** Amount of the asset to bridge. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   /** AggLayer-assigned network ID of the destination chain. */
   destinationNetwork: number;
   /** Destination Ethereum address on the destination network (0x-prefixed hex). */
   destinationAddress: string;
+}
+
+export interface WithdrawUsdcxOptions extends TransactionOptions {
+  /** Account that creates and funds the burn note (the sender / executing account). */
+  account: AccountRef;
+  /** USDCx faucet ID. It consumes the note and burns the asset; it must be a public account. */
+  token: AccountRef;
+  /**
+   * Amount of USDCx to withdraw. A `number` must be a safe integer; any other
+   * `number` throws before a burn note is built, so pass a `bigint` above
+   * `2 ** 53 - 1`.
+   */
+  amount: number | bigint;
+  /** Circle domain of the destination chain (for example 6 for Arbitrum). */
+  destinationDomain: number;
+  /**
+   * Destination recipient as Circle's 32-byte form, 0x-prefixed hex (64 hex
+   * digits). An EVM address is left-padded with zeros to 32 bytes.
+   */
+  destinationRecipient: string;
 }
 
 export interface ConsumeOptions extends TransactionOptions {
@@ -770,16 +845,21 @@ export interface ConsumeAllOptions extends TransactionOptions {
 }
 
 /**
- * A single operation inside a transaction batch. The shape mirrors the
- * singular options types (`SendOptions`, `MintOptions`, ...) minus the
- * `account` field — the executing account is set once at the batch level
- * and shared by every operation (V1 single-account constraint).
+ * A single operation inside a transaction batch. Each shape carries the
+ * request-building fields of its singular options type (`SendOptions`,
+ * `MintOptions`, ...) and none of the per-submission ones. Each operation
+ * specifies which local account executes it via `account`; a batch may mix
+ * operations across any combination of local accounts. Neither `prover`,
+ * `waitForConfirmation` and `timeout` nor `returnNote`, which selects a
+ * different request shape, has any per-operation meaning.
  */
 export type BatchOperation =
   | {
       kind: "send";
+      account: AccountRef;
       to: AccountRef;
       token: AccountRef;
+      /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
       amount: number | bigint;
       type?: NoteVisibility;
       reclaimAfter?: number;
@@ -787,16 +867,20 @@ export type BatchOperation =
     }
   | {
       kind: "mint";
+      account: AccountRef;
       to: AccountRef;
+      /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
       amount: number | bigint;
       type?: NoteVisibility;
     }
   | {
       kind: "consume";
+      account: AccountRef;
       notes: NoteInput | NoteInput[];
     }
   | {
       kind: "swap";
+      account: AccountRef;
       offer: Asset;
       request: Asset;
       type?: NoteVisibility;
@@ -804,6 +888,7 @@ export type BatchOperation =
     }
   | {
       kind: "execute";
+      account: AccountRef;
       script: TransactionScript;
       foreignAccounts?: (
         | AccountRef
@@ -813,26 +898,38 @@ export type BatchOperation =
   | {
       /** Escape hatch for pre-built TransactionRequests. */
       kind: "custom";
+      account: AccountRef;
       request: TransactionRequest;
     };
 
 export interface BatchOptions {
-  /** The account executing every operation in the batch (single-account in V1). */
-  account: AccountRef;
   /** Operations to execute atomically as a batch. Must be non-empty. */
   operations: BatchOperation[];
   /**
-   * Wait until the batch's block has been observed in the local sync height.
-   * Differs from singular `waitForConfirmation`: the V1 batch API returns
-   * only a block number, so we poll chain height rather than per-tx status.
+   * Resolve only once every transaction of the batch is committed. The call
+   * syncs the chain and polls the transactions the submission recorded, and
+   * rejects with `Batch transaction rejected: <id>` if the node discards one,
+   * with `Batch confirmation found no transactions to wait for` when no stored
+   * transaction can be attributed to the batch, or with
+   * `Batch confirmation timed out` when `timeout` runs out first.
+   *
+   * The returned `blockNumber` is still the node's chain tip as of submission,
+   * not the block the batch committed in.
    */
   waitForConfirmation?: boolean;
-  /** Wall-clock polling timeout for `waitForConfirmation` (default 60_000ms). */
+  /**
+   * Wall-clock polling timeout for `waitForConfirmation` in milliseconds
+   * (default 60_000). Set to 0 to poll until the batch is committed or
+   * discarded. A sync or query already in flight still finishes first.
+   */
   timeout?: number;
 }
 
 export interface BatchSubmitResult {
-  /** The block number the batch was accepted into. */
+  /**
+   * The node's chain tip as of submission — not the block the batch commits
+   * in. Sync to learn where it landed.
+   */
   blockNumber: number;
 }
 
@@ -881,6 +978,9 @@ export interface TransactionProof {
   /**
    * Submit the proof to the network, then persist with
    * {@link TransactionSubmission.apply}. Does NOT persist locally on its own.
+   * It registers no script the request declared through
+   * `withExpectedNtxScripts`; submit `newRegisterNoteScriptsTransactionRequest`
+   * first.
    */
   submit(): Promise<TransactionSubmission>;
 }
@@ -902,10 +1002,13 @@ export interface TransactionSubmission {
    *
    * Browser stores require the stored account to match the execution input;
    * a mismatch rejects before changing account state or transaction history.
-   * The network may already have accepted the transaction, so check its status
-   * before submitting again after a local apply failure.
+   * The node already accepted the transaction, so a local apply failure
+   * rejects with `code: "ApplyTransactionAfterSubmitFailed"`, `transactionId`,
+   * `submissionHeight` and the original error as `cause`. Do not resubmit.
    *
    * @returns The pre-apply store update.
+   * @throws An error with `code` `"ApplyTransactionAfterSubmitFailed"` when the
+   *   local store update fails.
    */
   apply(): Promise<TransactionStoreUpdate>;
   /**
@@ -952,9 +1055,9 @@ export interface PswapConsumeOptions extends TransactionOptions {
   account: AccountRef;
   /** PSWAP note to consume — accepts a note id (hex), `NoteId`, `InputNoteRecord`, or `Note`. */
   note: NoteInput;
-  /** Requested-asset amount the consumer supplies from its own vault; a partial amount emits a remainder PSWAP note. */
+  /** Requested-asset amount the consumer supplies from its own vault; a partial amount emits a remainder PSWAP note. A `number` must be a safe integer. */
   fillAmount: number | bigint;
-  /** Requested-asset amount supplied by other in-flight notes in the same tx. Defaults to `0`; leave unset normally. */
+  /** Requested-asset amount supplied by other in-flight notes in the same tx. Defaults to `0`; leave unset normally. A `number` must be a safe integer. */
   noteFillAmount?: number | bigint;
 }
 
@@ -1008,6 +1111,7 @@ export interface PreviewSendOptions {
   account: AccountRef;
   to: AccountRef;
   token: AccountRef;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   type?: NoteVisibility;
   reclaimAfter?: number;
@@ -1018,6 +1122,7 @@ export interface PreviewMintOptions {
   operation: "mint";
   account: AccountRef;
   to: AccountRef;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   type?: NoteVisibility;
 }
@@ -1027,6 +1132,7 @@ export interface PreviewBridgeOptions {
   account: AccountRef;
   bridgeAccount: AccountRef;
   token: AccountRef;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   destinationNetwork: number;
   destinationAddress: string;
@@ -1060,7 +1166,9 @@ export interface PreviewPswapConsumeOptions {
   operation: "pswapConsume";
   account: AccountRef;
   note: NoteInput;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   fillAmount: number | bigint;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   noteFillAmount?: number | bigint;
 }
 
@@ -1093,16 +1201,22 @@ export type WaitStatus = "pending" | "submitted" | "committed";
 export interface WaitOptions {
   /** Wall-clock polling timeout in ms (default: 60_000). Set to 0 to disable timeout and poll indefinitely. */
   timeout?: number;
-  /** Polling interval in ms (default: 5_000). */
+  /**
+   * Polling interval in ms (default: 5_000). When `timeout` is set, the wait
+   * between polls ends at the timeout, so `waitFor` gives up at the deadline
+   * rather than up to one interval later. A sync or query already in flight
+   * still finishes first.
+   */
   interval?: number;
   onProgress?: (status: WaitStatus) => void;
 }
 
 /**
- * Result of consumeAll. `consumed` and `remaining` count only notes consumable
- * at the last synced block, so `remaining === 0` means nothing is consumable
- * now, not that the account has no unconsumed notes: block-locked notes appear
- * in neither count. Use {@link NotesResource.listConsumable} to see those.
+ * Result of consumeAll. `consumed` and `remaining` count only the P2ID and
+ * P2IDE notes consumable at the last synced block, so `remaining === 0` means
+ * no payment is consumable now, not that the account has no unconsumed notes:
+ * block-locked notes and notes running any other script appear in neither
+ * count. Use {@link NotesResource.listConsumable} to see those.
  */
 export interface ConsumeAllResult {
   txId: TransactionId | null;
@@ -1245,6 +1359,13 @@ export interface MockOptions extends NoteAcquisitionOptions {
   seed?: string | Uint8Array;
   serializedMockChain?: Uint8Array;
   serializedNoteTransport?: Uint8Array;
+  /**
+   * IndexedDB database name for this mock client. Defaults to `mock_client_db`.
+   * Use a distinct name when a second mock client in the same origin must not
+   * share store state with another live mock (otherwise `syncState` can fail
+   * genesis tip validation).
+   */
+  storeName?: string;
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1272,7 +1393,12 @@ export interface AccountsResource {
    * value as `type`; use `storage`.
    *
    * @param options - Account creation options. A faucet sets `type`, a
-   * contract passes `components`, and a wallet is the default.
+   * contract passes `components`, and a wallet is the default. A contract also
+   * needs a raw 32-byte `seed` and `auth`. `auth` is an `AuthSecretKey` stored
+   * with the account, or `"none"` for a NoAuth contract that anyone can call
+   * and that stores no key. Omitting `auth` is rejected and does not default
+   * to NoAuth. `"none"` is only valid on a contract; wallet and faucet `auth`
+   * stays `AuthScheme.Falcon` or `AuthScheme.ECDSA`.
    * @throws TypeError naming `FaucetType`, before creating anything, for an
    * unrecognised `type`, for faucet fields (`name`, `symbol`, `decimals`,
    * `maxSupply`) without a faucet type, for `components` on a faucet, and for a
@@ -1376,6 +1502,50 @@ export interface AccountsResource {
    */
   import(input: ImportAccountInput): Promise<Account>;
   /**
+   * Start watching a public on-chain account by ID, without subscribing to its
+   * note tag. Sync keeps the account's commitment, nonce and storage current,
+   * but notes addressed to it are not pulled.
+   *
+   * @param accountId - The public account to watch.
+   */
+  importWatched(accountId: AccountRef): Promise<Account>;
+  /**
+   * Keep the account's witness up to date on every sync, so transactions that
+   * use it as a foreign account resolve the witness locally. The first sync
+   * after this call fetches it. Resolves to `true` if the account was not
+   * tracked before.
+   *
+   * The account is not validated against the network here. Sync fails while a
+   * tracked account has no witness the node can return, so an account that is
+   * not in the account tree blocks sync until it is untracked.
+   *
+   * @param accountId - The account whose witness to track.
+   */
+  trackWitness(accountId: AccountRef): Promise<boolean>;
+  /**
+   * Stop tracking the account's witness and drop the cached one. Resolves to
+   * `true` if the account was tracked.
+   *
+   * @param accountId - The account to stop tracking.
+   */
+  untrackWitness(accountId: AccountRef): Promise<boolean>;
+  /**
+   * List the accounts whose witness is tracked.
+   */
+  trackedWitnesses(): Promise<AccountId[]>;
+  /**
+   * Read the stored witness for a key of a storage map slot.
+   *
+   * @param accountId - The account that owns the slot.
+   * @param slotName - The name of the storage map slot.
+   * @param key - The map key.
+   */
+  getStorageMapWitness(
+    accountId: AccountRef,
+    slotName: string,
+    key: Word
+  ): Promise<StorageMapWitness>;
+  /**
    * Export an account to an {@link AccountFile} for backup or transfer.
    *
    * @param accountId - The account to export.
@@ -1448,6 +1618,14 @@ export interface TransactionsResource {
    */
   bridge(options: BridgeOptions): Promise<TransactionSubmitResult>;
   /**
+   * Withdraw USDCx through Circle xReserve. Emits a single public burn note
+   * with the fixed `BURN` tag; the USDCx faucet consumes it and Circle releases
+   * USDC to the destination recipient on the destination domain.
+   *
+   * @param options - Sender, USDCx faucet, amount, and destination.
+   */
+  withdrawUsdcx(options: WithdrawUsdcxOptions): Promise<TransactionSubmitResult>;
+  /**
    * Consume one or more notes for an account.
    *
    * @param options - Consume options including the account and notes to consume.
@@ -1485,10 +1663,13 @@ export interface TransactionsResource {
    */
   pswapCancel(options: PswapCancelOptions): Promise<TransactionSubmitResult>;
   /**
-   * Consume the notes an account can consume right now, up to an optional
-   * limit. Block-locked notes are skipped, the same set
-   * {@link NotesResource.listAvailable} returns. Returns the count of remaining
-   * notes for pagination.
+   * Consume the payments an account can consume right now, up to an optional
+   * limit: the set {@link NotesResource.listAvailable} returns. Only P2ID and
+   * P2IDE notes are taken, and block-locked ones are skipped. A note running
+   * any other script can spend from the account (consuming another trader's
+   * public PSWAP order fills it from this account's vault), so pass such a note
+   * to {@link TransactionsResource.consume} by name. Returns the count of
+   * remaining payments for pagination.
    *
    * @param options - Options including the account and optional max notes limit.
    */
@@ -1549,6 +1730,11 @@ export interface TransactionsResource {
    * {@link MidenClient.withFeeAwareAuth}. Raises the same fee errors
    * {@link executeRequest} does.
    *
+   * The request is submitted as given: scripts it declares through
+   * `withExpectedNtxScripts` are not registered, so submit
+   * `newRegisterNoteScriptsTransactionRequest` first. `executeRequest` and the
+   * staged `prove` and `submit` calls behave the same.
+   *
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
    * @param options - Optional transaction options (prover, confirmation, anchor).
@@ -1605,6 +1791,10 @@ export interface TransactionsResource {
    * await submitted.apply();
    * ```
    *
+   * No stage registers the scripts the request declares through
+   * `withExpectedNtxScripts`; submit `newRegisterNoteScriptsTransactionRequest`
+   * first.
+   *
    * {@link submit} runs every stage in one call. The stages are not atomic as a
    * group: awaiting other mutating calls on the same account between them can
    * interleave state — drive the chain as an uninterrupted sequence per account.
@@ -1660,19 +1850,26 @@ export interface TransactionsResource {
   ): Promise<TransactionSubmission>;
 
   /**
-   * Execute a heterogeneous batch of operations against a single account.
-   * Each operation is built, proven individually and as a batch, and all
-   * operations are submitted atomically — either every tx in the batch
-   * lands or none does.
-   *
-   * V1 supports only same-account batches (mirrors the underlying Rust
-   * `Client::new_transaction_batch()` constraint).
+   * Execute a heterogeneous batch of operations across one or more local
+   * accounts. Each operation specifies its executing `account`. Each
+   * operation is proven individually as it is added, then a single batch
+   * proof is produced over all of them and submitted as one batch; the node
+   * commits them together or not at all. Every proof runs inside the batch
+   * primitive on the client's built-in local prover, so `proverUrl` does not
+   * apply to batches.
+   * In the browser the batch is forwarded to the client's Web Worker, so the
+   * page's main thread stays responsive; without a worker (`useWorker: false`,
+   * or no `Worker` in the environment), and on a mock client, it proves on the
+   * calling thread and blocks it until it settles.
+   * Through the worker, `sign` waits without a limit unless `callbackTimeoutMs`
+   * sets one, so a stalled signer holds the batch and later worker calls. See
+   * https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
    *
    * The named operations attach fee conversion info themselves; a request you
    * supply through the `custom` operation is subject to the fee checks
    * described on {@link submitBatch}, which this delegates to.
    *
-   * @param options - Batch options including the account and operations.
+   * @param options - Batch options including the operations array.
    */
   batch(options: BatchOptions): Promise<BatchSubmitResult>;
 
@@ -1691,17 +1888,27 @@ export interface TransactionsResource {
    * {@link MidenClient.feeAwareTransactionRequestBuilder}, or pass a finished
    * one through {@link MidenClient.withFeeAwareAuth} before batching it.
    *
-   * The account's code is read once for the whole batch, not once per request,
-   * since a batch is single-account by contract.
+   * @param items - Per-tx (account, request) pairs (must be non-empty).
+   * @param options - Optional batch settings (`waitForConfirmation` and its
+   *   `timeout`, see {@link BatchOptions}).
+   *   There is no prover option: every transaction is proven inside the batch
+   *   primitive by the client's built-in local prover, and `proverUrl` does not
+   *   apply.
+   *   In the browser the batch runs in the client's Web Worker where it has
+   *   one; see {@link batch} for when it runs in-thread instead.
    *
-   * @param account - The account executing every transaction in the batch.
-   * @param requests - Pre-built transaction requests (must be non-empty).
-   * @param options - Optional batch settings (waitForConfirmation, timeout, prover).
+   *   With an external keystore and a worker, signing happens at push time
+   *   and this wrapper treats a failed push as fatal, so one failed or timed
+   *   out signature callback fails the whole batch. `sign` has no time limit
+   *   unless `callbackTimeoutMs` sets one, so a stalled signer holds the batch
+   *   and later worker calls. See
+   *   https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
+   *   Relatedly, `lastAuthError()` reads the main-thread instance, so it does
+   *   not report a forwarded batch's auth error.
    */
   submitBatch(
-    account: AccountRef,
-    requests: TransactionRequest[],
-    options?: Omit<BatchOptions, "account" | "operations">
+    items: { account: AccountRef; request: TransactionRequest }[],
+    options?: Omit<BatchOptions, "operations">
   ): Promise<BatchSubmitResult>;
 
   /** Execute a program (view call) and return the resulting stack output. */
@@ -1821,23 +2028,35 @@ export interface NotesResource {
   listSent(query?: NoteQuery): Promise<OutputNoteRecord[]>;
 
   /**
-   * List notes a specific account can consume, as of the client's last sync.
+   * List the payments a specific account can consume, as of the client's last
+   * sync: P2ID and P2IDE notes only, see {@link isStandardPayment}.
    *
-   * Excludes block-locked notes (status `consumableAfterBlock`). Consumability
-   * is what miden-client's note screener reports at the last synced block, so
+   * Excludes block-locked notes (status `consumableAfterBlock`) and notes
+   * running any other script. The screener lists a note for every tracked
+   * account that a trial consume succeeds for, so another trader's public
+   * PSWAP order shows up for an account holding the asset it requests, and
+   * consuming it fills the order from that account's vault. Consumability is
+   * what miden-client's note screener reports at the last synced block, so
    * sync first for a current answer. Use {@link NotesResource.listConsumable}
-   * to include block-locked notes, with their consumability metadata.
+   * to include the other notes, with their consumability metadata.
    *
    * @param options - Options containing the account to check availability for.
    */
   listAvailable(options: { account: AccountRef }): Promise<InputNoteRecord[]>;
 
   /**
-   * List notes consumable by an account, including block-locked ones, keeping
-   * each note's consumability metadata. `noteConsumability()` holds one status
-   * per account; its `consumableAfterBlock()` is set when the note unlocks at a
-   * later block. Like {@link NotesResource.listAvailable}, it reflects the last
-   * sync.
+   * List notes consumable by an account, including block-locked ones and
+   * notes running any script, keeping each note's consumability metadata.
+   * `noteConsumability()` holds one status per account; its
+   * `consumableAfterBlock()` is set when the note unlocks at a later block.
+   * Like {@link NotesResource.listAvailable}, it reflects the last sync.
+   *
+   * Not every note here is a payment. Consuming a note that is not a P2ID or
+   * P2IDE note can spend from the consuming account: another trader's public
+   * PSWAP order is listed for any account holding the asset it requests, and
+   * consuming it fills the order at their price. Check
+   * {@link isStandardPayment} before consuming a note from this list unless
+   * you know its script.
    *
    * @param options - Optional account to check; omit to list notes consumable
    *   by any tracked account.
@@ -1845,6 +2064,26 @@ export interface NotesResource {
   listConsumable(options?: {
     account?: AccountRef;
   }): Promise<ConsumableNoteRecord[]>;
+
+  /**
+   * Screen a note the client has not imported, with the screener sync uses.
+   * The note is not stored.
+   *
+   * Returns one {@link NoteConsumability} per account that can consume the
+   * note now, after a block, or with authorization. The screener drops
+   * accounts that can never consume the note, and accounts that cannot
+   * consume it under the current conditions, so an empty array means no
+   * screened account can consume it now. It is also empty when the client
+   * tracks no accounts, so it does not mean never consumable.
+   *
+   * @param note - The note to screen.
+   * @param options - Optional account to screen against; it must be in the
+   *   client's store. Omit to screen against every tracked account.
+   */
+  screen(
+    note: Note,
+    options?: { account?: AccountRef }
+  ): Promise<NoteConsumability[]>;
 
   /**
    * Import a note from a {@link NoteFile}.
@@ -2142,25 +2381,23 @@ export declare class MidenClient {
   /**
    * Creates and initializes a new MidenClient.
    *
-   * Every non-mock client must name the chain's fee faucet in
-   * {@link ClientOptions.feeFaucetId} while the SDK carries a default for no
-   * network; without it creation fails with an error saying so.
+   * {@link ClientOptions.feeFaucetId} is optional: the client receives the
+   * chain's protocol configuration, which names the fee asset, from the node
+   * when it syncs.
    */
   static create(options?: ClientOptions): Promise<MidenClient>;
   /**
    * Creates a client preconfigured for testnet (rpc, prover, note transport, autoSync).
-   *
-   * Still needs {@link ClientOptions.feeFaucetId}: the preconfigured defaults
-   * cover the endpoints, not the chain's fee asset.
    */
   static createTestnet(options?: ClientOptions): Promise<MidenClient>;
   /**
    * Creates a client preconfigured for devnet (rpc, prover, note transport, autoSync).
-   *
-   * Still needs {@link ClientOptions.feeFaucetId}: the preconfigured defaults
-   * cover the endpoints, not the chain's fee asset.
    */
   static createDevnet(options?: ClientOptions): Promise<MidenClient>;
+  /**
+   * Creates a client preconfigured for mainnet (rpc, prover, note transport, autoSync).
+   */
+  static createMainnet(options?: ClientOptions): Promise<MidenClient>;
   /**
    * Creates a mock-chain client for testing. Browser mocks accept indexedDb and
    * useWorker controls; Node mocks use SQLite and reject explicit indexedDb.
@@ -2211,15 +2448,15 @@ export declare class MidenClient {
    */
   waitForIdle(): Promise<void>;
   /**
-   * Returns the raw JS value that the most recent sign-callback invocation
-   * threw, or `null` if the last sign call succeeded (or no call has
-   * happened yet). Useful for recovering structured metadata (e.g. a
-   * `reason: 'locked'` property) that the kernel-level `auth::request`
-   * diagnostic would otherwise erase.
+   * Returns the latest raw sign callback rejection or readable external `getKey`
+   * failure string. Returns `null` after a successful sign or `getKey` callback,
+   * or when `executeTransaction` starts. Raw sign values preserve structured metadata
+   * such as `reason: 'locked'`. Transaction errors include any missing readable
+   * callback detail on both the direct and worker paths.
    *
    * Meaningful only with `useWorker: false` (the worker shim's keystore
    * lives in the worker WASM instance, so this reads `null` there). On
-   * the Node.js binding it always returns `null` — signing goes through
+   * the Node.js binding it always returns `null` - signing goes through
    * the filesystem keystore, never a JS callback.
    */
   lastAuthError(): unknown;
@@ -2250,11 +2487,36 @@ export declare class MidenClient {
   feeFaucetId(): Promise<AccountId>;
 
   /**
+   * Returns the protocol configuration of the connected network, including its
+   * fee asset, so a dApp need not hardcode it per network.
+   *
+   * The client receives the configuration from the node when it syncs, so this
+   * rejects until the first sync has stored it. Mock clients are seeded with
+   * their chain's configuration. {@link ProtocolConfig.feeFaucetId} agrees with
+   * {@link MidenClient.feeFaucetId} once synced.
+   */
+  protocolConfig(): Promise<ProtocolConfig>;
+
+  /**
    * Returns the underlying store namespace (IndexedDB database name or file path),
    * not an incarnation or data-integrity identifier. Recreated/restored stores can
    * retain it. Wallet recovery must also check its own marker and expected accounts.
    */
   storeIdentifier(): Promise<string>;
+
+  /**
+   * Returns the URL of the node this client was created against, e.g.
+   * `"https://rpc.devnet.miden.io"`.
+   *
+   * The value is fixed at creation and read synchronously. `rpcUrl` shorthands
+   * are already resolved, and a client created without `rpcUrl` reports the
+   * testnet endpoint it defaulted to. A mock client ({@link MidenClient.createMock})
+   * talks to no node and returns `undefined`.
+   *
+   * Use it to point a standalone `RpcClient` at the same node:
+   * `new RpcClient(new Endpoint(client.endpoint()!))`.
+   */
+  endpoint(): string | undefined;
 
   /**
    * Returns a `TransactionRequestBuilder` that already declares a fee
@@ -2279,9 +2541,9 @@ export declare class MidenClient {
    * - **A custom auth procedure that reads conversion info** — miden-client
    *   does not recognise the component and commits nothing, so the transaction
    *   aborts in the VM with `ERR_FEE_CONVERSION_INFO_MISSING`. Attach the
-   *   commitment yourself with `TransactionRequestBuilder.withAuthArg` plus
-   *   `extendAdviceMap`, or on a finished request with
-   *   `request.withAuthArgs(preimage)`.
+   *   auth args yourself with `TransactionRequestBuilder.withAuthArgs`, which
+   *   sets the commitment and adds its advice-map preimage, or on a finished
+   *   request with `request.withAuthArgs(preimage)`.
    *
    * The `new*TransactionRequest` constructors declare it, and so does every
    * `client.transactions` operation that builds its own request — but the ones
@@ -2314,11 +2576,11 @@ export declare class MidenClient {
    * height when it built the request; below it execution fails with
    * "requested block N is after transaction reference block M" until it syncs.
    *
-   * Calling `withAuthArg` on the result clears what this declared, and vice
+   * Calling `withAuthArgs` on the result clears what this declared, and vice
    * versa: miden-client keeps the two mutually exclusive, so whichever is
    * called last wins rather than producing an error.
    *
-   * Do not call `withFeeConversionSalt` or `withAuthArg` on the builder this
+   * Do not call `withFeeConversionSalt` or `withAuthArgs` on the builder this
    * returns for a multisig. The two setters clear each other, so either one
    * discards the three-word auth args this already set and the transaction
    * aborts in the auth procedure. Pass `feeConversionSalt` in `options`.
@@ -2420,8 +2682,8 @@ export declare class MidenClient {
   /**
    * Terminates the client, then resolves once its wasm client is freed and its
    * store connection released, so the store can be deleted or reopened once
-   * this settles. On the Node.js binding it releases nothing and resolves at
-   * once.
+   * this settles. On the Node.js binding it releases only the store's
+   * ownership claim and resolves at once.
    * A store handle you obtain yourself, such as an AccountReader from
    * `accountReader`, keeps the connection open until you free it.
    */
@@ -2442,6 +2704,48 @@ export declare function createP2IDENote(
   options: P2IDEOptions
 ): ReturnType<WasmModule["Note"]["createP2IDENote"]>;
 
+/** Options for {@link createFeeSponsorshipNote}. */
+export interface FeeSponsorshipNoteOptions {
+  /** Sponsor account paying the fee. */
+  from: AccountRef;
+  /**
+   * Target account the bound feature note routes to. Must be a public account
+   * because fee-sponsorship notes are network-routed.
+   */
+  to: AccountRef;
+  /** Id of the feature note this sponsorship note binds to. */
+  featureNoteId: NoteId;
+  /** Single fungible fee asset carried by the sponsorship note. */
+  asset: FungibleAsset;
+  /**
+   * Account allowed to reclaim the fee if `reclaimAfter` is set. Defaults to
+   * the sponsor (`from`). Passing an `AccountId` instance to
+   * {@link createFeeSponsorshipNote} clones it so the caller's handle is
+   * preserved.
+   */
+  reclaimer?: AccountRef;
+  /**
+   * Optional block height at which `reclaimer` can reclaim the note. Omit or
+   * leave `undefined` to disable reclaim; when set, must be a positive 32-bit
+   * integer (`> 0`).
+   */
+  reclaimAfter?: number;
+}
+
+/**
+ * Creates a fee-sponsorship note bound to a feature note id.
+ *
+ * Binds the note to `options.featureNoteId`, routes to the public target
+ * `options.to`, and defaults `options.reclaimer` to the sponsor (`options.from`).
+ * Unlike `Note.createFeeSponsorshipNote`, which consumes a passed `reclaimer`
+ * `AccountId` in browser WASM, this standalone helper clones `AccountId`
+ * inputs to preserve the caller's handle. Omit `options.reclaimAfter` to
+ * disable reclaim, or pass a positive 32-bit integer (`> 0`).
+ */
+export declare function createFeeSponsorshipNote(
+  options: FeeSponsorshipNoteOptions
+): ReturnType<WasmModule["Note"]["createFeeSponsorshipNote"]>;
+
 /**
  * Builds (without submitting) a Public custom-script note carrying a
  * `NetworkAccountTarget` attachment. Provide exactly one of `recipient` or
@@ -2461,15 +2765,65 @@ export declare function buildSwapTag(
  * client's last sync.
  *
  * `getConsumableNotes` also returns notes that unlock at a later block. This is
- * the rule {@link NotesResource.listAvailable} and
+ * one of the two rules {@link NotesResource.listAvailable} and
  * {@link TransactionsResource.consumeAll} apply, exported for code that reads
- * the low-level client directly. With `accountIdHex`, only that account's
+ * the low-level client directly; {@link isStandardPayment} is the other. With `accountIdHex`, only that account's
  * consumability entry counts; without one, any account's entry does.
  */
 export declare function isConsumableNow(
   record: ConsumableNoteRecord,
   accountIdHex?: string
 ): boolean;
+
+/**
+ * True when the note runs the standard P2ID or P2IDE payment script.
+ *
+ * Consuming such a note only moves its assets into the consuming account, and
+ * the screener reports it consumable only for the account it pays, or for its
+ * sender once a P2IDE note can be reclaimed. A note running any other script
+ * can also spend from the consumer: anyone holding the requested asset can
+ * consume another trader's public PSWAP order, and doing so fills it from
+ * their vault at the creator's price. `getConsumableNotes` and
+ * {@link NotesResource.listConsumable} list such notes; this is the rule
+ * {@link NotesResource.listAvailable} and
+ * {@link TransactionsResource.consumeAll} apply to leave them out. A note whose
+ * script cannot be read is not a payment.
+ *
+ * Needs the SDK's WASM to be loaded: with a lazy entry, await
+ * `MidenClient.ready()` first.
+ */
+export declare function isStandardPayment(
+  record: ConsumableNoteRecord | InputNoteRecord
+): boolean;
+
+/**
+ * Computes the commitment Bread signs for a dApp's `signBytes` request.
+ * Verify a returned signature with
+ * `publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)`.
+ *
+ * The wallet signs under a domain tag: the Poseidon2 hash of the string
+ * `miden-wallet/sign-bytes/v1`, one field element per UTF-8 byte. Its four
+ * elements are `0x38a8bcdddf30cacf`, `0x240d1b8455bc2c58`,
+ * `0x18162f6af29602dd` and `0x5385955edcd341a4`.
+ *
+ * - `"word"`: `data` is a serialized `Word`; the signed commitment is that of
+ *   `SigningInputs.newArbitrary([...tag, ...word.toFelts()])`.
+ * - `"signingInputs"`: `data` is serialized `SigningInputs`. A Blind payload
+ *   signs `[...tag, ...word.toFelts()]` and an Arbitrary payload signs
+ *   `[...tag, ...payload]` (the tag alone when empty), both as Arbitrary
+ *   inputs. A TransactionSummary is signed unchanged, so its own commitment
+ *   is returned.
+ *
+ * Any other `kind` or variant throws. Wallets released before this change
+ * signed the raw value instead.
+ *
+ * Needs the SDK's WASM to be loaded: with a lazy entry, await
+ * `MidenClient.ready()` first.
+ */
+export declare function domainSeparatedSignCommitment(
+  data: Uint8Array,
+  kind: "word" | "signingInputs"
+): Word;
 
 /**
  * Browser only: exports the entire IndexedDB store as JSON, including USER

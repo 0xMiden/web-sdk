@@ -66,7 +66,7 @@ export async function initializeSignerAccount(
       // `code_from_error` in crates/web-client/src/lib.rs); it survives the
       // worker shim. We match on that code rather than the changeable message.
       const code = (e as { code?: string } | null | undefined)?.code;
-      // Tolerate two benign cases; rethrow anything else (e.g. a real network
+      // Tolerate three benign cases; rethrow anything else (e.g. a real network
       // failure) so genuine problems still surface as an init error.
       //
       // - AccountNotFoundOnChain: the account is fresh — a brand-new wallet whose
@@ -79,14 +79,22 @@ export async function initializeSignerAccount(
       //   can't be built against it yet. It becomes usable once it is registered
       //   on-chain and a later importAccountById() succeeds — syncState() only
       //   refreshes already-tracked accounts, so it won't import this one by ID.
+      // - AccountIsPrivate: the wallet's account is private (Bread's default), so
+      //   its state is never on the network and a public import cannot work by
+      //   design. Same outcome as a fresh account: the signer ID is returned, the
+      //   provider becomes ready, and the account stays untracked locally. Building
+      //   a new account from the public key instead would mint a different ID.
       // - AccountAlreadyTracked: the account is already imported locally.
       //   Defensive — this import path overwrites, so it shouldn't normally
       //   surface, but tolerating it is harmless.
       const isFreshAccount = code === "ACCOUNT_NOT_FOUND_ON_CHAIN";
+      const isPrivateAccount = code === "ACCOUNT_IS_PRIVATE";
       const isAlreadyTracked = code === "ACCOUNT_ALREADY_TRACKED";
-      if (!isAlreadyTracked && !isFreshAccount) {
+      if (!isAlreadyTracked && !isFreshAccount && !isPrivateAccount) {
         throw e;
       }
+      // These three leave tracked state as the opening sync left it.
+      return config.importAccountId;
     }
     await client.syncState();
     return config.importAccountId;

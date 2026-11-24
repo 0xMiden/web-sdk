@@ -6,7 +6,7 @@ use crate::js_error_with_context;
 use crate::models::signature::Signature;
 use crate::models::signing_inputs::SigningInputs;
 use crate::models::word::Word;
-use crate::platform::{JsBytes, JsErr, from_str_err};
+use crate::platform::{JsBytes, JsErr};
 use crate::utils::serialize_to_bytes;
 
 #[js_export]
@@ -41,7 +41,14 @@ impl PublicKey {
         native_word.into()
     }
 
-    /// Recovers a public key from a signature (only supported for `RpoFalcon512`).
+    /// Recovers a public key from a signature over a blind message word.
+    ///
+    /// Recovery does not authenticate the signer. Treat the message as signed by a trusted key
+    /// only when `recovered.toCommitment()` equals a commitment from a trusted source and
+    /// `recovered.verify(message, signature)` returns `true` for this same message and signature.
+    /// Falcon recovery returns the public key embedded in the signature and does not read the
+    /// message, so a valid Falcon signature over a different message recovers the same key and
+    /// only `verify` rejects it.
     #[js_export(js_name = "recoverFrom")]
     pub fn recover_from(message: &Word, signature: &Signature) -> Result<PublicKey, JsErr> {
         let native_message: NativeWord = message.into();
@@ -55,9 +62,14 @@ impl PublicKey {
                 );
                 Ok(NativePublicKey::Falcon512Poseidon2(public_key).into())
             },
-            NativeSignature::EcdsaK256Keccak(_) => Err(from_str_err(
-                "Recovering a public key from an EcdsaK256Keccak signature is not supported yet",
-            )),
+            NativeSignature::EcdsaK256Keccak(ecdsa_signature) => {
+                let public_key = miden_client::crypto::ecdsa_k256_keccak::PublicKey::recover_from(
+                    native_message,
+                    &ecdsa_signature,
+                )
+                .map_err(|e| js_error_with_context(e, "Failed to recover ECDSA public key"))?;
+                Ok(NativePublicKey::EcdsaK256Keccak(public_key).into())
+            },
         }
     }
 

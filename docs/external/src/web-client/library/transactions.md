@@ -84,48 +84,57 @@ Check status using methods on the `TransactionStatus` object:
 
 ## Batch Operations
 
-Submit multiple operations against a single account as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally, so consumers don't have to assemble or serialize them by hand.
+Submit multiple operations across one or more local accounts as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally, so consumers don't have to assemble or serialize them by hand.
+
+The guarantee comes from the node's `SubmitProvenTxBatch` RPC contract: "All transactions in this batch will be considered atomic, and be committed together or not all." It does not exempt the transactions from building on the current mempool state under the normal submission rules — `miden-client`'s RPC trait spells that out on the same endpoint — so atomicity governs how the batch commits, not whether the node accepts it.
 
 ```typescript
 const { blockNumber } = await client.transactions.batch({
-  account: wallet,
   operations: [
-    { kind: "send", to: alice, token: dagToken, amount: 50n, type: "public" },
-    { kind: "send", to: bob, token: dagToken, amount: 30n, type: "public" },
-    { kind: "consume", notes: pendingNotes },
+    { kind: "send", account: alice, to: bob, token: dagToken, amount: 50n, type: "public" },
+    { kind: "send", account: alice, to: carol, token: dagToken, amount: 30n, type: "public" },
+    { kind: "consume", account: bob, notes: pendingNotes },
   ],
-  waitForConfirmation: true,
 });
-console.log(`Batch landed in block ${blockNumber}`);
+// The node's chain tip as of submission, not the block the batch commits in.
+console.log(`Batch submitted at chain tip ${blockNumber}`);
 ```
 
 ### Operation kinds
 
-`BatchOperation` is a discriminated union on `kind`. Each shape mirrors the singular options object (`SendOptions`, `MintOptions`, …) minus the `account` field, which is set once at the batch level:
+`BatchOperation` is a discriminated union on `kind`. Each shape carries the request-building fields of its singular options object (`SendOptions`, `MintOptions`, …) and none of the per-submission ones. Every operation specifies which local account executes it via `account`, and neither `prover`, `waitForConfirmation` and `timeout` nor `returnNote`, which selects a different request shape, has any per-operation meaning:
 
 | `kind` | Fields |
 |---|---|
-| `"send"` | `to`, `token`, `amount`, `type?`, `reclaimAfter?`, `timelockUntil?` |
-| `"mint"` | `to`, `amount`, `type?` |
-| `"consume"` | `notes` (single `NoteInput` or array) |
-| `"swap"` | `offer: { token, amount }`, `request: { token, amount }`, `type?`, `paybackType?` |
-| `"execute"` | `script`, `foreignAccounts?` |
-| `"custom"` | `request: TransactionRequest` (escape hatch for pre-built requests) |
+| `"send"` | `account`, `to`, `token`, `amount`, `type?`, `reclaimAfter?`, `timelockUntil?` |
+| `"mint"` | `account`, `to`, `amount`, `type?` |
+| `"consume"` | `account`, `notes` (single `NoteInput` or array) |
+| `"swap"` | `account`, `offer: { token, amount }`, `request: { token, amount }`, `type?`, `paybackType?` |
+| `"execute"` | `account`, `script`, `foreignAccounts?` |
+| `"custom"` | `account`, `request: TransactionRequest` (escape hatch for pre-built requests) |
 
-### V1 constraints
+### Cross-account flows
 
-- **Single account.** Every operation runs against the `account` passed at the top level. Mixing accounts across operations throws — V2 will lift this constraint.
-- **No per-tx ids in the result.** `batch` returns `{ blockNumber }`. To inspect individual transactions in the batch, sync state and query with `client.transactions.list()` after `waitForConfirmation` succeeds.
+A later transaction may consume a note produced by an earlier transaction in the same batch — even when the producer and consumer target different accounts. Push order must respect producer-before-consumer.
+
+### Constraints
+
+- **All accounts must be tracked.** Every `account` referenced by an operation must be registered with the client. Pushing for an unknown account fails at submit time with `AccountDataNotFound`.
+- **No per-tx ids in the result.** `batch` returns `{ blockNumber }`, the node's chain tip as of submission. To inspect individual transactions in the batch, sync state and query with `client.transactions.list()`.
+- **On a mock client, call `proveBlock()` after a batch** before submitting anything else. A submitted batch is not part of the serialized mock chain, so a later mock submit that round-trips through the worker adopts a chain that never saw it. A mock batch also proves for real whether you ask it to or not: the mock client's dummy-prover shortcut applies only when no prover was passed, and the batch builder bypasses it entirely, so budget more time for a mock batch than for other mock submits.
 - **Atomicity is at the batch level.** Either all transactions in the batch land or none do — this differs from `Promise.all([send, send, send])` of singular calls (which can partially succeed).
+- **No duplicate input notes.** A note consumed by one transaction in the batch cannot be consumed by another — globally across accounts.
+- **Proving uses the built-in local prover.** Each transaction is proven inside the batch primitive by the client's built-in local prover, so `proverUrl` does not apply to `batch` or `submitBatch`, and neither takes a per-call prover.
+- **Proving runs in the Web Worker where there is one.** In the browser the client forwards a batch to its Web Worker, so the page keeps responding while the batch proves. With `useWorker: false`, where no `Worker` exists, or on a mock client, it proves on the calling thread and blocks it until it settles, so keep batches small there. Either way the batch holds the client: its other calls queue behind it until it settles. With an external keystore, the batch signs while it is built, and through the Web Worker `sign` waits without a limit unless `callbackTimeoutMs` sets one, so a stalled signer holds the batch and leaves later worker calls in the queue. To fail a stalled signer instead, set a finite timeout, such as `MidenClient.create({ keystore, callbackTimeoutMs: 120000 })`. See the [complete callback timeout contract](https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts).
 
 ### `submitBatch` — pre-built requests
 
-For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders:
+For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders. Each item pairs the executing account with its request:
 
 ```typescript
-const { blockNumber } = await client.transactions.submitBatch(wallet, [
-  request1,
-  request2,
+const { blockNumber } = await client.transactions.submitBatch([
+  { account: alice, request: request1 },
+  { account: bob, request: request2 },
 ]);
 ```
 
@@ -133,7 +142,23 @@ This is the plural counterpart of `client.transactions.submit(account, request)`
 
 ### `waitForConfirmation` semantics
 
-The V1 batch primitive returns only a block number — there are no per-tx ids to poll. Setting `waitForConfirmation: true` polls the local sync height until it reaches `blockNumber` (rather than per-transaction polling like singular `send` / `consume` do). The `timeout` option still applies; default is 60 seconds.
+The batch primitive returns only a block number, and that number is the node's chain tip at submission, per the caveat above, so reaching it says nothing about the batch. With `waitForConfirmation: true` the call instead follows the transactions the submission recorded in the local store: it syncs the chain and resolves once every one of them is committed. It rejects with `Batch transaction rejected: <id>` if the node discards one, and with `Batch confirmation timed out` when `timeout` runs out first; the default is 60 seconds, and `0` polls until the batch settles.
+
+```typescript
+await client.transactions.batch({
+  operations,
+  waitForConfirmation: true,
+});
+```
+
+The batch's own effects are already in the local store when the call returns, so without the option what you are waiting for is chain inclusion:
+
+```typescript
+await client.sync();
+const txs = await client.transactions.list();
+```
+
+One failure mode worth handling: the node can accept a batch and the local store update still fail, which surfaces as a rejected promise whose message contains `batch was accepted at block N but building store updates failed` (or `applying to the store failed`). The node has taken the batch in that case, so retrying would submit it twice; sync instead.
 
 ## Manual Transaction Lifecycle
 
@@ -169,8 +194,12 @@ continue to sync before relying on on-chain balances.
 
 For browser stores, `apply` requires the stored account to match the
 transaction's execution input. A mismatch rejects before changing account state
-or transaction history. A submitted transaction may already be on-chain when
-local apply fails; check its status before submitting again.
+or transaction history. A submitted transaction is already accepted by the node when
+local apply fails, so `apply` and the single-transaction `transactions.*` helpers
+(which apply after submitting) reject with `code: "ApplyTransactionAfterSubmitFailed"`,
+`transactionId`, `submissionHeight` and the original error as `cause`. A batch whose
+local update fails after the node accepted it rejects with the same `code` and the
+accepted block in its message, without those fields. Do not submit it again.
 
 ## Pinning How Input Notes Are Consumed
 
@@ -193,6 +222,71 @@ Each call adds one note. The optional second argument is the note's arguments, t
 
 To consume an authenticated note, the executing client must be able to serve the header of the note's creation block, from its store or from the [chain anchor](#chain-anchored-execution) the request executes against.
 
+## Skipping Invalid Notes, Network Scripts and Code Upgrades
+
+`ignoreInvalidInputNotes()` makes execution drop an input note the account can no longer consume, without an error, and consume the rest. `request.ignoresInvalidInputNotes()` reports the flag. Execution screens at most 20 input notes this way and fails with `invalid input note count` above that, so split a larger batch across requests.
+
+```typescript
+const request = new TransactionRequestBuilder()
+  .withInputNotes(notes)
+  .ignoreInvalidInputNotes()
+  .build();
+```
+
+`withExpectedNtxScripts(scripts)` declares the note scripts the network will run for the request, and `request.expectedNtxScripts()` reads the declared list back, standard scripts included. The web client submits exactly the request it is given and registers nothing, so register each custom script the node does not know yet first. `client.newRegisterNoteScriptsTransactionRequest(sender, scripts)` builds a request that emits one public note per script, with no assets and no storage; submit it from `sender` before the network transaction that needs the scripts. The node resolves standard scripts itself.
+
+```typescript
+const scripts = new NoteScriptArray([customScript]);
+const register = await client.newRegisterNoteScriptsTransactionRequest(
+  sender,
+  scripts
+);
+await client.submitNewTransaction(sender, register);
+```
+
+`buildAccountCodeUpgrade(code)` finalizes a request that upgrades the executing account to `code`. The account needs the `UpgradeManager` component with `AuthControlled` authority, and `code` must keep the storage layout. It replaces any custom script and script argument, and fails when own output notes or an expiration delta are set. `withAccountCodeUpgrade(code)` only places the code in the advice map, and `request.accountCodeUpgrade()` returns it.
+
+## Claiming an inbound AggLayer deposit
+
+`Note.createClaimNote(...)` builds the public CLAIM note that asks the AggLayer bridge to mint an inbound deposit. The proof and leaf come from the AggLayer `claimAsset` data; the Miden amount is derived from the leaf's uint256 amount and the faucet's decimal scale, `floor(amount / 10^scale)`, which is what the bridge verifies.
+
+```typescript
+const proof = new ClaimProofData(
+  smtProofLocalExitRoot, // 32 hex nodes
+  smtProofRollupExitRoot, // 32 hex nodes
+  globalIndex,
+  mainnetExitRoot,
+  rollupExitRoot
+);
+const leaf = new ClaimLeafData(
+  originNetwork,
+  EthAddress.fromHex(originTokenAddress),
+  destinationNetwork,
+  EthAddress.fromHex(destinationAddress),
+  "100000000000000000000", // uint256 amount as a decimal string
+  metadataHash
+);
+const note = Note.createClaimNote(proof, leaf, 10, bridgeAccountId, senderId);
+```
+
+A scale above 18, or a scaled amount above the maximum fungible amount, throws. Submit the note as an own output note of a transaction, for example through `feeAwareTransactionRequestBuilder(sender)` and `withOwnOutputNotes`. It is a network note targeting the bridge account, so the transaction must also declare that account with `withForeignAccounts`, as for any network note.
+
+## Withdrawing USDCx (Circle xReserve)
+
+`client.transactions.withdrawUsdcx(...)` emits a single public burn note with the fixed `BURN` tag. The USDCx faucet, a public account, consumes and burns it, and Circle releases USDC to the recipient on the destination domain.
+
+```typescript
+await client.transactions.withdrawUsdcx({
+  account: wallet, // sender, the executing account
+  token: usdcxFaucet, // public USDCx faucet; consumes the note and burns the asset
+  amount: 1_000_000n, // a number must be a safe integer; use a bigint above 2 ** 53 - 1
+  destinationDomain: 6, // Circle domain id
+  destinationRecipient: "0x0000000000000000000000001111111111111111111111111111111111111111", // 32 bytes
+});
+```
+
+`destinationRecipient` is a `0x`-prefixed 64-digit hex string, validated before any WASM call. An EVM address is left-padded with zeros to 32 bytes. The lower-level builders are `Note.createXReserveBurnNote(...)` and `client.newXReserveBurnTransactionRequest(...)`, which take the recipient as a 32-byte `Uint8Array`.
+
 ## Paying Transaction Fees
 
 Since protocol 0.16 a chain can charge a verification fee, and the fee is paid from inside the account's auth procedure rather than by the transaction kernel. `fee::pay_fee` reads the asset and rate to pay in out of the transaction's auth argument: `AUTH_ARGS` has to be `hash(CONVERSION_INFO || SALT)`, with the preimage reachable in the advice map. A procedure that reaches `pay_fee` without that commitment aborts with `ERR_FEE_CONVERSION_INFO_MISSING`.
@@ -205,7 +299,7 @@ So how much of this you have to think about depends on the account:
 - **Multisig, smart multisig and guarded multisig** — miden-client refuses to guess the salt, and the transaction fails with `FeeConversionInfoRequired` naming the component. Declaring a salt is what makes those accounts work at all.
 - **A custom auth procedure that reads conversion info** — miden-client does not recognise the component, commits nothing, and the transaction hits the VM abort above. Attach the commitment yourself; see [Custom auth procedures](#custom-auth-procedures).
 
-Whether any of this applies is a property of the chain, and `BlockHeader.verificationBaseFee()` is how you ask. A block header is reachable from a chain anchor; the fee asset itself comes from the client, since 0.17 keeps it in the protocol configuration rather than in the header:
+Whether any of this applies is a property of the chain, and `BlockHeader.verificationBaseFee()` is how you ask. A block header is reachable from a chain anchor; the fee asset itself comes from the client, since 0.17 keeps it in the protocol configuration rather than in the header (`client.protocolConfig()` returns that configuration, whose `commitment()` is the header's `protocolConfigCommitment()`):
 
 ```typescript
 const anchor = await client.transactions.captureAnchor(request);
@@ -219,11 +313,11 @@ On a chain that charges nothing, a request for an account that is not a multisig
 
 ### The convenience constructors handle it
 
-`newSendTransactionRequest`, `newMintTransactionRequest`, `newConsumeTransactionRequest`, `newSwapTransactionRequest`, `newB2AggTransactionRequest`, `newPswapCreateTransactionRequest`, `newPswapConsumeTransactionRequest` and `newPswapCancelTransactionRequest` declare a salt themselves where the executing account needs one. Each returns a finished `TransactionRequest`, which takes no salt declaration afterwards, so they declare it while they build. A finished request from anywhere else gets the multisig auth args from `withFeeAwareAuth`; see [Executing a request someone else built](#executing-a-request-someone-else-built).
+`newSendTransactionRequest`, `newMintTransactionRequest`, `newConsumeTransactionRequest`, `newSwapTransactionRequest`, `newB2AggTransactionRequest`, `newXReserveBurnTransactionRequest`, `newPswapCreateTransactionRequest`, `newPswapConsumeTransactionRequest` and `newPswapCancelTransactionRequest` declare a salt themselves where the executing account needs one. Each returns a finished `TransactionRequest`, which takes no salt declaration afterwards, so they declare it while they build. A finished request from anywhere else gets the multisig auth args from `withFeeAwareAuth`; see [Executing a request someone else built](#executing-a-request-someone-else-built).
 
-The `client.transactions` operations that build their own request - `send`, `mint`, `consume`, `consumeAll`, `swap`, `bridge`, `createNetworkNote`, `execute`, `pswapCreate`, `pswapConsume`, `pswapCancel`, and the named operations of `batch` and `preview` - declare it too. The ones that take a finished request **from you** never do: `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview`. Those are the paths the next two sections are for.
+The `client.transactions` operations that build their own request - `send`, `mint`, `consume`, `consumeAll`, `swap`, `bridge`, `withdrawUsdcx`, `createNetworkNote`, `execute`, `pswapCreate`, `pswapConsume`, `pswapCancel`, and the named operations of `batch` and `preview` - declare it too. The ones that take a finished request **from you** never do: `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview`. Those are the paths the next two sections are for.
 
-`submitBatch` is worth calling out because a batch proves each transaction as it is pushed. A multisig request that declares no salt is rejected by miden-client during preparation - after the proofs of everything ahead of it in the batch have already been paid for. Build multisig requests from `feeAwareTransactionRequestBuilder`, or pass a finished one through `withFeeAwareAuth`, before batching them.
+`submitBatch` is worth calling out because a batch proves each transaction as it is pushed, on the client's built-in local prover rather than `proverUrl`. A multisig request that declares no salt is rejected by miden-client during preparation, after the proofs of everything ahead of it in the batch have already been paid for. Build multisig requests from `feeAwareTransactionRequestBuilder`, or pass a finished one through `withFeeAwareAuth`, before batching them.
 
 ### Assembling a request yourself
 
@@ -259,7 +353,7 @@ Each call **consumes** the `Word` you pass: it is moved across the WASM boundary
 
 The salt is a *declaration*, not a commitment: `request.feeConversionSalt()` reports it back, `request.authArg()` is still empty, and miden-client computes `hash(CONVERSION_INFO || SALT)` from it during preparation. It survives serialization, so a proposal transported to its co-signers still names the salt its summary was derived under.
 
-`withAuthArg` and `withFeeConversionSalt` are **mutually exclusive**, and miden-client enforces that by having each setter clear the other — so whichever you call last simply wins, rather than producing an error. That makes either setter destructive on a builder from `feeAwareTransactionRequestBuilder` for a multisig: it already carries the component's three-word auth args, and clearing them leaves the auth procedure piping a preimage that was never written. Pass `feeConversionSalt` to the builder instead, as above.
+`withAuthArgs` and `withFeeConversionSalt` are **mutually exclusive**, and miden-client enforces that by having each setter clear the other — so whichever you call last simply wins, rather than producing an error. That makes either setter destructive on a builder from `feeAwareTransactionRequestBuilder` for a multisig: it already carries the component's three-word auth args, and clearing them leaves the auth procedure piping a preimage that was never written. Pass `feeConversionSalt` to the builder instead, as above.
 
 ### Executing a request someone else built
 
@@ -293,7 +387,7 @@ The `Felt`s in `preimage` are consumed by the call in the browser build: they ar
 
 miden-client only commits conversion info for auth components it recognises. If you have written your own, which way out applies depends on the procedure:
 
-- **It reads the conversion info from `AUTH_ARGS`** (it calls `fee::load_conversion_info`, like the standard signature components). Compute the commitment yourself and attach it with `TransactionRequestBuilder.withAuthArg`, plus `extendAdviceMap` for the preimage. On a finished request, `request.withAuthArgs(preimage)` does both in one call. Setting an auth argument opts the request out of the client's fee machinery entirely — it commits only when the request carries none — so the word you set is the one the procedure reads.
+- **It reads the conversion info from `AUTH_ARGS`** (it calls `fee::load_conversion_info`, like the standard signature components). Attach the auth args yourself with `TransactionRequestBuilder.withAuthArgs`, which sets the commitment and adds its advice-map preimage; on a finished request, `request.withAuthArgs(preimage)` does the same. Setting an auth argument opts the request out of the client's fee machinery entirely — it commits only when the request carries none — so the word you set is the one the procedure reads.
 - **It is still yours to write.** Read the chain's native conversion info in the procedure instead, the way the no-auth and network-account components do, and the transaction needs no auth argument at all.
 
 Note that declaring a *salt* against such an account does not work: miden-client rejects a salt whose auth component it cannot see reading it, with `FeeConversionInfoUnsupported` naming the component.
@@ -418,7 +512,7 @@ await client.transactions.submit(account, proposedRequest, {
 
 Notes on anchors:
 
-- **The request travels with the anchor.** A co-signer has to re-derive the summary from the proposer's request bytes, not from a request they build themselves. On a fee-charging chain a multisig request carries fee conversion info whose salt is drawn fresh on every build, and the multisig auth procedure uses that auth argument as the summary's replay-guard salt — so two independently built requests produce two different summaries even when they describe the identical transfer. Rebuilding locally therefore fails the comparison below and reads as tampering when nothing is wrong. `TransactionRequest.serialize()` / `.deserialize()` are the transport.
+- **The request travels with the anchor.** A co-signer has to re-derive the summary from the proposer's request bytes, not from a request they build themselves. On a fee-charging chain a multisig request carries fee conversion info whose salt is drawn fresh on every build, and the multisig auth procedure uses that auth argument as the summary's replay-guard salt — so two independently built requests produce two different summaries even when they describe the identical transfer. Rebuilding locally therefore fails the comparison below and reads as tampering when nothing is wrong. `TransactionRequest.serialize()` / `.deserialize()` are the transport. To check that a received request equals one you hold, use `request.equals(other)`, not a byte comparison: a Merkle store serializes its entries beyond the empty-subtree defaults in hash-map order, so equal requests can differ in bytes.
 
 - **Signature collection is a separate concern.** An anchor makes signatures *reproducible* across heights; it does not transport them. Signatures are returned to the executor and attached to the request with `request.extendAdviceMap(...)` before submission, which is unchanged by anchoring.
 

@@ -26,6 +26,7 @@ export { useAccounts } from "./hooks/useAccounts";
 export { useAccount } from "./hooks/useAccount";
 export { useNotes } from "./hooks/useNotes";
 export { useNoteStream } from "./hooks/useNoteStream";
+export { useNoteConsumability } from "./hooks/useNoteConsumability";
 export { useTransactionHistory } from "./hooks/useTransactionHistory";
 export { useSyncState } from "./hooks/useSyncState";
 export { useAssetMetadata } from "./hooks/useAssetMetadata";
@@ -39,10 +40,12 @@ export { useCreateFaucet } from "./hooks/useCreateFaucet";
 export { useImportAccount } from "./hooks/useImportAccount";
 export { useSend } from "./hooks/useSend";
 export { useMultiSend } from "./hooks/useMultiSend";
+export { useBatch } from "./hooks/useBatch";
 export { useWaitForCommit } from "./hooks/useWaitForCommit";
 export { useWaitForNotes } from "./hooks/useWaitForNotes";
 export { useMint } from "./hooks/useMint";
 export { useBridge } from "./hooks/useBridge";
+export { useWithdrawUsdcx } from "./hooks/useWithdrawUsdcx";
 export { useConsume } from "./hooks/useConsume";
 export { useSwap } from "./hooks/useSwap";
 export { usePswapCreate } from "./hooks/usePswapCreate";
@@ -67,6 +70,7 @@ export { useSyncControl } from "./hooks/useSyncControl";
 export type {
   MidenConfig,
   RpcUrlConfig,
+  MidenNetwork,
   ProverConfig,
   ProverTarget,
   ProverUrls,
@@ -80,6 +84,9 @@ export type {
   AssetBalance,
   NotesFilter,
   NotesResult,
+  NoteConsumabilityStatus,
+  NoteConsumabilityOptions,
+  NoteConsumabilityResult,
   TransactionHistoryOptions,
   TransactionHistoryResult,
   TransactionStatus,
@@ -93,10 +100,14 @@ export type {
   SendResult,
   MultiSendRecipient,
   MultiSendOptions,
+  BatchItemInput,
+  BatchOptions,
+  BatchResult,
   WaitForCommitOptions,
   WaitForNotesOptions,
   MintOptions,
   BridgeOptions,
+  WithdrawUsdcxOptions,
   CreateNetworkNoteOptions,
   NetworkNoteResult,
   ConsumeOptions,
@@ -138,6 +149,7 @@ export type {
   AccountFile,
   InputNoteRecord,
   ConsumableNoteRecord,
+  NoteConsumability,
   TransactionId,
   TransactionFilter,
   TransactionRecord,
@@ -161,6 +173,7 @@ export {
 } from "./utils/accountBech32";
 export { formatAssetAmount, parseAssetAmount } from "./utils/amounts";
 export { getNoteSummary, formatNoteSummary } from "./utils/notes";
+export { getNoteConsumabilityStatus } from "./utils/noteConsumability";
 export { normalizeAccountId, accountIdsEqual } from "./utils/accountId";
 export {
   readNoteAttachment,
@@ -195,10 +208,12 @@ export type { UseCreateFaucetResult } from "./hooks/useCreateFaucet";
 export type { UseImportAccountResult } from "./hooks/useImportAccount";
 export type { UseSendResult } from "./hooks/useSend";
 export type { UseMultiSendResult } from "./hooks/useMultiSend";
+export type { UseBatchResult } from "./hooks/useBatch";
 export type { UseWaitForCommitResult } from "./hooks/useWaitForCommit";
 export type { UseWaitForNotesResult } from "./hooks/useWaitForNotes";
 export type { UseMintResult } from "./hooks/useMint";
 export type { UseBridgeResult } from "./hooks/useBridge";
+export type { UseWithdrawUsdcxResult } from "./hooks/useWithdrawUsdcx";
 export type { UseConsumeResult } from "./hooks/useConsume";
 export type { UseSwapResult } from "./hooks/useSwap";
 export type { UsePswapCreateResult } from "./hooks/usePswapCreate";

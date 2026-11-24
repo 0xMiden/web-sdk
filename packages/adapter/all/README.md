@@ -259,7 +259,7 @@ function WalletStatus() {
 
   return connected
     ? <button onClick={disconnect}>Disconnect ({address})</button>
-    : <button onClick={connect}>Connect Wallet</button>;
+    : <button onClick={() => { void connect(); }}>Connect Wallet</button>;
 }
 ```
 
@@ -278,7 +278,7 @@ The package includes several pre-built React components:
 ### Core Types
 
 - `WalletAdapter` - Base wallet adapter interface
-- `WalletAdapterNetwork` - Network types (Testnet, Localnet)
+- `WalletAdapterNetwork` - Network types (Mainnet, Devnet, Testnet, Localnet)
 - `WalletReadyState` - Wallet readiness states
 - `TransactionType` - Transaction type enumeration
 

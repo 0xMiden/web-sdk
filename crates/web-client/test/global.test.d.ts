@@ -19,6 +19,7 @@ import {
   AuthFalcon512RpoMultisigConfig,
   AuthSecretKey,
   BasicFungibleFaucetComponent,
+  BatchItem,
   ConsumableNoteRecord,
   Endpoint,
   Felt,
@@ -114,6 +115,7 @@ declare global {
     AuthFalcon512RpoMultisigConfig: typeof AuthFalcon512RpoMultisigConfig;
     AuthSecretKey: typeof AuthSecretKey;
     BasicFungibleFaucetComponent: typeof BasicFungibleFaucetComponent;
+    BatchItem: typeof BatchItem;
     ConsumableNoteRecord: typeof ConsumableNoteRecord;
     Endpoint: typeof Endpoint;
     Felt: typeof Felt;

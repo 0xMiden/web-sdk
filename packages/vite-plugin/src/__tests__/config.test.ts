@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { ConfigEnv, UserConfig } from "vite";
 import { existsSync } from "node:fs";
+import path from "node:path";
 import { midenVitePlugin } from "../index.js";
 
 function callConfig(
@@ -135,6 +136,15 @@ describe("config() hook", () => {
     });
     expect(result.resolve.alias[0].replacement).toBe(
       "/custom/root/node_modules/nope-xyz"
+    );
+  });
+
+  it("resolves a relative userConfig.root before creating aliases", () => {
+    const result = callConfig(midenVitePlugin({ wasmPackages: ["nope-xyz"] }), {
+      root: "src",
+    });
+    expect(result.resolve.alias[0].replacement).toBe(
+      path.resolve("src", "node_modules", "nope-xyz")
     );
   });
 

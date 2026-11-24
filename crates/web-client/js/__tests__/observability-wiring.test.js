@@ -11,8 +11,32 @@ import { setObserver, __resetObserverForTest } from "../observability.js";
 // below touches WASM.
 vi.mock("../../Cargo.toml", () => ({}));
 
+// The batch tests need `getWasmOrThrow()` to resolve, and a `BatchItem` class
+// for `assertBatchItems` to accept.
+const { BatchItem } = vi.hoisted(() => {
+  class BatchItem {
+    accountId() {
+      return { toString: () => "0xaccount" };
+    }
+    request() {
+      return { serialize: () => new Uint8Array([1]) };
+    }
+  }
+  return { BatchItem };
+});
+vi.mock("../wasm.js", () => ({
+  default: async () => ({
+    BatchItem,
+    TransactionFilter: {
+      all: () => ({}),
+    },
+  }),
+}));
+
+import { MidenClient } from "../client.js";
 import {
   WasmWebClient,
+  MockWasmWebClient,
   __serializeWasmCallForTest as serialize,
   __createClientProxyForTest as createClientProxy,
 } from "../index.js";
@@ -22,7 +46,6 @@ afterEach(() => __resetObserverForTest());
 /** A host carrying just the state `_serializeWasmCall` reads. */
 function makeHost() {
   return {
-    _withInnerLockDepth: 0,
     _wasmCallChain: Promise.resolve(),
     _serializeWasmCall: WasmWebClient.prototype._serializeWasmCall,
   };
@@ -216,19 +239,171 @@ describe("_serializeWasmCall preserves call semantics", () => {
     ]);
   });
 
-  it("runs inline without touching the chain while an inner lock is held", async () => {
+  it("runs a call through a trusted handle inline without touching the chain", async () => {
     const seen = [];
     setObserver((o) => seen.push(o));
     const host = makeHost();
-    host._withInnerLockDepth = 1;
+    const { handle } = MidenClient._createTrustedHandle(host);
     const chainBefore = host._wasmCallChain;
     await expect(
-      host._serializeWasmCall(async () => "value", "opOne")
+      handle._serializeWasmCall(async () => "value", "opOne")
     ).resolves.toBe("value");
     expect(host._wasmCallChain).toBe(chainBefore);
     expect(seen).toHaveLength(1);
     expect(seen[0].op).toBe("opOne");
   });
+});
+
+describe("submitNewTransactionBatch joins the chain when called", () => {
+  function makeBatchHost(Client, fields) {
+    return Object.assign(Object.create(Client.prototype), {
+      _wasmCallChain: Promise.resolve(),
+      ...fields,
+    });
+  }
+
+  // Each host routes its batch to `call`. The mock has a worker, as a real
+  // mock client does, and must still batch in-thread. The store starts with
+  // one row so a waiting submit can tell a pre-existing transaction from the
+  // batch's own write.
+  function batchStore() {
+    const records = new Map([
+      ["0xold", { account: "0xaccount", status: "pending" }],
+    ]);
+    const getTransactions = async () =>
+      [...records.entries()].map(([id, row]) => ({
+        id: () => ({ toHex: () => id }),
+        accountId: () => ({ toString: () => row.account }),
+      }));
+    return { records, getTransactions };
+  }
+
+  const batchHosts = [
+    [
+      "worker client",
+      (call) => {
+        const { records, getTransactions } = batchStore();
+        return makeBatchHost(WasmWebClient, {
+          worker: {},
+          records,
+          callMethodWithWorker: call,
+          getWasmWebClient: async () => ({ getTransactions }),
+        });
+      },
+    ],
+    [
+      "in-thread client",
+      (call) => {
+        const { records, getTransactions } = batchStore();
+        return makeBatchHost(WasmWebClient, {
+          worker: null,
+          records,
+          getWasmWebClient: async () => ({
+            submitNewTransactionBatch: call,
+            getTransactions,
+          }),
+        });
+      },
+    ],
+    [
+      "mock client",
+      (call) => {
+        const { records, getTransactions } = batchStore();
+        return makeBatchHost(MockWasmWebClient, {
+          worker: {},
+          records,
+          callMethodWithWorker: vi.fn(async () => {
+            throw new Error("a mock batch must not reach the worker");
+          }),
+          getWasmWebClient: async () => ({
+            submitNewTransactionBatch: call,
+            getTransactions,
+          }),
+        });
+      },
+    ],
+  ];
+
+  it.each(batchHosts)(
+    "%s: waitForIdle waits for a batch called in the same tick",
+    async (_, makeHost) => {
+      const gate = deferred();
+      const call = vi.fn(() => gate.promise);
+      const client = makeHost(call);
+
+      const batch = client.submitNewTransactionBatch([new BatchItem()]);
+      let idle = false;
+      const idled = client.waitForIdle().then(() => {
+        idle = true;
+      });
+
+      // Positive control: the batch is in flight before idleness is judged.
+      await vi.waitFor(() => expect(call).toHaveBeenCalledOnce());
+      expect(idle).toBe(false);
+
+      gate.resolve(7);
+      await expect(batch).resolves.toBe(7);
+      await idled;
+      expect(idle).toBe(true);
+    }
+  );
+
+  it.each(batchHosts)(
+    "%s: an invalid items argument is observed as the batch's error",
+    async (_, makeHost) => {
+      const seen = [];
+      setObserver((o) => seen.push(o));
+      const call = vi.fn();
+      const client = makeHost(call);
+
+      const error = await client
+        .submitNewTransactionBatch("not an array")
+        .catch((e) => e);
+      expect(error).toBeInstanceOf(TypeError);
+      expect(call).not.toHaveBeenCalled();
+      expect(seen.map((o) => [o.op, o.outcome])).toEqual([
+        ["submitNewTransactionBatch", "error"],
+      ]);
+    }
+  );
+
+  it.each(batchHosts)(
+    "%s: _submitNewTransactionBatchForWait snapshots around the batch write",
+    async (label, makeHost) => {
+      let records;
+      let client;
+      const call = vi.fn(async () => {
+        records.set("0xb1", { account: "0xaccount", status: "pending" });
+        records.set("0xb2", { account: "0xaccount", status: "discarded" });
+        client._serializeWasmCall(async () => {
+          records.set("0xsame", { account: "0xaccount", status: "pending" });
+        });
+        // A sibling queued on the chain must not run before this write
+        // returns. Yielding gives an inline or later slot the chance to.
+        await Promise.resolve();
+        return 100;
+      });
+      client = makeHost(call);
+      records = client.records;
+
+      const result = await client._submitNewTransactionBatchForWait([
+        new BatchItem(),
+      ]);
+      const ids = (rows) => rows.map((tx) => tx.id().toHex());
+      expect(ids(result.before)).toEqual(["0xold"]);
+      expect(ids(result.after)).toEqual(
+        expect.arrayContaining(["0xold", "0xb1", "0xb2"])
+      );
+      expect(ids(result.after)).not.toContain("0xsame");
+      expect(ids(result.after)).toHaveLength(3);
+
+      await client.waitForIdle();
+      expect([...records.keys()]).toContain("0xsame");
+      if (label === "mock client") {
+        expect(client.callMethodWithWorker).not.toHaveBeenCalled();
+      }
+    }
+  );
 });
 
 describe("every observed call site names its operation", () => {
@@ -271,7 +446,8 @@ describe("every observed call site names its operation", () => {
   it("passes an op name from every WebClient call site", () => {
     const sites = serializeCallSites().filter((s) => s.scope === "WebClient");
     expect(sites.length).toBeGreaterThan(0);
-    expect(sites.map((s) => s.argumentCount)).toEqual(sites.map(() => 2));
+    // The op name is the second argument; a store-locked call adds a third.
+    expect(sites.filter((s) => s.argumentCount < 2)).toEqual([]);
   });
 
   it("passes no op name from the MockWebClient call sites", () => {
@@ -291,6 +467,7 @@ describe("proxy fallthrough observation", () => {
       getAccount: async () => "account",
       // Classified in SYNC_METHODS — bound raw, must stay unobserved.
       usesMockChain: () => false,
+      endpoint: () => "https://rpc.devnet.miden.io",
     };
     return createClientProxy(instance);
   }
@@ -316,5 +493,15 @@ describe("proxy fallthrough observation", () => {
     expect(proxy.usesMockChain()).toBe(false);
     await Promise.resolve();
     expect(seen.map((o) => o.op)).toEqual(["getAccount"]);
+  });
+
+  // `endpoint()` is synchronous by contract: React reads it during render.
+  it("binds endpoint raw so it answers synchronously", async () => {
+    const seen = [];
+    setObserver((o) => seen.push(o));
+
+    expect(makeProxy().endpoint()).toBe("https://rpc.devnet.miden.io");
+    await Promise.resolve();
+    expect(seen).toEqual([]);
   });
 });

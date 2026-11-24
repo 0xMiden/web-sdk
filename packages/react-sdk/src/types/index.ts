@@ -9,6 +9,7 @@ import type {
   AccountFile,
   InputNoteRecord,
   ConsumableNoteRecord,
+  NoteConsumability,
   TransactionFilter,
   TransactionId,
   TransactionRecord,
@@ -41,6 +42,7 @@ export type {
   AccountFile,
   InputNoteRecord,
   ConsumableNoteRecord,
+  NoteConsumability,
   TransactionFilter,
   TransactionId,
   TransactionRecord,
@@ -63,8 +65,12 @@ export type {
   SignerContextValue,
 } from "../context/SignerContext";
 
+/** Networks that have their own bech32 address prefix. */
+export type MidenNetwork = "mainnet" | "testnet" | "devnet";
+
 export type RpcUrlConfig =
   | string
+  | "mainnet"
   | "devnet"
   | "testnet"
   | "localhost"
@@ -74,6 +80,7 @@ export type RpcUrlConfig =
 export type ProverTarget =
   | "local"
   | "localhost"
+  | "mainnet"
   | "devnet"
   | "testnet"
   | string
@@ -96,14 +103,20 @@ export type ProverConfig =
     };
 
 export type ProverUrls = {
+  mainnet?: string;
   devnet?: string;
   testnet?: string;
 };
 
 // Provider configuration
 export interface MidenConfig {
-  /** RPC node URL or network name (devnet/testnet/localhost). Defaults to testnet. */
+  /** RPC node URL or network name (mainnet/devnet/testnet/localhost). Defaults to testnet. */
   rpcUrl?: RpcUrlConfig;
+  /**
+   * Network whose bech32 prefix account addresses use. Wins over the network
+   * inferred from `rpcUrl`; without it a URL naming no network is mainnet.
+   */
+  network?: MidenNetwork;
   /** Note transport URL for streaming notes. */
   noteTransportUrl?: string;
   /**
@@ -138,14 +151,15 @@ export interface MidenConfig {
   autoSyncInterval?: number;
   /** Initial seed for deterministic RNG (must be 32 bytes if provided) */
   seed?: Uint8Array;
-  /** Transaction prover selection (local/devnet/testnet or a remote URL). */
+  /** Transaction prover selection (local/mainnet/devnet/testnet or a remote URL). */
   prover?: ProverConfig;
   /** Optional override URLs for network provers. */
   proverUrls?: ProverUrls;
   /** Default timeout for remote prover requests in milliseconds. */
   proverTimeoutMs?: number | bigint;
   /**
-   * Enable the Web Worker shim that runs WASM calls off the main thread.
+   * Enable the Web Worker shim that runs WASM calls, batch submission
+   * (`useBatch`) included, off the main thread.
    * Defaults to `true` — leave it that way in browsers/extensions so the UI
    * stays responsive while WASM is busy.
    *
@@ -160,6 +174,26 @@ export interface MidenConfig {
    *   isn't competing with the WASM thread anyway.
    */
   useWorker?: boolean;
+  /**
+   * How long, in milliseconds, the client waits for each `keystore` callback
+   * (`getKey`, `insertKey`, `sign`) before the call that needed it fails with
+   * `Callback <id> timed out after <n>ms`.
+   *
+   * Applies only when a signer is connected and the callbacks run through the
+   * Web Worker (the browser default; see `useWorker`). Left unset, `sign` waits
+   * without a limit, since it can wait on a person approving in a wallet or
+   * on a hardware device, and `getKey` and `insertKey` time out after 30
+   * seconds. A positive value applies to all three callbacks, rounded up to a
+   * whole millisecond, and `0` removes the limit for all three. A negative,
+   * non-finite, non-number, or greater-than-2147483647 value fails client
+   * creation with `TypeError`. The value is read when that client is
+   * constructed.
+   *
+   * Without a limit, a stalled `sign` holds its batch or transaction and leaves
+   * later worker calls in the queue; set a finite value if a signer can stall.
+   * See https://github.com/0xMiden/web-sdk/blob/main/packages/react-sdk/README.md#keystore-callback-timeouts
+   */
+  callbackTimeoutMs?: number;
 }
 
 // Provider state
@@ -251,9 +285,41 @@ export interface NotesFilter {
 
 export interface NotesResult {
   notes: InputNoteRecord[];
+  /**
+   * Payments (P2ID and P2IDE notes) consumable now. Other scripts, such as
+   * another trader's public PSWAP order, are left out: consuming one can spend
+   * from the account.
+   */
   consumableNotes: ConsumableNoteRecord[];
   noteSummaries: NoteSummary[];
   consumableNoteSummaries: NoteSummary[];
+  isLoading: boolean;
+  error: Error | null;
+  refetch: () => Promise<void>;
+}
+
+/**
+ * Whether a note can be consumed, from the screener's result: now, once the
+ * chain reaches `blockHeight`, or never. `never` also covers an empty result,
+ * which the screener returns when no screened account can consume the note
+ * under the current conditions. A client tracking no accounts screens nothing,
+ * so its status stays null.
+ */
+export type NoteConsumabilityStatus =
+  | { kind: "immediately" }
+  | { kind: "afterBlock"; blockHeight: number }
+  | { kind: "never" };
+
+export interface NoteConsumabilityOptions {
+  /** Screen for this account only; omit to screen every tracked account. */
+  accountId?: AccountRef;
+}
+
+export interface NoteConsumabilityResult {
+  /** The note's status; null until it has been screened, or without a note. */
+  status: NoteConsumabilityStatus | null;
+  /** The screener's entries, one per account that can consume the note. */
+  consumability: NoteConsumability[] | null;
   isLoading: boolean;
   error: Error | null;
   refetch: () => Promise<void>;
@@ -266,8 +332,15 @@ export interface TransactionHistoryOptions {
   id?: string | TransactionId;
   /** List of transaction IDs to look up. */
   ids?: Array<string | TransactionId>;
-  /** Custom transaction filter (overrides id/ids). */
-  filter?: TransactionFilter;
+  /**
+   * Custom transaction filter (overrides id/ids). Prefer a factory such as
+   * `() => TransactionFilter.uncommitted()`: the hook calls it for every
+   * fetch. A `TransactionFilter` instance is consumed by the first fetch, so
+   * a later refetch (e.g. after a sync) fails with
+   * `null pointer passed to rust`. Keep either form referentially stable
+   * (module scope or `useCallback`); a new value refetches.
+   */
+  filter?: TransactionFilter | (() => TransactionFilter);
   /** Refresh after provider syncs. Default: true */
   refreshOnSync?: boolean;
 }
@@ -366,7 +439,7 @@ export interface SendOptions {
   skipSync?: boolean;
   /** Send the full balance of this asset. When true, amount is ignored. */
   sendAll?: boolean;
-  /** true = build note in JS and return the Note object (e.g. for out-of-band delivery). Default: false */
+  /** true = build note in JS and return the Note object (e.g. for out-of-band delivery). Cannot be combined with recallHeight or timelockHeight. Default: false */
   returnNote?: boolean;
 }
 
@@ -398,6 +471,29 @@ export interface MultiSendOptions {
   noteType?: NoteVisibility;
   /** Skip auto-sync before send. Default: false */
   skipSync?: boolean;
+}
+
+/** A single (account, request) pair for {@link BatchOptions.items}. */
+export interface BatchItemInput {
+  /** Local account that executes this transaction. */
+  account: AccountRef;
+  /** Pre-built `TransactionRequest`. */
+  request: TransactionRequest;
+}
+
+export interface BatchOptions {
+  /** Per-tx `(account, request)` pairs. Must be non-empty. */
+  items: BatchItemInput[];
+  /** Skip auto-sync before submit. Default: false */
+  skipSync?: boolean;
+}
+
+export interface BatchResult {
+  /**
+   * The node's chain tip as of submission, not the block the batch commits in.
+   * Sync to learn where it landed.
+   */
+  blockNumber: number;
 }
 
 export interface WaitForCommitOptions {
@@ -473,6 +569,22 @@ export interface BridgeOptions {
   /** Destination Ethereum address on the destination network (0x-prefixed hex) */
   destinationAddress: string;
   /** Skip auto-sync after bridging. Default: false */
+  skipSync?: boolean;
+}
+
+// USDCx withdrawal options (Circle xReserve)
+export interface WithdrawUsdcxOptions {
+  /** Account that creates and funds the burn note (the sender) */
+  from: AccountRef;
+  /** USDCx faucet ID. It consumes the note and burns the asset; it must be a public account */
+  faucetId: AccountRef;
+  /** Amount of USDCx to withdraw. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1` */
+  amount: bigint | number;
+  /** Circle domain of the destination chain (for example 6 for Arbitrum) */
+  destinationDomain: number;
+  /** Destination recipient in Circle's 32-byte form, 0x-prefixed hex (64 hex digits); an EVM address is left-padded with zeros */
+  destinationRecipient: string;
+  /** Skip auto-sync after withdrawing. Default: false */
   skipSync?: boolean;
 }
 
@@ -684,6 +796,12 @@ export interface StreamedNote {
   firstSeenAt: number;
   /** Pre-decoded attachment values, or null if no attachment */
   attachment: bigint[] | null;
+  /**
+   * True only for a P2ID or P2IDE payment (`isStandardPayment(record)`).
+   * `useNoteStream` always sets it; optional so code that builds a
+   * `StreamedNote` keeps compiling.
+   */
+  standardPayment?: boolean;
 }
 
 export interface UseNoteStreamOptions {

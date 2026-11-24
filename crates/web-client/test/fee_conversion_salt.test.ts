@@ -356,7 +356,9 @@ test.describe("auth args on a finished request", () => {
       const { multisigAccountId } =
         await helpers.setupMultisigWithConsumableNote();
       const request = new sdk.TransactionRequestBuilder()
-        .withAuthArg(new sdk.Word(sdk.u64Array([5, 6, 7, 8])))
+        .withAuthArgs(
+          new sdk.FeltArray([5n, 6n, 7n, 8n].map((v) => new sdk.Felt(v)))
+        )
         .build();
       try {
         await client.withFeeAwareAuth(request, multisigAccountId);
@@ -500,7 +502,9 @@ test.describe("auth args on a finished request", () => {
       // An auth arg and no salt option: building the auth args before the
       // refusal would draw a salt.
       const request = new sdk.TransactionRequestBuilder()
-        .withAuthArg(new sdk.Word(sdk.u64Array([5, 6, 7, 8])))
+        .withAuthArgs(
+          new sdk.FeltArray([5n, 6n, 7n, 8n].map((v) => new sdk.Felt(v)))
+        )
         .build();
       let refusal = null;
       try {
@@ -661,7 +665,7 @@ test.describe("fee conversion salt", () => {
     expect(result.roundTrippedSalt).toBe(result.expectedSalt);
   });
 
-  test("withAuthArg and withFeeConversionSalt are mutually exclusive", async ({
+  test("withAuthArgs and withFeeConversionSalt are mutually exclusive", async ({
     run,
   }) => {
     // miden-client keeps these two in the same slot and has each setter clear
@@ -678,21 +682,17 @@ test.describe("fee conversion salt", () => {
         new sdk.Felt(33n),
         new sdk.Felt(44n),
       ]);
-      const authArg = sdk.Word.newFromFelts([
-        new sdk.Felt(55n),
-        new sdk.Felt(66n),
-        new sdk.Felt(77n),
-        new sdk.Felt(88n),
-      ]);
+      const authArgs = () =>
+        new sdk.FeltArray([55n, 66n, 77n, 88n].map((v) => new sdk.Felt(v)));
 
       const saltLast = new sdk.TransactionRequestBuilder()
-        .withAuthArg(authArg)
+        .withAuthArgs(authArgs())
         .withFeeConversionSalt(salt)
         .build();
 
       const authArgLast = new sdk.TransactionRequestBuilder()
         .withFeeConversionSalt(salt)
-        .withAuthArg(authArg)
+        .withAuthArgs(authArgs())
         .build();
 
       return {
@@ -701,7 +701,7 @@ test.describe("fee conversion salt", () => {
         authArgLastSalt: authArgLast.feeConversionSalt()?.toHex() ?? null,
         authArgLastAuthArg: authArgLast.authArg()?.toHex() ?? null,
         expectedSalt: salt.toHex(),
-        expectedAuthArg: authArg.toHex(),
+        expectedAuthArg: sdk.Poseidon2.hashElements(authArgs()).toHex(),
       };
     });
 
@@ -712,6 +712,60 @@ test.describe("fee conversion salt", () => {
     // Auth arg called last: it wins and the declaration is cleared.
     expect(result.authArgLastAuthArg).toBe(result.expectedAuthArg);
     expect(result.authArgLastSalt).toBeNull();
+  });
+
+  test("withAuthArgs sets the commitment and its advice-map preimage", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const values = [1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n];
+
+      const request = new sdk.TransactionRequestBuilder()
+        .withAuthArgs(new sdk.FeltArray(values.map((v) => new sdk.Felt(v))))
+        .build();
+
+      const authArg = request.authArg();
+      const expected = sdk.Poseidon2.hashElements(
+        new sdk.FeltArray(values.map((v) => new sdk.Felt(v)))
+      );
+      const preimage = authArg ? request.adviceMap().get(authArg) : undefined;
+
+      return {
+        authArg: authArg?.toHex() ?? null,
+        expected: expected.toHex(),
+        preimage: preimage?.map((f) => f.asInt().toString()) ?? null,
+      };
+    });
+
+    expect(result.authArg).toBe(result.expected);
+    expect(result.preimage).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
+  });
+
+  test("withAuthArgs rejects input that is not a non-empty multiple of 4 felts", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      let notWholeWordsError = null;
+      try {
+        new sdk.TransactionRequestBuilder().withAuthArgs(
+          new sdk.FeltArray([1n, 2n, 3n].map((v) => new sdk.Felt(v)))
+        );
+      } catch (e) {
+        notWholeWordsError = String(e);
+      }
+
+      let emptyError = null;
+      try {
+        new sdk.TransactionRequestBuilder().withAuthArgs(new sdk.FeltArray([]));
+      } catch (e) {
+        emptyError = String(e);
+      }
+
+      return { notWholeWordsError, emptyError };
+    });
+
+    expect(result.notWholeWordsError).toContain("multiple of 4 felts");
+    expect(result.emptyError).toContain("multiple of 4 felts");
   });
 
   test("feeNote and userOutputNotes split the kernel's fee note off", async ({
@@ -812,5 +866,69 @@ test.describe("fee conversion salt", () => {
     // A single-sig account never needs a declared salt, at any base fee.
     expect(result.hasSalt).toBe(false);
     expect(result.hasAuthArg).toBe(false);
+  });
+});
+
+test.describe("TransactionRequest.equals", () => {
+  test("compares structure, not serialized bytes", async ({ run }) => {
+    const result = await run(async ({ sdk }) => {
+      const salt = (n) => new sdk.Word(sdk.u64Array([n, 2, 3, 4]));
+      const withSalt = (n) =>
+        new sdk.TransactionRequestBuilder()
+          .withFeeConversionSalt(salt(n))
+          .build();
+
+      // The builder has no Merkle store setter, so splice entries into the
+      // serialized bytes. In an untouched request the store's u64 count is
+      // the first run of eight zero bytes, between two 0x01 empty lengths.
+      const base = new Uint8Array(
+        new sdk.TransactionRequestBuilder().build().serialize()
+      );
+      let at = 0;
+      while (base.slice(at, at + 8).some((b) => b !== 0)) at++;
+      if (base[at - 1] !== 1 || base[at + 8] !== 1) {
+        throw new Error("unexpected TransactionRequest layout");
+      }
+
+      // A (key, left, right) entry: three words of four u64 limbs each.
+      const entry = (n) => {
+        const bytes = new Uint8Array(96);
+        [1, 2, 3].forEach((w, k) => {
+          bytes[k * 32] = n;
+          [8, 16, 24].forEach((o) => {
+            bytes[k * 32 + o] = w;
+          });
+        });
+        return bytes;
+      };
+      const request = (ids) => {
+        const out = new Uint8Array(base.length + ids.length * 96);
+        out.set(base.slice(0, at));
+        out[at] = ids.length;
+        ids.forEach((n, k) => out.set(entry(n), at + 8 + k * 96));
+        out.set(base.slice(at + 8), at + 8 + ids.length * 96);
+        return sdk.TransactionRequest.deserialize(out);
+      };
+
+      const ids = Array.from({ length: 64 }, (_, k) => k + 1);
+      const forward = request(ids);
+      const reversed = request([...ids].reverse());
+      const missing = request(ids.slice(1));
+      const a = forward.serialize();
+      const b = reversed.serialize();
+      return {
+        sameEntries: forward.equals(reversed),
+        bytesDiffer: a.length === b.length && a.some((v, k) => v !== b[k]),
+        missingEntry: forward.equals(missing),
+        sameSalt: withSalt(1).equals(withSalt(1)),
+        otherSalt: withSalt(1).equals(withSalt(9)),
+      };
+    });
+
+    expect(result.sameEntries).toBe(true);
+    expect(result.bytesDiffer).toBe(true);
+    expect(result.missingEntry).toBe(false);
+    expect(result.sameSalt).toBe(true);
+    expect(result.otherSalt).toBe(false);
   });
 });

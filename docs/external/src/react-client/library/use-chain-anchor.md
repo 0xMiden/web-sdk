@@ -132,7 +132,7 @@ salt and need nothing extra. A wallet handed a finished request, such as a
 dApp's, cannot rebuild it, so it adds the same auth args with
 `await client.withFeeAwareAuth(request, multisig)`.
 
-Two caveats. `withAuthArg` and `withFeeConversionSalt` occupy the same slot and
+Two caveats. `withAuthArgs` and `withFeeConversionSalt` occupy the same slot and
 each setter clears the other, so a request cannot carry both. Never call either
 on a builder from `feeAwareTransactionRequestBuilder` for a multisig: that
 builder already carries the three-word auth args, and either setter discards

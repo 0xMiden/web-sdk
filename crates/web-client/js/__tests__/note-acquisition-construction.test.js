@@ -111,6 +111,7 @@ it("rejects all Node construction paths before filesystem or native construction
       undefined,
       undefined,
       undefined,
+      undefined,
       false,
       options()
     )
@@ -157,7 +158,7 @@ it("holds the worker acknowledgement until the matching owning operation has a r
   );
   await receive({ data: { loaded: true } });
   await Promise.resolve();
-  expect(posted[0].args[13]).toEqual(limits);
+  expect(posted[0].args[14]).toEqual(limits);
   await receive({ data: { ready: true } });
   const operation = client.callMethodWithWorker("sync");
   await Promise.resolve();
@@ -195,6 +196,8 @@ it("holds the worker acknowledgement until the matching owning operation has a r
   expect(posted.at(-1).decision).toBe("rejected");
   const lost = operation.catch((error) => error.message);
   listeners.error();
-  expect(await lost).toBe("WebClient terminated");
+  expect(await lost).toBe(
+    "WebClient worker failed: the worker script failed to run"
+  );
   await receive({ data: notification });
 });

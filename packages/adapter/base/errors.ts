@@ -84,6 +84,10 @@ export class WalletPrivateDataPermissionError extends WalletError {
   name = "WalletPrivateDataPermissionError";
 }
 
+export class WalletStorageUnsupportedError extends WalletError {
+  name = "WalletStorageUnsupportedError";
+}
+
 export class WalletDecryptionError extends WalletError {
   name = "WalletDecryptionError";
 }

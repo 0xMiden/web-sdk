@@ -134,3 +134,149 @@ test("createParaMidenClient leaves the client it returns alive", async () => {
     restore();
   }
 });
+
+/**
+ * Builds the client with `opts` and returns the options `MidenClient.create`
+ * received.
+ */
+const createOptionsFor = async (opts) => {
+  const client = makeClient(async () => {});
+  const mocks = buildMocks(client);
+  let received;
+  mocks["@miden-sdk/miden-sdk"].MidenClient = {
+    create: async (options) => {
+      received = options;
+      return client;
+    },
+  };
+  const { createParaMidenClient, restore } = loadMidenClient(mocks);
+  try {
+    await createParaMidenClient(
+      { id: "para" },
+      [{ id: "evm-1", type: "EVM" }],
+      { storageMode: "public", ...opts },
+      false
+    );
+  } finally {
+    restore();
+  }
+  return received;
+};
+
+for (const [endpoint, transport] of [
+  ["https://rpc.mainnet.miden.io", "https://transport.mainnet.miden.io"],
+  ["mainnet", "https://transport.mainnet.miden.io"],
+  [" MainNet ", "https://transport.mainnet.miden.io"],
+  ["https://rpc.devnet.miden.io", "https://transport.devnet.miden.io"],
+  ["devnet", "https://transport.devnet.miden.io"],
+  ["https://rpc.testnet.miden.io", "https://transport.miden.io"],
+  ["testnet", "https://transport.miden.io"],
+  [undefined, "https://transport.miden.io"],
+  ["https://rpc.example.com", "https://transport.miden.io"],
+  ["/rpc.Api", "https://transport.miden.io"],
+  ["not a url", "https://transport.miden.io"],
+]) {
+  test(`createParaMidenClient defaults the note transport for endpoint ${JSON.stringify(endpoint)} to ${transport}`, async () => {
+    const options = await createOptionsFor({ endpoint });
+    assert.strictEqual(options.noteTransportUrl, transport);
+    assert.strictEqual(options.rpcUrl, endpoint);
+  });
+}
+
+test("createParaMidenClient refuses to take a key it cannot keep", async () => {
+  const { keystore } = await createOptionsFor({});
+  await assert.rejects(
+    keystore.insertKey("pk", "sk"),
+    /only signs with the Para wallet key/
+  );
+});
+
+test("createParaMidenClient keeps an explicit noteTransportUrl on mainnet", async () => {
+  const options = await createOptionsFor({
+    endpoint: "https://rpc.mainnet.miden.io",
+    noteTransportUrl: "https://transport.example.com",
+  });
+  assert.strictEqual(options.noteTransportUrl, "https://transport.example.com");
+});
+
+test("createParaMidenClient keeps an explicit noteTransportUrl for a relative proxy endpoint", async () => {
+  const options = await createOptionsFor({
+    endpoint: "/rpc.Api",
+    noteTransportUrl: "https://transport.mainnet.miden.io",
+  });
+  assert.strictEqual(options.rpcUrl, "/rpc.Api");
+  assert.strictEqual(
+    options.noteTransportUrl,
+    "https://transport.mainnet.miden.io"
+  );
+});
+
+const sliceBetween = (content, startMarker, endMarker, label) => {
+  const start = content.indexOf(startMarker);
+  assert.ok(start >= 0, `${label}: missing marker ${startMarker}`);
+  if (!endMarker) return content.slice(start);
+  const end = content.indexOf(endMarker, start + startMarker.length);
+  assert.ok(end > start, `${label}: missing end marker ${endMarker}`);
+  return content.slice(start, end);
+};
+
+for (const [label, relPath, extract] of [
+  [
+    "packages/para/core/src/midenClient.ts",
+    "../src/midenClient.ts",
+    (c) =>
+      sliceBetween(
+        c,
+        "const NOTE_TRANSPORT_URLS",
+        "export async function createParaMidenClient",
+        "midenClient.ts"
+      ),
+  ],
+  [
+    "packages/para/core/src/types.ts",
+    "../src/types.ts",
+    (c) =>
+      sliceBetween(
+        c,
+        "export interface MidenClientOpts",
+        "export type MidenAccountStorageMode",
+        "types.ts"
+      ),
+  ],
+  [
+    "packages/para/core/AGENTS.md",
+    "../AGENTS.md",
+    (c) =>
+      sliceBetween(
+        c,
+        "The third argument is `Opts`:",
+        "The rest of the public surface",
+        "AGENTS.md"
+      ),
+  ],
+  [
+    "packages/para/core/skills/para-signer/SKILL.md",
+    "../skills/para-signer/SKILL.md",
+    (c) =>
+      sliceBetween(c, "`Opts` fields:", "In React, `useParaMiden(", "SKILL.md"),
+  ],
+  [
+    "CHANGELOG.md",
+    "../../../../CHANGELOG.md",
+    (c) => {
+      const line = c
+        .split("\n")
+        .find((entry) => entry.startsWith("* [FIX][para]"));
+      assert.ok(line, "CHANGELOG.md: missing * [FIX][para] entry");
+      return line;
+    },
+  ],
+]) {
+  test(`${label} documents explicit noteTransportUrl requirement for proxied or relative endpoints`, () => {
+    const content = fs.readFileSync(path.resolve(__dirname, relPath), "utf8");
+    const section = extract(content);
+    assert.match(section, /proxied|proxy/i);
+    assert.match(section, /\/rpc\.Api/);
+    assert.match(section, /noteTransportUrl/);
+  });
+}

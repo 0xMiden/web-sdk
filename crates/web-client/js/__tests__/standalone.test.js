@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   _setWasm,
   _setWebClient,
   createP2IDNote,
   createP2IDENote,
+  createFeeSponsorshipNote,
   buildSwapTag,
+  isStandardPayment,
+  domainSeparatedSignCommitment,
 } from "../standalone.js";
 
 // ── WASM mock ─────────────────────────────────────────────────────────────────
@@ -19,6 +23,7 @@ function makeWasm() {
     Note: {
       createP2IDNote: vi.fn().mockReturnValue("p2idNote"),
       createP2IDENote: vi.fn().mockReturnValue("p2ideNote"),
+      createFeeSponsorshipNote: vi.fn().mockReturnValue("feeSponsorshipNote"),
     },
     NoteAttachment: vi.fn().mockImplementation((data) => ({ data })),
     NoteAssets: vi.fn().mockImplementation(() => "noteAssets"),
@@ -204,6 +209,166 @@ describe("createP2IDENote", () => {
   });
 });
 
+// ── createFeeSponsorshipNote ──────────────────────────────────────────────────
+
+describe("createFeeSponsorshipNote", () => {
+  let wasm;
+
+  beforeEach(() => {
+    wasm = makeWasm();
+    _setWasm(wasm);
+  });
+
+  afterEach(() => {
+    _setWasm(null);
+  });
+
+  it("throws when WASM is not initialized", () => {
+    _setWasm(null);
+    expect(() =>
+      createFeeSponsorshipNote({
+        from: "0xsender",
+        to: "0xrecipient",
+        featureNoteId: "featureNoteId",
+        asset: "feeAsset",
+      })
+    ).toThrow("WASM not initialized");
+  });
+
+  it("requires featureNoteId and asset", () => {
+    expect(() =>
+      createFeeSponsorshipNote({
+        from: "0xsender",
+        to: "0xrecipient",
+        asset: "feeAsset",
+      })
+    ).toThrow("createFeeSponsorshipNote requires featureNoteId");
+
+    expect(() =>
+      createFeeSponsorshipNote({
+        from: "0xsender",
+        to: "0xrecipient",
+        featureNoteId: "featureNoteId",
+      })
+    ).toThrow("createFeeSponsorshipNote requires asset");
+  });
+
+  it.each([0, -1, 1.5, NaN, Infinity, 0x1_0000_0000])(
+    "rejects invalid reclaimAfter value %p before resolving WASM handles",
+    (reclaimAfter) => {
+      expect(() =>
+        createFeeSponsorshipNote({
+          from: "0xsender",
+          to: "0xrecipient",
+          featureNoteId: "featureNoteId",
+          asset: "feeAsset",
+          reclaimAfter,
+        })
+      ).toThrow(TypeError);
+      expect(wasm.AccountId.fromHex).not.toHaveBeenCalled();
+      expect(wasm.Note.createFeeSponsorshipNote).not.toHaveBeenCalled();
+    }
+  );
+
+  it("accepts omitted, null, and positive 32-bit reclaimAfter values", () => {
+    expect(
+      createFeeSponsorshipNote({
+        from: "0xsender",
+        to: "0xrecipient",
+        featureNoteId: "featureNoteId",
+        asset: "feeAsset",
+      })
+    ).toBe("feeSponsorshipNote");
+    expect(wasm.Note.createFeeSponsorshipNote).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "featureNoteId",
+      "feeAsset",
+      undefined,
+      undefined
+    );
+
+    createFeeSponsorshipNote({
+      from: "0xsender",
+      to: "0xrecipient",
+      featureNoteId: "featureNoteId",
+      asset: "feeAsset",
+      reclaimAfter: null,
+    });
+    expect(wasm.Note.createFeeSponsorshipNote).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "featureNoteId",
+      "feeAsset",
+      undefined,
+      undefined
+    );
+
+    createFeeSponsorshipNote({
+      from: "0xsender",
+      to: "0xrecipient",
+      featureNoteId: "featureNoteId",
+      asset: "feeAsset",
+      reclaimAfter: 0xffffffff,
+    });
+    expect(wasm.Note.createFeeSponsorshipNote).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "featureNoteId",
+      "feeAsset",
+      undefined,
+      0xffffffff
+    );
+  });
+
+  it("resolves AccountRef variants and clones AccountId opts.reclaimer via AccountId.fromHex", () => {
+    const senderAccountId = { kind: "senderId", toString: () => "0xsender" };
+    const senderAccount = { id: vi.fn(() => senderAccountId) };
+    const reclaimerAccountId = {
+      kind: "reclaimerId",
+      toString: () => "0xreclaimer",
+    };
+
+    createFeeSponsorshipNote({
+      from: senderAccount,
+      to: "mtst1qtarget",
+      featureNoteId: "featureNoteId",
+      asset: "feeAsset",
+      reclaimer: reclaimerAccountId,
+      reclaimAfter: 42,
+    });
+
+    expect(senderAccount.id).toHaveBeenCalledOnce();
+    expect(wasm.AccountId.fromBech32).toHaveBeenCalledWith("mtst1qtarget");
+    expect(wasm.AccountId.fromHex).toHaveBeenCalledWith("0xreclaimer");
+
+    const [, , , , passedReclaimer, passedReclaimAfter] =
+      wasm.Note.createFeeSponsorshipNote.mock.calls.at(-1);
+    expect(passedReclaimer).not.toBe(reclaimerAccountId);
+    expect(passedReclaimer.toString()).toBe("0xreclaimer");
+    expect(passedReclaimAfter).toBe(42);
+
+    // String and Account reclaimers already allocate fresh handles and need no extra clone.
+    wasm.AccountId.fromHex.mockClear();
+    const reclaimerFromAccount = {
+      kind: "accountId",
+      toString: () => "0xacct",
+    };
+    const reclaimerAccount = { id: vi.fn(() => reclaimerFromAccount) };
+    createFeeSponsorshipNote({
+      from: { toString: () => "0xsenderId" },
+      to: "mtst1qtarget",
+      featureNoteId: "featureNoteId",
+      asset: "feeAsset",
+      reclaimer: reclaimerAccount,
+    });
+    expect(wasm.AccountId.fromHex).not.toHaveBeenCalled();
+    expect(wasm.Note.createFeeSponsorshipNote.mock.calls.at(-1)[4]).toBe(
+      reclaimerFromAccount
+    );
+  });
+});
+
 // ── buildSwapTag ──────────────────────────────────────────────────────────────
 
 describe("buildSwapTag", () => {
@@ -270,5 +435,298 @@ describe("buildSwapTag", () => {
       BigInt(5)
     );
     expect(result).toBe("swapTag");
+  });
+});
+
+// ── isStandardPayment ─────────────────────────────────────────────────────────
+
+describe("isStandardPayment", () => {
+  const scriptWithRoot = (root) => ({ root: () => ({ toHex: () => root }) });
+  const record = (root) => ({
+    inputNoteRecord: () => ({
+      details: () => ({
+        recipient: () => ({ script: () => scriptWithRoot(root) }),
+      }),
+    }),
+  });
+
+  afterEach(() => {
+    _setWasm(null);
+  });
+
+  it("checks the note against the loaded module's P2ID and P2IDE scripts", () => {
+    _setWasm({
+      NoteScript: {
+        p2id: () => scriptWithRoot("0xp2id"),
+        p2ide: () => scriptWithRoot("0xp2ide"),
+      },
+    });
+    expect(isStandardPayment(record("0xp2id"))).toBe(true);
+    expect(isStandardPayment(record("0xp2ide"))).toBe(true);
+    expect(isStandardPayment(record("0xpswap"))).toBe(false);
+  });
+
+  it("throws when WASM is not initialized", () => {
+    expect(() => isStandardPayment(record("0xp2id"))).toThrow(
+      "WASM not initialized"
+    );
+  });
+});
+
+// ── domainSeparatedSignCommitment ─────────────────────────────────────────────
+
+const TAG_U64S = [11n, 22n, 33n, 44n];
+
+function makeSignWasm({ variant, blind, arbitrary, summary } = {}) {
+  const calls = { hashed: [], arbitrary: [] };
+  class Felt {
+    constructor(v) {
+      this.v = BigInt(v);
+    }
+    asInt() {
+      return this.v;
+    }
+  }
+  class FeltArray {
+    constructor(items) {
+      this.items = items;
+    }
+    length() {
+      return this.items.length;
+    }
+    get(i) {
+      return this.items[i];
+    }
+  }
+  const wordOf = (u64s) => ({
+    toFelts: () => u64s.map((u) => new Felt(u)),
+  });
+  const wasm = {
+    Felt,
+    FeltArray,
+    Poseidon2: {
+      hashElements: vi.fn((arr) => {
+        calls.hashed.push(arr.items.map((f) => f.v));
+        return wordOf(TAG_U64S);
+      }),
+    },
+    Word: { deserialize: vi.fn(() => wordOf([1n, 2n, 3n, 4n])) },
+    SigningInputsType: { TransactionSummary: 0, Arbitrary: 1, Blind: 2 },
+    SigningInputs: {
+      newArbitrary: vi.fn((felts) => {
+        calls.arbitrary.push(felts.map((f) => f.v));
+        return { toCommitment: () => ({ committed: calls.arbitrary.at(-1) }) };
+      }),
+      deserialize: vi.fn(() => ({
+        variantType: variant,
+        blindPayload: () => blind,
+        arbitraryPayload: () => arbitrary,
+        toCommitment: () => summary,
+      })),
+    },
+  };
+  return { wasm, calls };
+}
+
+describe("domainSeparatedSignCommitment", () => {
+  afterEach(() => {
+    _setWasm(null);
+  });
+
+  it("hashes the tag then the word for kind word", () => {
+    const { wasm, calls } = makeSignWasm();
+    _setWasm(wasm);
+    const out = domainSeparatedSignCommitment(new Uint8Array([1]), "word");
+    expect(calls.hashed[0]).toEqual(
+      [..."miden-wallet/sign-bytes/v1"].map((c) => BigInt(c.charCodeAt(0)))
+    );
+    expect(calls.arbitrary[0]).toEqual([...TAG_U64S, 1n, 2n, 3n, 4n]);
+    expect(out).toEqual({ committed: calls.arbitrary[0] });
+  });
+
+  it("returns a transaction summary's own commitment", () => {
+    const summary = { summaryCommitment: true };
+    const { wasm, calls } = makeSignWasm({ variant: 0, summary });
+    _setWasm(wasm);
+    expect(
+      domainSeparatedSignCommitment(new Uint8Array([1]), "signingInputs")
+    ).toBe(summary);
+    expect(calls.arbitrary).toHaveLength(0);
+  });
+
+  it("domain-separates a Blind payload", () => {
+    const { wasm, calls } = makeSignWasm({
+      variant: 2,
+      blind: { toFelts: () => [5n, 6n, 7n, 8n].map((v) => new wasmFelt(v)) },
+    });
+    function wasmFelt(v) {
+      return new wasm.Felt(v);
+    }
+    _setWasm(wasm);
+    domainSeparatedSignCommitment(new Uint8Array([1]), "signingInputs");
+    expect(calls.arbitrary[0]).toEqual([...TAG_U64S, 5n, 6n, 7n, 8n]);
+  });
+
+  it("reads an Arbitrary payload from a browser FeltArray and from a Node array", () => {
+    for (const asNode of [false, true]) {
+      const { wasm, calls } = makeSignWasm({ variant: 1 });
+      const felts = [5n, 6n, 7n].map((v) => new wasm.Felt(v));
+      const payload = asNode ? felts : new wasm.FeltArray(felts);
+      wasm.SigningInputs.deserialize = vi.fn(() => ({
+        variantType: 1,
+        arbitraryPayload: () => payload,
+      }));
+      _setWasm(wasm);
+      domainSeparatedSignCommitment(new Uint8Array([1]), "signingInputs");
+      expect(calls.arbitrary[0]).toEqual([...TAG_U64S, 5n, 6n, 7n]);
+    }
+  });
+
+  it("builds fresh felts per call", () => {
+    const { wasm } = makeSignWasm({ variant: 1 });
+    const payload = [new wasm.Felt(5n)];
+    wasm.SigningInputs.deserialize = vi.fn(() => ({
+      variantType: 1,
+      arbitraryPayload: () => payload,
+    }));
+    const seen = [];
+    wasm.SigningInputs.newArbitrary = vi.fn((felts) => {
+      seen.push(...felts);
+      return { toCommitment: () => null };
+    });
+    _setWasm(wasm);
+    domainSeparatedSignCommitment(new Uint8Array([1]), "signingInputs");
+    expect(seen).not.toContain(payload[0]);
+  });
+
+  it("commits to the tag alone for an empty Arbitrary payload", () => {
+    const { wasm, calls } = makeSignWasm({
+      variant: 1,
+      arbitrary: [],
+    });
+    _setWasm(wasm);
+    domainSeparatedSignCommitment(new Uint8Array([1]), "signingInputs");
+    expect(calls.arbitrary[0]).toEqual(TAG_U64S);
+  });
+
+  it("throws for an unknown kind or variant", () => {
+    const { wasm } = makeSignWasm({ variant: 99 });
+    _setWasm(wasm);
+    expect(() =>
+      domainSeparatedSignCommitment(new Uint8Array([1]), "raw")
+    ).toThrow(/kind/);
+    expect(() =>
+      domainSeparatedSignCommitment(new Uint8Array([1]), "signingInputs")
+    ).toThrow(/variant/);
+  });
+
+  it("throws when WASM is not initialized", () => {
+    _setWasm(null);
+    expect(() =>
+      domainSeparatedSignCommitment(new Uint8Array([1]), "word")
+    ).toThrow("WASM not initialized");
+  });
+});
+
+// The export ships with no other documentation, so each surface its sibling
+// isStandardPayment uses must carry the verification recipe.
+describe("domainSeparatedSignCommitment docs", () => {
+  const repo = new URL("../../../../", import.meta.url);
+  it.each([
+    "crates/web-client/README.md",
+    "crates/web-client/skills/web-client-usage/SKILL.md",
+    "docs/external/src/web-client/library/sign-bytes.md",
+  ])("%s documents the export", (path) => {
+    const text = readFileSync(new URL(path, repo), "utf8");
+    for (const fact of [
+      "domainSeparatedSignCommitment",
+      "publicKey.verify",
+      "MidenClient.ready",
+      "miden-wallet/sign-bytes/v1",
+      "signed the raw value",
+      "TransactionSummary",
+      "throws",
+    ]) {
+      expect(text).toContain(fact);
+    }
+  });
+});
+
+describe("createFeeSponsorshipNote docs", () => {
+  const repo = new URL("../../../../", import.meta.url);
+  it.each([
+    "crates/web-client/README.md",
+    "crates/web-client/AGENTS.md",
+    "crates/web-client/skills/web-client-usage/SKILL.md",
+    "docs/external/src/web-client/library/network-notes.md",
+  ])("%s documents the fee-sponsorship API", (path) => {
+    const text = readFileSync(new URL(path, repo), "utf8");
+    for (const fact of [
+      "createFeeSponsorshipNote",
+      "Note.createFeeSponsorshipNote",
+      "FeeSponsorshipNote.tryFromNote",
+      "featureNoteId",
+      "reclaimer",
+      "reclaimAfter",
+      "reclaimHeight",
+      "public",
+      "0 is rejected",
+      "sender",
+      "asset",
+      "tag",
+      "serialNumber",
+      "intoNote",
+    ]) {
+      expect(text).toContain(fact);
+    }
+  });
+});
+
+// ── number amounts ────────────────────────────────────────────────────────────
+
+describe("number amounts", () => {
+  let wasm;
+  let swapTagMock;
+
+  beforeEach(() => {
+    wasm = makeWasm();
+    _setWasm(wasm);
+    swapTagMock = vi.fn().mockReturnValue("swapTag");
+    _setWebClient({ buildSwapTag: swapTagMock });
+  });
+
+  afterEach(() => {
+    _setWasm(null);
+    _setWebClient(null);
+  });
+
+  const unsafe = Number.MAX_SAFE_INTEGER + 2;
+  const swap = (offer, request) =>
+    buildSwapTag({
+      type: "public",
+      offer: { token: "0xa", amount: offer },
+      request: { token: "0xb", amount: request },
+    });
+
+  it("buildSwapTag rejects an unsafe number on either side", () => {
+    expect(() => swap(unsafe, 1n)).toThrow(/amount must be a safe integer/);
+    expect(() => swap(1n, 1.5)).toThrow(/amount must be a safe integer/);
+  });
+
+  it("buildSwapTag forwards a bigint above 2^53 - 1 exactly", () => {
+    expect(swap(9007199254740993n, 9007199254740995n)).toBe("swapTag");
+    expect(swapTagMock.mock.calls[0][2]).toBe(9007199254740993n);
+    expect(swapTagMock.mock.calls[0][4]).toBe(9007199254740995n);
+  });
+
+  it("createP2IDNote rejects an unsafe asset number before building it", () => {
+    expect(() =>
+      createP2IDNote({
+        from: "0xsender",
+        to: "0xrecipient",
+        assets: { token: "0xfaucet", amount: unsafe },
+      })
+    ).toThrow(/amount must be a safe integer/);
+    expect(wasm.FungibleAsset).not.toHaveBeenCalled();
   });
 });

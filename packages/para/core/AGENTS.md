@@ -56,9 +56,18 @@ returning. No Miden private key exists anywhere: the account's auth component
 commits to the Para-held EVM key.
 
 The third argument is `Opts`: `endpoint` (the RPC URL, not `rpcUrl`),
-`noteTransportUrl` (defaults to `https://transport.miden.io`), `seed` (client
-store seed), `accountSeed`, and the required `storageMode`, which is `"public"`
-or `"private"`. Two optional arguments follow it: `showSigningModal` (default
+`noteTransportUrl` (defaults to the transport of the network `endpoint` names:
+`https://transport.mainnet.miden.io` for mainnet,
+`https://transport.devnet.miden.io` for devnet and `https://transport.miden.io`
+for testnet, missing, unknown, custom, proxied, or relative endpoints such as
+`"/rpc.Api"`). Proxied and other unrecognized endpoints cannot identify their
+Miden network, so set `noteTransportUrl` explicitly when they target a network
+other than testnet. `seed` (client store seed), `accountSeed`, and the required
+`storageMode`, which is `"public"` or `"private"`. A positive `callbackTimeoutMs`
+bounds each `sign`, `getKey`, and
+`insertKey` callback in milliseconds; omitted leaves signing unlimited and `0`
+removes the limit for all three. Invalid values throw `TypeError` from
+`MidenClient.create`. Two optional arguments follow it: `showSigningModal` (default
 `true`) and `customSignConfirmStep`.
 
 The rest of the public surface is the pieces that call is assembled from, for

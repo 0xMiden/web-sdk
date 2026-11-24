@@ -45,6 +45,7 @@ test("native Node explicitly refuses acquisition callbacks during initialization
       undefined,
       undefined,
       undefined,
+      undefined,
       false,
       options
     )

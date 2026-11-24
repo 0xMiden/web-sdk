@@ -10,9 +10,20 @@ use js_export_macro::js_export;
 use miden_client::block::BlockNumber;
 use miden_client::builder::DEFAULT_GRPC_TIMEOUT_MS;
 use miden_client::note::{NoteId as NativeNoteId, Nullifier};
-use miden_client::rpc::domain::account::{GetAccountRequest, StorageMapFetch, VaultFetch};
+use miden_client::rpc::domain::account::{
+    AccountFetch,
+    GetAccountRequest,
+    StorageMapFetch,
+    VaultFetch,
+};
 use miden_client::rpc::domain::note::FetchedNote as NativeFetchedNote;
-use miden_client::rpc::{AccountStateAt, GrpcClient, NodeRpcClient, VerifyingRpcClient};
+use miden_client::rpc::{
+    AccountStateAt,
+    Endpoint as NativeEndpoint,
+    GrpcClient,
+    NodeRpcClient,
+    VerifyingRpcClient,
+};
 use note::FetchedNote;
 
 use crate::js_error_with_context;
@@ -45,6 +56,7 @@ mod tests;
 #[js_export]
 pub struct RpcClient {
     inner: Arc<dyn NodeRpcClient>,
+    endpoint: String,
 }
 
 #[js_export]
@@ -54,12 +66,21 @@ impl RpcClient {
     /// @param endpoint - Endpoint to connect to.
     #[js_export(constructor)]
     pub fn new(endpoint: Endpoint) -> Result<RpcClient, JsErr> {
-        let rpc_client = Arc::new(VerifyingRpcClient::new(GrpcClient::new(
-            &endpoint.into(),
-            DEFAULT_GRPC_TIMEOUT_MS,
-        )));
+        let endpoint = NativeEndpoint::from(endpoint);
+        let rpc_client =
+            Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
-        Ok(RpcClient { inner: rpc_client })
+        Ok(RpcClient {
+            inner: rpc_client,
+            endpoint: endpoint.to_string(),
+        })
+    }
+
+    /// Returns the URL of the node this RPC client was created against, in the form
+    /// `Endpoint.toString()` gives, for example `https://rpc.devnet.miden.io`.
+    #[js_export(js_name = "endpoint")]
+    pub fn endpoint(&self) -> String {
+        self.endpoint.clone()
     }
 
     /// Fetches notes by their IDs from the connected Miden node.
@@ -177,13 +198,14 @@ impl RpcClient {
         // Keep the proof's commitment and block height for `FetchedAccount`, and resolve any
         // oversized state at that same block before reconstructing the full account. `from_proof`
         // enforces that the reconstructed commitment matches the proof.
-        let request = GetAccountRequest::new()
+        let fetch = AccountFetch::new()
             .with_storage(StorageMapFetch::All)
             .with_vault(VaultFetch::Always);
+        let request = GetAccountRequest::new(native_id).with_fetch(fetch);
 
         let (block_num, mut proof) = self
             .inner
-            .get_account(native_id, request)
+            .get_account(request)
             .await
             .map_err(|err| js_error_with_context(err, "failed to get account details"))?;
 
@@ -257,14 +279,12 @@ impl RpcClient {
             None => VaultFetch::Skip,
         };
 
-        let request = GetAccountRequest::new()
-            .with_storage(storage_fetch)
-            .at(account_state)
-            .with_vault(vault);
+        let fetch = AccountFetch::new().with_storage(storage_fetch).with_vault(vault);
+        let request = GetAccountRequest::new(native_id).with_fetch(fetch).at(account_state);
 
         let (block_num, proof) = self
             .inner
-            .get_account(native_id, request)
+            .get_account(request)
             .await
             .map_err(|err| js_error_with_context(err, "failed to get account proof"))?;
 

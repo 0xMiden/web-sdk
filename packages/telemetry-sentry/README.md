@@ -79,7 +79,7 @@ scheduled afterwards:
 | `level` | `"error"` on failure, `"info"` on success |
 | `tags.op` | the operation name |
 | `tags.outcome` | `"ok"` or `"error"` |
-| `extra.durationMs` | the observation's `durationMs`: from the call's turn on its client's queue until it settled |
+| `extra.durationMs` | the observation's `durationMs`: from the call's turn on its client's queue until it settled, 0 for a store-locked call that timed out before its turn |
 
 ## Sensitive detail
 

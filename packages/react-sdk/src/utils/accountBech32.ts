@@ -7,44 +7,39 @@ import {
 } from "@miden-sdk/miden-sdk";
 import { useMidenStore } from "../store/MidenStore";
 import { parseAccountId } from "./accountParsing";
+import { resolveNetworkName } from "./network";
 
 type AccountPrototype = {
   bech32id?: () => string;
 };
 
-const inferNetworkId = (): NetworkId => {
-  const { rpcUrl } = useMidenStore.getState().config;
-  if (!rpcUrl) {
-    return NetworkId.testnet();
+// `config.network` wins; else the endpoint of the provider's client names the
+// network, and an endpoint naming none is mainnet. `null` means no client yet or
+// a mock client; callers then show the raw account id rather than a guess.
+const resolveNetworkId = (): NetworkId | null => {
+  const { client, config } = useMidenStore.getState();
+  const name = resolveNetworkName(client?.endpoint(), config.network);
+  if (!name) {
+    return null;
   }
-
-  const url = rpcUrl.toLowerCase();
-  if (url.includes("devnet") || url.includes("mdev")) {
-    return NetworkId.devnet();
-  }
-  if (url.includes("mainnet")) {
-    return NetworkId.mainnet();
-  }
-  if (url.includes("testnet") || url.includes("mtst")) {
-    return NetworkId.testnet();
-  }
-
-  return NetworkId.testnet();
+  return NetworkId[name]();
 };
 
 const toBech32FromAccountId = (id: AccountId): string => {
+  const networkId = resolveNetworkId();
+  if (!networkId) {
+    return id.toString();
+  }
+
   try {
     const address = Address.fromAccountId(id, "BasicWallet");
-    return address.toBech32(inferNetworkId());
+    return address.toBech32(networkId);
   } catch {
     // Fall through to AccountId conversion or string fallback.
   }
 
   try {
-    const maybeBech32 = id.toBech32?.(
-      inferNetworkId(),
-      AccountInterface.BasicWallet
-    );
+    const maybeBech32 = id.toBech32?.(networkId, AccountInterface.BasicWallet);
     if (typeof maybeBech32 === "string") {
       return maybeBech32;
     }

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import {
   useMidenStore,
@@ -111,6 +111,7 @@ describe("MidenStore", () => {
       expect(state.accountDetails.size).toBe(0);
       expect(state.notesByFilter.size).toBe(0);
       expect(state.consumableNotesByAccount.size).toBe(0);
+      expect(state.cacheGeneration).toEqual(expect.any(Number));
 
       expect(state.isLoadingAccounts).toBe(false);
       expect(state.isLoadingNotes).toBe(false);
@@ -129,6 +130,45 @@ describe("MidenStore", () => {
       expect(state.isInitializing).toBe(false);
       expect(state.initError).toBeNull();
     });
+
+    it.each(["another client", "null"])(
+      "releases only the replaced client's in-flight flags when set to %s",
+      (replacement) => {
+        const previousClient = createMockWebClient();
+        const currentClient =
+          replacement === "null" ? null : createMockWebClient();
+        const store = useMidenStore.getState();
+        store.setClient(previousClient as any);
+        store.setAccounts([createMockAccountHeader()] as any);
+        store.setLoadingAccounts(true);
+        store.setLoadingNotes(true);
+        store.setSyncPaused(true);
+        store.setSyncState({
+          isSyncing: true,
+          syncHeight: 123,
+          lastSyncTime: 456,
+          error: new Error("previous sync error"),
+        });
+        const inFlight = useMidenStore.getState();
+
+        store.setClient(previousClient as any);
+        expect(useMidenStore.getState()).toEqual(inFlight);
+        expect(useMidenStore.getState().sync).toBe(inFlight.sync);
+
+        store.setClient(currentClient as any);
+
+        const current = useMidenStore.getState();
+        expect(current.isLoadingAccounts).toBe(false);
+        expect(current.isLoadingNotes).toBe(false);
+        expect(current.sync).toEqual({ ...inFlight.sync, isSyncing: false });
+        expect(current.sync.error).toBe(inFlight.sync.error);
+        expect(current.accounts).toBe(inFlight.accounts);
+        expect(current.cacheGeneration).toBe(inFlight.cacheGeneration);
+        expect(current.syncPaused).toBe(true);
+        expect(current.client).toBe(currentClient);
+        expect(current.isReady).toBe(currentClient !== null);
+      }
+    );
   });
 
   describe("setInitializing", () => {
@@ -320,6 +360,20 @@ describe("MidenStore", () => {
   });
 
   describe("reset", () => {
+    it("advances the cache generation for every reset", () => {
+      const initialGeneration = useMidenStore.getState().cacheGeneration;
+
+      useMidenStore.getState().resetInMemoryState();
+      expect(useMidenStore.getState().cacheGeneration).toBe(
+        initialGeneration + 1
+      );
+
+      useMidenStore.getState().reset();
+      expect(useMidenStore.getState().cacheGeneration).toBe(
+        initialGeneration + 2
+      );
+    });
+
     it("should reset all state to initial values", () => {
       // Set some state
       useMidenStore.getState().setClient(createMockWebClient() as any);
@@ -503,6 +557,79 @@ describe("MidenStore", () => {
 
       expect(useMidenStore.getState().noteFirstSeen.has("0xnote2")).toBe(true);
     });
+
+    it("should update notes when a note's state changes but its ID does not", () => {
+      const pending = createMockInputNoteRecord("0xnote1", false);
+      useMidenStore.getState().setNotes([pending] as any, "all");
+
+      const consumed = createMockInputNoteRecord("0xnote1", true);
+      useMidenStore.getState().setNotesIfChanged([consumed] as any, "all");
+
+      const stored = useMidenStore.getState().notesByFilter.get("all")!;
+      expect(stored).toHaveLength(1);
+      expect(stored[0].isConsumed()).toBe(true);
+    });
+
+    it("should keep firstSeen when only a note's state changes", () => {
+      const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1000);
+      const pending = createMockInputNoteRecord("0xnote1", false);
+      useMidenStore.getState().setNotes([pending] as any, "all");
+      expect(useMidenStore.getState().noteFirstSeen.get("0xnote1")).toBe(1000);
+
+      nowSpy.mockReturnValue(2000);
+      const consumed = createMockInputNoteRecord("0xnote1", true);
+      useMidenStore.getState().setNotesIfChanged([consumed] as any, "all");
+      nowSpy.mockRestore();
+
+      // The refresh was applied (the stored record is the consumed one) and
+      // the original timestamp survived it.
+      expect(useMidenStore.getState().notesByFilter.get("all")![0]).toBe(
+        consumed
+      );
+      expect(useMidenStore.getState().noteFirstSeen.get("0xnote1")).toBe(1000);
+    });
+
+    it("falls back to the note ID when state() throws", () => {
+      const withBrokenState = (id: string) => ({
+        ...createMockInputNoteRecord(id),
+        state: () => {
+          throw new Error("state explosion");
+        },
+      });
+      useMidenStore
+        .getState()
+        .setNotes([withBrokenState("0xnote1")] as any, "all");
+      const firstRef = useMidenStore.getState().notesByFilter.get("all")!;
+
+      useMidenStore
+        .getState()
+        .setNotesIfChanged([withBrokenState("0xnote1")] as any, "all");
+      expect(useMidenStore.getState().notesByFilter.get("all")!).toBe(firstRef);
+
+      useMidenStore
+        .getState()
+        .setNotesIfChanged([withBrokenState("0xnote2")] as any, "all");
+      expect(useMidenStore.getState().notesByFilter.get("all")!).not.toBe(
+        firstRef
+      );
+    });
+
+    it("ignores notes whose id() throws when comparing", () => {
+      const note1 = createMockInputNoteRecord("0xnote1");
+      const brokenNote = {
+        id: () => {
+          throw new Error("note id explosion");
+        },
+      };
+      useMidenStore.getState().setNotes([note1] as any, "all");
+      const firstRef = useMidenStore.getState().notesByFilter.get("all")!;
+
+      // The id-less record adds no key, so the key sets still match.
+      useMidenStore
+        .getState()
+        .setNotesIfChanged([note1, brokenNote] as any, "all");
+      expect(useMidenStore.getState().notesByFilter.get("all")!).toBe(firstRef);
+    });
   });
 
   describe("setConsumableNotesIfChanged", () => {
@@ -542,6 +669,25 @@ describe("MidenStore", () => {
       expect(
         useMidenStore.getState().consumableNotesByAccount.get("default")!
       ).toBe(firstRef);
+    });
+
+    it("should update consumable notes when a note's state changes but its ID does not", () => {
+      const cn1 = createMockConsumableNoteRecord("0xcn1");
+      useMidenStore.getState().setConsumableNotes([cn1] as any, "default");
+
+      const cn1Consumed = {
+        ...createMockConsumableNoteRecord("0xcn1"),
+        inputNoteRecord: vi.fn(() => createMockInputNoteRecord("0xcn1", true)),
+      };
+      useMidenStore
+        .getState()
+        .setConsumableNotesIfChanged([cn1Consumed] as any, "default");
+
+      const stored = useMidenStore
+        .getState()
+        .consumableNotesByAccount.get("default")!;
+      expect(stored).toHaveLength(1);
+      expect(stored[0].inputNoteRecord().isConsumed()).toBe(true);
     });
 
     it("setNotes skips notes whose id() throws (catch arm)", () => {

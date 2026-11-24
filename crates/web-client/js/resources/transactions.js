@@ -1,8 +1,10 @@
 import {
   isConsumableNow,
+  isStandardPaymentNote,
   resolveAccountRef,
   resolveNoteType,
   resolveTransactionIdHex,
+  toAmount,
 } from "../utils.js";
 
 /** Preview operations that build their own request, and so cannot be anchored. */
@@ -76,6 +78,42 @@ async function proveResult(inner, defaultProver, result, opts) {
     : await inner.proveTransaction(result);
 }
 
+/**
+ * Wraps a failed local apply that follows an accepted submit. A bare apply
+ * error looks like a pre-submit failure and invites a double-spend retry.
+ * Matches the code `code_from_error` assigns to the Rust post-submit variants.
+ */
+function applyAfterSubmitError(applyError, txId, height) {
+  const txIdHex =
+    typeof txId?.toHex === "function" ? txId.toHex() : String(txId);
+  const wrapped = new Error(
+    `Transaction ${txIdHex} was accepted into the node's mempool at block ${height} but the local store update failed. Do not resubmit the same transaction.`
+  );
+  wrapped.code = "ApplyTransactionAfterSubmitFailed";
+  wrapped.cause = applyError;
+  wrapped.transactionId = txIdHex;
+  wrapped.submissionHeight = height;
+  return wrapped;
+}
+
+/**
+ * Sleeps one polling interval, cut short at a finite `timeout` measured from
+ * `start`, so a polling loop gives up at its deadline rather than up to one
+ * interval after it. `timeout: 0` (poll indefinitely) sleeps the full interval.
+ *
+ * @param {number} start - `Date.now()` when polling began.
+ * @param {number} timeout - The polling timeout in ms, or 0 for none.
+ * @param {number} interval - The polling interval in ms.
+ * @returns {Promise<void>}
+ */
+function waitBeforeNextPoll(start, timeout, interval) {
+  const sleepMs =
+    timeout > 0
+      ? Math.max(0, Math.min(interval, timeout - (Date.now() - start)))
+      : interval;
+  return new Promise((resolve) => setTimeout(resolve, sleepMs));
+}
+
 export class TransactionsResource {
   #inner;
   #getWasm;
@@ -101,6 +139,7 @@ export class TransactionsResource {
         );
       }
 
+      const amount = toAmount(opts.amount, "send");
       const senderId = resolveAccountRef(opts.account, wasm);
       const receiverId = resolveAccountRef(opts.to, wasm);
       const faucetId = resolveAccountRef(opts.token, wasm);
@@ -109,9 +148,7 @@ export class TransactionsResource {
       const note = wasm.Note.createP2IDNote(
         senderId,
         receiverId,
-        new wasm.NoteAssets([
-          new wasm.FungibleAsset(faucetId, BigInt(opts.amount)),
-        ]),
+        new wasm.NoteAssets([new wasm.FungibleAsset(faucetId, amount)]),
         noteType,
         new wasm.NoteAttachment()
       );
@@ -184,7 +221,7 @@ export class TransactionsResource {
             (a) =>
               new wasm.FungibleAsset(
                 resolveAccountRef(a.token, wasm),
-                BigInt(a.amount)
+                toAmount(a.amount, "createNetworkNote")
               )
           )
         )
@@ -302,6 +339,33 @@ export class TransactionsResource {
     return { txId, result };
   }
 
+  /**
+   * Withdraws USDCx through Circle xReserve by emitting one public burn note
+   * that the USDCx faucet consumes. The amount and the recipient are validated
+   * before any WASM call.
+   */
+  async withdrawUsdcx(opts) {
+    rejectUnexpectedAnchor(opts, "withdrawUsdcx", "submit()");
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const { accountId, request } = await this.#buildXReserveBurnRequest(
+      opts,
+      wasm
+    );
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      accountId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, result };
+  }
+
   async consume(opts) {
     rejectUnexpectedAnchor(opts, "consume", "submit()");
     this.#client.assertNotTerminated();
@@ -330,12 +394,15 @@ export class TransactionsResource {
     // Save hex so we can reconstruct for submitNewTransaction.
     const accountId = resolveAccountRef(opts.account, wasm);
     const accountIdHex = accountId.toString();
-    // Block-locked notes cannot be consumed yet and would fail the whole
-    // transaction, so they are not "available" here either (notes.listAvailable
-    // applies the same rule).
+    // The set notes.listAvailable returns. A block-locked note would fail the
+    // whole transaction. Any script but P2ID or P2IDE can spend from the
+    // account: consuming another trader's public PSWAP order fills it from this
+    // vault, so such a note is consumed only when the caller names it.
     const consumable = (
       (await this.#inner.getConsumableNotes(accountId)) ?? []
-    ).filter((c) => isConsumableNow(c, accountIdHex));
+    ).filter(
+      (c) => isConsumableNow(c, accountIdHex) && isStandardPaymentNote(c, wasm)
+    );
 
     if (consumable.length === 0) {
       return { txId: null, consumed: 0, remaining: 0 };
@@ -586,64 +653,64 @@ export class TransactionsResource {
   }
 
   /**
-   * Submit a heterogeneous batch of operations against a single account. All
-   * operations are executed, proven individually and as a batch, and submitted
-   * atomically — either every tx in the batch lands or none does.
+   * Submit a heterogeneous batch of operations across one or more local
+   * accounts. Each operation specifies which account it targets via `account`.
+   * Each operation is executed and proven individually, then a single batch
+   * proof is produced over all of them and submitted as one batch; the node
+   * commits them together or not at all.
+   * Every proof runs inside the batch primitive on the client's built-in local
+   * prover, so `proverUrl` does not apply to batches.
+   * In the browser the batch is forwarded to the client's Web Worker, so the
+   * page's main thread stays responsive; without a worker (`useWorker: false`,
+   * or no `Worker` in the environment), and on a mock client, it proves on the
+   * calling thread and blocks it until it settles.
+   * With an external keystore and a worker, `sign` waits without a limit unless
+   * `callbackTimeoutMs` sets one, so a stalled signer holds the batch and later
+   * worker calls. See
+   * https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
    *
-   * @param {BatchOptions} opts - Batch options including the account, operations array, and confirmation settings.
-   * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
+   * @param {BatchOptions} opts - Batch options: the operations array, and
+   *   `waitForConfirmation` / `timeout` (see `submitBatch`).
+   * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
+   *   submission, not the block the batch commits in.
    */
   async batch(opts) {
     rejectUnexpectedAnchor(opts, "batch", "submit() per transaction");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
-    if (!opts || !opts.account) {
-      throw new Error("batch: `account` is required");
-    }
-    if (!Array.isArray(opts.operations) || opts.operations.length === 0) {
+    if (
+      !opts ||
+      !Array.isArray(opts.operations) ||
+      opts.operations.length === 0
+    ) {
       throw new Error("batch: `operations` must be a non-empty array");
     }
 
-    // Build each TransactionRequest. Per-op builders all use the batch-level
-    // `account` — V1 only supports same-account batches, mirroring the Rust
-    // constraint. We forward `opts.account` into each per-op options object so
-    // the existing builders' `resolveAccountRef` produces fresh AccountIds
-    // when needed.
-    const requests = [];
+    // Build each TransactionRequest. Every operation carries its own
+    // `account` — same-account batches just repeat the same value.
+    const items = [];
     for (let i = 0; i < opts.operations.length; i++) {
       const op = opts.operations[i];
+      if (!op?.account) {
+        throw new Error(`batch: operation[${i}] is missing \`account\``);
+      }
       let built;
       switch (op?.kind) {
         case "send":
-          built = await this.#buildSendRequest(
-            { ...op, account: opts.account },
-            wasm
-          );
+          built = await this.#buildSendRequest(op, wasm);
           break;
         case "mint":
-          built = await this.#buildMintRequest(
-            { ...op, account: opts.account },
-            wasm
-          );
+          built = await this.#buildMintRequest(op, wasm);
           break;
         case "consume":
-          built = await this.#buildConsumeRequest(
-            { ...op, account: opts.account },
-            wasm
-          );
+          built = await this.#buildConsumeRequest(op, wasm);
           break;
         case "swap":
-          built = await this.#buildSwapRequest(
-            { ...op, account: opts.account },
-            wasm
-          );
+          built = await this.#buildSwapRequest(op, wasm);
           break;
         case "execute":
-          built = await this.#buildExecuteRequest(
-            { ...op, account: opts.account },
-            wasm
-          );
+          built = await this.#buildExecuteRequest(op, wasm);
           break;
         case "custom":
           if (!op.request) {
@@ -658,16 +725,16 @@ export class TransactionsResource {
             `batch: operation[${i}] has unknown kind "${op?.kind}"`
           );
       }
-      requests.push(built.request);
+      items.push({ account: op.account, request: built.request });
     }
 
-    return this.submitBatch(opts.account, requests, opts);
+    return this.submitBatch(items, opts);
   }
 
   /**
    * Submit pre-built TransactionRequests as an atomic batch. Lower-level
-   * counterpart of `batch()` — for callers that already have built requests in
-   * hand. Equivalent to `submit()` but plural.
+   * counterpart of `batch()` — for callers that already have built requests
+   * paired with their target accounts.
    *
    * No fee conversion salt is declared here. miden-client commits the chain's
    * native conversion info while preparing each transaction, so requests against
@@ -678,62 +745,158 @@ export class TransactionsResource {
    * `client.feeAwareTransactionRequestBuilder`, or pass a finished one through
    * `client.withFeeAwareAuth` before batching it.
    *
-   * @param {AccountRef} account - The account executing the batch.
-   * @param {TransactionRequest[]} requests - Pre-built transaction requests.
-   * @param {object} [options] - Optional settings (waitForConfirmation, timeout).
-   *   The batch is proved with the client's configured prover; the V1 batch API
-   *   has no per-call prover override.
-   * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
+   * @param {Array<{ account: AccountRef, request: TransactionRequest }>} items - Per-tx (account, request) pairs.
+   * @param {object} [options] - Optional settings. `waitForConfirmation`
+   *   resolves the call only once every transaction of the batch is committed,
+   *   and rejects if the node discards one, if no stored transaction can be
+   *   attributed to the batch (`Batch confirmation found no transactions to
+   *   wait for`), or when `timeout` (default 60000 ms, 0 for none) runs out
+   *   first. A sync or query already in flight still finishes first.
+   *   Every transaction is proven inside the batch primitive by the client's
+   *   built-in local prover, so `proverUrl` does not apply; the V1 batch API has
+   *   no per-call prover override.
+   *   In the browser the batch runs in the client's Web Worker where it has
+   *   one, so the page's main thread stays responsive; see `batch()` for when
+   *   it runs in-thread instead.
+   *   With an external keystore and a worker, signing happens at push time
+   *   and this wrapper treats a failed push as fatal, so one failed or timed
+   *   out signature callback fails the whole batch. `sign` has no time limit
+   *   unless `callbackTimeoutMs` sets one, so a stalled signer holds the batch
+   *   and later worker calls. See
+   *   https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts
+   *   Relatedly, `lastAuthError()` reads the main-thread instance, so it does
+   *   not report a forwarded batch's auth error.
+   * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
+   *   submission, not the block the batch commits in.
    */
-  async submitBatch(account, requests, options) {
+  async submitBatch(items, options) {
     rejectUnexpectedAnchor(options, "submitBatch", "submit() per transaction");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
-    if (!Array.isArray(requests) || requests.length === 0) {
-      throw new Error("submitBatch: `requests` must be a non-empty array");
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error("submitBatch: `items` must be a non-empty array");
     }
 
-    const accountId = resolveAccountRef(account, wasm);
-    const blockNumber = await this.#inner.submitNewTransactionBatch(
-      accountId,
-      requests.map((r) => r.serialize())
-    );
+    const wasmItems = items.map((item, i) => {
+      if (!item?.account) {
+        throw new Error(`submitBatch: items[${i}] is missing \`account\``);
+      }
+      if (!item?.request) {
+        throw new Error(`submitBatch: items[${i}] is missing \`request\``);
+      }
+      return new wasm.BatchItem(
+        resolveAccountRef(item.account, wasm),
+        item.request
+      );
+    });
 
+    // The batch primitive returns no transaction ids. While waiting, one chain
+    // slot reads every stored row, submits, and reads again; the new rows for
+    // these items' accounts are the ones to wait for, in any status. So is a
+    // discarded row that the submission reopened: a retried batch can have the
+    // same ids as the discarded one it replaces.
     if (options?.waitForConfirmation) {
-      await this.#waitForBlock(blockNumber, options);
+      let blockNumber;
+      let before;
+      let after;
+      if (typeof this.#inner._submitNewTransactionBatchForWait === "function") {
+        ({ blockNumber, before, after } =
+          await this.#inner._submitNewTransactionBatchForWait(wasmItems));
+      } else {
+        // Node has no chain slot to hold: read, submit and read directly. A
+        // sync between the calls could change a row, which the browser slot
+        // rules out. A reopened id that is discarded again in that window is
+        // left out, and the empty-list throw covers it when it was the only one.
+        before = await this.#inner.getTransactions(
+          wasm.TransactionFilter.all()
+        );
+        blockNumber = await this.#inner.submitNewTransactionBatch(wasmItems);
+        after = await this.#inner.getTransactions(wasm.TransactionFilter.all());
+      }
+      const accounts = new Set(
+        items.map((item) => resolveAccountRef(item.account, wasm).toString())
+      );
+      const beforeById = new Map(
+        (before ?? []).map((tx) => [tx.id().toHex(), tx])
+      );
+      const isDiscarded = (tx) => tx.transactionStatus?.()?.isDiscarded();
+      const batchTxIds = (after ?? [])
+        .filter((tx) => {
+          if (!accounts.has(tx.accountId().toString())) return false;
+          const prior = beforeById.get(tx.id().toHex());
+          return !prior || (isDiscarded(prior) && !isDiscarded(tx));
+        })
+        .map((tx) => tx.id().toHex());
+      await this.#waitForBatch(batchTxIds, options);
+      return { blockNumber };
     }
 
+    const blockNumber = await this.#inner.submitNewTransactionBatch(wasmItems);
     return { blockNumber };
   }
 
   /**
-   * Polls until the local sync height reaches `blockNumber` or the timeout
-   * expires. The Rust V1 batch API returns only a block number — there are no
-   * per-tx ids to poll on, so we wait on the chain height instead.
+   * Polls until every transaction in `txIds` is committed, a transaction is
+   * discarded, or the timeout expires. The batch counterpart of `waitFor`.
    *
-   * @param {number} blockNumber - The block height to wait for.
-   * @param {object} [opts] - Polling options (timeout, interval).
+   * `txIds` are the batch accounts' new records in any status, plus a
+   * discarded record this submission reopened. A discarded id still rejects,
+   * and an empty list throws: a non-empty batch always records a row.
+   * The batch primitive returns no ids, so a transaction that
+   * another client instance on the same store writes for one of these accounts
+   * during the submission cannot be told apart and is waited for as well.
+   *
+   * The block number the submission returned is not used: it is the node's
+   * chain tip as of submission, which the client has usually reached already.
+   *
+   * @param {string[]} txIds - Transaction ids to wait for, as hex.
+   * @param {object} [opts] - Polling options (timeout, interval). A finite
+   *   `timeout` ends the wait between polls at the deadline. A sync or query
+   *   already in flight still finishes first.
    */
-  async #waitForBlock(blockNumber, opts) {
+  async #waitForBatch(txIds, opts) {
+    if (txIds.length === 0) {
+      throw new Error("Batch confirmation found no transactions to wait for");
+    }
+
     const timeout = opts?.timeout ?? 60_000;
     const interval = opts?.interval ?? 5_000;
     const start = Date.now();
+    const wasm = await this.#getWasm();
 
     while (true) {
       if (timeout > 0 && Date.now() - start >= timeout) {
         throw new Error(
-          `Batch confirmation timed out after ${timeout}ms (waiting for block ${blockNumber})`
+          `Batch confirmation timed out after ${timeout}ms ` +
+            `(waiting for ${txIds.length} transaction(s))`
         );
       }
       try {
-        await this.#inner.syncStateWithTimeout(0);
+        // Chain-only sync, as in waitFor: confirmation needs only on-chain
+        // state, and polling survives an unavailable note transport endpoint.
+        await this.#inner.syncChain();
       } catch {
-        // sync may fail transiently; continue polling
+        // Sync may fail transiently; continue polling
       }
-      const height = await this.#inner.getSyncHeight();
-      if (height >= blockNumber) return;
-      await new Promise((resolve) => setTimeout(resolve, interval));
+
+      // Recreate filter each iteration: WASM consumes it by value
+      const filter = wasm.TransactionFilter.ids(
+        txIds.map((hex) => wasm.TransactionId.fromHex(hex))
+      );
+      const txs = (await this.#inner.getTransactions(filter)) ?? [];
+
+      let committed = 0;
+      for (const tx of txs) {
+        const status = tx.transactionStatus?.();
+        if (status?.isDiscarded()) {
+          throw new Error(`Batch transaction rejected: ${tx.id().toHex()}`);
+        }
+        if (status?.isCommitted()) committed += 1;
+      }
+      if (committed === txIds.length) return;
+
+      await waitBeforeNextPoll(start, timeout, interval);
     }
   }
 
@@ -960,7 +1123,10 @@ export class TransactionsResource {
    *   milliseconds. This is NOT a block height — it controls how long the
    *   client waits before giving up. Set to 0 to disable the timeout and poll
    *   indefinitely until the transaction is committed or discarded.
-   * @param {number} [opts.interval=5000] - Polling interval in ms.
+   * @param {number} [opts.interval=5000] - Polling interval in ms. When
+   *   `timeout` is set, the wait between polls ends at the timeout, so
+   *   `waitFor` gives up at the deadline rather than up to one interval later.
+   *   A sync or query already in flight still finishes first.
    * @param {function} [opts.onProgress] - Called with the current status on
    *   each poll iteration ("pending", "submitted", or "committed").
    */
@@ -1015,18 +1181,18 @@ export class TransactionsResource {
         opts?.onProgress?.("pending");
       }
 
-      await new Promise((resolve) => setTimeout(resolve, interval));
+      await waitBeforeNextPoll(start, timeout, interval);
     }
   }
 
   // ── Shared request builders ──
 
   async #buildSendRequest(opts, wasm) {
+    const amount = toAmount(opts.amount, "send");
     const accountId = resolveAccountRef(opts.account, wasm);
     const targetId = resolveAccountRef(opts.to, wasm);
     const faucetId = resolveAccountRef(opts.token, wasm);
     const noteType = resolveNoteType(opts.type, wasm);
-    const amount = BigInt(opts.amount);
 
     const request = await this.#inner.newSendTransactionRequest(
       accountId,
@@ -1041,10 +1207,10 @@ export class TransactionsResource {
   }
 
   async #buildMintRequest(opts, wasm) {
+    const amount = toAmount(opts.amount, "mint");
     const accountId = resolveAccountRef(opts.account, wasm);
     const targetId = resolveAccountRef(opts.to, wasm);
     const noteType = resolveNoteType(opts.type, wasm);
-    const amount = BigInt(opts.amount);
 
     // WASM signature: newMintTransactionRequest(target, faucet, noteType, amount)
     const request = await this.#inner.newMintTransactionRequest(
@@ -1057,10 +1223,10 @@ export class TransactionsResource {
   }
 
   async #buildB2AggRequest(opts, wasm) {
+    const amount = toAmount(opts.amount, "bridge");
     const accountId = resolveAccountRef(opts.account, wasm);
     const bridgeAccountId = resolveAccountRef(opts.bridgeAccount, wasm);
     const faucetId = resolveAccountRef(opts.token, wasm);
-    const amount = BigInt(opts.amount);
     const destinationAddress = wasm.EthAddress.fromHex(opts.destinationAddress);
 
     const request = await this.#inner.newB2AggTransactionRequest(
@@ -1070,6 +1236,34 @@ export class TransactionsResource {
       amount,
       opts.destinationNetwork,
       destinationAddress
+    );
+    return { accountId, request };
+  }
+
+  async #buildXReserveBurnRequest(opts, wasm) {
+    const amount = toAmount(opts.amount, "withdrawUsdcx");
+    const recipientHex = opts.destinationRecipient;
+    if (
+      typeof recipientHex !== "string" ||
+      !/^0x[0-9a-fA-F]{64}$/.test(recipientHex)
+    ) {
+      throw new Error(
+        "withdrawUsdcx: destinationRecipient must be a 0x-prefixed 32-byte hex string"
+      );
+    }
+    const accountId = resolveAccountRef(opts.account, wasm);
+    const faucetId = resolveAccountRef(opts.token, wasm);
+    const recipient = Uint8Array.from(
+      recipientHex.slice(2).match(/../g),
+      (byte) => parseInt(byte, 16)
+    );
+
+    const request = await this.#inner.newXReserveBurnTransactionRequest(
+      accountId,
+      faucetId,
+      amount,
+      opts.destinationDomain,
+      recipient
     );
     return { accountId, request };
   }
@@ -1133,9 +1327,9 @@ export class TransactionsResource {
     const request = await this.#inner.newSwapTransactionRequest(
       accountId,
       offeredFaucetId,
-      BigInt(opts.offer.amount),
+      toAmount(opts.offer.amount, "swap"),
       requestedFaucetId,
-      BigInt(opts.request.amount),
+      toAmount(opts.request.amount, "swap"),
       noteType,
       paybackNoteType
     );
@@ -1155,9 +1349,9 @@ export class TransactionsResource {
     const request = await this.#inner.newPswapCreateTransactionRequest(
       accountId,
       offeredFaucetId,
-      BigInt(opts.offer.amount),
+      toAmount(opts.offer.amount, "pswapCreate"),
       requestedFaucetId,
-      BigInt(opts.request.amount),
+      toAmount(opts.request.amount, "pswapCreate"),
       noteType,
       paybackNoteType
     );
@@ -1172,8 +1366,8 @@ export class TransactionsResource {
     const request = await this.#inner.newPswapConsumeTransactionRequest(
       note,
       accountId,
-      BigInt(opts.fillAmount),
-      BigInt(noteFillAmount)
+      toAmount(opts.fillAmount, "pswapConsume"),
+      toAmount(noteFillAmount, "pswapConsume")
     );
     return { accountId, request };
   }
@@ -1221,6 +1415,9 @@ export class TransactionsResource {
     return input;
   }
 
+  // Submits exactly `request`: scripts it declares through withExpectedNtxScripts
+  // are not registered here (the native submit does, this pipeline does not), so
+  // a caller submits newRegisterNoteScriptsTransactionRequest first.
   async #submitOrSubmitWithProver(accountId, request, perCallProver, anchor) {
     const result = anchor
       ? await this.#inner.executeTransactionAt(accountId, request, anchor)
@@ -1233,7 +1430,11 @@ export class TransactionsResource {
     );
     const txId = result.id();
     const height = await this.#inner.submitProvenTransaction(proven, result);
-    await this.#inner.applyTransaction(result, height);
+    try {
+      await this.#inner.applyTransaction(result, height);
+    } catch (applyError) {
+      throw applyAfterSubmitError(applyError, txId, height);
+    }
     return { txId, result };
   }
 }
@@ -1388,13 +1589,28 @@ class TransactionSubmission {
    *
    * Browser stores require the stored account to match the execution input;
    * a mismatch rejects before changing account state or transaction history.
-   * Check network status before resubmitting after a local apply failure.
+   * The node already accepted the transaction, so a local apply failure
+   * rejects with `code: "ApplyTransactionAfterSubmitFailed"`, `transactionId`,
+   * `submissionHeight` and the original error as `cause`. Do not resubmit.
    *
    * @returns {Promise<TransactionStoreUpdate>} The pre-apply store update.
+   * @throws An error with `code` `"ApplyTransactionAfterSubmitFailed"` when the
+   *   local store update fails.
    */
   async apply() {
     this.#client.assertNotTerminated();
-    return await this.#inner.applyTransaction(this.#result, this.#blockNumber);
+    try {
+      return await this.#inner.applyTransaction(
+        this.#result,
+        this.#blockNumber
+      );
+    } catch (applyError) {
+      throw applyAfterSubmitError(
+        applyError,
+        this.#result.id(),
+        this.#blockNumber
+      );
+    }
   }
 
   /**

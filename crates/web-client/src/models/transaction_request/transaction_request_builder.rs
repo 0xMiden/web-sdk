@@ -1,10 +1,11 @@
 use js_export_macro::js_export;
-use miden_client::Word as NativeWord;
+use miden_client::account::AccountCode as NativeAccountCode;
 use miden_client::block::BlockNumber;
 use miden_client::note::{
     Note as NativeNote,
     NoteDetails as NativeNoteDetails,
     NoteRecipient as NativeNoteRecipient,
+    NoteScript as NativeNoteScript,
     NoteTag as NativeNoteTag,
 };
 use miden_client::transaction::{
@@ -15,25 +16,33 @@ use miden_client::transaction::{
     TransactionScript as NativeTransactionScript,
 };
 use miden_client::vm::AdviceMap as NativeAdviceMap;
+use miden_client::{Felt as NativeFelt, Word as NativeWord};
+use miden_protocol::WORD_SIZE;
+use miden_protocol::crypto::SequentialCommit;
 
 use crate::js_error_with_context;
+use crate::models::account_code::AccountCode;
 use crate::models::advice_map::AdviceMap;
+use crate::models::felt::felt_array_to_native_vec;
 use crate::models::foreign_account::ForeignAccount;
 use crate::models::input_note::InputNote;
 use crate::models::miden_arrays::{
+    FeltArray,
     ForeignAccountArray,
     NoteAndArgsArray,
     NoteArray,
     NoteDetailsAndTagArray,
     NoteRecipientArray,
+    NoteScriptArray,
 };
 use crate::models::note_recipient::NoteRecipient;
+use crate::models::note_script::NoteScript;
 use crate::models::transaction_request::TransactionRequest;
 use crate::models::transaction_request::note_and_args::{NoteAndArgs, NoteArgs};
 use crate::models::transaction_request::note_details_and_tag::NoteDetailsAndTag;
 use crate::models::transaction_script::TransactionScript;
 use crate::models::word::Word;
-use crate::platform::JsErr;
+use crate::platform::{JsErr, from_str_err};
 
 /// A builder for a `TransactionRequest`.
 ///
@@ -168,36 +177,39 @@ impl TransactionRequestBuilder {
         self.clone()
     }
 
-    /// Adds an authentication argument: a `Word` pushed to the stack for the account's
-    /// authentication procedure.
+    /// Sets the authentication argument to the commitment of `auth_args` and adds their preimage to
+    /// the advice map. `authArgs` must hold a whole number of words: a non-empty multiple of 4
+    /// felts.
     ///
     /// Mutually exclusive with `withFeeConversionSalt`, and the exclusion is enforced by
     /// miden-client rather than reported as an error: each setter clears the other, so whichever
     /// is called last wins and the request can never carry both.
     ///
-    /// That symmetry makes this setter destructive in the same place its twin is: on a builder
-    /// returned by `feeAwareTransactionRequestBuilder` for a multisig account, which already
-    /// carries the component's three-word auth args. Calling this discards them and the auth
-    /// procedure aborts piping a preimage that was never written. Pass `feeConversionSalt` to
+    /// That makes this setter destructive on a builder returned by
+    /// `feeAwareTransactionRequestBuilder` for a multisig account, which already carries the
+    /// component's three-word auth args: calling it replaces them. Pass `feeConversionSalt` to
     /// `feeAwareTransactionRequestBuilder` instead.
     ///
     /// Setting this opts the request out of the client's fee-conversion machinery entirely. The
     /// client commits conversion info only when the request carries no auth argument of its own,
     /// so a caller that sets one is taking responsibility for the fee: on a fee-charging chain
-    /// the word has to be the commitment `hash(CONVERSION_INFO || SALT)`, with its preimage
-    /// reachable through `extendAdviceMap`, or `fee::pay_fee` aborts in the VM with
-    /// `ERR_FEE_CONVERSION_INFO_MISSING`. This is the escape hatch for an account whose auth
+    /// `authArgs` has to hold the conversion info the auth procedure reads, or `fee::pay_fee`
+    /// aborts in the VM with `ERR_FEE_CONVERSION_INFO_MISSING`. This is for an account whose auth
     /// component miden-client does not recognise and therefore will not commit for; where the
     /// account is a standard one, prefer `withFeeConversionSalt` or nothing at all.
-    #[js_export(js_name = "withAuthArg")]
-    pub fn with_auth_arg(&mut self, auth_arg: &Word) -> Self {
-        let native_word: NativeWord = auth_arg.into();
-        // Deprecated in 0.17.4 for auth_args, yet still the only raw-word setter, which a
-        // component that reads the auth arg directly needs.
-        #[allow(deprecated)]
-        let builder = self.builder.clone().auth_arg(native_word);
-        self.builder = builder;
-        self.clone()
+    #[js_export(js_name = "withAuthArgs")]
+    pub fn with_auth_args(&mut self, auth_args: FeltArray) -> Result<Self, JsErr> {
+        let elements = felt_array_to_native_vec(&auth_args);
+        if elements.is_empty() || !elements.len().is_multiple_of(WORD_SIZE) {
+            return Err(from_str_err(&format!(
+                "auth args must be a non-empty multiple of {} felts, got {}",
+                WORD_SIZE,
+                elements.len()
+            )));
+        }
+
+        self.builder = self.builder.clone().auth_args(&AuthArgs(elements));
+        Ok(self.clone())
     }
 
     /// Declares the salt the transaction's fee conversion info is committed under.
@@ -215,7 +227,7 @@ impl TransactionRequestBuilder {
     /// Declaring a salt against an account whose auth component does not read the auth args as
     /// conversion info is refused with `FeeConversionInfoUnsupported`.
     ///
-    /// Mutually exclusive with `withAuthArg` — see the note there. That makes this setter
+    /// Mutually exclusive with `withAuthArgs` — see the note there. That makes this setter
     /// destructive on a builder returned by `feeAwareTransactionRequestBuilder` for a multisig:
     /// that builder already carries the component's three-word auth args, and clearing them
     /// leaves the auth procedure piping a preimage that was never written. Pass
@@ -227,6 +239,57 @@ impl TransactionRequestBuilder {
         self.clone()
     }
 
+    /// Makes execution skip input notes that are no longer consumable instead of failing. The
+    /// skipped notes are dropped without an error, so the transaction consumes only the rest.
+    /// Execution screens at most 20 input notes this way and fails with `invalid input note count`
+    /// above that, so split a larger batch across requests.
+    #[js_export(js_name = "ignoreInvalidInputNotes")]
+    pub fn ignore_invalid_input_notes(&mut self) -> Self {
+        self.builder = self.builder.clone().ignore_invalid_input_notes();
+        self.clone()
+    }
+
+    /// Declares the note scripts the network executes for this request, and the request carries
+    /// them through serialization. The web client submits exactly the request it is given, so it
+    /// registers nothing: submit `newRegisterNoteScriptsTransactionRequest` from the same sender
+    /// first for every custom script the node does not know yet. The node resolves standard
+    /// scripts itself, so they need no registration.
+    #[js_export(js_name = "withExpectedNtxScripts")]
+    pub fn with_expected_ntx_scripts(&mut self, scripts: NoteScriptArray) -> Self {
+        let items: Vec<NoteScript> = scripts.into();
+        let native_scripts: Vec<NativeNoteScript> = items.into_iter().map(Into::into).collect();
+        self.builder = self.builder.clone().expected_ntx_scripts(native_scripts);
+        self.clone()
+    }
+
+    /// Gives `code` to the transaction as the new code of the executing account, through the
+    /// advice map. It neither initializes the upgrade nor changes the transaction script; use
+    /// `buildAccountCodeUpgrade` when the transaction only upgrades the code.
+    #[js_export(js_name = "withAccountCodeUpgrade")]
+    pub fn with_account_code_upgrade(&mut self, code: &AccountCode) -> Self {
+        let native_code: NativeAccountCode = code.into();
+        self.builder = self.builder.clone().account_code_upgrade(native_code);
+        self.clone()
+    }
+
+    /// Finalizes the builder into a request that upgrades the executing account to `code`. The
+    /// account needs the `UpgradeManager` component with `AuthControlled` authority. The upgrade
+    /// keeps the storage, so `code` must use the same storage layout. The request replaces any
+    /// custom script and script argument, and fails if own output notes or an expiration delta
+    /// are set.
+    #[js_export(js_name = "buildAccountCodeUpgrade")]
+    pub fn build_account_code_upgrade(
+        &self,
+        code: &AccountCode,
+    ) -> Result<TransactionRequest, JsErr> {
+        let native_code: NativeAccountCode = code.into();
+        self.builder
+            .clone()
+            .build_account_code_upgrade(native_code)
+            .map(TransactionRequest)
+            .map_err(|err| js_error_with_context(err, "failed to build account code upgrade"))
+    }
+
     /// Finalizes the builder into a `TransactionRequest`.
     pub fn build(&self) -> Result<TransactionRequest, JsErr> {
         self.builder
@@ -234,6 +297,17 @@ impl TransactionRequestBuilder {
             .build()
             .map(TransactionRequest)
             .map_err(|err| js_error_with_context(err, "failed to build transaction request"))
+    }
+}
+
+/// Auth args given as raw felts, committed with the default Poseidon2 hash.
+struct AuthArgs(Vec<NativeFelt>);
+
+impl SequentialCommit for AuthArgs {
+    type Commitment = NativeWord;
+
+    fn to_elements(&self) -> Vec<NativeFelt> {
+        self.0.clone()
     }
 }
 

@@ -31,7 +31,9 @@ interface MidenObservation {
 
 `durationMs` runs from when the call's turn on its client's queue starts until
 it settles: time queued behind the same client's earlier calls is not in it.
-Round it yourself. A call that takes the store lock - `syncState`, `syncChain`,
+A store-locked call that times out before its turn starts has no turn, so it
+reports 0, delivered when it rejects, and the wait it spent queued is not
+counted. Round it yourself. A call that takes the store lock - `syncState`, `syncChain`,
 `syncNoteTransport`, `importNoteFile` (`notes.import`), `fetchPrivateNotes`
 (`notes.fetchPrivate`), and, on a store still at genesis only,
 `syncBeforeAccountCreation` and account creation (`newWallet`, `newFaucet`,
@@ -74,9 +76,9 @@ resource method: read the resource implementation in
 
 Four categories emit nothing, and each has bitten someone:
 
-- **The six raw-bound `SYNC_METHODS`** - `buildSwapTag`, `lastAuthError`,
-  `proveBlock`, `serializeMockChain`, `serializeMockNoteTransportNode`,
-  `usesMockChain`. They bypass the serialization wrapper entirely, which is
+- **The seven raw-bound `SYNC_METHODS`** - `buildSwapTag`, `endpoint`,
+  `lastAuthError`, `proveBlock`, `serializeMockChain`,
+  `serializeMockNoteTransportNode`, `usesMockChain`. They bypass the serialization wrapper entirely, which is
   where observation happens.
 - **Client construction.** `create`, `ready()` and the factories emit nothing.
   You cannot measure startup this way.
@@ -102,6 +104,8 @@ Four categories emit nothing, and each has bitten someone:
   on another client on the same store is not shared: it runs its own,
   serialized by the store lock, and reports its own observation, lock wait
   included.
+- **A store-locked call that times out before its turn** reports once, when it
+  rejects, its skipped turn reports nothing, and a joiner adds none.
 - **`waitForConfirmation: true` inflates the stream.** The wait loop polls
   `syncChain` plus `getTransactions` on every interval (5 s by default, up to a
   60 s timeout), so a single confirmed transaction can contribute dozens of

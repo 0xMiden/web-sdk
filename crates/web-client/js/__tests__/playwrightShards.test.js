@@ -37,15 +37,20 @@ const EXCLUDED = {
   "storage_view.test.ts": "runs in `nodejs`",
   "worker_init_failure.test.ts":
     "browser-worker failure injection, run locally",
+  // SDK surface lands first; chromium shard registration is a follow-up so
+  // this PR does not touch playwright.config.ts. The `nodejs` project still
+  // picks the file up via `**/*.test.ts`.
+  "fee_sponsorship_note.test.ts":
+    "nodejs only for now; chromium shard in follow-up",
 
   // KNOWN GAP: the `nodejs` project ignores each of these by name (or by the
   // `test/*.browser.test.ts` glob) and no chromium shard lists them, so they
   // run in no CI project at all. They are recorded rather than added to a
   // shard because none of them has ever run in CI: enabling them could surface
   // pre-existing failures, and verifying them first needs a local node, which
-  // is outside what a review pass can check.
+  // is outside what a review pass can check. `batch.browser.test.ts` matches
+  // the same glob but runs in ci-shard-1-tx-flows, so it is not listed here.
   "account.browser.test.ts": "KNOWN GAP — runs in no CI project",
-  "batch.browser.test.ts": "KNOWN GAP — runs in no CI project",
   "new_account.browser.test.ts": "KNOWN GAP — runs in no CI project",
   "new_transactions.browser.test.ts": "KNOWN GAP — runs in no CI project",
   "no_wasm_reentry_via_tojson.test.ts": "KNOWN GAP — runs in no CI project",
@@ -159,9 +164,34 @@ describe("playwright CI shard coverage", () => {
     ).toEqual([]);
   });
 
+  it("does not exclude a file that a shard runs", () => {
+    const sharded = new Set(shardedFiles());
+    const both = Object.keys(EXCLUDED).filter((f) => sharded.has(f));
+    expect(
+      both,
+      "an EXCLUDED entry for a sharded file misreports what CI runs; drop the entry"
+    ).toEqual([]);
+  });
+
   it("does not exclude a file that no longer exists", () => {
     const onDisk = new Set(integrationTestFiles());
     const stale = Object.keys(EXCLUDED).filter((f) => !onDisk.has(f));
     expect(stale, "stale EXCLUDED entries hide real gaps").toEqual([]);
+  });
+});
+
+// The store-read failure ("failed to read the protocol configuration") and the
+// `feeFaucetId()` rejection both contain "protocol configuration", so only the
+// full sentence tells the not-synced rejection apart from them.
+describe("protocolConfig integration assertions", () => {
+  it("pre-sync protocolConfig rejection is pinned to the not-synced sentence", () => {
+    const spec = fs.readFileSync(
+      path.join(testDir, "miden_client_api.test.ts"),
+      "utf8"
+    );
+    expect(spec).toContain(
+      `"the network's protocol configuration is not known yet"`
+    );
+    expect(spec).not.toContain(`toContain("protocol configuration")`);
   });
 });

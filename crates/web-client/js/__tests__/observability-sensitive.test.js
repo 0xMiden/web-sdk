@@ -64,7 +64,6 @@ function newClient(observability) {
 /** A host carrying just the state `_serializeWasmCall` reads. */
 function makeHost(observeSensitive) {
   return {
-    _withInnerLockDepth: 0,
     _wasmCallChain: Promise.resolve(),
     _observeSensitive: observeSensitive,
     _serializeWasmCall: WasmWebClient.prototype._serializeWasmCall,

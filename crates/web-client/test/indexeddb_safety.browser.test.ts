@@ -92,6 +92,7 @@ async function prepare(page, build, entry, workerMode) {
         undefined,
         seed,
         undefined,
+        undefined,
         { durability: "strict" },
         false
       );
@@ -105,6 +106,7 @@ async function prepare(page, build, entry, workerMode) {
         chain,
         transport,
         seed,
+        undefined,
         undefined,
         {
           durability: "strict",

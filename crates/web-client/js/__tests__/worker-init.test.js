@@ -1,12 +1,16 @@
-import { describe, it, expect, beforeAll, vi } from "vitest";
-import { WorkerAction } from "../constants.js";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { MethodName, WorkerAction } from "../constants.js";
 
-// The worker loads the built bindings from dist/; a stub stands in for them so
-// the INIT handler runs in node.
 const created = [];
+const posted = [];
 let initFailure;
-vi.mock("../../dist/wasm.js", () => ({
-  default: async () => ({
+
+beforeAll(async () => {
+  vi.resetModules();
+  vi.stubGlobal("__midenWorkerWasm", {
+    AccountId: { fromHex: (hex) => ({ hex }) },
+    TransactionRequest: { deserialize: (bytes) => ({ bytes }) },
+    TransactionProver: { deserialize: (bytes) => ({ bytes }) },
     WebClient: class {
       async createClient(...args) {
         created.push({ method: "createClient", args });
@@ -19,21 +23,47 @@ vi.mock("../../dist/wasm.js", () => ({
         created.push({ method: "createClientWithExternalKeystore", args });
       }
       async createMockClient(...args) {
-        const call = { method: "createMockClient", args, instance: this };
-        created.push(call);
+        created.push({ method: "createMockClient", args, instance: this });
       }
       async installNoteAcquisitionGate(...args) {
         this.acquisitionGateArgs = args;
       }
+      async syncStateImpl() {
+        return { serialize: () => new Uint8Array([1, 2]) };
+      }
+      async syncChainImpl() {
+        return { serialize: () => new Uint8Array([3, 4]) };
+      }
+      async syncNoteTransportImpl() {}
+      async executeTransaction() {
+        return {
+          id: () => ({ toHex: () => "0xtx" }),
+          serialize: () => new Uint8Array([5]),
+        };
+      }
+      async proveTransaction() {
+        return { proven: true };
+      }
+      async submitProvenTransaction() {
+        return 7;
+      }
+      async applyTransaction() {
+        return { serialize: () => new Uint8Array([6]) };
+      }
+      async serializeMockChain() {
+        return new Uint8Array([7]);
+      }
+      async serializeMockNoteTransportNode() {
+        return new Uint8Array([8]);
+      }
     },
-  }),
-}));
-
-const posted = [];
-
-beforeAll(async () => {
+  });
   vi.stubGlobal("self", { postMessage: (message) => posted.push(message) });
   await import("../workers/web-client-methods-worker.js");
+});
+
+afterAll(() => {
+  vi.unstubAllGlobals();
 });
 
 async function init(args) {
@@ -45,12 +75,29 @@ async function init(args) {
   return created.at(-1);
 }
 
+let nextRequestId = 1;
+
 async function initMock(args) {
   const readyBefore = posted.filter((m) => m.ready).length;
   self.onmessage({ data: { action: WorkerAction.INIT_MOCK, args } });
   await vi.waitFor(() => {
     expect(posted.filter((m) => m.ready).length).toBe(readyBefore + 1);
   });
+  return created.at(-1);
+}
+
+async function callWorkerMethod(methodName, args) {
+  const requestId = nextRequestId++;
+  self.onmessage({
+    data: { action: WorkerAction.CALL_METHOD, methodName, args, requestId },
+  });
+  await vi.waitFor(() => {
+    expect(posted.some((m) => m.requestId === requestId)).toBe(true);
+  });
+  const reply = posted.find((m) => m.requestId === requestId);
+  if (reply.error) {
+    throw new Error(reply.error.message);
+  }
   return created.at(-1);
 }
 
@@ -106,7 +153,89 @@ describe("worker INIT", () => {
   });
 });
 
-it("keeps serialized mock state ahead of worker storage and acquisition options", async () => {
+describe("worker INIT_MOCK", () => {
+  it("defaults omitted and nullish storeName to mock_client_db", async () => {
+    for (const storeName of [undefined, null]) {
+      const initCall = await initMock([
+        undefined,
+        undefined,
+        1,
+        new Uint8Array([1]).buffer,
+        undefined,
+        storeName,
+      ]);
+      expect(initCall.args[3]).toBe("mock_client_db");
+    }
+  });
+
+  it("preserves empty string storeName across INIT_MOCK and SYNC_STATE_MOCK", async () => {
+    const initCall = await initMock([
+      undefined,
+      undefined,
+      1,
+      undefined,
+      undefined,
+      "",
+    ]);
+    expect(initCall.args).toEqual([undefined, undefined, undefined, ""]);
+
+    const syncCall = await callWorkerMethod(MethodName.SYNC_STATE_MOCK, [
+      new Uint8Array([1]).buffer,
+      null,
+    ]);
+    expect(syncCall.args[3]).toBe("");
+  });
+
+  it("forwards custom and empty storeName across all five worker mock handlers", async () => {
+    for (const storeName of ["mock_isolated_db", ""]) {
+      const initCall = await initMock([
+        undefined,
+        undefined,
+        1,
+        undefined,
+        undefined,
+        storeName,
+      ]);
+      expect(initCall.args[3]).toBe(storeName);
+
+      const invocations = [
+        [MethodName.SYNC_STATE_MOCK, [new Uint8Array([1]).buffer, null]],
+        [MethodName.SYNC_CHAIN_MOCK, [new Uint8Array([1]).buffer, null]],
+        [
+          MethodName.SYNC_NOTE_TRANSPORT_MOCK,
+          [new Uint8Array([1]).buffer, null],
+        ],
+        [
+          MethodName.SUBMIT_NEW_TRANSACTION_MOCK,
+          [
+            "0xabc",
+            new Uint8Array([2]).buffer,
+            new Uint8Array([1]).buffer,
+            null,
+          ],
+        ],
+        [
+          MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK,
+          [
+            "0xabc",
+            new Uint8Array([2]).buffer,
+            new Uint8Array([3]).buffer,
+            new Uint8Array([1]).buffer,
+            null,
+          ],
+        ],
+      ];
+
+      for (const [methodName, args] of invocations) {
+        const call = await callWorkerMethod(methodName, args);
+        expect(call.method).toBe("createMockClient");
+        expect(call.args[3]).toBe(storeName);
+      }
+    }
+  });
+});
+
+it("keeps serialized mock state and storeName ahead of worker storage and acquisition options", async () => {
   const storageOptions = { durability: "strict", notify: true };
   const limits = { maxCandidates: 2 };
   const call = await initMock([
@@ -115,22 +244,30 @@ it("keeps serialized mock state ahead of worker storage and acquisition options"
     1,
     new Uint8Array([1]).buffer,
     new Uint8Array([2]).buffer,
+    undefined,
     storageOptions,
     limits,
   ]);
 
   expect(call.method).toBe("createMockClient");
-  expect(call.args.slice(0, 3)).toEqual([
+  expect(call.args.slice(0, 4)).toEqual([
     "seed",
     new Uint8Array([1]),
     new Uint8Array([2]),
+    "mock_client_db",
   ]);
-  expect(call.args[3].durability).toBe("strict");
-  expect(call.args[3].onFailure).toEqual(expect.any(Function));
+  expect(call.args[4].durability).toBe("strict");
+  expect(call.args[4].onFailure).toEqual(expect.any(Function));
   expect(call.instance.acquisitionGateArgs).toEqual([
     expect.any(Function),
     limits,
   ]);
+
+  const sync = await callWorkerMethod(MethodName.SYNC_STATE_MOCK, [
+    new Uint8Array([1]).buffer,
+    null,
+  ]);
+  expect(sync.args[4].durability).toBe("strict");
 });
 
 it("forwards cloneable storage policy and posts open failure before init rejection", async () => {
@@ -158,6 +295,7 @@ it("forwards cloneable storage policy and posts open failure before init rejecti
         false,
         undefined,
         1,
+        undefined,
         undefined,
         undefined,
         undefined,

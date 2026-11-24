@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { openDatabase, getDatabase } from "./schema.js";
 import {
   upsertInputNote,
@@ -15,6 +15,7 @@ import {
   getUnspentInputNoteNullifiers,
   getNoteScript,
 } from "./notes.js";
+import { recordReads } from "./test-utils.js";
 
 // Unique DB names to avoid collisions between tests.
 let dbCounter = 0;
@@ -53,7 +54,8 @@ const CONSUMED_STATES = new Uint8Array([
   STATE_CONSUMED_EXTERNAL,
 ]);
 
-// Unspent state discriminants (stateDiscriminant 2, 4, 5)
+// Unspent state discriminants (stateDiscriminant 0, 1, 2, 4, 5)
+const STATE_UNVERIFIED = 1;
 const STATE_COMMITTED = 2;
 const STATE_PROCESSING_AUTHENTICATED = 4;
 const STATE_PROCESSING_UNAUTHENTICATED = 5;
@@ -103,6 +105,63 @@ async function insertNote(
     opts.consumedBlockHeight,
     opts.consumedTxOrder,
     opts.consumerAccountId ?? CONSUMER
+  );
+}
+
+const SCRIPT_A = new Uint8Array([1]);
+const SCRIPT_B = new Uint8Array([2]);
+// base64 of [1] and [2].
+const SCRIPT_A_BASE64 = "AQ==";
+const SCRIPT_B_BASE64 = "Ag==";
+
+// The noteId is stored in `createdAt` so each processed input note can be identified.
+async function insertInputNoteWithScript(
+  dbId: string,
+  noteId: string,
+  scriptRoot: string,
+  script: Uint8Array
+) {
+  await upsertInputNote(
+    dbId,
+    noteId,
+    noteId,
+    DUMMY_BYTES,
+    DUMMY_BYTES,
+    DUMMY_BYTES,
+    DUMMY_BYTES,
+    scriptRoot,
+    script,
+    `nullifier-${noteId}`,
+    noteId,
+    STATE_EXPECTED,
+    DUMMY_BYTES,
+    undefined,
+    undefined,
+    undefined
+  );
+}
+
+// The noteId is stored in `recipientDigest` so each processed output note can be identified.
+async function insertOutputNoteWithScript(
+  dbId: string,
+  noteId: string,
+  scriptRoot?: string,
+  script?: Uint8Array
+) {
+  await upsertOutputNote(
+    dbId,
+    noteId,
+    noteId,
+    DUMMY_BYTES,
+    DUMMY_BYTES,
+    noteId,
+    DUMMY_BYTES,
+    undefined,
+    100,
+    STATE_EXPECTED,
+    DUMMY_BYTES,
+    scriptRoot,
+    script
   );
 }
 
@@ -311,6 +370,61 @@ describe("getInputNoteAfter ordering", () => {
 
 // CURSOR SEMANTICS TESTS
 // ================================================================================================
+
+describe("getInputNoteAfter index use", () => {
+  const CONSUMER_INDEX =
+    "[consumerAccountId+consumedBlockHeight+consumedTxOrder+detailsCommitment]";
+
+  it("reads only the consumer's range of the consumer-prefixed index, for every cursor and bound shape", async () => {
+    const dbId = await openTestDb();
+    for (let height = 1; height <= 3; height++) {
+      await insertNote(dbId, `mine-${height}`, {
+        consumedBlockHeight: height,
+        consumedTxOrder: 0,
+      });
+      await insertNote(dbId, `other-${height}`, {
+        consumedBlockHeight: height,
+        consumedTxOrder: 0,
+        consumerAccountId: "0xother",
+      });
+    }
+    const cursor = await cursorFor(dbId, "mine-1");
+
+    const recorder = recordReads();
+    try {
+      const page = (
+        blockStart?: number,
+        blockEnd?: number,
+        after?: typeof cursor
+      ) =>
+        getInputNoteAfter(
+          dbId,
+          CONSUMED_STATES,
+          CONSUMER,
+          blockStart,
+          blockEnd,
+          after?.blockHeight,
+          after?.txOrder,
+          after?.detailsCommitment
+        );
+      const ids = async (...args: Parameters<typeof page>) =>
+        ((await page(...args)) ?? []).map((n) => n.createdAt);
+      // A range that left the consumer would surface an "other-" note here.
+      expect(await ids()).toEqual(["mine-1"]);
+      expect(await ids(2, 3)).toEqual(["mine-2"]);
+      expect(await ids(undefined, 2, cursor)).toEqual(["mine-2"]);
+    } finally {
+      recorder.stop();
+    }
+
+    const noteReads = recorder.reads.filter((r) => r.store === "inputNotes");
+    expect(noteReads.length).toBeGreaterThan(0);
+    for (const read of noteReads) {
+      expect(read.index).toBe(CONSUMER_INDEX);
+      expect(read.ranged).toBe(true);
+    }
+  });
+});
 
 describe("getInputNoteAfter cursor semantics", () => {
   it("returns the first note when no cursor is given", async () => {
@@ -647,6 +761,35 @@ describe("getInputNotes", () => {
     expect(result).toHaveLength(1);
     expect(result![0].serializedNoteScript).toBeUndefined();
   });
+
+  it("returns each input note its own script, including shared and missing roots", async () => {
+    const dbId = await openTestDb();
+    // Notes a1 and a2 share the same script
+    await insertInputNoteWithScript(dbId, "a1", "root-a", SCRIPT_A);
+    await insertInputNoteWithScript(dbId, "a2", "root-a", SCRIPT_A);
+    await insertInputNoteWithScript(dbId, "b", "root-b", SCRIPT_B);
+    await insertInputNoteWithScript(
+      dbId,
+      "missing-script",
+      "root-missing",
+      SCRIPT_A
+    );
+    // Model a note whose script row is absent.
+    await getDatabase(dbId).notesScripts.delete("root-missing");
+
+    const result = await getInputNotes(dbId, new Uint8Array([]));
+    const scripts = Object.fromEntries(
+      result!.map((note) => [note.createdAt, note.serializedNoteScript])
+    );
+
+    expect(result).toHaveLength(4);
+    expect(scripts).toEqual({
+      a1: SCRIPT_A_BASE64,
+      a2: SCRIPT_A_BASE64,
+      b: SCRIPT_B_BASE64,
+      "missing-script": undefined,
+    });
+  });
 });
 
 // ================================================================================================
@@ -747,7 +890,7 @@ describe("getInputNotesFromNullifiers", () => {
 // ================================================================================================
 
 describe("getUnspentInputNoteNullifiers", () => {
-  it("returns nullifiers for notes with discriminant 2, 4, or 5", async () => {
+  it("returns nullifiers for notes with discriminant 0, 1, 2, 4, or 5", async () => {
     const dbId = await openTestDb();
     await insertNote(dbId, "note-committed", {
       stateDiscriminant: STATE_COMMITTED,
@@ -765,13 +908,38 @@ describe("getUnspentInputNoteNullifiers", () => {
       stateDiscriminant: STATE_EXPECTED,
       nullifier: "0xnull-expected",
     });
+    await insertNote(dbId, "note-unverified", {
+      stateDiscriminant: STATE_UNVERIFIED,
+      nullifier: "0xnull-unverified",
+    });
 
     const nullifiers = await getUnspentInputNoteNullifiers(dbId);
-    expect(nullifiers).toHaveLength(3);
+    expect(nullifiers).toHaveLength(5);
     expect(nullifiers).toContain("0xnull-committed");
     expect(nullifiers).toContain("0xnull-proc-auth");
     expect(nullifiers).toContain("0xnull-proc-unauth");
-    expect(nullifiers).not.toContain("0xnull-expected");
+    expect(nullifiers).toContain("0xnull-expected");
+    expect(nullifiers).toContain("0xnull-unverified");
+  });
+
+  it("reads the [stateDiscriminant+nullifier] index keys instead of scanning notes", async () => {
+    const dbId = await openTestDb();
+    await insertNote(dbId, "note-committed", {
+      stateDiscriminant: STATE_COMMITTED,
+      nullifier: "0xnull-committed",
+    });
+    const notes = getDatabase(dbId).inputNotes;
+    const whereSpy = vi.spyOn(notes, "where");
+    const collection = Object.getPrototypeOf(notes.toCollection());
+    const keysSpy = vi.spyOn(collection, "keys");
+    const toArraySpy = vi.spyOn(collection, "toArray");
+
+    expect(await getUnspentInputNoteNullifiers(dbId)).toEqual([
+      "0xnull-committed",
+    ]);
+    expect(whereSpy).toHaveBeenCalledWith("[stateDiscriminant+nullifier]");
+    expect(keysSpy).toHaveBeenCalledTimes(1);
+    expect(toArraySpy).not.toHaveBeenCalled();
   });
 
   it("returns empty array when no unspent notes", async () => {
@@ -868,6 +1036,31 @@ describe("getOutputNotes", () => {
 
     const result = await getOutputNotesFromIds(dbId, ["out-partial"]);
     expect(result![0].serializedNoteScript).toBeUndefined();
+  });
+
+  it("returns each output note its own script, including shared and missing roots", async () => {
+    const dbId = await openTestDb();
+    // Notes a1 and a2 share the same script
+    await insertOutputNoteWithScript(dbId, "a1", "root-a", SCRIPT_A);
+    await insertOutputNoteWithScript(dbId, "a2", "root-a", SCRIPT_A);
+    await insertOutputNoteWithScript(dbId, "b", "root-b", SCRIPT_B);
+    // A root without script bytes writes no `notesScripts` row.
+    await insertOutputNoteWithScript(dbId, "missing-script", "root-missing");
+    await insertOutputNoteWithScript(dbId, "no-recipient");
+
+    const result = await getOutputNotes(dbId, new Uint8Array([]));
+    const scripts = Object.fromEntries(
+      result!.map((note) => [note.recipientDigest, note.serializedNoteScript])
+    );
+
+    expect(result).toHaveLength(5);
+    expect(scripts).toEqual({
+      a1: SCRIPT_A_BASE64,
+      a2: SCRIPT_A_BASE64,
+      b: SCRIPT_B_BASE64,
+      "missing-script": undefined,
+      "no-recipient": undefined,
+    });
   });
 
   it("returns all output notes when states is empty", async () => {

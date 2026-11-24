@@ -25,12 +25,18 @@ use crate::{WebKeyStore, idxdb_store_init_error};
 impl WebClient {
     /// Creates a new client with a mock RPC API. Useful for testing purposes and proof-of-concept
     /// applications as it uses a mock chain that simulates the behavior of a real node.
+    ///
+    /// `store_name` selects the `IndexedDB` database. Omit it (or pass `None`) to keep the
+    /// historical default `"mock_client_db"`. Pass a distinct name when a second mock client
+    /// must not share that database with another live mock in the same origin; sharing it with
+    /// a different mock chain makes `syncState` fail genesis tip validation.
     #[js_export(js_name = "createMockClient")]
     pub async fn create_mock_client(
         &self,
         seed: Option<Vec<u8>>,
         serialized_mock_chain: Option<Vec<u8>>,
         serialized_mock_note_transport_node: Option<Vec<u8>>,
+        store_name: Option<String>,
         indexed_db: Option<wasm_bindgen::JsValue>,
     ) -> Result<String, JsErr> {
         let mock_rpc_api = match serialized_mock_chain {
@@ -52,7 +58,7 @@ impl WebClient {
             None => Arc::new(MockNoteTransportApi::default()),
         };
 
-        let store_name = "mock_client_db".to_owned();
+        let store_name = store_name.unwrap_or_else(|| "mock_client_db".to_owned());
         let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
             IdxdbStore::new_with_options(
@@ -73,6 +79,7 @@ impl WebClient {
         let protocol_config = mock_rpc_api.protocol_config();
         self.setup_client(
             mock_rpc_api.clone(),
+            None,
             store,
             keystore,
             rng,
@@ -137,6 +144,7 @@ impl WebClient {
         let protocol_config = mock_rpc_api.protocol_config();
         self.setup_client(
             mock_rpc_api.clone(),
+            None,
             store,
             keystore,
             rng,

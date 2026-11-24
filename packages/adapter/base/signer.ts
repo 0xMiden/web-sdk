@@ -8,6 +8,7 @@ import {
 } from "./transaction";
 import {
   Asset,
+  StorageReadRequest,
   CreateAccountParams,
   GuardianInfo,
   InputNoteDetails,
@@ -41,6 +42,22 @@ export interface MessageSignerWalletAdapterProps<
     noteFilterType: NoteFilterTypes,
     noteIds?: string[]
   ): Promise<InputNoteDetails[]>;
+  /**
+   * Signs `data` with the connected account's key and returns the signature.
+   *
+   * Per kind, the wallet signs: `"word"` and a `"signingInputs"` Blind or
+   * Arbitrary payload, the domain-separated commitment
+   * `domainSeparatedSignCommitment(data, kind)` from `@miden-sdk/miden-sdk`;
+   * a `"signingInputs"` transaction summary, its own commitment.
+   *
+   * The result carries no scheme signal: the adapter returns only the
+   * signature. Current wallets:
+   * `publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)`.
+   * Wallets released before this scheme signed the raw value, so their
+   * `"word"`, Blind and Arbitrary signatures do not verify against it. A
+   * transaction summary's commitment is the same in both generations, so the
+   * current check already covers it.
+   */
   signBytes(data: Uint8Array, kind: SignKind): Promise<Uint8Array>;
   importPrivateNote(note: Uint8Array): Promise<string>;
   requestConsumableNotes(): Promise<InputNoteDetails[]>;
@@ -51,6 +68,10 @@ export interface MessageSignerWalletAdapterProps<
   requestSend(transaction: MidenSendTransaction): Promise<string>;
   requestConsume(transaction: MidenConsumeTransaction): Promise<string>;
   createAccount(params?: CreateAccountParams): Promise<string>;
+  /** True when the wallet exposes storage reads and the grant covers them. */
+  readonly supportsStorageReads?: boolean;
+  /** Rejects with `WalletStorageUnsupportedError` when the wallet lacks it. */
+  requestStorage?(request: StorageReadRequest): Promise<string>;
 }
 
 export type MessageSignerWalletAdapter<Name extends string = string> =

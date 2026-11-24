@@ -1,4 +1,5 @@
 import { getDatabase } from "./schema.js";
+import Dexie from "dexie";
 import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
 export async function getOutputNotes(dbId, states) {
     try {
@@ -159,16 +160,20 @@ export async function getOutputNotesFromIds(dbId, noteIds) {
         logWebStoreError(err, "Failed to get output notes from IDs");
     }
 }
+// Expected, Unverified, Committed, ProcessingAuthenticated and ProcessingUnauthenticated.
+const UNSPENT_STATE_DISCRIMINANTS = [0, 1, 2, 4, 5];
 export async function getUnspentInputNoteNullifiers(dbId) {
     try {
         const db = getDatabase(dbId);
-        const notes = await db.inputNotes
-            .where("stateDiscriminant")
-            .anyOf([2, 4, 5])
-            .toArray();
-        return notes
-            .map((note) => note.nullifier)
-            .filter((nullifier) => nullifier != null);
+        // Key-only read: no note rows are loaded. Notes without a nullifier are not in the index.
+        const keys = await db.inputNotes
+            .where("[stateDiscriminant+nullifier]")
+            .inAnyRange(UNSPENT_STATE_DISCRIMINANTS.map((state) => [
+            [state, Dexie.minKey],
+            [state, Dexie.maxKey],
+        ]))
+            .keys();
+        return keys.map((key) => key[1]);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get unspent input note nullifiers");
@@ -227,7 +232,7 @@ export async function upsertInputNote(dbId, detailsCommitment, noteId, assets, a
         return doWork(tx);
     return db.dexie.transaction("rw", db.inputNotes, db.notesScripts, doWork);
 }
-const INPUT_NOTE_CONSUMPTION_INDEX = "[consumedBlockHeight+consumedTxOrder+detailsCommitment]";
+const INPUT_NOTE_CONSUMPTION_INDEX = "[consumerAccountId+consumedBlockHeight+consumedTxOrder+detailsCommitment]";
 // Returns a one-element array so the caller's shape is uniform with the other readers. The
 // cursor is compared as an index key rather than looked up, so it still resolves the right
 // position once its own note is deleted.
@@ -237,26 +242,26 @@ export async function getInputNoteAfter(dbId, states, consumerAccountId, blockSt
         const hasCursor = cursorBlockHeight != null &&
             cursorTxOrder != null &&
             cursorDetailsCommitment != null;
-        // With a cursor, `blockStart` is left to the predicate below: the cursor is the tighter
-        // lower bound, and emitting both abandons the row-value seek.
-        const ordered = hasCursor
-            ? db.inputNotes
+        // The consumer leads the index, so every read is one consumer's slice. With a cursor,
+        // `blockStart` is left to the predicate below: the cursor is the tighter lower bound.
+        const lower = hasCursor
+            ? [
+                consumerAccountId,
+                cursorBlockHeight,
+                cursorTxOrder,
+                cursorDetailsCommitment,
+            ]
+            : [consumerAccountId, blockStart ?? Dexie.minKey];
+        const upper = blockEnd != null
+            ? [consumerAccountId, blockEnd, Dexie.maxKey]
+            : [consumerAccountId, Dexie.maxKey];
+        const note = await db.inputNotes
                 .where(INPUT_NOTE_CONSUMPTION_INDEX)
-                .above([cursorBlockHeight, cursorTxOrder, cursorDetailsCommitment])
-            : blockStart != null
-                ? db.inputNotes
-                    .where(INPUT_NOTE_CONSUMPTION_INDEX)
-                    .aboveOrEqual([blockStart])
-                : db.inputNotes.orderBy(INPUT_NOTE_CONSUMPTION_INDEX);
-        const note = await ordered
+            .between(lower, upper, !hasCursor, true)
             .filter((n) => {
             if (states.length > 0 && !states.includes(n.stateDiscriminant))
                 return false;
-            if (n.consumerAccountId !== consumerAccountId)
-                return false;
             if (blockStart != null && n.consumedBlockHeight < blockStart)
-                return false;
-            if (blockEnd != null && n.consumedBlockHeight > blockEnd)
                 return false;
             return true;
         })
@@ -303,18 +308,11 @@ export async function upsertOutputNote(dbId, detailsCommitment, noteId, assets, 
     return db.dexie.transaction("rw", db.outputNotes, db.notesScripts, doWork);
 }
 async function processInputNotes(dbId, notes) {
-    const db = getDatabase(dbId);
-    return await Promise.all(notes.map(async (note) => {
+    const scripts = await getNoteScriptsBase64(dbId, notes.map((note) => note.scriptRoot));
+    return notes.map((note) => {
         const assetsBase64 = uint8ArrayToBase64(note.assets);
         const serialNumberBase64 = uint8ArrayToBase64(note.serialNumber);
         const inputsBase64 = uint8ArrayToBase64(note.inputs);
-        let serializedNoteScriptBase64 = undefined;
-        if (note.scriptRoot) {
-            let record = await db.notesScripts.get(note.scriptRoot);
-            if (record) {
-                serializedNoteScriptBase64 = uint8ArrayToBase64(record.serializedNoteScript);
-            }
-        }
         const stateBase64 = uint8ArrayToBase64(note.state);
         const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
         return {
@@ -322,24 +320,20 @@ async function processInputNotes(dbId, notes) {
             serialNumber: serialNumberBase64,
             inputs: inputsBase64,
             createdAt: note.serializedCreatedAt,
-            serializedNoteScript: serializedNoteScriptBase64,
+            serializedNoteScript: scripts.get(note.scriptRoot),
             state: stateBase64,
             attachments: attachmentsBase64,
         };
-    }));
+    });
 }
 async function processOutputNotes(dbId, notes) {
-    const db = getDatabase(dbId);
-    return await Promise.all(notes.map(async (note) => {
+    const scripts = await getNoteScriptsBase64(dbId, notes.map((note) => note.scriptRoot));
+    return notes.map((note) => {
         const assetsBase64 = uint8ArrayToBase64(note.assets);
         const metadataBase64 = uint8ArrayToBase64(note.metadata);
-        let serializedNoteScriptBase64 = undefined;
-        if (note.scriptRoot) {
-            const record = await db.notesScripts.get(note.scriptRoot);
-            if (record) {
-                serializedNoteScriptBase64 = uint8ArrayToBase64(record.serializedNoteScript);
-            }
-        }
+        const serializedNoteScriptBase64 = note.scriptRoot
+            ? scripts.get(note.scriptRoot)
+            : undefined;
         const stateBase64 = uint8ArrayToBase64(note.state);
         const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
         return {
@@ -351,7 +345,23 @@ async function processOutputNotes(dbId, notes) {
             state: stateBase64,
             attachments: attachmentsBase64,
         };
-    }));
+    });
+}
+// Fetches the scripts for the given roots in one read and returns them base64-encoded, keyed by
+// root. Empty roots are skipped, and roots without a stored script are absent from the map.
+async function getNoteScriptsBase64(dbId, roots) {
+    const db = getDatabase(dbId);
+    const uniqueRoots = [...new Set(roots.filter((root) => !!root))];
+    if (uniqueRoots.length === 0) {
+        return new Map();
+    }
+    const records = await db.notesScripts.bulkGet(uniqueRoots);
+    return new Map(records
+        .filter((record) => record !== undefined)
+        .map((record) => [
+        record.scriptRoot,
+        uint8ArrayToBase64(record.serializedNoteScript),
+    ]));
 }
 export async function upsertNoteScript(dbId, scriptRoot, serializedNoteScript) {
     const db = getDatabase(dbId);

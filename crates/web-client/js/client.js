@@ -13,6 +13,7 @@ import {
   resolveAccountRef,
   validateNoteTransportRetryOptions,
 } from "./utils.js";
+import { validateCallbackTimeoutMs } from "./callbackBridge.js";
 
 /**
  * MidenClient wraps the existing proxy-wrapped WebClient with a resource-based API.
@@ -25,6 +26,7 @@ export class MidenClient {
   static _WasmWebClient = null;
   static _MockWasmWebClient = null;
   static _getWasmOrThrow = null;
+  static _createTrustedHandle = null;
 
   #inner;
   #getWasm;
@@ -67,29 +69,21 @@ export class MidenClient {
    * The callback runs inside `_serializeWasmCall`, so the WASM RefCell is
    * held for the duration of `fn`. Concurrent SDK calls (sync, other
    * transactions, etc.) queue on the same chain and run after `fn`
-   * settles. Without this serialization, raw inner-client access would
-   * race the proxy's chain and trip wasm-bindgen's "recursive use of an
-   * object detected" panic.
+   * settles, including calls that land during one of `fn`'s awaits. The
+   * raw-bound accessors in `SYNC_METHODS` (index.js) and the `keystore`
+   * getter are the exception: they never queue.
+   * Without this serialization, raw inner-client access would race the
+   * proxy's chain and trip wasm-bindgen's "recursive use of an object
+   * detected" panic.
    *
-   * Re-entrancy: while `fn` is running, the underlying client's
-   * `_withInnerLockDepth` counter is bumped so that `_serializeWasmCall`
-   * invocations made BY `fn` (or any proxy-dispatched method it calls)
-   * run inline rather than enqueuing on the chain. Without this, every
-   * `await inner.X(...)` inside `fn` would enqueue behind the outer
-   * `_withInnerWebClient` slot which is itself awaiting `fn` —
-   * a classic re-entrant-lock deadlock. The depth counter restores the
-   * intent of the docstring above: the lock is held for the duration
-   * of `fn`, and inner-client calls "borrow" that already-held lock
-   * instead of trying to re-acquire it.
-   *
-   * SAFETY CONTRACT for re-entrancy: callers MUST hold an external
-   * mutex preventing concurrent access to this same client instance
-   * via other code paths during `fn`. The chain still serializes
-   * against external callers — they queue behind the outer slot — but
-   * if an external task runs during one of `fn`'s awaits and calls
-   * into the SDK, it will see `_withInnerLockDepth > 0` and run
-   * inline, racing wasm-bindgen's borrow check. The wallet pattern
-   * (own outer mutex around `_withInnerWebClient`) satisfies this.
+   * Re-entrancy: `fn` receives a trusted handle on the client, and only
+   * calls made through that handle run inline in the slot `fn` holds;
+   * queueing them would deadlock behind `fn` itself. Use the handle, not
+   * another reference to the client, inside `fn`: a call through any
+   * other reference queues behind `fn` and never settles while `fn`
+   * awaits it. Calls through the handle run inline, so await them one at a
+   * time. Once `fn` settles, calls through a kept handle queue like any
+   * other.
    *
    * A call inside `fn` that takes the store lock (see
    * `WebClient._withStoreLock`) still waits for other clients on the same
@@ -117,11 +111,11 @@ export class MidenClient {
     }
     const inner = this.#inner;
     return inner._serializeWasmCall(async () => {
-      inner._withInnerLockDepth = (inner._withInnerLockDepth || 0) + 1;
+      const { handle, release } = MidenClient._createTrustedHandle(inner);
       try {
-        return await fn(inner);
+        return await fn(handle);
       } finally {
-        inner._withInnerLockDepth--;
+        release();
       }
     });
   }
@@ -168,13 +162,15 @@ export class MidenClient {
       );
     }
 
+    validateCallbackTimeoutMs(options?.callbackTimeoutMs);
+
     const seed = options?.seed ? await hashSeed(options.seed) : undefined;
 
     const rpcUrl = resolveRpcUrl(options?.rpcUrl);
     const noteTransportUrl = resolveNoteTransportUrl(options?.noteTransportUrl);
 
-    // `useWorker: false` opts out of the Web Worker shim that wraps every
-    // WASM call. The shim exists to keep the main thread responsive in
+    // `useWorker: false` opts out of the Web Worker shim that wraps WASM
+    // calls. The shim exists to keep the main thread responsive in
     // browser/extension contexts, but it serializes the prover via
     // `TransactionProver.serialize()` — a format that has no encoding for
     // `newCallbackProver(jsFn)` and silently downgrades it to `"local"`.
@@ -198,6 +194,8 @@ export class MidenClient {
         options?.feeFaucetId,
         options?.noteTransportMaxRetries,
         options?.noteTransportRetryIntervalMs,
+        options?.callbackTimeoutMs,
+        options?.exclusive,
         ...indexedDbArgs(options?.indexedDb)
       );
     } else {
@@ -212,6 +210,8 @@ export class MidenClient {
         options?.feeFaucetId,
         options?.noteTransportMaxRetries,
         options?.noteTransportRetryIntervalMs,
+        undefined,
+        options?.exclusive,
         ...indexedDbArgs(options?.indexedDb)
       );
     }
@@ -289,6 +289,29 @@ export class MidenClient {
   }
 
   /**
+   * Creates a client preconfigured for mainnet use.
+   *
+   * Defaults: rpcUrl "mainnet", proverUrl "mainnet", noteTransportUrl "mainnet", autoSync true.
+   * All defaults can be overridden via options.
+   *
+   * `feeFaucetId` is optional: the client receives the chain's protocol
+   * configuration, which names the fee asset, from the node when it syncs. The
+   * option only sets what `feeFaucetId()` reports before that first sync.
+   *
+   * @param {ClientOptions} [options] - Options to override defaults.
+   * @returns {Promise<MidenClient>} A fully initialized mainnet client.
+   */
+  static async createMainnet(options) {
+    return MidenClient.create({
+      rpcUrl: "mainnet",
+      proverUrl: "mainnet",
+      noteTransportUrl: "mainnet",
+      autoSync: true,
+      ...options,
+    });
+  }
+
+  /**
    * Resolves once the WASM module is initialized and safe to use.
    *
    * Idempotent and shared across callers: the underlying loader memoizes the
@@ -340,10 +363,12 @@ export class MidenClient {
       options?.serializedMockChain,
       options?.serializedNoteTransport,
       seed,
+      undefined,
+      options?.storeName,
       ...(options?.indexedDb !== undefined ||
       options?.useWorker !== undefined ||
       options?.beforeNoteAcquisition !== undefined
-        ? [undefined, options?.indexedDb, options?.useWorker, options]
+        ? [options?.indexedDb, options?.useWorker, options]
         : [])
     );
 
@@ -437,9 +462,10 @@ export class MidenClient {
    * Meaningful only with `useWorker: false`: under the worker shim the
    * sign callback fires against the worker's WASM keystore, while this
    * accessor reads the main-thread instance — which never signed — so it
-   * returns `null`. Consumers that need this signal (e.g. external
-   * keystores with lock-aware sign callbacks) already require
-   * `useWorker: false` for the callback to be reachable at all.
+   * returns `null`. The callback itself still fires under the worker (it is
+   * proxied back to the main thread); it is only this accessor that cannot
+   * see the error, so consumers who need the signal require
+   * `useWorker: false`.
    *
    * @returns {any} The raw thrown value, or `null`.
    */
@@ -454,7 +480,8 @@ export class MidenClient {
    * store connection once the calls already queued or running have settled.
    * After this, all method calls will throw. To wait for the release, use
    * `await using` or `await client[Symbol.asyncDispose]()`. The release is
-   * browser-only: on the Node.js binding nothing is released.
+   * browser-only: on the Node.js binding only the store's ownership claim
+   * (see `ClientOptions.exclusive`) is released.
    * A store handle you obtain yourself, such as an AccountReader from
    * `accountReader`, keeps the connection open until you free it.
    */
@@ -471,8 +498,8 @@ export class MidenClient {
   /**
    * Terminates the client, then waits until its wasm client is freed and its
    * store connection released, so the store can be deleted or reopened once
-   * this settles. On the Node.js binding it releases nothing and resolves at
-   * once.
+   * this settles. On the Node.js binding it releases only the store's
+   * ownership claim and resolves at once.
    * A store handle you obtain yourself, such as an AccountReader from
    * `accountReader`, keeps the connection open until you free it.
    */
@@ -498,6 +525,21 @@ export class MidenClient {
   }
 
   /**
+   * Returns the protocol configuration of the connected network, including its
+   * fee asset, so a dApp need not hardcode it per network.
+   *
+   * The client receives the configuration from the node when it syncs, so this
+   * rejects until the first sync has stored it. Mock clients are seeded with
+   * their chain's configuration.
+   *
+   * @returns {Promise<ProtocolConfig>} The configuration the synced block commits to.
+   */
+  async protocolConfig() {
+    this.assertNotTerminated();
+    return await this.#inner.protocolConfig();
+  }
+
+  /**
    * Returns the identifier of the underlying store (e.g. IndexedDB database name, file path).
    *
    * @returns {string} The store identifier.
@@ -505,6 +547,22 @@ export class MidenClient {
   async storeIdentifier() {
     this.assertNotTerminated();
     return await this.#inner.storeIdentifier();
+  }
+
+  /**
+   * Returns the URL of the node this client was created against, e.g.
+   * `"https://rpc.devnet.miden.io"`. Shorthands are already resolved, and a
+   * client created without `rpcUrl` reports the testnet endpoint it defaulted
+   * to. A mock client talks to no node and returns `undefined`.
+   *
+   * Synchronous: the value is fixed at creation, so it never waits behind an
+   * in-flight call.
+   *
+   * @returns {string | undefined} The node URL, or `undefined` for a mock client.
+   */
+  endpoint() {
+    this.assertNotTerminated();
+    return this.#inner.endpoint();
   }
 
   /**
@@ -524,7 +582,7 @@ export class MidenClient {
    * auth procedure pays — not the recipient or a note's sender. For an account
    * that is not a multisig the builder comes back untouched, so this is a safe
    * drop-in; a zero base fee is not a second condition, since 0.17 a multisig
-   * resolves its auth args whatever the chain charges. `withAuthArg` and
+   * resolves its auth args whatever the chain charges. `withAuthArgs` and
    * `withFeeConversionSalt` are mutually exclusive: each clears the other, so
    * whichever is called last wins.
    *
@@ -552,7 +610,7 @@ export class MidenClient {
    * height when it built the request; below it execution fails with
    * "requested block N is after transaction reference block M" until it syncs.
    *
-   * Do not call `withFeeConversionSalt` or `withAuthArg` on the builder this
+   * Do not call `withFeeConversionSalt` or `withAuthArgs` on the builder this
    * returns for a multisig: the two setters clear each other, so either one
    * discards the auth args this already set. Pass `feeConversionSalt` here.
    *
@@ -670,6 +728,7 @@ export class MidenClient {
 }
 
 const RPC_URLS = {
+  mainnet: "https://rpc.mainnet.miden.io",
   testnet: "https://rpc.testnet.miden.io",
   devnet: "https://rpc.devnet.miden.io",
   localhost: "http://localhost:57291",
@@ -679,7 +738,8 @@ const RPC_URLS = {
 /**
  * Resolves an rpcUrl shorthand or raw URL into a concrete endpoint string.
  *
- * @param {string | undefined} rpcUrl - "testnet", "devnet", "localhost", "local", or a raw URL.
+ * @param {string | undefined} rpcUrl - "mainnet", "testnet", "devnet", "localhost", "local", or a
+ *   raw URL.
  * @returns {string | undefined} A fully qualified URL, or undefined to use the SDK default.
  */
 function resolveRpcUrl(rpcUrl) {
@@ -688,11 +748,13 @@ function resolveRpcUrl(rpcUrl) {
 }
 
 const PROVER_URLS = {
+  mainnet: "https://tx-prover.mainnet.miden.io",
   devnet: "https://tx-prover.devnet.miden.io",
   testnet: "https://tx-prover.testnet.miden.io",
 };
 
 const NOTE_TRANSPORT_URLS = {
+  mainnet: "https://transport.mainnet.miden.io",
   testnet: "https://transport.miden.io",
   devnet: "https://transport.devnet.miden.io",
 };
@@ -700,7 +762,7 @@ const NOTE_TRANSPORT_URLS = {
 /**
  * Resolves a noteTransportUrl shorthand or raw URL into a concrete endpoint string.
  *
- * @param {string | undefined} noteTransportUrl - "testnet", "devnet", or a raw URL.
+ * @param {string | undefined} noteTransportUrl - "mainnet", "testnet", "devnet", or a raw URL.
  * @returns {string | undefined} A fully qualified URL, or undefined if omitted.
  */
 function resolveNoteTransportUrl(noteTransportUrl) {
@@ -714,7 +776,7 @@ function resolveNoteTransportUrl(noteTransportUrl) {
 /**
  * Resolves a proverUrl shorthand or raw URL into a TransactionProver.
  *
- * @param {string} proverUrl - "local", "devnet", "testnet", or a raw URL.
+ * @param {string} proverUrl - "local", "mainnet", "devnet", "testnet", or a raw URL.
  * @param {object} wasm - Loaded WASM module.
  * @returns {object} A TransactionProver instance.
  */

@@ -1,11 +1,13 @@
 import { useCallback, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
-import { captureClientCurrency, useMidenStore } from "../store/MidenStore";
+import { useMidenStore } from "../store/MidenStore";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import { AccountStorageMode } from "@miden-sdk/miden-sdk";
 import type { Account } from "@miden-sdk/miden-sdk";
 import type { CreateFaucetOptions } from "../types";
 import { DEFAULTS } from "../types";
 import { runExclusiveDirect } from "../utils/runExclusive";
+import { toAmount } from "../utils/amounts";
 
 export interface UseCreateFaucetResult {
   /** Create a new faucet with the specified options */
@@ -65,7 +67,7 @@ export function useCreateFaucet(): UseCreateFaucetResult {
         throw new Error("Miden client is not ready");
       }
 
-      const isCurrent = captureClientCurrency(client);
+      const isCurrent = captureClientReadGuard(client);
       if (!isCurrent()) {
         throw new Error("Miden client is not ready");
       }
@@ -91,7 +93,7 @@ export function useCreateFaucet(): UseCreateFaucetResult {
             options.tokenName ?? options.tokenSymbol,
             options.tokenSymbol,
             decimals,
-            BigInt(options.maxSupply),
+            toAmount(options.maxSupply, "createFaucet maxSupply"),
             authScheme
           );
           if (!isCurrent()) return createdFaucet;

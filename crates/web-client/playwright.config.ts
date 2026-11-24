@@ -64,6 +64,9 @@ const ciShardProjects = process.env.CI
           "test/network_transaction.test.ts",
           "test/swap_transactions.test.ts",
           "test/pswap_transactions.test.ts",
+          // The only test that reaches the non-mock batch worker handler
+          // against a real node.
+          "test/batch.browser.test.ts",
         ],
         testIgnore: browserTestIgnore,
       },
@@ -74,7 +77,11 @@ const ciShardProjects = process.env.CI
           "test/sync_lock.test.ts",
           "test/tags.test.ts",
           "test/notes.test.ts",
+          "test/note_details_commitment.test.ts",
+          "test/xreserve_burn_note.test.ts",
+          "test/claim_note.test.ts",
           "test/note_transport.test.ts",
+          "test/protocol_config.test.ts",
           "test/rpc_client.browser.test.ts",
         ],
         testIgnore: browserTestIgnore,
@@ -89,6 +96,8 @@ const ciShardProjects = process.env.CI
           "test/allowlist.test.ts",
           "test/account_file.test.ts",
           "test/account_reader.test.ts",
+          "test/account_witness.test.ts",
+          "test/account_witness.browser.test.ts",
           "test/new_account.test.ts",
           "test/multisig_component.test.ts",
           "test/key.test.ts",
@@ -117,6 +126,7 @@ const ciShardProjects = process.env.CI
           "test/address.test.ts",
           "test/basic_fungible_faucet_component.test.ts",
           "test/fungible_asset.test.ts",
+          "test/u64_range.test.ts",
           "test/non_fungible_asset.test.ts",
           "test/prune_account_history.test.ts",
           "test/settings.test.ts",
@@ -127,6 +137,9 @@ const ciShardProjects = process.env.CI
           "test/fee_conversion_salt.test.ts",
           "test/direct_call_serialization.test.ts",
           "test/with_inner_web_client_reentrancy.test.ts",
+          "test/transaction_request_builders.test.ts",
+          "test/standard_note_decoders.test.ts",
+          "test/note_screening.test.ts",
         ],
         testIgnore: browserTestIgnore,
       },
@@ -227,7 +240,7 @@ export default defineConfig({
         "test/no_wasm_reentry_via_tojson.test.ts",
         // _withInnerWebClient re-entrancy (#152): exercises the browser
         // worker-shim chain mechanics (_serializeWasmCall, the
-        // _withInnerLockDepth counter, chain release on rejection). The
+        // trusted handle, chain release on rejection). The
         // napi client has no JS call chain — serialization happens in
         // Rust — so the escape hatch and its tests are browser-only.
         "test/with_inner_web_client_reentrancy.test.ts",

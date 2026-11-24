@@ -273,6 +273,13 @@ protocol configuration, which the client receives from the node when it syncs,
 so execution never needs the option: it only sets what `client.feeFaucetId()`
 reports before the first sync. Snippets below leave it out.
 
+`client.protocolConfig()` returns that configuration as a `ProtocolConfig`: its
+`feeFaucetId()` is the faucet `client.feeFaucetId()` reports after a sync, and
+its `commitment()` is what block headers carry as `protocolConfigCommitment()`.
+It rejects with "the network's protocol configuration is not known yet" until
+the first sync stores the configuration; a mock client is seeded with its
+chain's.
+
 `noteTransportMaxRetries` (0 to 10, default 3) and
 `noteTransportRetryIntervalMs` (0 to 60000, default 250), with a total computed
 backoff `interval * (2^retries - 1)` of at most 120000 ms, set how
@@ -446,7 +453,7 @@ The following are just a few simple examples to get started. For more details, s
 ```typescript
 import { MidenClient, FaucetType } from "@miden-sdk/miden-sdk";
 
-// 1. Create client (defaults to testnet, or use createTestnet()/createDevnet())
+// 1. Create client (defaults to testnet, or use createTestnet()/createDevnet()/createMainnet())
 const client = await MidenClient.createDevnet();
 
 // 2. Create a wallet and a token (faucet account)
@@ -640,6 +647,11 @@ For `client.accounts.create()`, select visibility with `storage: "public"` or
 `"private"`, and create a fungible faucet with `type: FaucetType.FungibleFaucet`.
 Migrate previous `AccountType.FungibleFaucet` uses to `FaucetType.FungibleFaucet`.
 Omit `type` to create a wallet, or pass `components` to create a contract.
+A contract also needs a raw 32-byte `seed` and `auth`. `auth` is an
+`AuthSecretKey` stored with the account, or `"none"` for a NoAuth contract that
+anyone can call and that stores no key. Omitting `auth` is rejected and does
+not default to NoAuth. `"none"` is only valid on a contract; wallet and faucet
+`auth` stays `AuthScheme.Falcon` or `AuthScheme.ECDSA`.
 The legacy selectors `0`, `1` and `"NonFungibleFaucet"` are still read as
 faucet types (non-fungible faucets are not supported yet and are rejected);
 `0` and `1` are also `AccountType.Private` / `AccountType.Public`, so never pass
@@ -741,19 +753,27 @@ const txId = await client.transactions.send({
 ### Consume Notes
 
 ```typescript
+import { isStandardPayment } from "@miden-sdk/miden-sdk";
+
 // Sync state to discover new notes
 await client.sync();
 
-// Consume the notes this account can consume right now. Notes that unlock at a
-// later block are left alone, and are counted in neither number below.
+// Consume the payments (P2ID and P2IDE notes) this account can consume right
+// now. Notes that unlock at a later block, and notes running any other script,
+// are left alone and counted in neither number below.
 const result = await client.transactions.consumeAll({ account: wallet });
 console.log(`Consumed ${result.consumed} notes, ${result.remaining} remaining`);
 
-// `remaining === 0` therefore means "nothing consumable now", not "no notes".
-// To see block-locked notes too, with their unlock block:
+// `remaining === 0` therefore means "no payment consumable now", not "no notes".
+// To see block-locked notes and other scripts too, with their unlock block:
 const walletId = wallet.id().toString();
 const all = await client.notes.listConsumable({ account: wallet });
 for (const record of all) {
+  // Not every note here is a payment. Another trader's public PSWAP order is
+  // listed for any account holding the asset it requests, and consuming it
+  // fills the order from this account's vault. Consume such a note only on
+  // purpose, by name, with `transactions.consume`.
+  if (!isStandardPayment(record)) continue;
   // Match the entry to the account you asked about rather than taking the
   // first: a record can carry one status per account.
   const entry = record
@@ -802,6 +822,107 @@ combined with status/IDs/script roots and has no page limit.
 These read APIs add no acquisition gate or recovery journal. See
 [Input Note Queries](https://docs.miden.xyz/builder/tools/clients/web-client/library/input-note-queries/)
 for cursor semantics and baseline coordination.
+
+### Decode Standard Notes
+
+`P2idNote`, `P2ideNote` and `SwapNote` decode a standard note into its typed
+fields, so an inbox can show who a note pays, when it unlocks and what a swap
+exchanges without reading raw storage:
+
+```typescript
+import { NoteScript, P2idNote, P2ideNote, SwapNote } from "@miden-sdk/miden-sdk";
+
+const note = record.toNote();
+const root = note.script().root().toHex();
+
+if (root === NoteScript.p2id().root().toHex()) {
+  const p2id = P2idNote.tryFromNote(note);
+  p2id.target(); // who it pays
+  p2id.assets();
+} else if (root === NoteScript.p2ide().root().toHex()) {
+  const p2ide = P2ideNote.tryFromNote(note);
+  p2ide.target();
+  p2ide.timelockHeight(); // number | undefined: not consumable before this block
+  p2ide.reclaimer();
+  p2ide.reclaimHeight(); // number | undefined: the reclaimer may take it back from here
+} else if (root === NoteScript.swap().root().toHex()) {
+  const swap = SwapNote.tryFromNote(note);
+  swap.offeredAsset(); // what the consumer receives
+  swap.requestedAsset(); // what the consumer pays back to swap.sender()
+  swap.paybackNoteType();
+  swap.paybackTarget(); // AccountId | undefined (public payback only)
+  swap.paybackRecipient(); // Word | undefined (private payback only)
+}
+```
+
+Each decoder also exposes `sender()`, `serialNumber()`, `noteType()` and
+`intoNote()`. `tryFromNote` throws when the note runs another script
+(`not a P2ID note`), when its storage does not decode, or, for `SwapNote`, when
+it does not carry exactly one asset.
+
+`PswapNote` and `BurnNote` decode a partial-fill swap order and a burn the same
+way:
+
+```typescript
+import { BurnNote, NoteScript, PswapNote } from "@miden-sdk/miden-sdk";
+
+if (root === NoteScript.pswap().root().toHex()) {
+  const pswap = PswapNote.tryFromNote(note);
+  pswap.offeredAsset(); // FungibleAsset on offer
+  pswap.requestedAsset(); // FungibleAsset asked for the whole offer
+  pswap.minFillStep(); // smallest fill, 0 when unbounded
+  pswap.creatorAccountId(); // receives every payback
+  pswap.orderId(); // decimal string, as PswapLineageRecord.orderId()
+  pswap.parentDepth(); // 0 for the original order, +1 per remainder
+} else if (root === NoteScript.burn().root().toHex()) {
+  const burn = BurnNote.tryFromNote(note);
+  burn.asset(); // what the faucet burns
+  burn.faucetId(); // the faucet that consumes the note
+}
+```
+
+A BURN note whose storage does not hold exactly the asset it carries is
+rejected, as the BURN script rejects it at consume time. A PSWAP note with more than one
+attachment is rejected too.
+
+`MintNote` decodes a MINT note, which asks a network faucet to mint an asset
+into a new note:
+
+```typescript
+import { MintNote, NoteScript } from "@miden-sdk/miden-sdk";
+
+if (root === NoteScript.mint().root().toHex()) {
+  const mint = MintNote.tryFromNote(note);
+  mint.asset(); // what the faucet mints
+  mint.faucetId(); // the faucet that consumes the note
+  mint.tag(); // tag of the minted note
+  mint.recipientDigest(); // private minted note: its recipient, else undefined
+  mint.recipientScriptRoot(); // public minted note: its script root,
+  mint.recipientSerialNumber(); // serial number
+  mint.recipientStorage(); // and storage, else undefined
+}
+```
+
+To screen a note before importing it, pass it to `client.notes.screen`. Each
+entry is a `NoteConsumability`, as `ConsumableNoteRecord.noteConsumability()`
+lists them:
+
+```typescript
+const all = await client.notes.screen(note); // every tracked account
+const mine = await client.notes.screen(note, { account: wallet });
+for (const entry of mine) {
+  const status = entry.consumptionStatus();
+  status.isConsumableNow(); // consumable at the last synced block
+  status.consumableAfterBlock(); // unlock height when locked, else undefined
+}
+```
+
+The screener leaves out accounts that can never consume the note, and accounts
+that cannot consume it under the current conditions, so an empty array means
+no screened account can consume it now. It is also empty when the client
+tracks no accounts, so do not read it as never consumable. Screening does
+not import the note. The low-level `WebClient` exposes the same screen as
+`getNoteConsumability(note)` and `getNoteConsumabilityForAccount(note, accountId)`.
 
 ### Check Balance
 
@@ -855,35 +976,49 @@ the asset back in the vault. See the [non-fungible asset guide](../../docs/exter
 
 ### Batch Operations
 
-Submit multiple operations against a single account as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally; you don't have to assemble or serialize them yourself.
+Submit multiple operations across one or more local accounts as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally; you don't have to assemble or serialize them yourself.
+
+The guarantee comes from the node's `SubmitProvenTxBatch` RPC contract: "All transactions in this batch will be considered atomic, and be committed together or not all." Two things it does *not* mean. The transactions still have to build on the current mempool state under the normal submission rules — `miden-client`'s RPC trait spells that out on the same endpoint — so atomicity governs how the batch commits, not whether the node accepts it. And locally, the batch's store updates are applied in one step whose failure is reported separately (see below).
 
 ```typescript
 const { blockNumber } = await client.transactions.batch({
-  account: wallet,
   operations: [
-    { kind: "send", to: alice, token: dagToken, amount: 50n, type: "public" },
-    { kind: "send", to: bob,   token: dagToken, amount: 30n, type: "public" },
-    { kind: "consume", notes: pendingNotes },
+    { kind: "send", account: alice, to: bob, token: dagToken, amount: 50n, type: "public" },
+    { kind: "send", account: alice, to: carol, token: dagToken, amount: 30n, type: "public" },
+    { kind: "consume", account: bob, notes: pendingNotes },
   ],
-  waitForConfirmation: true,
 });
-console.log(`Batch landed in block ${blockNumber}`);
+// The node's chain tip as of submission, not the block the batch commits in.
+console.log(`Batch submitted at chain tip ${blockNumber}`);
 ```
 
-Operations are discriminated by `kind`: `"send"`, `"mint"`, `"consume"`, `"swap"`, `"execute"`, and `"custom"` (escape hatch for a pre-built `TransactionRequest`). The shape of each operation mirrors the singular options object (`SendOptions`, `MintOptions`, …) minus the `account` field, which is set once at the batch level.
+Operations are discriminated by `kind`: `"send"`, `"mint"`, `"consume"`, `"swap"`, `"execute"`, and `"custom"` (escape hatch for a pre-built `TransactionRequest`). Each operation specifies its executing `account`; a batch may mix any combination of tracked local accounts, and a later transaction may consume a note produced by an earlier one in the same batch. Beyond `account`, each operation carries the request-building fields of its singular options object (`SendOptions`, `MintOptions`, …) and none of the per-submission ones: neither `prover`, `waitForConfirmation` and `timeout` nor `returnNote`, which selects a different request shape, has any per-operation meaning.
 
-V1 supports only same-account batches — every operation must execute against the `account` passed at the top level. Mixing accounts in one batch is not supported.
+A batch runs in the client's Web Worker where it has one, so the page keeps painting while every transaction and the batch itself are proven; with `useWorker: false`, or where no `Worker` exists, it proves on the calling thread and blocks it. Through the worker, a batch with an external keystore signs with no time limit unless `callbackTimeoutMs` sets one, so a stalled `sign` holds the batch and later worker calls in the queue; see [Keystore Callback Timeouts](#keystore-callback-timeouts). Mock clients always batch on the main thread. On a mock client, call `proveBlock()` after a batch and before submitting anything else: a submitted batch is not part of the serialized mock chain, so a later mock submit that round-trips through the worker would adopt a chain that never saw it. A mock batch also proves for real whether you ask it to or not: the mock client's dummy-prover shortcut applies only when no prover was passed, and the batch builder bypasses it entirely, so budget more time for a mock batch than for other mock submits. A batch is also always proven locally: the batch API takes no prover, so `ClientOptions.proverUrl` applies to `submit()` but not here. The batch proof itself is always local; the per-transaction proofs use the Rust client's configured prover, which this crate never sets.
 
-For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders:
+For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders. Pass an array of `{ account, request }` pairs:
 
 ```typescript
-const { blockNumber } = await client.transactions.submitBatch(wallet, [
-  request1,
-  request2,
+const { blockNumber } = await client.transactions.submitBatch([
+  { account: alice, request: request1 },
+  { account: bob, request: request2 },
 ]);
 ```
 
-The V1 batch primitive returns only the block number — there are no per-tx ids in the result. `waitForConfirmation` polls local sync height until it reaches `blockNumber` (rather than per-tx polling like singular `send` / `consume`).
+The batch primitive returns only a block number. There are no per-tx ids in the result, and the number is the node's chain tip as of submission, not the block the batch commits in. The batch's own effects are already in the local store when the call returns, so what is left to wait for is chain inclusion. Pass `waitForConfirmation: true` to have the call resolve only once every transaction of the batch is committed; it rejects if the node discards one, or when `timeout` (default 60 seconds) runs out first:
+
+```typescript
+await client.transactions.submitBatch(items, { waitForConfirmation: true });
+```
+
+To check later instead, sync and read the transactions:
+
+```typescript
+await client.sync();
+const txs = await client.transactions.list();
+```
+
+One more failure mode worth handling: the node can accept a batch and the local store update still fail, which surfaces as a rejected promise whose message contains `batch was accepted at block N but building store updates failed` (or `applying to the store failed`). The node has taken the batch in that case, so retrying would submit it twice; sync instead.
 
 ### Manual Transaction Lifecycle
 
@@ -905,10 +1040,38 @@ continue to sync before relying on on-chain balances.
 
 For browser stores, `apply` requires the stored account to match the
 transaction's execution input. A mismatch rejects before changing account state
-or transaction history. A submitted transaction may already be on-chain when
-local apply fails; check its status before submitting again.
+or transaction history. A submitted transaction is already accepted by the node when
+local apply fails, so `apply` and the single-transaction `transactions.*` helpers
+(which apply after submitting) reject with `code: "ApplyTransactionAfterSubmitFailed"`,
+`transactionId`, `submissionHeight` and the original error as `cause`. A batch whose
+local update fails after the node accepted it rejects with the same `code` and the
+accepted block in its message, without those fields. Do not submit it again.
 
 To submit a proof produced somewhere that shares nothing with this client (a detached prover), pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
+
+### Skipping Invalid Notes, Network Scripts and Code Upgrades
+
+`ignoreInvalidInputNotes()` makes execution drop an input note the account can no longer consume, without an error, and consume the rest. `request.ignoresInvalidInputNotes()` reports the flag. Execution screens at most 20 input notes this way and fails with `invalid input note count` above that, so split a larger batch across requests.
+
+```typescript
+const request = new TransactionRequestBuilder()
+  .withInputNotes(notes)
+  .ignoreInvalidInputNotes()
+  .build();
+```
+
+`withExpectedNtxScripts(scripts)` declares the note scripts the network will run for the request, and `request.expectedNtxScripts()` reads the declared list back, standard scripts included. The web client submits exactly the request it is given and registers nothing, so register each custom script the node does not know yet first. `client.newRegisterNoteScriptsTransactionRequest(sender, scripts)` builds a request that emits one public note per script, with no assets and no storage; submit it from `sender` before the network transaction that needs the scripts. The node resolves standard scripts itself.
+
+```typescript
+const scripts = new NoteScriptArray([customScript]);
+const register = await client.newRegisterNoteScriptsTransactionRequest(
+  sender,
+  scripts
+);
+await client.submitNewTransaction(sender, register);
+```
+
+`buildAccountCodeUpgrade(code)` finalizes a request that upgrades the executing account to `code`. The account needs the `UpgradeManager` component with `AuthControlled` authority, and `code` must keep the storage layout. It replaces any custom script and script argument, and fails when own output notes or an expiration delta are set. `withAccountCodeUpgrade(code)` only places the code in the advice map, and `request.accountCodeUpgrade()` returns it.
 
 ### Paying Transaction Fees
 
@@ -927,7 +1090,7 @@ The argument is the account that will **execute** the request — the one whose 
 
 To set the salt yourself — which co-signers must do when they need to agree on it without transporting the proposer's bytes — pass it to `feeAwareTransactionRequestBuilder`, together with the block the summary binds: `client.feeAwareTransactionRequestBuilder(multisig, { feeConversionSalt: salt, boundBlockNum: block })`. Both are bound by the summary, so two parties who disagree on either can never derive the same one. Each call consumes the `Word`: it is moved across the WASM boundary, so a second build needs a freshly constructed one, and a spent handle arrives as "no salt given" rather than as an error. A co-signer who has the proposer's serialized request needs neither — it carries the auth argument and its advice-map preimage.
 
-Do **not** reach for `builder.withFeeConversionSalt(salt)` on that builder. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive, and miden-client enforces that by having each setter clear the other, so calling it discards the three-word multisig auth args the builder already carries and the transaction aborts in the auth procedure. On a bare `new TransactionRequestBuilder()` the setter is still a declaration rather than a commitment — `request.feeConversionSalt()` reports it back, `request.authArg()` stays empty, and it survives serialization — which is what a single-sig or custom-auth caller wants. For a custom auth procedure that reads `AUTH_ARGS` as conversion info, compute the commitment yourself and attach it with `withAuthArg` plus `extendAdviceMap` — setting an auth argument opts the request out of the client's fee machinery, which commits only when the request carries none. Declaring a salt against such an account instead is rejected with `FeeConversionInfoUnsupported`.
+Do **not** reach for `builder.withFeeConversionSalt(salt)` on that builder. `withAuthArgs` and `withFeeConversionSalt` are mutually exclusive, and miden-client enforces that by having each setter clear the other, so calling it discards the three-word multisig auth args the builder already carries and the transaction aborts in the auth procedure. On a bare `new TransactionRequestBuilder()` the setter is still a declaration rather than a commitment — `request.feeConversionSalt()` reports it back, `request.authArg()` stays empty, and it survives serialization — which is what a single-sig or custom-auth caller wants. For a custom auth procedure that reads `AUTH_ARGS` as conversion info, attach the auth args yourself with `withAuthArgs`, which sets the commitment and adds its advice-map preimage — setting an auth argument opts the request out of the client's fee machinery, which commits only when the request carries none. Declaring a salt against such an account instead is rejected with `FeeConversionInfoUnsupported`.
 
 When another party built the request, such as a dApp that gives a finished request to a wallet, set the multisig auth args on it with `client.withFeeAwareAuth(request, multisig, options?)`. A request that declares a salt executes on a multisig as it is, because miden-client derives the auth args from the salt, but it binds them to the reference block of each execution and sets no approval expiration. `withFeeAwareAuth` returns a copy with the same auth argument and advice-map preimage that `feeAwareTransactionRequestBuilder` declares, keeps every other field, and returns the request unchanged, auth argument and all, for an account that is not a multisig. When `feeConversionSalt` is omitted, it uses the salt that the request declares, or draws one. miden-client tracks the bound block when it executes the request, so the request executes at the tip with no anchor; an anchor from `chainAnchorForRequest` does not track the bound block, and a co-signer cannot read it from `request.blockNumbers()`, so it syncs before previewing the copy. For a multisig it refuses a request that already has an auth argument (`AUTH_ALREADY_SET`).
 
@@ -1039,6 +1202,27 @@ ForeignAccount.private(account);
 
 A public entry's inputs are fetched against the transaction's reference block, and the vault and storage maps the foreign code actually reads are resolved during execution as per-asset and per-key witnesses rather than up front. A transaction pinned to a block the node no longer serves account state for therefore cannot execute: pin it to a recent block instead.
 
+### Watch-Only Accounts and Witnesses
+
+A watch-only account is a public on-chain account the client follows without subscribing to its note tag. Sync keeps its commitment, nonce and storage current, but notes addressed to it are not pulled.
+
+```typescript
+const account = await client.accounts.importWatched(oracleId);
+```
+
+Tracking an account's witness keeps it current: the first sync fetches it and every sync that advances the chain refreshes it, so a transaction that uses the account as a foreign account resolves its witness locally instead of asking the node:
+
+```typescript
+await client.accounts.trackWitness(oracleId); // true if it was not tracked before
+await client.sync(); // fetches the witness
+await client.accounts.trackedWitnesses(); // [oracleId]
+await client.accounts.untrackWitness(oracleId); // true if it was tracked
+```
+
+The tracked set persists across client reopens. `trackWitness` does not validate the account: sync fails while a tracked account has no witness the node can return, so an account that is not in the account tree blocks sync until `untrackWitness` removes it.
+
+`getStorageMapWitness(account, slotName, key)` reads the stored witness for a key of a storage map slot. The result has `get(key)` for the value and `root()` for the map root.
+
 ### Partial-Swap (PSWAP) Orders
 
 A partial-swap note offers one asset for another and can be filled by multiple
@@ -1095,6 +1279,47 @@ await client.transactions.bridge({
 
 The 20-byte destination is also available as an `EthAddress` (`EthAddress.fromHex("0x…")`) for the lower-level builders `Note.createB2AggNote(...)` and `client.newB2AggTransactionRequest(...)`.
 
+### Claim an inbound AggLayer deposit
+
+`Note.createClaimNote(...)` builds the public CLAIM note that asks the AggLayer bridge to mint an inbound deposit. The proof and leaf come from the AggLayer `claimAsset` data; the Miden amount is derived from the leaf's uint256 amount and the faucet's decimal scale, `floor(amount / 10^scale)`, which is what the bridge verifies.
+
+```typescript
+const proof = new ClaimProofData(
+  smtProofLocalExitRoot, // 32 hex nodes
+  smtProofRollupExitRoot, // 32 hex nodes
+  globalIndex,
+  mainnetExitRoot,
+  rollupExitRoot
+);
+const leaf = new ClaimLeafData(
+  originNetwork,
+  EthAddress.fromHex(originTokenAddress),
+  destinationNetwork,
+  EthAddress.fromHex(destinationAddress),
+  "100000000000000000000", // uint256 amount as a decimal string
+  metadataHash
+);
+const note = Note.createClaimNote(proof, leaf, 10, bridgeAccountId, senderId);
+```
+
+A scale above 18, or a scaled amount above the maximum fungible amount, throws. Submit the note as an own output note of a transaction, for example through `feeAwareTransactionRequestBuilder(sender)` and `withOwnOutputNotes`. It is a network note targeting the bridge account, so the transaction must also declare that account with `withForeignAccounts`, as for any network note.
+
+### Withdraw USDCx (Circle xReserve)
+
+`client.transactions.withdrawUsdcx(...)` emits a single public burn note with the fixed `BURN` tag. The USDCx faucet (a public account) consumes and burns it, and Circle releases USDC to the recipient on the destination domain.
+
+```typescript
+await client.transactions.withdrawUsdcx({
+  account: wallet, // sender (executes the transaction)
+  token: usdcxFaucet, // consumes the note and burns the asset
+  amount: 1_000_000n,
+  destinationDomain: 6, // Circle domain id
+  destinationRecipient: "0x0000000000000000000000001111111111111111111111111111111111111111" // 32 bytes
+});
+```
+
+The lower-level builders are `Note.createXReserveBurnNote(...)` and `client.newXReserveBurnTransactionRequest(...)`, which take the recipient as a 32-byte `Uint8Array`.
+
 ### Network Notes
 
 A network note is a Public note carrying a `NetworkAccountTarget` attachment; a public network account auto-consumes it once the note lands on-chain — no manual `consume` call needed on the target side.
@@ -1116,9 +1341,10 @@ To create the receiving account, build a **public** account carrying the network
 ```typescript
 // Each allowed note script carries the fee charged to consume it, in the
 // chain's fee asset. Zero is a valid price. The fee faucet must be the chain's
-// own: the node never runs network transactions for an account whose fee asset
-// differs from the chain's protocol configuration, and says nothing to the
-// client - the account's notes are simply never consumed.
+// own, the one `client.protocolConfig()` names: the node never runs network
+// transactions for an account whose fee asset differs from the chain's
+// protocol configuration, and says nothing to the client - the account's notes
+// are simply never consumed.
 const feeFaucetId = await client.feeFaucetId();
 const components = AccountComponent.createNetworkAuthComponents(
   [new NoteScriptFee(myNoteScript.root(), 0n)],
@@ -1136,9 +1362,120 @@ const { account } = builder.build();
 
 The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional third argument (`TransactionScript.root()`). Deploying the account needs an effect: since 0.17 the auth component asserts the transaction consumed an input note, created an output note, or changed account state before it pays the fee, so an empty transaction aborts. Consume a note the account allowlists, or run an allowlisted transaction script that changes its state. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
 
+#### Fee Sponsorship Notes
+
+Use `createFeeSponsorshipNote` (or `Note.createFeeSponsorshipNote`) to attach a fee-sponsorship note to a feature note (`featureNoteId`) targeted at a **public** account (`to` must be public for network note routing). `reclaimer` defaults to the sponsor (`from`). Omit `reclaimAfter` / `reclaimHeight` to disable reclaim, or pass a positive 32-bit integer (`0` is rejected). Standalone `createFeeSponsorshipNote` clones an `AccountId` passed as `reclaimer`, while `Note.createFeeSponsorshipNote` consumes a passed `reclaimer` `AccountId` in browser WASM. Decode an existing note with `FeeSponsorshipNote.tryFromNote`:
+
+```typescript
+import {
+  FeeSponsorshipNote,
+  FungibleAsset,
+  createFeeSponsorshipNote,
+} from "@miden-sdk/miden-sdk";
+
+const note = createFeeSponsorshipNote({
+  from: sponsorAccountId,
+  to: targetNetworkAccountId,
+  featureNoteId: featureNote.id(),
+  asset: new FungibleAsset(feeFaucetId, 1_000n),
+  reclaimer: reclaimerAccountId, // optional; defaults to `from`
+  reclaimAfter: 100, // optional positive 32-bit integer (> 0; 0 is rejected)
+});
+
+const decoded = FeeSponsorshipNote.tryFromNote(note);
+decoded.featureNoteId();
+decoded.sender();
+decoded.reclaimer();
+decoded.reclaimHeight(); // number | undefined
+decoded.asset();
+decoded.tag();
+decoded.serialNumber();
+decoded.intoNote();
+```
+
+### Read the Client's Node URL
+
+`client.endpoint()` returns the URL of the node the client was created against, synchronously. Shorthands are resolved, a client created without `rpcUrl` reports the testnet endpoint, and a mock client returns `undefined`. Use it to aim a standalone `RpcClient` at the same node; `rpc.endpoint()` reports the URL an `RpcClient` was built with:
+
+```typescript
+import { Endpoint, RpcClient } from "@miden-sdk/miden-sdk";
+
+const client = await MidenClient.createDevnet();
+client.endpoint(); // "https://rpc.devnet.miden.io"
+
+const rpc = new RpcClient(new Endpoint(client.endpoint()!));
+const header = await rpc.getBlockHeaderByNumber(100, false);
+```
+
+### Verify a signBytes signature
+
+`domainSeparatedSignCommitment` computes the commitment a wallet signs for a
+dApp's `signBytes` request. Verify the returned signature with
+`publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)`.
+
+The wallet signs under the domain tag `miden-wallet/sign-bytes/v1`, the
+Poseidon2 hash of that string, one field element per UTF-8 byte. `"word"`:
+`data` is a serialized `Word`; the signed commitment is that of
+`SigningInputs.newArbitrary([...tag, ...word.toFelts()])`. `"signingInputs"`:
+`data` is serialized `SigningInputs`. A Blind payload signs
+`[...tag, ...word.toFelts()]` and an Arbitrary payload signs
+`[...tag, ...payload]` (the tag alone when the payload is empty), both as
+Arbitrary inputs. A TransactionSummary is signed unchanged, so its own
+commitment is returned.
+
+Any other kind or variant throws.
+Wallets released before this change signed the raw value instead.
+
+Needs the SDK's WASM to be loaded: with a lazy entry, await
+`MidenClient.ready()` first.
+
+```typescript
+import {
+  domainSeparatedSignCommitment,
+  MidenClient,
+} from "@miden-sdk/miden-sdk/lazy";
+
+await MidenClient.ready();
+publicKey.verify(domainSeparatedSignCommitment(data, kind), signature);
+```
+
+### Keystore Callback Timeouts
+
+Under the Web Worker, `keystore` callbacks run on the main thread and the worker waits for each one. `ClientOptions.callbackTimeoutMs` sets that wait. A callback that outlasts it fails the call that needed it with `Callback <id> timed out after <n>ms`.
+
+| `callbackTimeoutMs` | `sign` | `getKey` and `insertKey` |
+|---|---|---|
+| Unset | No limit | 30 seconds |
+| `0` | No limit | No limit |
+| Positive | That value | That value |
+
+A positive value applies to all three callbacks, and a fraction rounds up to a whole millisecond. A negative, non-finite or non-number value, or one above `2147483647`, throws `TypeError` at creation. Callbacks use this timeout only through the Web Worker: with `useWorker: false`, or where no `Worker` exists, it sets no limit on them.
+
+`sign` has no limit by default because it can wait on a person approving in a wallet or on a hardware device. The cost is that a stalled `sign` never fails on its own. The worker runs one call at a time, so it holds its batch or transaction and leaves later worker calls in the queue. If a signer can stall, set a finite timeout:
+
+```typescript
+const client = await MidenClient.create({
+  rpcUrl: "testnet",
+  keystore: { getKey, insertKey, sign },
+  callbackTimeoutMs: 120000, // Fail any callback that takes over two minutes.
+});
+```
+
+A batch signs while it is built, so one failed or timed out `sign` fails the whole batch.
+
+### One Client per Store
+
+Two live clients on one store do not coordinate with each other. Opening a store that another live client in the same realm has open (the same IndexedDB database in the browser, the same SQLite file on Node.js) logs a `console.warn` naming that client, `client #N` in the order clients opened the store. Pass `exclusive: true` to refuse instead: the open throws an error naming the owner, and while an exclusive client lives every other open of its store throws too.
+
+```typescript
+const owner = await MidenClient.create({ rpcUrl: "testnet", storeName: "app", exclusive: true });
+await MidenClient.create({ rpcUrl: "testnet", storeName: "app" }); // throws: Store "app" is already open in client #1 ...
+owner.terminate(); // releases the store; the next open succeeds without a warning
+```
+
 ### Cleanup
 
-When you're finished using a MidenClient instance, call `terminate()`. In the browser it stops the client's Web Worker if there is one, and releases its main-realm wasm client and, through it, its IndexedDB connection once the calls already queued or running have settled. On the Node.js binding it releases nothing.
+When you're finished using a MidenClient instance, call `terminate()`. In the browser it stops the client's Web Worker if there is one, and releases its main-realm wasm client and, through it, its IndexedDB connection once the calls already queued or running have settled. On the Node.js binding it releases only the store's ownership claim (see [One Client per Store](#one-client-per-store)).
 
 ```typescript
 client.terminate();
@@ -1173,7 +1510,7 @@ const client = await MidenClient.create({
 });
 ```
 
-`observer` is a field on `ClientOptions`, so it works on `create`, `createTestnet`, and `createDevnet` alike.
+`observer` is a field on `ClientOptions`, so it works on `create`, `createTestnet`, `createDevnet`, and `createMainnet` alike.
 
 **The SDK never transports an observation.** It hands the object to your callback and forgets about it. There is no telemetry dependency in `@miden-sdk/miden-sdk` — not a direct one, not a peer, not an optional one — and the module that delivers observations has no egress primitive in it and imports nothing at all. Both halves are enforced on every CI run by `js/__tests__/no-telemetry-dependency.test.js`, which parses the module rather than grepping it: it asserts the module reaches for no global object, builds no code at runtime, constructs nothing, and calls nothing but your observer. Where the observations go is entirely your decision, made in your code.
 
@@ -1199,7 +1536,7 @@ interface MidenObservation {
 
 `op` is the name of the underlying client method, not the name of the high-level call you made. One call into a resource API usually produces **several** observations: `client.transactions.send(...)` builds the request and then runs execute → prove → submit → apply, so it reports `newSendTransactionRequest`, `executeTransaction`, `proveTransaction`, `submitProvenTransaction`, and `applyTransaction` as five separate observations. Aggregate by `op` rather than assuming a one-to-one mapping with your own call sites.
 
-`durationMs` is measured with `performance.now()` from when the call's turn on its client's queue starts until the call settles, so time spent queued behind the same client's earlier calls is not in it. It is a fractional millisecond value, not an integer. Round it yourself if your backend wants integers.
+`durationMs` is measured with `performance.now()` from when the call's turn on its client's queue starts until the call settles, so time spent queued behind the same client's earlier calls is not in it. A store-locked call that times out before its turn starts has no turn, so it reports 0, delivered when it rejects, and the wait it spent queued is not counted. It is a fractional millisecond value, not an integer. Round it yourself if your backend wants integers.
 
 Two properties are worth relying on:
 

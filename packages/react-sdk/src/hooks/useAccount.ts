@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { useMiden } from "../context/MidenProvider";
-import {
-  captureClientCurrency,
-  useMidenStore,
-  useSyncStateStore,
-} from "../store/MidenStore";
+import { useMidenStore, useSyncStateStore } from "../store/MidenStore";
+import { captureClientReadGuard } from "../store/clientReadGuard";
 import type { AccountResult, AssetBalance } from "../types";
 import { ensureAccountBech32 } from "../utils/accountBech32";
 import { parseAccountId, type AccountRef } from "../utils/accountParsing";
@@ -47,7 +44,6 @@ export function useAccount(accountId: AccountRef | undefined): AccountResult {
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-
   const latestRequestRef = useRef(0);
 
   // Normalize accountId to string
@@ -65,7 +61,7 @@ export function useAccount(accountId: AccountRef | undefined): AccountResult {
   const refetch = useCallback(async () => {
     if (!client || !isReady || !accountIdStr) return;
 
-    const isCurrent = captureClientCurrency(client);
+    const isCurrent = captureClientReadGuard(client);
     if (!isCurrent()) return;
 
     const request = ++latestRequestRef.current;
@@ -81,7 +77,7 @@ export function useAccount(accountId: AccountRef | undefined): AccountResult {
         setAccountDetails(accountIdStr, fetchedAccount);
       }
     } catch (err) {
-      if (!isCurrent()) return;
+      if (!isCurrent() || latestRequestRef.current !== request) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
       if (latestRequestRef.current === request) setIsLoading(false);

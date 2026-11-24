@@ -2,6 +2,7 @@ import { createAcquisitionChannel } from "../noteAcquisition.js";
 import { indexedDbArgs } from "../indexeddb.js";
 import loadWasm from "../../dist/wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "../constants.js";
+import { appendAuthError, createCallbackForwarder } from "../callbackBridge.js";
 
 let wasmModule = null;
 
@@ -105,75 +106,46 @@ async function installAcquisition() {
     );
 }
 let wasmSeed = null; // Seed for the WASM WebClient, if needed.
+// IndexedDB name the mock client opened. SYNC/SUBMIT mock paths recreate the
+// wasm client and must reopen the same store as INIT_MOCK.
+let wasmMockStoreName = "mock_client_db";
 let ready = false; // Indicates if the worker is fully initialized.
+
+const createMockClientOn = async (
+  client,
+  seed,
+  serializedMockChain,
+  serializedMockNoteTransportNode
+) =>
+  client.createMockClient(
+    seed,
+    serializedMockChain,
+    serializedMockNoteTransportNode,
+    wasmMockStoreName,
+    ...indexedDbArgs(wasmIndexedDb)
+  );
 let messageQueue = []; // Queue for sequential processing.
 let processing = false; // Flag to ensure one message is processed at a time.
 
-// Track pending callback requests
-let pendingCallbacks = new Map();
+// The `callbackTimeoutMs` client option, received with INIT.
+let callbackTimeoutMs;
 
-// Timeout for pending callbacks (30 seconds)
-const CALLBACK_TIMEOUT_MS = 30000;
+// Keystore callbacks run on the main thread; this forwards each one there and
+// settles it from the reply `self.onmessage` hands back.
+const callbackForwarder = createCallbackForwarder({
+  post: (request) =>
+    self.postMessage({ action: WorkerAction.EXECUTE_CALLBACK, ...request }),
+  timeoutMs: () => callbackTimeoutMs,
+});
 
 // Define proxy functions for callbacks that communicate with main thread
 const callbackProxies = {
-  getKey: async (pubKey) => {
-    return new Promise((resolve, reject) => {
-      const requestId = `${CallbackType.GET_KEY}-${Date.now()}-${Math.random()}`;
-      const timeoutId = setTimeout(() => {
-        if (pendingCallbacks.has(requestId)) {
-          pendingCallbacks.delete(requestId);
-          reject(new Error(`Callback ${requestId} timed out`));
-        }
-      }, CALLBACK_TIMEOUT_MS);
-      pendingCallbacks.set(requestId, { resolve, reject, timeoutId });
-
-      self.postMessage({
-        action: WorkerAction.EXECUTE_CALLBACK,
-        callbackType: CallbackType.GET_KEY,
-        args: [pubKey],
-        requestId,
-      });
-    });
-  },
-  insertKey: async (pubKey, secretKey) => {
-    return new Promise((resolve, reject) => {
-      const requestId = `${CallbackType.INSERT_KEY}-${Date.now()}-${Math.random()}`;
-      const timeoutId = setTimeout(() => {
-        if (pendingCallbacks.has(requestId)) {
-          pendingCallbacks.delete(requestId);
-          reject(new Error(`Callback ${requestId} timed out`));
-        }
-      }, CALLBACK_TIMEOUT_MS);
-      pendingCallbacks.set(requestId, { resolve, reject, timeoutId });
-
-      self.postMessage({
-        action: WorkerAction.EXECUTE_CALLBACK,
-        callbackType: CallbackType.INSERT_KEY,
-        args: [pubKey, secretKey],
-        requestId,
-      });
-    });
-  },
-  sign: async (pubKey, signingInputs) => {
-    return new Promise((resolve, reject) => {
-      const requestId = `${CallbackType.SIGN}-${Date.now()}-${Math.random()}`;
-      const timeoutId = setTimeout(() => {
-        if (pendingCallbacks.has(requestId)) {
-          pendingCallbacks.delete(requestId);
-          reject(new Error(`Callback ${requestId} timed out`));
-        }
-      }, CALLBACK_TIMEOUT_MS);
-      pendingCallbacks.set(requestId, { resolve, reject, timeoutId });
-
-      self.postMessage({
-        action: WorkerAction.EXECUTE_CALLBACK,
-        callbackType: CallbackType.SIGN,
-        args: [pubKey, signingInputs],
-        requestId,
-      });
-    });
-  },
+  getKey: async (pubKey) =>
+    callbackForwarder.forward(CallbackType.GET_KEY, [pubKey]),
+  insertKey: async (pubKey, secretKey) =>
+    callbackForwarder.forward(CallbackType.INSERT_KEY, [pubKey, secretKey]),
+  sign: async (pubKey, signingInputs) =>
+    callbackForwarder.forward(CallbackType.SIGN, [pubKey, signingInputs]),
 };
 
 // Define a mapping from method names to handler functions.
@@ -216,10 +188,22 @@ const methodHandlers = {
     const transactionRequest = wasm.TransactionRequest.deserialize(
       transactionRequestBytes
     );
-    const result = await wasmWebClient.executeTransaction(
-      accountId,
-      transactionRequest
-    );
+    let result;
+    try {
+      result = await wasmWebClient.executeTransaction(
+        accountId,
+        transactionRequest
+      );
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") {
+        throw appendAuthError(error, authError);
+      }
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
+    }
     const serializedResult = result.serialize();
     return serializedResult.buffer;
   },
@@ -241,6 +225,15 @@ const methodHandlers = {
       );
       const serializedResult = result.serialize();
       return serializedResult.buffer;
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") {
+        throw appendAuthError(error, authError);
+      }
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
     } finally {
       // Rebuilt from bytes on every anchored execution and the largest
       // transient here, since it carries a partial blockchain. The binding
@@ -279,10 +272,20 @@ const methodHandlers = {
       transactionRequestBytes
     );
 
-    const result = await wasmWebClient.executeTransaction(
-      accountId,
-      transactionRequest
-    );
+    let result;
+    try {
+      result = await wasmWebClient.executeTransaction(
+        accountId,
+        transactionRequest
+      );
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") throw appendAuthError(error, authError);
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
+    }
 
     const transactionId = result.id().toHex();
 
@@ -303,6 +306,35 @@ const methodHandlers = {
       serializedTransactionUpdate: transactionUpdate.serialize().buffer,
     };
   },
+  [MethodName.SUBMIT_NEW_TRANSACTION_BATCH]: async (args) => {
+    const wasm = await getWasmOrThrow();
+    const [serializedItems] = args;
+    // Rebuild each (account, request) pair in this instance, in order, so the
+    // batch runs exactly as the main-thread path runs it. This returns a plain
+    // block number, so unlike the single-submit handlers there is no result
+    // object to serialize back across the boundary.
+    const items = serializedItems.map(
+      ([accountIdHex, serializedTransactionRequest]) =>
+        new wasm.BatchItem(
+          wasm.AccountId.fromHex(accountIdHex),
+          wasm.TransactionRequest.deserialize(
+            new Uint8Array(serializedTransactionRequest)
+          )
+        )
+    );
+    try {
+      return await wasmWebClient.submitNewTransactionBatch(items);
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") {
+        throw appendAuthError(error, authError);
+      }
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
+    }
+  },
   [MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER]: async (args) => {
     const wasm = await getWasmOrThrow();
     const [accountIdHex, serializedTransactionRequest, proverPayload] = args;
@@ -319,10 +351,20 @@ const methodHandlers = {
       ? wasm.TransactionProver.deserialize(proverPayload)
       : undefined;
 
-    const result = await wasmWebClient.executeTransaction(
-      accountId,
-      transactionRequest
-    );
+    let result;
+    try {
+      result = await wasmWebClient.executeTransaction(
+        accountId,
+        transactionRequest
+      );
+    } catch (error) {
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") throw appendAuthError(error, authError);
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw error;
+    }
 
     const transactionId = result.id().toHex();
 
@@ -352,11 +394,11 @@ methodHandlers[MethodName.SYNC_STATE_MOCK] = async (args) => {
   serializedMockNoteTransportNode = serializedMockNoteTransportNode
     ? new Uint8Array(serializedMockNoteTransportNode)
     : null;
-  await wasmWebClient.createMockClient(
+  await createMockClientOn(
+    wasmWebClient,
     wasmSeed,
     serializedMockChain,
-    serializedMockNoteTransportNode,
-    ...indexedDbArgs(wasmIndexedDb)
+    serializedMockNoteTransportNode
   );
   await installAcquisition();
 
@@ -369,11 +411,11 @@ methodHandlers[MethodName.SYNC_CHAIN_MOCK] = async (args) => {
   serializedMockNoteTransportNode = serializedMockNoteTransportNode
     ? new Uint8Array(serializedMockNoteTransportNode)
     : null;
-  await wasmWebClient.createMockClient(
+  await createMockClientOn(
+    wasmWebClient,
     wasmSeed,
     serializedMockChain,
-    serializedMockNoteTransportNode,
-    ...indexedDbArgs(wasmIndexedDb)
+    serializedMockNoteTransportNode
   );
   await installAcquisition();
 
@@ -386,11 +428,11 @@ methodHandlers[MethodName.SYNC_NOTE_TRANSPORT_MOCK] = async (args) => {
   serializedMockNoteTransportNode = serializedMockNoteTransportNode
     ? new Uint8Array(serializedMockNoteTransportNode)
     : null;
-  await wasmWebClient.createMockClient(
+  await createMockClientOn(
+    wasmWebClient,
     wasmSeed,
     serializedMockChain,
-    serializedMockNoteTransportNode,
-    ...indexedDbArgs(wasmIndexedDb)
+    serializedMockNoteTransportNode
   );
   await installAcquisition();
 
@@ -407,11 +449,11 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_MOCK] = async (args) => {
     : null;
 
   wasmWebClient = new wasm.WebClient();
-  await wasmWebClient.createMockClient(
+  await createMockClientOn(
+    wasmWebClient,
     wasmSeed,
     serializedMockChain,
-    serializedMockNoteTransportNode,
-    ...indexedDbArgs(wasmIndexedDb)
+    serializedMockNoteTransportNode
   );
   await installAcquisition();
 
@@ -444,11 +486,11 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK] = async (
     : null;
 
   wasmWebClient = new wasm.WebClient();
-  await wasmWebClient.createMockClient(
+  await createMockClientOn(
+    wasmWebClient,
     wasmSeed,
     serializedMockChain,
-    serializedMockNoteTransportNode,
-    ...indexedDbArgs(wasmIndexedDb)
+    serializedMockNoteTransportNode
   );
   await installAcquisition();
 
@@ -501,9 +543,11 @@ async function processMessage(event) {
         feeFaucetId,
         noteTransportMaxRetries,
         noteTransportRetryIntervalMs,
+        initCallbackTimeoutMs,
         storagePolicy,
         limits,
       ] = args;
+      callbackTimeoutMs = initCallbackTimeoutMs;
       acquisitionLimits = limits;
       const indexedDb = storageOptions(storagePolicy);
       wasmIndexedDb = indexedDb;
@@ -514,10 +558,10 @@ async function processMessage(event) {
       }
 
       // Initialize rayon's thread pool inside THIS worker's WASM instance.
-      // The SDK runs every prove call here (NOT on the main thread), so a
-      // pool initialized only in main-thread WASM does not parallelize the
-      // prove. Without this, par_iter()/par_chunks() in miden-crypto +
-      // p3-maybe-rayon return rayon::current_num_threads() == 1 and fall
+      // The SDK runs proving here rather than on the main thread wherever a
+      // worker is in use, so a pool initialized only in main-thread WASM does
+      // not parallelize the prove. Without this, par_iter()/par_chunks() in
+      // miden-crypto + p3-maybe-rayon return current_num_threads() == 1 and fall
       // through to sequential code despite the parallel features being on.
       if (
         numThreads &&
@@ -572,6 +616,7 @@ async function processMessage(event) {
         numThreads,
         serializedMockChain,
         serializedMockNoteTransportNode,
+        storeName,
         storagePolicy,
         limits,
       ] = args;
@@ -585,8 +630,9 @@ async function processMessage(event) {
       }
 
       // Initialize rayon's pool inside THIS worker's WASM instance — same
-      // rationale as the INIT path above: all proving executes here, and a
-      // pool initialized in any other instance does not parallelize it.
+      // rationale as the INIT path above: any proving that happens here uses
+      // this instance, and a pool initialized in another one does not
+      // parallelize it.
       if (
         numThreads &&
         numThreads > 1 &&
@@ -595,14 +641,15 @@ async function processMessage(event) {
         await wasm.initThreadPool(numThreads);
       }
 
+      wasmMockStoreName = storeName ?? "mock_client_db";
       wasmWebClient = new wasm.WebClient();
-      await wasmWebClient.createMockClient(
+      await createMockClientOn(
+        wasmWebClient,
         seed,
         serializedMockChain ? new Uint8Array(serializedMockChain) : undefined,
         serializedMockNoteTransportNode
           ? new Uint8Array(serializedMockNoteTransportNode)
-          : undefined,
-        ...indexedDbArgs(indexedDb)
+          : undefined
       );
 
       await installAcquisition();
@@ -663,20 +710,7 @@ async function processQueue() {
 // Enqueue incoming messages and process them sequentially.
 self.onmessage = (event) => {
   if (acquisitionChannel.receive(event.data)) return;
-  if (
-    event.data.callbackRequestId &&
-    pendingCallbacks.has(event.data.callbackRequestId)
-  ) {
-    const { callbackRequestId, callbackResult, callbackError } = event.data;
-    const { resolve, reject, timeoutId } =
-      pendingCallbacks.get(callbackRequestId);
-    clearTimeout(timeoutId);
-    pendingCallbacks.delete(callbackRequestId);
-    if (!callbackError) {
-      resolve(callbackResult);
-    } else {
-      reject(new Error(callbackError));
-    }
+  if (callbackForwarder.handleReply(event.data)) {
     return;
   }
   messageQueue.push(event);

@@ -33,7 +33,10 @@ type aliases and helpers so most code is written once. Key aliases:
   carrying a stable machine-readable `code` (see
   [Error Handling](#error-handling-across-the-boundary)).
 - `JsU64`: `u64` on browser, `napi::bindgen_prelude::BigInt` on nodejs; both
-  surface as a JS `BigInt`. Convert with `js_u64_to_u64` / `u64_to_js_u64`.
+  surface as a JS `BigInt`. `js_export` types a browser argument as `js_sys::BigInt`
+  (and a `Vec<JsU64>` argument element-wise as `js_sys::BigInt`). Convert with
+  `js_u64_to_u64`, which returns a `Result` and rejects values outside `0..2^64`
+  (propagate with `?`), and `u64_to_js_u64`.
 - `JsBytes`: `js_sys::Uint8Array` on browser, `napi::bindgen_prelude::Buffer`
   on nodejs. Convert with `bytes_to_js` / `js_to_bytes` (`js_to_bytes` is
   platform-agnostic; only `bytes_to_js` splits).
@@ -67,7 +70,7 @@ The public API is exposed with the custom `#[js_export]` proc-macro from the
 the dual `wasm_bindgen` (browser) and `napi` (Node.js) annotations from one
 attribute, forwarding `constructor` / `js_name` / `getter`. When a signature
 contains `JsU64`, the macro splits the impl per platform, replacing `JsU64` with
-`u64` (browser) or `BigInt` (nodejs), so `JsU64` is resolved by the macro and
+`js_sys::BigInt` for arguments and `u64` for returns (browser) or `BigInt` (nodejs), so `JsU64` is resolved by the macro and
 does not need to be imported in the annotated module. Raw `#[wasm_bindgen]` is
 reserved for browser-only members (e.g. synchronous getters that cannot be async).
 
@@ -164,23 +167,27 @@ This:
 2. Extracts an `ErrorHint` from `ClientError` via `hint_from_error` if available.
 3. Browser path: attaches `help` (the hint) and `code` (from `code_from_error`,
    which maps the few `ClientError` variants JS callers branch on, e.g.
-   `ACCOUNT_NOT_FOUND_ON_CHAIN`, `ACCOUNT_ALREADY_TRACKED`) as properties on the
+   `ACCOUNT_NOT_FOUND_ON_CHAIN`, `ACCOUNT_ALREADY_TRACKED`, `ACCOUNT_IS_PRIVATE`) as properties on the
    JS `Error` via `Reflect::set`.
 4. Node.js path: returns `napi::Error::from_reason(...)` with the help inlined
-   into the message.
+   into the message. A post-submit failure (`post_submit_code`) is prefixed
+   `"ApplyTransactionAfterSubmitFailed: "`; other mapped codes stay unprefixed.
 
 ### The named error codes
 
 JS callers branch on a `code`, never on message text, so the vocabulary is a
-public contract. Two primitives produce one, and between them they emit exactly
-four codes today:
+public contract. Two primitives produce one. These are the transaction and
+account codes (the registration codes `code_from_error` also maps are not
+listed):
 
 | Code | Produced by | Raised when |
 |---|---|---|
 | `ACCOUNT_NOT_FOUND_ON_CHAIN` | `code_from_error` (`lib.rs:672-682`) | `ClientError::AccountNotFoundOnChain` |
 | `ACCOUNT_ALREADY_TRACKED` | `code_from_error` | `ClientError::AccountAlreadyTracked` |
+| `ACCOUNT_IS_PRIVATE` | `code_from_error` | `ClientError::AccountIsPrivate` |
 | `TRANSACTION_ALREADY_AUTHORIZED` | `from_str_err_with_code` | `executeForSummary` / `executeForSummaryAt` produced no summary because the transaction was already fully authorized (`new_transactions.rs:611`, `:649`) |
 | `INVALID_CHAIN_ANCHOR` | `from_str_err_with_code` | `ClientError::ChainAnchorError`, routed through `map_anchor_err` (`new_transactions.rs:910`) |
+| `ApplyTransactionAfterSubmitFailed` | `post_submit_code` (via `code_from_error`) and `js_post_submit_error` | The node accepted the transaction or batch but the local store update failed: `ClientError::ApplyTransactionAfterSubmitFailed`, the two `BatchBuilderError::BatchSubmitted*` variants, and every failure inside `applyTransaction`. Never resubmit. The JS resource helpers and `TransactionSubmission.apply()` raise it with `transactionId`, `submissionHeight` and `cause` |
 
 `code_from_error` recurses through `err.source()`, so a code survives being
 wrapped. It maps typed `ClientError` variants only, and is reachable **only**
@@ -605,12 +612,13 @@ WASM off the main thread. Two knobs govern it:
   need `useWorker: false`. It is also the right choice in single-WebView native
   shells (Capacitor, Tauri, Electron preload).
 
-`lastAuthError()` is likewise meaningful **only** with `useWorker: false`: the
-sign callback fires against the worker's WASM keystore while the accessor reads
+`lastAuthError()` is likewise meaningful **only** with `useWorker: false`. The
+sign callback still fires under the shim, because it is proxied back to the main
+thread, but signing runs in the worker's WASM keystore while the accessor reads
 the main-thread instance, which never signed, so under the shim it returns
-`null` (`js/client.js:376-381`). On the Node.js binding it always returns
-`null`. Consumers that need the signal already require `useWorker: false` for
-the callback to be reachable at all.
+`null` (`js/client.js:381-404`). Only the accessor misses the error: consumers
+that need the signal set `useWorker: false`. On the Node.js binding it always
+returns `null`.
 
 #### The worker-URL duplication is load-bearing
 
@@ -651,7 +659,7 @@ add a new init path, plumb `numThreads` through it too.
 
 ### `_withInnerWebClient(fn)` - the `@internal` escape hatch
 
-`MidenClient._withInnerWebClient(fn)` (`js/client.js:102-116`) runs `fn` with
+`MidenClient._withInnerWebClient(fn)` (`js/client.js`) runs `fn` with
 exclusive access to the proxied JS `WebClient`, so `fn` can reach lower-level
 methods the resource surface does not expose (`executeTransaction`,
 `proveTransaction[WithProver]`, `submitProvenTransaction`, `applyTransaction`,
@@ -662,22 +670,19 @@ contexts - an MV3 extension that executes in its service worker, proves in a
 pool, then submits and applies back in the SW.
 
 The callback runs inside `_serializeWasmCall`, so the WASM borrow is held for
-the duration of `fn` and concurrent SDK calls queue behind it. While `fn` runs,
-the underlying client's `_withInnerLockDepth` counter is bumped so that
-`_serializeWasmCall` invocations made **by** `fn` (or by any proxy-dispatched
-method it calls) run **inline** instead of enqueuing behind the outer slot -
-which is itself awaiting `fn`. Without the counter that is a textbook
-re-entrant-lock deadlock.
-
-> **Safety contract.** Callers MUST hold their own external mutex preventing
-> concurrent access to the same client instance during `fn`. The chain still
-> serializes against external callers - they queue behind the outer slot - but
-> if an external task runs during one of `fn`'s awaits and calls into the SDK,
-> it sees `_withInnerLockDepth > 0` and runs **inline**, racing wasm-bindgen's
-> borrow check. The method is `@internal` and the proxied client's shape is not
-> part of the documented public API, so pin the SDK version if you depend on it.
-> (The consumer-facing statement of this contract lives in the shipped
-> `web-client-usage` skill; the mechanism lives here.)
+the duration of `fn` and concurrent SDK calls queue behind it, including calls
+an unrelated task makes during one of `fn`'s awaits, except the raw-bound
+`SYNC_METHODS` accessors and the `keystore` getter, which never queue. `fn` receives a trusted
+handle (`createTrustedHandle` in `index.js`): a proxy over the client proxy
+whose methods run with the handle as `this`, so `_serializeWasmCall` and
+`_withStoreLock` see the handle's private `TRUSTED_CALLS` marker and run
+**inline** only for calls made through it, and for the calls those methods
+make on `this`. Queueing them would deadlock behind the slot that is awaiting
+`fn`. After `fn` settles the marker reads false, so a kept handle queues like
+the client. A call inside `fn` through any other reference to the client
+queues behind `fn` and deadlocks. Calls through the handle run inline, so
+`fn` must await them one at a time. (The consumer-facing statement lives in the
+shipped `web-client-usage` skill; the mechanism lives here.)
 
 ### Adding a method
 

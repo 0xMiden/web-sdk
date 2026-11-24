@@ -230,6 +230,7 @@ export async function upsertAccountCode(dbId, codeRoot, code) {
 export async function upsertAccountStorage(dbId, accountId, storageSlots) {
     try {
         const db = getDatabase(dbId);
+        await db.dexie.transaction("rw", db.latestAccountStorages, async () => {
         await db.latestAccountStorages
             .where("accountId")
             .equals(accountId)
@@ -243,6 +244,7 @@ export async function upsertAccountStorage(dbId, accountId, storageSlots) {
             slotType: slot.slotType,
         }));
         await db.latestAccountStorages.bulkPut(latestEntries);
+        });
     }
     catch (error) {
         logWebStoreError(error, `Error inserting storage slots`);
@@ -251,6 +253,7 @@ export async function upsertAccountStorage(dbId, accountId, storageSlots) {
 export async function upsertStorageMapEntries(dbId, accountId, entries) {
     try {
         const db = getDatabase(dbId);
+        await db.dexie.transaction("rw", db.latestStorageMapEntries, async () => {
         await db.latestStorageMapEntries
             .where("accountId")
             .equals(accountId)
@@ -264,6 +267,7 @@ export async function upsertStorageMapEntries(dbId, accountId, entries) {
             value: entry.value,
         }));
         await db.latestStorageMapEntries.bulkPut(latestEntries);
+        });
     }
     catch (error) {
         logWebStoreError(error, `Error inserting storage map entries`);
@@ -272,7 +276,11 @@ export async function upsertStorageMapEntries(dbId, accountId, entries) {
 export async function upsertVaultAssets(dbId, accountId, assets) {
     try {
         const db = getDatabase(dbId);
-        await db.latestAccountAssets.where("accountId").equals(accountId).delete();
+        await db.dexie.transaction("rw", db.latestAccountAssets, async () => {
+            await db.latestAccountAssets
+                .where("accountId")
+                .equals(accountId)
+                .delete();
         if (assets.length === 0)
             return;
         const latestEntries = assets.map((asset) => ({
@@ -281,6 +289,7 @@ export async function upsertVaultAssets(dbId, accountId, assets) {
             asset: asset.asset,
         }));
         await db.latestAccountAssets.bulkPut(latestEntries);
+        });
     }
     catch (error) {
         logWebStoreError(error, `Error inserting assets`);
@@ -746,6 +755,25 @@ export async function upsertAccountRecord(dbId, accountId, codeRoot, storageRoot
         logWebStoreError(error, `Error inserting account: ${accountId}`);
     }
 }
+export async function insertAccount(dbId, accountId, codeRoot, code, storageSlots, storageMapEntries, vaultAssets, storageRoot, vaultRoot, nonce, committed, commitment, accountSeed, watched, address) {
+    const db = getDatabase(dbId);
+    // The helpers below join this transaction, so any failed write rolls back all of them.
+    await db.dexie.transaction("rw", [
+        db.accountCodes,
+        db.latestAccountStorages,
+        db.latestStorageMapEntries,
+        db.latestAccountAssets,
+        db.latestAccountHeaders,
+        db.addresses,
+    ], async () => {
+        await upsertAccountCode(dbId, codeRoot, code);
+        await upsertAccountStorage(dbId, accountId, storageSlots);
+        await upsertStorageMapEntries(dbId, accountId, storageMapEntries);
+        await upsertVaultAssets(dbId, accountId, vaultAssets);
+        await upsertAccountRecord(dbId, accountId, codeRoot, storageRoot, vaultRoot, nonce, committed, commitment, accountSeed, watched);
+        await insertAccountAddress(dbId, accountId, address);
+    });
+}
 export async function insertAccountAddress(dbId, accountId, address) {
     try {
         const db = getDatabase(dbId);
@@ -781,12 +809,10 @@ export async function removeAccountAddress(dbId, address) {
 export async function upsertForeignAccountCode(dbId, accountId, code, codeRoot) {
     try {
         const db = getDatabase(dbId);
+        await db.dexie.transaction("rw", [db.accountCodes, db.foreignAccountCode], async () => {
         await upsertAccountCode(dbId, codeRoot, code);
-        const data = {
-            accountId,
-            codeRoot,
-        };
-        await db.foreignAccountCode.put(data);
+            await db.foreignAccountCode.put({ accountId, codeRoot });
+        });
     }
     catch (error) {
         logWebStoreError(error, `Error upserting foreign account code for account: ${accountId}`);
@@ -830,6 +856,7 @@ export async function getForeignAccountCode(dbId, accountIds) {
 export async function lockAccount(dbId, accountId) {
     try {
         const db = getDatabase(dbId);
+        await db.dexie.transaction("rw", [db.latestAccountHeaders, db.historicalAccountHeaders], async () => {
         await db.latestAccountHeaders
             .where("id")
             .equals(accountId)
@@ -839,6 +866,7 @@ export async function lockAccount(dbId, accountId) {
             .where("id")
             .equals(accountId)
             .modify({ locked: true });
+        });
     }
     catch (error) {
         logWebStoreError(error, `Error locking account: ${accountId}`);
@@ -896,18 +924,20 @@ export async function pruneAccountHistory(dbId, accountId, upToNonce) {
             // Delete orphaned code: only check roots from the deleted headers,
             // and only if they are not referenced by any remaining header or foreign code.
             if (candidateCodeRoots.size > 0) {
-                const latestHeaders = await db.latestAccountHeaders.toArray();
-                const remainingHistorical = await db.historicalAccountHeaders.toArray();
-                const foreignCodes = await db.foreignAccountCode.toArray();
-                const referencedCodeRoots = new Set();
-                for (const h of latestHeaders)
-                    referencedCodeRoots.add(h.codeRoot);
-                for (const h of remainingHistorical)
-                    referencedCodeRoots.add(h.codeRoot);
-                for (const f of foreignCodes)
-                    referencedCodeRoots.add(f.codeRoot);
                 for (const root of candidateCodeRoots) {
-                    if (!referencedCodeRoots.has(root)) {
+                    const referenced = (await db.latestAccountHeaders
+                        .where("codeRoot")
+                        .equals(root)
+                        .first()) ||
+                        (await db.historicalAccountHeaders
+                            .where("codeRoot")
+                            .equals(root)
+                            .first()) ||
+                        (await db.foreignAccountCode
+                            .where("codeRoot")
+                            .equals(root)
+                            .first());
+                    if (!referenced) {
                         await db.accountCodes.where("root").equals(root).delete();
                         totalDeleted += 1;
                     }

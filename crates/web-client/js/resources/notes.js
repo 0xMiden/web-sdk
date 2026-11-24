@@ -1,5 +1,6 @@
 import {
   isConsumableNow,
+  isStandardPaymentNote,
   resolveAccountRef,
   resolveAddress,
   resolveNoteIdHex,
@@ -98,7 +99,9 @@ export class NotesResource {
     return await this.#inner.getOutputNotes(filter);
   }
 
-  // Drops block-locked notes; `listConsumable` returns them.
+  // Payments the account can claim now. `listConsumable` keeps block-locked
+  // notes and every other script, such as another trader's public PSWAP order,
+  // which the screener lists for any account able to fill it.
   async listAvailable(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
@@ -107,7 +110,10 @@ export class NotesResource {
     const accountIdHex = accountId.toString();
     const consumable = await this.#inner.getConsumableNotes(accountId);
     return consumable
-      .filter((c) => isConsumableNow(c, accountIdHex))
+      .filter(
+        (c) =>
+          isConsumableNow(c, accountIdHex) && isStandardPaymentNote(c, wasm)
+      )
       .map((c) => c.inputNoteRecord());
   }
 
@@ -117,6 +123,16 @@ export class NotesResource {
     const accountId =
       opts?.account == null ? undefined : resolveAccountRef(opts.account, wasm);
     return await this.#inner.getConsumableNotes(accountId);
+  }
+
+  async screen(note, opts) {
+    this.#client.assertNotTerminated();
+    if (opts?.account == null) {
+      return await this.#inner.getNoteConsumability(note);
+    }
+    const wasm = await this.#getWasm();
+    const accountId = resolveAccountRef(opts.account, wasm);
+    return await this.#inner.getNoteConsumabilityForAccount(note, accountId);
   }
 
   async import(noteFile) {

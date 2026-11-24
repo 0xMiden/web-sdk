@@ -119,7 +119,9 @@ which one you are relying on tells you what a second browser tab can still do to
    call takes its place on the layer 1 chain when it is made and requests the lock
    when its turn comes (chain, then lock), so call order, `waitForIdle()` and
    `terminate()` treat it like any other call. While it waits for another client's lock,
-   later calls on its own client wait behind it. A call of a sync joins its client's
+   later calls on its own client wait behind it. Such a call waits at most 10 minutes
+   from when it is made, then rejects with `Timed out after <ms> ms waiting for the sync lock of <store>`
+   and its work never runs. A call of a sync joins its client's
    pending run of the *same* sync only while no other call has been queued on that client
    since the run; after one has, it starts a run of its own behind that call, so it never
    settles ahead of a call made before it. Every other call, the same sync on another
@@ -131,7 +133,8 @@ which one you are relying on tells you what a second browser tab can still do to
    lock the callback holds, and every later call on that client waits behind it. It is
    also any lock whose holder is waiting on such a call, such as `@miden-sdk/react`'s
    `runExclusive`, which `MidenProvider` holds across its init sync, or an application
-   mutex around `_withInnerWebClient`. Every client on the store then stops. With no Web
+   mutex around `_withInnerWebClient`. Every client on the store stalls until the
+   waiting store-locked call's bound runs out and it rejects. With no Web
    Locks API it degrades to an in-process per-database chain. Two writes take no lock:
    the free `importStore` function, which replaces a whole store, so run it only while no
    client uses that store; and the genesis block header `createClient` stores in a store
@@ -221,14 +224,11 @@ AccountId.fromBech32("mtst1...");
 
 Both hex and bech32 formats work in all hooks. Prefer hex for constants, bech32 for display.
 
-**Gotcha: the HRP is inferred from your `rpcUrl` string, not from the chain.** `bech32id()` (and `toBech32AccountId()`) read the *resolved* `rpcUrl` out of the store, lowercase it, and look for substrings in this order: `devnet` or `mdev` -> devnet, `mainnet` -> mainnet, `testnet` or `mtst` -> testnet. **Anything matching none of them falls back to testnet**, as does an unset `rpcUrl`.
+**Gotcha: the HRP is inferred from the endpoint URL, not from the chain.** `bech32id()` (and `toBech32AccountId()`) read `client.endpoint()` from the provider's client, the URL of the node it was created against, lowercase it, and look for substrings in this order: `devnet` or `mdev` -> devnet, `mainnet` -> mainnet, `testnet` or `mtst` -> testnet, `localhost` or `127.0.0.1` -> devnet. An unset `rpcUrl` is not a gap here: the client defaulted to testnet and reports that endpoint.
 
-`MidenConfig.rpcUrl` resolves only the shorthands `"testnet"`, `"devnet"` and `"localhost"` / `"local"` to concrete URLs and passes any other value through verbatim. So:
+**Anything matching none of them is mainnet (`mm`)**, and every call made before `MidenProvider` has a client renders the hex ID. `MidenConfig.rpcUrl` resolves only the shorthands `"mainnet"`, `"testnet"`, `"devnet"` and `"localhost"` / `"local"` to concrete URLs and passes any other value through verbatim, so a private or self-hosted RPC endpoint whose hostname names no network formats mainnet (`mm`) addresses; set `MidenConfig.network` when that host is not mainnet.
 
-- A private or self-hosted RPC endpoint whose hostname contains none of those substrings silently renders `mtst1...` addresses for a network that is not testnet.
-- `"localhost"` resolves to `http://localhost:57291`, which also contains none of them, so a local node renders testnet-prefixed addresses too.
-
-If you run a custom or local network, do not treat `bech32id()` output as authoritative - key off hex, and render bech32 only where you control the network mapping yourself.
+If you run a custom network, set `MidenConfig.network` or render bech32 yourself with `AccountId.toBech32(networkId, ...)` where you control the network mapping. An unnamed host is mainnet, not hex.
 
 The three real HRPs are `mtst` (testnet), `mdev` (devnet) and `mm` (mainnet); a custom
 network supplies its own through `NetworkId::custom`. **There is no `miden1` prefix** -
@@ -453,15 +453,17 @@ Set `useWorker: false` when:
 
 `MidenConfig.useWorker` is forwarded to both `createClient` and `createClientWithExternalKeystore`.
 
-Two companions to the same boundary:
+Four companions to the same boundary:
 
-- **`lastAuthError()` returns `null` under the worker.** The sign callback fires against the worker's WASM keystore while the accessor reads the main-thread instance, which never signed. It is meaningful only with `useWorker: false` - which is not a real constraint, since a JS sign callback needs that setting to be reachable at all. On the Node binding it always returns `null`, because signing goes through the filesystem keystore rather than a JS callback. Read it under your own lock: it is one of the raw-bound `SYNC_METHODS`, so unlike a forwarded async method it does not join `_serializeWasmCall`, and it takes a shared WASM borrow that can still lose the race against an in-flight call. The `keystore` getter has the same shape.
+- **`lastAuthError()` returns `null` under the worker.** The sign callback still fires under the worker, because it is proxied back to the main thread, but signing runs in the worker's WASM keystore while the accessor reads the main-thread instance, which never signed. Only the accessor misses the error, so if you need the signal, set `useWorker: false`. On the Node binding it always returns `null`, because signing goes through the filesystem keystore rather than a JS callback. Read it under your own lock: it is one of the raw-bound `SYNC_METHODS`, so unlike a forwarded async method it does not join `_serializeWasmCall`, and it takes a shared WASM borrow that can still lose the race against an in-flight call. The `keystore` getter has the same shape.
+- **Keystore callbacks wait on the main thread.** Under the worker, each `getKey`, `insertKey` and `sign` call is proxied to the main thread, and the worker gives `getKey` and `insertKey` 30 seconds by default while `sign` waits without a limit. Set `ClientOptions.callbackTimeoutMs` to put one limit on all three, rounded up to a whole millisecond (`0` removes them all). A negative, non-finite or non-number value, or one greater than 2147483647, throws `TypeError` at creation. A batch signs while it is built, so one failed or timed out `sign` fails the whole batch, and a stalled `sign` with no limit holds the batch and leaves later worker calls in the queue. If a signer can stall, set a finite value such as `callbackTimeoutMs: 120000`. See the [complete contract](https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts).
 - **`usePreview()` runs the VM on the main thread regardless.** It is not offloaded to the worker (matching the client's unanchored `executeForSummary`), so it blocks the UI for its whole duration and queues other client calls behind it. Budget for that in a confirmation flow; do not assume the worker is absorbing it.
+- **A batch in the worker still holds the client.** `submitNewTransactionBatch` is forwarded to the worker, so `transactions.batch`, `submitBatch` and `useBatch` leave the page's main thread free while every transaction is proven, but the whole batch occupies the client: other client calls queue behind it until it settles. A batch forwarded to the worker also does not surface its auth error through `lastAuthError()`, for the reason given above. With `useWorker: false`, without `Worker` support, or on a mock client, the batch proves on the main thread and blocks the UI, so keep batches small there.
 
 **Config cannot carry a prover instance.** Neither `ClientOptions.proverUrl` nor the React
 SDK's `ProverTarget` / `ProverConfig` has an arm that accepts a `TransactionProver`. The
-raw client takes `proverUrl?: "local" | "devnet" | "testnet" | (string & {})`, and
-`ProverTarget` widens that to `"local" | "localhost" | "devnet" | "testnet" | string |
+raw client takes `proverUrl?: "local" | "mainnet" | "devnet" | "testnet" | (string & {})`, and
+`ProverTarget` widens that to `"local" | "localhost" | "mainnet" | "devnet" | "testnet" | string |
 { url, timeoutMs? }`, with `ProverConfig` adding `{ primary, fallback }` around it - every
 arm is a URL or a name, never a handle. So a callback prover cannot be supplied through
 config at all; it has to be passed at the call that proves, which is why the
@@ -473,7 +475,7 @@ Verify: `crates/web-client/js/index.js`, `crates/web-client/js/client.js`, `pack
 
 Errors carry machine-readable codes; message strings are not a stable API.
 
-- Assigned by the React SDK (`MidenError`, the closed `MidenErrorCode` union): `WASM_CLASS_MISMATCH`, `WASM_POINTER_CONSUMED`, `WASM_NOT_INITIALIZED`, `WASM_SYNC_REQUIRED`, `SEND_BUSY`, `OPERATION_BUSY`, `STALE_CLIENT`, `UNKNOWN`.
+- Assigned by the React SDK (`MidenError`, the closed `MidenErrorCode` union): `WASM_CLASS_MISMATCH`, `WASM_POINTER_CONSUMED`, `WASM_NOT_INITIALIZED`, `WASM_SYNC_REQUIRED`, `SEND_BUSY`, `OPERATION_BUSY`, `BATCH_BUSY`, `STALE_CLIENT`, `UNKNOWN`.
 - Assigned by the Rust client and thrown out of WASM (`WasmErrorCode`): `INVALID_CHAIN_ANCHOR`, `TRANSACTION_ALREADY_AUTHORIZED`. This list is deliberately **not** exhaustive of what the client can emit - `CodedError.code` carries a `(string & {})` arm so codes from a newer client stay assignable. Handle the ones you care about and fall through on the rest.
 
 ```tsx
@@ -510,7 +512,7 @@ Verify: `crates/web-client/js/eager.js`.
 - `FungibleAsset.withCallbacks(flag)` removed. The flag is an immutable property of the issuing faucet's account id; `FungibleAsset.callbacks()` still reports it.
 - `TransactionSummary.salt()` replaced by `userParams()` (the seven user-defined field elements the summary commitment binds).
 - `ExecutedTransaction.accountDelta()` and `TransactionStoreUpdate.accountDelta()` replaced by `accountPatch()`, exposing the absolute-valued `AccountPatch` / `AccountStoragePatch` / `AccountVaultPatch`. `TransactionSummary.accountDelta()` remains relative. `AccountStorageDelta` was removed.
-- `AccountComponent.createNetworkAuth` renamed to `createNetworkAuthComponents(NoteScriptFee[], feeFaucetId)`, which returns an **array**. Add every returned component to the builder with `AccountBuilder.withComponent`. Since 0.17 `feeFaucetId` must be the chain's own (`client.feeFaucetId()`): the node never runs network transactions for an account whose fee asset differs from the chain's protocol configuration, and the notes sent to it silently go unconsumed.
+- `AccountComponent.createNetworkAuth` renamed to `createNetworkAuthComponents(NoteScriptFee[], feeFaucetId)`, which returns an **array**. Add every returned component to the builder with `AccountBuilder.withComponent`. Since 0.17 `feeFaucetId` must be the chain's own (`client.feeFaucetId()`, the faucet `client.protocolConfig()` names): the node never runs network transactions for an account whose fee asset differs from the chain's protocol configuration, and the notes sent to it silently go unconsumed.
 - MASM: note scripts calling `basic_wallet::add_assets_to_account` must switch to `basic_wallet::move_note_assets_to_account` (a stale script fails to compile with `undefined item 'add_assets_to_account'`). Account-component procedures now require `@account_procedure`, and transaction scripts use `@transaction_script pub proc main`.
 - `newConsumeTransactionRequest` is async and takes the consuming account as a second argument. `newPswapConsumeTransactionRequest` and `newPswapCancelTransactionRequest` are async too (parameters unchanged). Code going through `client.transactions.consume(...)` / `consumeAll(...)` or the `useConsume` hook is unaffected.
 - `TransactionProver.newLocalProver()` now produces Poseidon2 proofs, matching the client's own default prover instead of the prover crate's Blake3 default. Expect local proving to take roughly 1.6-2.6x longer. This is an alignment, not a regression - do not go hunting for a performance bug.
@@ -525,7 +527,7 @@ Verify: `crates/web-client/js/eager.js`.
 | FP2 | Sequences are not atomic | HIGH | Forwarded async calls serialize themselves (raw-bound `SYNC_METHODS` do not); wrap multi-call sequences in `runExclusive()` |
 | FP3 | COOP/COEP | HIGH | Default ST build needs no headers; required ONLY for the `/mt` build |
 | FP4 | BigInt | HIGH | Hooks and the high-level `MidenClient` coerce `number`; strict `bigint` only at the low-level request constructors |
-| FP5 | Bech32 mismatch | HIGH | Match network in rpcUrl and addresses; the HRP is inferred from the `rpcUrl` string and falls back to testnet |
+| FP5 | Bech32 mismatch | HIGH | Match network in rpcUrl and addresses; the HRP is inferred from `client.endpoint()`, and an unrecognised endpoint is mainnet (`mm`) |
 | FP6 | Auto-sync | MEDIUM | Default 15000ms; prefer `useSyncControl()` over `autoSyncInterval: 0` |
 | FP7 | IndexedDB loss | HIGH | Upgrading from a pre-0.17.0 SDK clears the store once and its export cannot be imported; a newer SDK's store and export are refused |
 | FP8 | Vite config | MEDIUM | `midenVitePlugin()` has four options; bare call is right for ST, `crossOriginIsolation: true` only for `/mt` |

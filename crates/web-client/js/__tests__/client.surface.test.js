@@ -204,3 +204,119 @@ describe("MidenClient declared surface", () => {
     ).toEqual([]);
   });
 });
+
+// A public method is documented on every consumer surface the repository
+// requires, and typedoc renders a WASM return type only when the curated entry
+// exports it. Each listed file is one that tells a reader how to get the fee
+// asset, so it names `protocolConfig()` beside `feeFaucetId()`.
+const REPO_ROOT = new URL("../../../../", import.meta.url);
+const PROTOCOL_CONFIG_DOCS = [
+  "README.md",
+  "crates/web-client/README.md",
+  "crates/web-client/AGENTS.md",
+  "crates/web-client/skills/web-client-usage/SKILL.md",
+  "crates/web-client/skills/chain-anchored-execution/SKILL.md",
+  "crates/web-client/skills/signer-integration/SKILL.md",
+  "crates/web-client/skills/frontend-pitfalls/SKILL.md",
+  "crates/web-client/src/models/account_component.rs",
+  "docs/external/src/web-client/library/network-notes.md",
+  "docs/external/src/web-client/library/transactions.md",
+];
+
+describe("protocolConfig documentation", () => {
+  it("docs-entry exports ProtocolConfig", () => {
+    const entry = readFileSync(
+      new URL("../types/docs-entry.d.ts", import.meta.url),
+      "utf8"
+    );
+    expect(entry).toMatch(/^\s*ProtocolConfig,/m);
+  });
+
+  it.each(PROTOCOL_CONFIG_DOCS)(
+    "protocolConfig is documented on every required surface: %s",
+    (file) => {
+      expect(readFileSync(new URL(file, REPO_ROOT), "utf8")).toContain(
+        "protocolConfig("
+      );
+    }
+  );
+});
+
+// The web submit paths submit exactly the request they are given, so the
+// registration contract of the new request builders is stated where a caller
+// reads it: on the Rust doc comments that become the JSDoc and on every page.
+const REQUEST_BUILDER_DOCS = [
+  "crates/web-client/README.md",
+  "crates/web-client/skills/web-client-usage/SKILL.md",
+  "docs/external/src/web-client/library/transactions.md",
+];
+const rustDoc = (file, jsName) => {
+  const lines = readFileSync(new URL(file, REPO_ROOT), "utf8").split("\n");
+  const at = lines.findIndex((line) =>
+    line.includes(`js_name = "${jsName}")]`)
+  );
+  expect(at, `${jsName} is exported in ${file}`).toBeGreaterThan(0);
+  const doc = [];
+  for (let i = at - 1; i >= 0 && lines[i].trim().startsWith("///"); i--) {
+    doc.unshift(lines[i]);
+  }
+  return doc.join("\n");
+};
+const BUILDER = "crates/web-client/src/models/transaction_request/";
+
+describe("request builder documentation", () => {
+  it.each(REQUEST_BUILDER_DOCS)(
+    "%s names the registration request and the 20-note limit",
+    (file) => {
+      const text = readFileSync(new URL(file, REPO_ROOT), "utf8");
+      expect(text).toContain("newRegisterNoteScriptsTransactionRequest");
+      expect(text).toContain("withExpectedNtxScripts");
+      expect(text).toContain("invalid input note count");
+    }
+  );
+
+  it("withExpectedNtxScripts does not promise automatic registration", () => {
+    const setterDoc = rustDoc(
+      `${BUILDER}transaction_request_builder.rs`,
+      "withExpectedNtxScripts"
+    );
+    expect(setterDoc).toContain("newRegisterNoteScriptsTransactionRequest");
+    expect(setterDoc).not.toContain("registers any script");
+  });
+
+  it("ignoreInvalidInputNotes documents the 20-note checker limit", () => {
+    const setterDoc = rustDoc(
+      `${BUILDER}transaction_request_builder.rs`,
+      "ignoreInvalidInputNotes"
+    );
+    expect(setterDoc).toContain("20");
+    expect(setterDoc).toContain("invalid input note count");
+  });
+
+  it("expectedNtxScripts documents that standard scripts are returned", () => {
+    expect(rustDoc(`${BUILDER}mod.rs`, "expectedNtxScripts")).toContain(
+      "standard"
+    );
+  });
+
+  it("every submit surface points at the registration request", () => {
+    const types = readFileSync(
+      new URL("crates/web-client/js/types/api-types.d.ts", REPO_ROOT),
+      "utf8"
+    );
+    const block = (needle) => {
+      const at = types.indexOf(needle);
+      expect(at, needle).toBeGreaterThan(0);
+      return types.slice(types.lastIndexOf("/**", at), at);
+    };
+    for (const needle of [
+      "  submit(\n",
+      "  executeRequest(\n",
+      "  submit(): Promise<TransactionSubmission>;",
+    ]) {
+      expect(block(needle)).toContain(
+        "newRegisterNoteScriptsTransactionRequest"
+      );
+    }
+  });
+});

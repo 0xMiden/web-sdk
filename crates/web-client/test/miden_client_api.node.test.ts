@@ -63,6 +63,18 @@ test("native account visibility selects the builder's account type", async ({
 });
 
 test.describe("MidenClient API - Mock Chain", () => {
+  test("endpoint: a mock client reports none, an RpcClient its own", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const rpcClient = new sdk.RpcClient(sdk.Endpoint.devnet());
+
+    expect(client.endpoint()).toBeUndefined();
+    expect(rpcClient.endpoint()).toBe(sdk.Endpoint.devnet().toString());
+  });
+
   test("full flow: create accounts, mint, consume, check balance", async ({
     sdk,
   }) => {
@@ -468,6 +480,70 @@ test.describe("MidenClient API - Mock Chain", () => {
     client.proveBlock();
 
     expect(isMock).toBe(true);
+  });
+
+  test("transactions.batch waitForConfirmation follows the batch's own transactions", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+
+    const wallet = await client.accounts.create();
+    const faucet = await client.accounts.create({
+      type: "FungibleFaucet",
+      symbol: "DAG",
+      decimals: 8,
+      maxSupply: sdk.u64(10000000),
+    });
+
+    // A transaction that is pending before the batch and is not part of it.
+    await client.transactions.mint({
+      account: faucet,
+      to: wallet,
+      amount: sdk.u64(5),
+    });
+
+    // No block is proven, so the batch stays pending. The client is already at
+    // the block number the submission returns, so only the batch's
+    // transactions can tell the wait that nothing has committed.
+    await expect(
+      client.transactions.batch({
+        operations: [
+          { kind: "mint", account: faucet, to: wallet, amount: sdk.u64(100) },
+          { kind: "mint", account: faucet, to: wallet, amount: sdk.u64(200) },
+        ],
+        waitForConfirmation: true,
+        timeout: 1000,
+        interval: 100,
+      })
+    ).rejects.toThrow(
+      "Batch confirmation timed out after 1000ms (waiting for 2 transaction(s))"
+    );
+    expect(
+      (await client.transactions.list({ status: "uncommitted" })).length
+    ).toBe(3);
+
+    // Blocks are proven while a second batch waits, so its wait resolves.
+    const prover = setInterval(() => client.proveBlock(), 250);
+    let result;
+    try {
+      result = await client.transactions.batch({
+        operations: [
+          { kind: "mint", account: faucet, to: wallet, amount: sdk.u64(300) },
+        ],
+        waitForConfirmation: true,
+        timeout: 60_000,
+        interval: 100,
+      });
+    } finally {
+      clearInterval(prover);
+    }
+
+    expect(typeof result.blockNumber).toBe("number");
+    expect(
+      (await client.transactions.list({ status: "uncommitted" })).length
+    ).toBe(0);
   });
 
   test("terminate prevents further operations", async ({ sdk }) => {
@@ -936,6 +1012,92 @@ test.describe("MidenClient API - Mock Chain", () => {
     expect(typeof tag.asU32 === "function").toBe(true);
     expect(tagValue).toBeGreaterThan(0);
     expect(tagValue >= 0 && tagValue <= 0xffffffff).toBe(true);
+  });
+
+  test("node-index FeeSponsorshipNote and createFeeSponsorshipNote round-trip", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const jsDir = path.resolve(import.meta.dirname, "..", "js");
+    const prevStatics = {
+      wasmWebClient: MidenClient._WasmWebClient,
+      mockWasmWebClient: MidenClient._MockWasmWebClient,
+      getWasmOrThrow: MidenClient._getWasmOrThrow,
+    };
+
+    try {
+      const {
+        MockWasmWebClient,
+        FeeSponsorshipNote,
+        createFeeSponsorshipNote,
+        Note,
+        FungibleAsset,
+        NoteAssets,
+        NoteType,
+        NoteAttachment,
+        AccountStorageMode,
+        AuthScheme,
+      } = await import(path.join(jsDir, "node-index.js"));
+
+      const mockClient = await MockWasmWebClient.createClient();
+      const sender = await mockClient.newWallet(
+        AccountStorageMode.public(),
+        AuthScheme.Falcon
+      );
+      const target = await mockClient.newWallet(
+        AccountStorageMode.public(),
+        AuthScheme.Falcon
+      );
+      const faucet = await mockClient.newFaucet(
+        AccountStorageMode.public(),
+        false,
+        "FEE",
+        "FEE",
+        8,
+        sdk.u64(1_000_000),
+        AuthScheme.Falcon
+      );
+
+      const featureNote = Note.createP2IDNote(
+        sender.id(),
+        target.id(),
+        new NoteAssets([new FungibleAsset(faucet.id(), sdk.u64(1))]),
+        NoteType.Public,
+        new NoteAttachment()
+      );
+
+      const sponsorship = createFeeSponsorshipNote({
+        from: sender,
+        to: target.id(),
+        featureNoteId: featureNote.id(),
+        asset: new FungibleAsset(faucet.id(), sdk.u64(10)),
+      });
+
+      const decoded = FeeSponsorshipNote.tryFromNote(sponsorship);
+      expect(decoded.featureNoteId().toString()).toBe(
+        featureNote.id().toString()
+      );
+      expect(decoded.sender().toString()).toBe(sender.id().toString());
+      expect(decoded.reclaimer().toString()).toBe(sender.id().toString());
+      expect(decoded.reclaimHeight()).toBeUndefined();
+      expect(Number(decoded.asset().amount())).toBe(10);
+      expect(decoded.asset().faucetId().toString()).toBe(
+        faucet.id().toString()
+      );
+      expect(decoded.intoNote().id().toString()).toBe(
+        sponsorship.id().toString()
+      );
+    } finally {
+      MidenClient._WasmWebClient = prevStatics.wasmWebClient;
+      MidenClient._MockWasmWebClient = prevStatics.mockWasmWebClient;
+      MidenClient._getWasmOrThrow = prevStatics.getWasmOrThrow;
+      const standalone = await import(path.join(jsDir, "standalone.js"));
+      if (standalone._setWasm)
+        standalone._setWasm(await prevStatics.getWasmOrThrow());
+      if (standalone._setWebClient)
+        standalone._setWebClient(prevStatics.wasmWebClient);
+    }
   });
 
   test("accounts.getOrImport returns existing account without importing", async ({

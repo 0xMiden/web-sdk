@@ -9,16 +9,31 @@ import {
 } from "./indexeddb.js";
 import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
-import { coalesceRun, runUnderLock, withSyncLock } from "./syncLock.js";
+import {
+  coalesceRun,
+  lockWaitError,
+  LOCK_WAIT_TIMEOUT_MS,
+  runUnderLock,
+  withSyncLock,
+} from "./syncLock.js";
+import {
+  appendAuthError,
+  serializeCallbackError,
+  validateCallbackTimeoutMs,
+} from "./callbackBridge.js";
 import { emitObservation, hasObserver, setObserver } from "./observability.js";
+import { assertBatchItems } from "./utils.js";
 import { MidenClient } from "./client.js";
 import { CompilerResource } from "./resources/compiler.js";
-import { validateNoteTransportRetryOptions } from "./utils.js";
+import { claimStore, validateNoteTransportRetryOptions } from "./utils.js";
 import {
   createP2IDNote,
   createP2IDENote,
+  createFeeSponsorshipNote,
   buildSwapTag,
   buildNetworkNote,
+  isStandardPayment,
+  domainSeparatedSignCommitment,
   _setWasm as _setStandaloneWasm,
   _setWebClient as _setStandaloneWebClient,
 } from "./standalone.js";
@@ -28,8 +43,25 @@ import {
   StorageResult,
   wordToBigInt,
 } from "./storageView.js";
-import { resolveAuthScheme } from "./utils.js";
+import {
+  installAuthSchemeResolution,
+  resolveAuthScheme,
+  wrapAuthGuardedMultisigConfig,
+} from "./utils.js";
+import {
+  AuthGuardedMultisigConfig as WasmAuthGuardedMultisigConfig,
+  AuthScheme as WasmAuthScheme,
+} from "../Cargo.toml";
 export * from "../Cargo.toml";
+
+// The package's `AuthScheme` (below) is the friendly string const and shadows
+// the wasm enum, so these bindings resolve the friendly strings themselves.
+// AccountComponent.createAuthComponentFromCommitment is patched once the wasm
+// module loads (see ensureWasm).
+export const AuthGuardedMultisigConfig = wrapAuthGuardedMultisigConfig(
+  () => WasmAuthGuardedMultisigConfig,
+  () => ({ AuthScheme: WasmAuthScheme })
+);
 
 export {
   FaucetType,
@@ -42,7 +74,15 @@ export {
 export { isConsumableNow } from "./utils.js";
 export { MidenClient };
 export { CompilerResource };
-export { createP2IDNote, createP2IDENote, buildSwapTag, buildNetworkNote };
+export {
+  createP2IDNote,
+  createP2IDENote,
+  createFeeSponsorshipNote,
+  buildSwapTag,
+  buildNetworkNote,
+  isStandardPayment,
+  domainSeparatedSignCommitment,
+};
 export { StorageView, StorageResult, wordToBigInt };
 
 // Internal exports — used by integration tests that need direct access to the low-level WebClient proxy.
@@ -68,7 +108,7 @@ export {
 //
 //   - An entry that awaits while holding the borrow can be polled concurrently
 //     with any other call and panics with `already borrowed: BorrowMutError`.
-//     The methods that read the store while holding the borrow — the eight
+//     The methods that read the store while holding the borrow — the nine
 //     request constructors, `feeAwareTransactionRequestBuilder` and
 //     `withFeeAwareAuth`, which read the chain's fee parameters, and
 //     `buildPswapCancelByOrder`, which reads the order's lineage — are write
@@ -92,6 +132,7 @@ export {
 // borrow, so both can still lose the race above — don't add a third.
 const SYNC_METHODS = new Set([
   "buildSwapTag",
+  "endpoint",
   "lastAuthError",
   "proveBlock",
   "serializeMockChain",
@@ -118,6 +159,7 @@ const WRITE_METHODS = new Set([
   "importAccountById",
   "importAccountFile",
   "importNoteFile",
+  "importWatchedAccountById",
   "insertAccountAddress",
   "installNoteAcquisitionGate",
   "newAccount",
@@ -127,8 +169,10 @@ const WRITE_METHODS = new Set([
   "newPswapCancelTransactionRequest",
   "newPswapConsumeTransactionRequest",
   "newPswapCreateTransactionRequest",
+  "newRegisterNoteScriptsTransactionRequest",
   "newSendTransactionRequest",
   "newSwapTransactionRequest",
+  "newXReserveBurnTransactionRequest",
   "pruneAccountHistory",
   "registerAccount",
   "removeAccountAddress",
@@ -137,8 +181,9 @@ const WRITE_METHODS = new Set([
   "sendPrivateNote",
   "sendPrivateOutputNote",
   "setSetting",
-  "submitNewTransactionBatch",
   "submitProvenTransaction",
+  "trackAccountWitness",
+  "untrackAccountWitness",
   "withFeeAwareAuth",
 ]);
 
@@ -156,6 +201,8 @@ const READ_METHODS = new Set([
   "getAccountVault",
   "getAccounts",
   "getConsumableNotes",
+  "getNoteConsumability",
+  "getNoteConsumabilityForAccount",
   "getInputNote",
   "getInputNotes",
   "getInputNotesPage",
@@ -174,7 +221,9 @@ const READ_METHODS = new Set([
   "listTags",
   "executeProgram",
   "feeFaucetId",
+  "protocolConfig",
   "storeIdentifier",
+  "trackedAccountWitnesses",
 ]);
 
 const MOCK_STORE_NAME = "mock_client_db";
@@ -245,6 +294,11 @@ const ensureWasm = async () => {
         // Install StorageView: account.storage() now returns a developer-friendly
         // wrapper that makes getItem() work correctly for StorageMap slots.
         installStorageView(module);
+        installAuthSchemeResolution(module.AccountComponent, module);
+        if (module.AuthGuardedMultisigConfig) {
+          AuthGuardedMultisigConfig.prototype =
+            module.AuthGuardedMultisigConfig.prototype;
+        }
       }
       return module;
     });
@@ -321,18 +375,63 @@ function applyObserverOptions(options) {
   return observeSensitive;
 }
 
+/**
+ * Error detail for one failed observation. Undefined unless `enabled` is
+ * true, so the caller can leave `sensitive` off the object entirely.
+ *
+ * @param {boolean} enabled
+ * @param {unknown} error
+ * @returns {{ errorMessage: string, errorStack?: string } | undefined}
+ */
+function observationSensitive(enabled, error) {
+  if (enabled !== true) return undefined;
+  return {
+    errorMessage: error instanceof Error ? error.message : String(error),
+    ...(error instanceof Error && error.stack
+      ? { errorStack: error.stack }
+      : {}),
+  };
+}
+
+// Marks the trusted handle `_withInnerWebClient` passes its callback: a call
+// whose receiver reads it as true runs inline in that callback's chain slot.
+const TRUSTED_CALLS = Symbol("trustedWasmCalls");
+
+/**
+ * A view of `client` for `_withInnerWebClient`. Every method reached through it
+ * runs with the view as `this`, so only calls made through the view, and the
+ * calls those make on `this`, skip the queue. After `release()` a kept view
+ * queues like the client itself.
+ * @internal
+ */
+function createTrustedHandle(client) {
+  let active = true;
+  const handle = new Proxy(client, {
+    get(target, prop, receiver) {
+      return prop === TRUSTED_CALLS
+        ? active
+        : Reflect.get(target, prop, receiver);
+    },
+  });
+  return { handle, release: () => (active = false) };
+}
+
 function createClientProxy(instance) {
   return new Proxy(instance, {
     get(target, prop, receiver) {
+      // Only a trusted handle answers true; it intercepts the read itself.
+      if (prop === TRUSTED_CALLS) {
+        return false;
+      }
       if (prop in target) {
         return Reflect.get(target, prop, receiver);
       }
       const live = target.wasmWebClient;
-      // After terminate() only a read nested in an in-flight
-      // `_withInnerWebClient` keeps the live route, as in `_serializeWasmCall`:
-      // it belongs to work that was already queued when terminate() ran.
+      // After terminate() only a read through an in-flight
+      // `_withInnerWebClient` handle keeps the live route, as in
+      // `_serializeWasmCall`: it belongs to work queued before terminate() ran.
       const liveRoute =
-        live && (!target._terminated || target._withInnerLockDepth > 0);
+        live && (!target._terminated || receiver[TRUSTED_CALLS] === true);
       if (liveRoute && prop in live) {
         const value = live[prop];
         if (typeof value === "function") {
@@ -352,7 +451,7 @@ function createClientProxy(instance) {
             };
           }
           return (...args) =>
-            target._serializeWasmCall(
+            receiver._serializeWasmCall(
               () => value.apply(target.wasmWebClient, args),
               prop
             );
@@ -483,6 +582,9 @@ class WebClient {
    *   60000. Defaults to 250. With the retries, the total computed backoff
    *   `interval * (2^retries - 1)`, an omitted value taken at its default, may
    *   not exceed 120000 ms.
+   * @param {number | undefined} [callbackTimeoutMs] - The `callbackTimeoutMs`
+   *   field of `ClientOptions`: how long the Web Worker waits for each external
+   *   keystore callback. See `callbackTimeoutFor` in `callbackBridge.js`.
    * @param {import("./types/api-types").IndexedDbOptions} [indexedDb] - Browser
    *   transaction durability hint and synchronous failure callback. Shared/pending
    *   connections inherit omitted durability and reject explicit conflicts.
@@ -504,6 +606,7 @@ class WebClient {
     feeFaucetId,
     noteTransportMaxRetries,
     noteTransportRetryIntervalMs,
+    callbackTimeoutMs,
     indexedDb
   ) {
     validateNoteTransportRetryOptions(
@@ -544,6 +647,7 @@ class WebClient {
     this._feeFaucetId = feeFaucetId;
     this._noteTransportMaxRetries = noteTransportMaxRetries;
     this._noteTransportRetryIntervalMs = noteTransportRetryIntervalMs;
+    this._callbackTimeoutMs = validateCallbackTimeoutMs(callbackTimeoutMs);
     this.useWorker = useWorker !== false;
 
     // Check if Web Workers are available AND the caller didn't opt out via
@@ -669,14 +773,31 @@ class WebClient {
             }
 
             this.worker.postMessage({
+              callbackOk: true,
               callbackResult: result,
               callbackRequestId: requestId,
             });
           } catch (error) {
-            this.worker.postMessage({
-              callbackError: error.message,
+            // A callback may throw any value, including one with no `.message`
+            // (a string, `{ code: 4001 }`, `null`), so send an explicit failure
+            // flag and the cloneable fields the worker needs to rebuild the
+            // error, including when causes cycle or properties are unreadable.
+            const reply = {
+              callbackOk: false,
+              callbackError: serializeCallbackError(error, callbackType),
               callbackRequestId: requestId,
-            });
+            };
+            try {
+              this.worker.postMessage(reply);
+            } catch {
+              this.worker.postMessage({
+                callbackOk: false,
+                callbackError: {
+                  message: `${callbackType} callback threw an unreadable value`,
+                },
+                callbackRequestId: requestId,
+              });
+            }
           }
           return;
         }
@@ -715,8 +836,16 @@ class WebClient {
         }
       });
 
-      this.worker.addEventListener("error", () => this.terminate());
-      this.worker.addEventListener("messageerror", () => this.terminate());
+      // A script that fails to load or throws uncaught, or a message that
+      // cannot be deserialized, leaves the worker unable to answer; without
+      // these listeners every call waits on it forever.
+      this.worker.addEventListener("error", (event) => {
+        this._failWorker(event?.message || "the worker script failed to run");
+      });
+      this.worker.addEventListener("messageerror", () => {
+        this._failWorker("the worker sent a message that could not be read");
+      });
+
       // Once the worker script has loaded, initialize the worker.
       this.loaded.then(() => this.initializeWorker());
     } else {
@@ -741,11 +870,6 @@ class WebClient {
     // would panic with "recursive use of an object detected" due to
     // wasm-bindgen's internal RefCell.
     this._wasmCallChain = Promise.resolve();
-    // Depth counter for `_withInnerWebClient` re-entrancy. While > 0,
-    // `_serializeWasmCall` runs its callback inline instead of queueing
-    // it on the chain — see the comment on `_serializeWasmCall` for the
-    // safety contract.
-    this._withInnerLockDepth = 0;
     // This client's in-flight coalesced syncs; see `_withStoreLock`.
     this._syncRuns = new Map();
     // Top-level calls queued on `_wasmCallChain` so far. A coalesced sync run
@@ -771,25 +895,18 @@ class WebClient {
    * Concurrent calls are queued and executed one at a time.
    *
    * Wraps both the direct (in-thread) path and the worker-dispatched path.
-   * On the worker path this is redundant with the worker's own message queue,
-   * but harmless (the chain resolves immediately on the main thread once the
-   * worker's postMessage returns). On the direct path it is load-bearing —
-   * without it, concurrent main-thread callers would panic with
-   * "recursive use of an object detected" (wasm-bindgen's internal RefCell).
+   * On the worker path this is redundant with the worker's own message queue
+   * for ordering, but it is not free: the callback resolves only when the
+   * worker posts its response, so the chain slot is held for the entire
+   * round trip and later calls queue behind it. On the direct path it is
+   * load-bearing — without it, concurrent main-thread callers would panic
+   * with "recursive use of an object detected" (wasm-bindgen's RefCell).
    *
-   * Re-entrancy: when invoked from inside a `_withInnerWebClient(fn)`
-   * callback — detected via `_withInnerLockDepth > 0` — `fn` runs inline
-   * (no chain enqueue). The outer `_withInnerWebClient` invocation
-   * already holds the chain via its own wrapping `_serializeWasmCall`,
-   * so enqueueing the inner call would deadlock (the inner queues
-   * behind the outer; the outer awaits the inner). The inline run is
-   * safe because the chain still serializes against external callers
-   * — they queue behind the outer call's chain slot, which only resolves
-   * after `fn` (including all inline re-entries) settles. Callers of
-   * `_withInnerWebClient` MUST hold an external mutex preventing
-   * concurrent access via other code paths on this same instance during
-   * the callback; without that, an external task running between two
-   * awaits inside `fn` would race wasm-bindgen's borrow check.
+   * Re-entrancy: a call made through the trusted handle an in-flight
+   * `_withInnerWebClient(fn)` passes `fn` (see `createTrustedHandle`) runs
+   * inline. The outer call already holds the chain slot, so queueing the
+   * inner call would deadlock. Every other caller, including one that runs
+   * during an await inside `fn`, queues behind that slot.
    *
    * Observability: when `opName` is supplied and a consumer has registered an
    * observer, one observation (name, outcome, duration) is emitted after the
@@ -807,12 +924,16 @@ class WebClient {
    * @param {() => Promise<any>} fn - The async function to execute.
    * @param {string} [opName] - Operation name to observe this call under.
    *   Omit to leave the call unobserved.
+   * @param {{ emitted: boolean }} [gate] - Set when a store-locked deadline
+   *   already emitted this call's observation, so this turn does not emit
+   *   again. Other callers omit it.
    * @returns {Promise<any>} The result of fn.
    */
-  _serializeWasmCall(fn, opName) {
-    // A call nested in an in-flight `_withInnerWebClient` still runs inline:
-    // it belongs to work that was already queued when terminate() ran.
-    if (this._terminated && this._withInnerLockDepth === 0) {
+  _serializeWasmCall(fn, opName, gate) {
+    // A call through an in-flight `_withInnerWebClient` handle still runs
+    // inline: it belongs to work that was already queued when terminate() ran.
+    const trusted = this[TRUSTED_CALLS] === true;
+    if (this._terminated && !trusted) {
       return Promise.reject(new Error("WebClient terminated"));
     }
     // Opt-in twice over: with no op name or nobody listening, `fn` is
@@ -820,6 +941,11 @@ class WebClient {
     const observed = opName !== undefined && hasObserver();
     const wrapped = observed
       ? async () => {
+          // The deadline already reported this call. The skipped turn still
+          // runs, with no clock and no second observation.
+          if (gate?.emitted) {
+            return fn();
+          }
           const startedAt = performance.now();
           try {
             const value = await fn();
@@ -835,16 +961,10 @@ class WebClient {
             // empty object. A consumer branching on
             // `"sensitive" in observation` has to be able to tell "not
             // enabled" from "enabled but nothing to report".
-            const sensitive =
-              this._observeSensitive === true
-                ? {
-                    errorMessage:
-                      error instanceof Error ? error.message : String(error),
-                    ...(error instanceof Error && error.stack
-                      ? { errorStack: error.stack }
-                      : {}),
-                  }
-                : undefined;
+            const sensitive = observationSensitive(
+              this._observeSensitive,
+              error
+            );
             emitObservation({
               op: opName,
               outcome: "error",
@@ -856,7 +976,7 @@ class WebClient {
         }
       : fn;
 
-    if (this._withInnerLockDepth > 0) {
+    if (trusted) {
       return Promise.resolve().then(wrapped);
     }
     this._queuedCalls += 1;
@@ -907,13 +1027,17 @@ class WebClient {
    * that has none. The shipped `frontend-pitfalls` skill keeps the consumer
    * copy of this list.
    *
-   * Lock order is always call chain, then store lock: the call takes its
-   * chain slot when it is made, like any other call, and requests the lock
-   * when that slot starts. So call order, `terminate()` and `waitForIdle()`
-   * treat it like any other call, and a lock holder never waits for a
-   * callback of its own instance. A call waiting for another instance's
-   * holder holds this instance's chain meanwhile, and its observation, named
-   * by `opName`, includes that wait.
+   * Lock order is always call chain, then store lock. The budget starts when
+   * the store-locked call is made and covers the chain and then the lock: the
+   * call takes its chain slot when it is made, like any other call, and
+   * requests the lock when that slot starts, with the time still left. The
+   * deadline rejection emits the one error observation then, with `durationMs`
+   * 0, the skipped turn emits nothing, and a turn that reaches the lock still
+   * observes the lock wait from the turn. So call order, `terminate()` and
+   * `waitForIdle()` treat it like any other call, and a lock holder never
+   * waits for a callback of its own instance. A call waiting for another
+   * instance's holder holds this instance's chain meanwhile, and its
+   * observation, named by `opName`, includes that wait.
    *
    * `syncMethod` lets a call of that sync join this instance's pending run of
    * it, registered when the run's own call was made, but only while no other
@@ -928,8 +1052,8 @@ class WebClient {
    * joins the run, but runs its own, serialized with it by the store lock.
    * Without `syncMethod` every call runs its own `fn`.
    *
-   * Nested in `_withInnerWebClient`, the call runs inline like any nested call
-   * and requests the lock itself. It never joins a coalesced run, which may
+   * Made through a `_withInnerWebClient` handle, the call runs inline like any
+   * call through it and requests the lock itself. It never joins a coalesced run, which may
    * be queued behind the callback.
    *
    * @param {() => Promise<any>} fn - The WASM work.
@@ -940,13 +1064,79 @@ class WebClient {
    */
   _withStoreLock(fn, opName, syncMethod) {
     // `_serializeWasmCall` rejects too, but a joiner never reaches it.
-    if (this._terminated && this._withInnerLockDepth === 0) {
+    // The terminated check arms nothing.
+    if (this._terminated && this[TRUSTED_CALLS] !== true) {
       return Promise.reject(new Error("WebClient terminated"));
     }
     const dbId = this._storeLockId();
-    const run = () =>
-      this._serializeWasmCall(() => runUnderLock(dbId, fn), opName);
-    if (!syncMethod || this._withInnerLockDepth > 0) {
+    // Both branches call `run`: a store-locked call without `syncMethod`
+    // (importNoteFile, fetchPrivateNotes) or nested in `_withInnerWebClient`,
+    // and `coalesceRun`'s start for a sync. A joiner shares that promise and
+    // gets no timer of its own.
+    const run = () => {
+      const startedAt = Date.now();
+      let timedOut = false;
+      let timeoutError;
+      let resolveCaller = () => {};
+      let rejectCaller = () => {};
+      const caller = new Promise((resolve, reject) => {
+        resolveCaller = resolve;
+        rejectCaller = reject;
+      });
+      const fail = () => {
+        if (!timeoutError) {
+          timeoutError = lockWaitError(dbId, LOCK_WAIT_TIMEOUT_MS);
+        }
+        return timeoutError;
+      };
+      // Taken when the call is made. A joiner never reaches `run`, and a
+      // listener registered later is not this call's observer.
+      const observe = opName !== undefined && hasObserver();
+      const gate = observe ? { emitted: false } : undefined;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        if (observe) {
+          gate.emitted = true;
+        }
+        const error = fail();
+        rejectCaller(error);
+        if (observe) {
+          const sensitive = observationSensitive(this._observeSensitive, error);
+          emitObservation({
+            op: opName,
+            outcome: "error",
+            durationMs: 0,
+            ...(sensitive !== undefined ? { sensitive } : {}),
+          });
+        }
+      }, LOCK_WAIT_TIMEOUT_MS);
+      const chain = this._serializeWasmCall(
+        () => {
+          const remaining = LOCK_WAIT_TIMEOUT_MS - (Date.now() - startedAt);
+          if (timedOut || remaining <= 0) {
+            clearTimeout(timer);
+            // The chain catch already attached swallows this late throw.
+            throw fail();
+          }
+          clearTimeout(timer);
+          return runUnderLock(dbId, fn, remaining);
+        },
+        opName,
+        gate
+      );
+      chain.then(
+        (value) => {
+          clearTimeout(timer);
+          resolveCaller(value);
+        },
+        (error) => {
+          clearTimeout(timer);
+          rejectCaller(error);
+        }
+      );
+      return caller;
+    };
+    if (!syncMethod || this[TRUSTED_CALLS] === true) {
       return run();
     }
     return coalesceRun(
@@ -1016,6 +1206,7 @@ class WebClient {
         this._feeFaucetId,
         this._noteTransportMaxRetries,
         this._noteTransportRetryIntervalMs,
+        this._callbackTimeoutMs,
         ...(this._acquisition
           ? [workerIndexedDbOptions(this._indexedDb), this._acquisition.limits]
           : indexedDbArgs(workerIndexedDbOptions(this._indexedDb))),
@@ -1064,8 +1255,13 @@ class WebClient {
    *   after a transient transport failure; see the constructor.
    * @param {number | undefined} [noteTransportRetryIntervalMs] - Delay before the first such
    *   retry; see the constructor.
+   * @param {number | undefined} [callbackTimeoutMs] - How long to wait for external keystore
+   *   callbacks. Invalid values reject before WASM initialization.
+   * @param {boolean} [exclusive=false] - Refuse a store another live client has open, and make
+   *   every other open of this store refuse until this client terminates. Without it, opening
+   *   an open store warns naming the client that has it.
    * @param {import("./types/api-types").IndexedDbOptions} [indexedDb] - Browser
-   *   durability hint and synchronous failure callback; appended after retry options.
+   *   durability hint and synchronous failure callback; appended after `exclusive`.
    *   Omission inherits a shared connection policy; explicit conflicts reject.
    */
   static async createClient(
@@ -1079,6 +1275,8 @@ class WebClient {
     feeFaucetId,
     noteTransportMaxRetries,
     noteTransportRetryIntervalMs,
+    callbackTimeoutMs,
+    exclusive = false,
     indexedDb
   ) {
     // Construct the instance (synchronously).
@@ -1096,6 +1294,7 @@ class WebClient {
       feeFaucetId,
       noteTransportMaxRetries,
       noteTransportRetryIntervalMs,
+      callbackTimeoutMs,
       indexedDb
     );
 
@@ -1113,6 +1312,7 @@ class WebClient {
         rpcUrl,
         network
       );
+      instance._releaseStore = claimStore(instance._openedStoreName, exclusive);
       await wasmWebClient.createClient(
         rpcUrl,
         noteTransportUrl,
@@ -1159,8 +1359,10 @@ class WebClient {
    *   after a transient transport failure; see the constructor.
    * @param {number | undefined} [noteTransportRetryIntervalMs] - Delay before the first such
    *   retry; see the constructor.
+   * @param {number | undefined} [callbackTimeoutMs] - See the constructor.
+   * @param {boolean} [exclusive=false] - See `createClient`.
    * @param {import("./types/api-types").IndexedDbOptions} [indexedDb] - Browser
-   *   durability hint and synchronous failure callback; appended after retry options.
+   *   durability hint and synchronous failure callback; appended after `exclusive`.
    *   Omission inherits a shared connection policy; explicit conflicts reject.
    */
   static async createClientWithExternalKeystore(
@@ -1177,6 +1379,8 @@ class WebClient {
     feeFaucetId,
     noteTransportMaxRetries,
     noteTransportRetryIntervalMs,
+    callbackTimeoutMs,
+    exclusive = false,
     indexedDb
   ) {
     // Construct the instance (synchronously).
@@ -1194,6 +1398,7 @@ class WebClient {
       feeFaucetId,
       noteTransportMaxRetries,
       noteTransportRetryIntervalMs,
+      callbackTimeoutMs,
       indexedDb
     );
 
@@ -1211,6 +1416,7 @@ class WebClient {
         rpcUrl,
         storeName
       );
+      instance._releaseStore = claimStore(instance._openedStoreName, exclusive);
       await wasmWebClient.createClientWithExternalKeystore(
         rpcUrl,
         noteTransportUrl,
@@ -1253,11 +1459,18 @@ class WebClient {
     if (this._terminated) {
       throw new Error("WebClient terminated");
     }
+    if (this._workerFailure) {
+      throw this._workerFailure;
+    }
     await this.ready;
     // terminate() can land while this awaits a settled `ready`; the stopped
     // worker would never answer a request posted now.
     if (this._terminated) {
       throw new Error("WebClient terminated");
+    }
+    // The worker can also fail after `ready` settled.
+    if (this._workerFailure) {
+      throw this._workerFailure;
     }
     // Create a unique request ID.
     const requestId = `${methodName}-${Date.now()}-${Math.random()}`;
@@ -1432,10 +1645,20 @@ class WebClient {
       try {
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
-          return await wasmWebClient.submitNewTransaction(
-            accountId,
-            transactionRequest
-          );
+          try {
+            return await wasmWebClient.submitNewTransaction(
+              accountId,
+              transactionRequest
+            );
+          } catch (error) {
+            const authError = wasmWebClient.lastAuthError();
+            if (typeof error === "string")
+              throw appendAuthError(error, authError);
+            if (error instanceof Error) {
+              error.message = appendAuthError(error.message, authError);
+            }
+            throw error;
+          }
         }
 
         const wasm = await getWasmOrThrow();
@@ -1458,16 +1681,153 @@ class WebClient {
     }, MethodName.SUBMIT_NEW_TRANSACTION);
   }
 
+  /**
+   * Submits transaction requests, each paired with its executing account, as
+   * one atomic batch.
+   *
+   * Every transaction is executed and proven, and the batch proof produced,
+   * inside a single WASM call, so this is forwarded to the worker to keep the
+   * main thread free for its duration. Without a worker (`useWorker: false`,
+   * or an environment with no `Worker`) it still runs in-thread and blocks.
+   *
+   * The batch is always proven by the client's built-in local prover: the
+   * batch API takes no prover, so `proverUrl` does not apply here as it does
+   * to `submit()`. And a free main thread is not a concurrent client: the call
+   * holds `_serializeWasmCall` throughout, so reads, syncs, and other
+   * forwarded methods still queue behind it. What changes is that the page
+   * keeps painting.
+   *
+   * @param {BatchItem[]} items - (account, request) pairs; the accounts may
+   *   differ from item to item.
+   * @returns {Promise<number>} The node's chain tip as of submission, not the
+   *   block the batch commits in. Sync to learn where it landed.
+   */
+  async submitNewTransactionBatch(items) {
+    return this._serializeWasmCall(async () => {
+      const wasm = await getWasmOrThrow();
+      assertBatchItems(items, wasm.BatchItem);
+      return await this._dispatchBatch(items);
+    }, MethodName.SUBMIT_NEW_TRANSACTION_BATCH);
+  }
+
+  /**
+   * Submits a batch and returns the transactions stored before and after it,
+   * from the one chain slot observed as `submitNewTransactionBatch`.
+   *
+   * Both reads call `TransactionFilter.all()` on the main-thread client. The
+   * filter binding is consumed by value, so each read calls `all()` itself,
+   * and a row that is already committed or discarded is still present.
+   * `_dispatchBatch` is the worker, in-thread, or mock submit and finishes
+   * its store write before the second read.
+   *
+   * This does not call `submitNewTransactionBatch`: that method takes its own
+   * chain slot, and from inside this one the inner call would queue behind
+   * the outer one and deadlock.
+   *
+   * @param {BatchItem[]} items - (account, request) pairs to submit.
+   * @returns {Promise<{ blockNumber: number, before: Array, after: Array }>}
+   */
+  async _submitNewTransactionBatchForWait(items) {
+    return this._serializeWasmCall(async () => {
+      const wasm = await getWasmOrThrow();
+      assertBatchItems(items, wasm.BatchItem);
+      const wasmClient = await this.getWasmWebClient();
+      const before = await wasmClient.getTransactions(
+        wasm.TransactionFilter.all()
+      );
+      const blockNumber = await this._dispatchBatch(items);
+      const after = await wasmClient.getTransactions(
+        wasm.TransactionFilter.all()
+      );
+      return { blockNumber, before, after };
+    }, MethodName.SUBMIT_NEW_TRANSACTION_BATCH);
+  }
+
+  /**
+   * Runs a validated batch in the worker when there is one, else in-thread.
+   * The caller already holds the chain slot, so this must not join the chain
+   * again: the inner call would queue behind the outer one and deadlock.
+   *
+   * @param {BatchItem[]} items - Already validated.
+   * @returns {Promise<number>}
+   */
+  async _dispatchBatch(items) {
+    if (!this.worker) {
+      return this._submitBatchInThread(items);
+    }
+
+    try {
+      // A `BatchItem` is a handle into this thread's WASM memory, so each
+      // one crosses as its parts and the worker rebuilds it.
+      const serializedItems = items.map((item) => [
+        item.accountId().toString(),
+        item.request().serialize(),
+      ]);
+      return await this.callMethodWithWorker(
+        MethodName.SUBMIT_NEW_TRANSACTION_BATCH,
+        serializedItems
+      );
+    } catch (error) {
+      console.error(
+        "INDEX.JS: Error in submitNewTransactionBatch (worker):",
+        error
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Runs a batch on this thread's WASM instance. Shared by the no-worker case
+   * above and by `MockWebClient`, which always takes this path. Like
+   * `_dispatchBatch`, it runs inside the caller's chain slot.
+   *
+   * @param {BatchItem[]} items - Already validated.
+   * @returns {Promise<number>}
+   */
+  async _submitBatchInThread(items) {
+    try {
+      const wasmWebClient = await this.getWasmWebClient();
+      try {
+        return await wasmWebClient.submitNewTransactionBatch(items);
+      } catch (error) {
+        const authError = wasmWebClient.lastAuthError();
+        if (typeof error === "string") {
+          throw appendAuthError(error, authError);
+        }
+        if (error instanceof Error) {
+          error.message = appendAuthError(error.message, authError);
+        }
+        throw error;
+      }
+    } catch (error) {
+      console.error(
+        "INDEX.JS: Error in submitNewTransactionBatch (in-thread):",
+        error
+      );
+      throw error;
+    }
+  }
+
   async submitNewTransactionWithProver(accountId, transactionRequest, prover) {
     return this._serializeWasmCall(async () => {
       try {
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
-          return await wasmWebClient.submitNewTransactionWithProver(
-            accountId,
-            transactionRequest,
-            prover
-          );
+          try {
+            return await wasmWebClient.submitNewTransactionWithProver(
+              accountId,
+              transactionRequest,
+              prover
+            );
+          } catch (error) {
+            const authError = wasmWebClient.lastAuthError();
+            if (typeof error === "string")
+              throw appendAuthError(error, authError);
+            if (error instanceof Error) {
+              error.message = appendAuthError(error.message, authError);
+            }
+            throw error;
+          }
         }
 
         const wasm = await getWasmOrThrow();
@@ -1500,10 +1860,21 @@ class WebClient {
       try {
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
-          return await wasmWebClient.executeTransaction(
-            accountId,
-            transactionRequest
-          );
+          try {
+            return await wasmWebClient.executeTransaction(
+              accountId,
+              transactionRequest
+            );
+          } catch (error) {
+            const authError = wasmWebClient.lastAuthError();
+            if (typeof error === "string") {
+              throw appendAuthError(error, authError);
+            }
+            if (error instanceof Error) {
+              error.message = appendAuthError(error.message, authError);
+            }
+            throw error;
+          }
         }
 
         const wasm = await getWasmOrThrow();
@@ -1539,11 +1910,22 @@ class WebClient {
 
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
-          return await wasmWebClient.executeTransactionAt(
-            accountId,
-            transactionRequest,
-            anchor
-          );
+          try {
+            return await wasmWebClient.executeTransactionAt(
+              accountId,
+              transactionRequest,
+              anchor
+            );
+          } catch (error) {
+            const authError = wasmWebClient.lastAuthError();
+            if (typeof error === "string") {
+              throw appendAuthError(error, authError);
+            }
+            if (error instanceof Error) {
+              error.message = appendAuthError(error.message, authError);
+            }
+            throw error;
+          }
         }
 
         const wasm = await getWasmOrThrow();
@@ -1725,6 +2107,39 @@ class WebClient {
   }
 
   /**
+   * Latches the worker as dead: stops it, rejects `ready` and every pending
+   * request, and makes every later worker call throw the same error until
+   * terminate(). After terminate(), those calls throw "WebClient terminated".
+   * The worker never recovers, so a late message from it is not answered.
+   * @private
+   */
+  _failWorker(reason) {
+    if (this._terminated || this._workerFailure) {
+      return;
+    }
+    const error = new Error(`WebClient worker failed: ${reason}`);
+    console.error(error.message);
+    this._workerFailure = error;
+    this._acquisition?.retire();
+    this.worker.terminate();
+    this.readyRejecter(error);
+    for (const { reject } of this.pendingRequests.values()) {
+      reject(error);
+    }
+    this.pendingRequests.clear();
+  }
+
+  /**
+   * The error that latched this client's worker as dead, or undefined until
+   * the worker fails. Every later worker call throws this same Error until
+   * terminate(). After terminate(), those calls throw "WebClient terminated".
+   * @returns {Error | undefined}
+   */
+  get workerFailure() {
+    return this._workerFailure;
+  }
+
+  /**
    * Terminates this WebClient: stops its Web Worker if there is one, and
    * releases the main-realm wasm client and, through it, its IndexedDB store
    * connection, which closes once no other client in this realm holds the
@@ -1741,11 +2156,12 @@ class WebClient {
    * of these calls have settled. Calling it again is harmless.
    *
    * The release and the rejections are browser-only: on the Node.js binding
-   * WasmWebClient.terminate() is a no-op.
+   * WasmWebClient.terminate() releases only the store's ownership claim.
    */
   terminate() {
     this._terminated = true;
     this._acquisition?.retire();
+    this._releaseStore?.();
     if (this.worker) {
       this.worker.terminate();
       // The stopped worker answers nothing, so a call still waiting on it
@@ -1819,18 +2235,26 @@ class WebClient {
 }
 
 class MockWebClient extends WebClient {
-  constructor(seed, logLevel, indexedDb, useWorker = true, acquisitionOptions) {
+  constructor(
+    seed,
+    logLevel,
+    storeName,
+    indexedDb,
+    useWorker = true,
+    acquisitionOptions
+  ) {
     super(
       null,
       null,
       seed,
-      MOCK_STORE_NAME,
+      storeName ?? MOCK_STORE_NAME,
       undefined,
       undefined,
       undefined,
       logLevel,
       useWorker,
       acquisitionOptions,
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -1841,17 +2265,17 @@ class MockWebClient extends WebClient {
     // built its own chain could store that chain's genesis header first.
     // Every later sync against the main chain would then fail validation
     // ("does not carry valid validator signatures"). `createClient` resolves
-    // this once the main-thread chain exists.
+    // this once the main-thread chain exists. Pass a distinct `storeName` when
+    // a second mock client must not share that database with another live mock.
     this.mockChainReady = new Promise((resolve) => {
       this.resolveMockChainReady = resolve;
     });
   }
 
   initializeWorker() {
-    // Pass `numThreads` exactly like the real INIT path: every prove runs
-    // inside the worker's own WASM instance, and rayon's pool is
-    // per-instance — without this, mock-client proving (including the
-    // integration suite) silently runs single-threaded.
+    // Pass `numThreads` exactly like the real INIT path: rayon's pool is
+    // per-instance, so without this any mock proving that reaches the worker
+    // silently runs single-threaded.
     let numThreads = 1;
     try {
       if (
@@ -1872,6 +2296,7 @@ class MockWebClient extends WebClient {
             numThreads,
             serializedMockChain,
             serializedMockNoteTransportNode,
+            this.storeName,
             ...(this._acquisition
               ? [
                   workerIndexedDbOptions(this._indexedDb),
@@ -1890,7 +2315,8 @@ class MockWebClient extends WebClient {
    * @param serializedMockChain - Serialized mock chain data (optional). Will use an empty chain if not provided.
    * @param serializedMockNoteTransportNode - Serialized mock note transport node data (optional). Will use a new instance if not provided.
    * @param seed - The seed for the account (optional).
-   * @param logLevel - Optional log verbosity.
+   * @param logLevel - Optional log level.
+   * @param storeName - Optional IndexedDB name. Defaults to `mock_client_db`. Use a distinct name for a second independent mock in the same origin.
    * @param {import("./types/api-types").IndexedDbOptions} [indexedDb] - Browser
    *   store durability hint and synchronous failure callback.
    * @param {boolean} [useWorker=true] - Set false for current-thread execution.
@@ -1901,6 +2327,7 @@ class MockWebClient extends WebClient {
     serializedMockNoteTransportNode,
     seed,
     logLevel,
+    storeName,
     indexedDb,
     useWorker,
     acquisitionOptions
@@ -1909,6 +2336,7 @@ class MockWebClient extends WebClient {
     const instance = new MockWebClient(
       seed,
       logLevel,
+      storeName,
       indexedDb,
       useWorker,
       acquisitionOptions
@@ -1927,6 +2355,7 @@ class MockWebClient extends WebClient {
         seed ?? null,
         serializedMockChain ?? null,
         serializedMockNoteTransportNode ?? null,
+        instance.storeName,
         ...indexedDbArgs(instance._indexedDb)
       );
 
@@ -2132,6 +2561,7 @@ class MockWebClient extends WebClient {
             this.seed,
             newMockChain,
             newMockNoteTransportNode,
+            this.storeName,
             ...indexedDbArgs(this._indexedDb)
           );
           await this._installAcquisition(replacement);
@@ -2153,6 +2583,29 @@ class MockWebClient extends WebClient {
       console.error("INDEX.JS: Error in submitNewTransaction:", error);
       throw error;
     }
+  }
+
+  /**
+   * Mock clients deliberately keep batching on the main thread.
+   *
+   * The mock submit handlers round-trip the mock chain: the serialized chain
+   * travels to the worker and the mutated chain is adopted back. That works
+   * for a submitted transaction, which lands in `pending_transactions` and is
+   * serialized. A submitted *batch* lands in `pending_batches`, which
+   * `MockChain`'s serializer does not write and its deserializer resets to
+   * empty. Shipping the chain back would therefore discard the whole batch
+   * while the shared store had already recorded its per-transaction updates —
+   * the nonce would advance on a chain that never saw the batch.
+   *
+   * Overriding is required rather than merely preferable: inheriting the base
+   * dispatch would forward to the worker, since a mock client has one.
+   *
+   * Note that this keeps the batch out of its own round trip, not out of every
+   * later one — call `proveBlock()` after a mock batch, before submitting
+   * anything else.
+   */
+  async _dispatchBatch(items) {
+    return this._submitBatchInThread(items);
   }
 
   async submitNewTransactionWithProver(accountId, transactionRequest, prover) {
@@ -2206,6 +2659,7 @@ class MockWebClient extends WebClient {
             this.seed,
             newMockChain,
             newMockNoteTransportNode,
+            this.storeName,
             ...indexedDbArgs(this._indexedDb)
           );
           await this._installAcquisition(replacement);
@@ -2252,6 +2706,7 @@ function copyWebClientStatics(WasmWebClient) {
 MidenClient._WasmWebClient = WebClient;
 MidenClient._MockWasmWebClient = MockWebClient;
 MidenClient._getWasmOrThrow = getWasmOrThrow;
+MidenClient._createTrustedHandle = createTrustedHandle;
 _setStandaloneWebClient(WebClient);
 
 /**
@@ -2262,7 +2717,6 @@ _setStandaloneWebClient(WebClient);
  */
 export function __serializeWasmCallForTest(fn, opName, observabilityConfig) {
   const host = {
-    _withInnerLockDepth: 0,
     _wasmCallChain: Promise.resolve(),
     _queuedCalls: 0,
     _observeSensitive: observabilityConfig?.observeSensitive === true,

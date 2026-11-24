@@ -29,9 +29,10 @@ use miden_client::note_transport::grpc::GrpcNoteTransportClient;
 #[cfg(feature = "browser")]
 use miden_client::rpc::RpcError;
 use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, VerifyingRpcClient};
-use miden_client::store::{Store, StoreError};
+use miden_client::store::Store;
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::MockNoteTransportApi;
+use miden_client::transaction::BatchBuilderError;
 use miden_client::{Client, ClientError, ErrorHint};
 use models::code_builder::CodeBuilder;
 #[cfg(feature = "nodejs")]
@@ -262,13 +263,17 @@ pub struct WebClient {
     fee_faucet: AsyncCell<Option<NativeAccountId>>,
     mock_rpc_api: AsyncCell<Option<Arc<MockRpcApi>>>,
     mock_note_transport_api: AsyncCell<Option<Arc<MockNoteTransportApi>>>,
+    /// Node endpoint the client was created against, kept outside `inner` so `endpoint()` can
+    /// answer synchronously without borrowing the client. `None` until creation succeeds, and for
+    /// a mock client, which talks to no node.
+    endpoint: std::sync::RwLock<Option<String>>,
 }
 
 // SAFETY: napi-rs with `tokio_rt` uses a multi-threaded tokio runtime, so async napi
 // functions run on worker threads. This is sound because the concrete types behind
 // trait objects (`SqliteStore`, `GrpcClient`, `FilesystemKeyStore`) are all Send + Sync
 // — only the `dyn Trait` bounds lack Send. All mutable state is behind `AsyncCell`
-// (tokio::sync::Mutex), which serializes access.
+// (tokio::sync::Mutex) or, for `endpoint`, a `std::sync::RwLock`, which serialize access.
 #[cfg(feature = "nodejs")]
 unsafe impl Send for WebClient {}
 #[cfg(feature = "nodejs")]
@@ -310,6 +315,7 @@ impl WebClient {
             fee_faucet: AsyncCell::new(None),
             mock_rpc_api: AsyncCell::new(None),
             mock_note_transport_api: AsyncCell::new(None),
+            endpoint: std::sync::RwLock::new(None),
         }
     }
 
@@ -323,35 +329,26 @@ impl WebClient {
     /// mock client, the one the mock chain itself commits to, and fails when neither is set.
     #[js_export(js_name = "feeFaucetId")]
     pub async fn fee_faucet_id(&self) -> Result<models::account_id::AccountId, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-
-        let sync_height = client
-            .get_sync_height()
-            .await
-            .map_err(|err| js_error_with_context(err, "failed to read the sync height"))?;
-        let header = client
-            .get_block_header_by_num(sync_height)
-            .await
-            .map_err(|err| js_error_with_context(err, "failed to read the synced block header"))?;
-        if let Some((header, _)) = header {
-            match client.get_protocol_config(header.protocol_config_commitment()).await {
-                Ok(config) => return Ok(config.fee_asset_id().faucet_id().into()),
-                // Nothing has been synced yet, so no configuration is stored for the header.
-                Err(ClientError::StoreError(StoreError::ProtocolConfigNotFound(_))) => {},
-                Err(err) => {
-                    return Err(js_error_with_context(
-                        err,
-                        "failed to read the protocol configuration",
-                    ));
-                },
-            }
-        }
-
-        (*self.fee_faucet.lock().await).map(Into::into).ok_or_else(|| {
+        self.known_fee_faucet_id().await?.ok_or_else(|| {
             from_str_err(
                 "the chain's fee faucet is not known yet: sync the client so it receives the \
                  protocol configuration from the node, or pass `feeFaucetId` when creating it",
+            )
+        })
+    }
+
+    /// Returns the protocol configuration of the connected network: its fee asset and the
+    /// commitment that block headers carry for it.
+    ///
+    /// The client receives the configuration from the node when it syncs, so this rejects until
+    /// the first sync has stored it. Mock clients are seeded with their chain's configuration.
+    #[js_export(js_name = "protocolConfig")]
+    pub async fn protocol_config(&self) -> Result<models::protocol_config::ProtocolConfig, JsErr> {
+        let config = self.synced_protocol_config().await?;
+        config.map(Into::into).ok_or_else(|| {
+            from_str_err(
+                "the network's protocol configuration is not known yet: sync the client so it \
+                 receives the configuration from the node",
             )
         })
     }
@@ -362,6 +359,18 @@ impl WebClient {
         let guard = self.inner.lock().await;
         let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         Ok(client.store_identifier().to_string())
+    }
+
+    /// Returns the URL of the node this client was created against, for example
+    /// `https://rpc.devnet.miden.io`. A client created without a node URL reports the testnet
+    /// endpoint it defaulted to. Returns `undefined` before the client is created and for a mock
+    /// client, which talks to no node.
+    ///
+    /// Synchronous: the value is stored at creation, so reading it never waits on an in-flight
+    /// call.
+    #[js_export(js_name = "endpoint")]
+    pub fn endpoint(&self) -> Option<String> {
+        self.endpoint.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
     }
 
     #[js_export(js_name = "createCodeBuilder")]
@@ -410,16 +419,14 @@ impl WebClient {
         Ok(keystore_api::WebKeystoreApi::new(ks))
     }
 
-    /// Returns the raw JS value that the most recent sign-callback invocation
-    /// threw, or `null` if the last sign call succeeded (or no call has
-    /// happened yet).
+    /// Returns the latest raw sign callback rejection or readable external `getKey` failure.
+    /// Returns `null` after a successful sign or `getKey` callback,
+    /// or when `executeTransaction` starts.
     ///
-    /// Combined with the serialized-call discipline enforced at the JS
-    /// `WebClient` wrapper, this lets a caller that caught a failed
-    /// `executeTransaction` / `submitNewTransaction` recover the original
-    /// JS error the signing callback threw — preserving any structured
-    /// metadata (e.g. a `reason: 'locked'` property) that the kernel-level
-    /// `auth::request` diagnostic would otherwise have erased.
+    /// With `useWorker: false`, callers can recover structured sign error metadata such as
+    /// `reason: 'locked'`. Failed `getKey` lookups return a string, since the native public-key
+    /// lookup cannot propagate errors directly. Transaction errors include any missing readable
+    /// callback detail on both the direct and worker paths.
     ///
     /// # Usage (TS)
     /// ```ts
@@ -436,7 +443,7 @@ impl WebClient {
     pub fn last_auth_error(&self) -> JsValue {
         let guard = self.inner.borrow();
         match guard.as_ref().and_then(|c| c.authenticator()) {
-            Some(keystore) => keystore.last_sign_error(),
+            Some(keystore) => keystore.last_auth_error(),
             None => JsValue::NULL,
         }
     }
@@ -507,8 +514,16 @@ impl WebClient {
 
         let fee_faucet = fee_faucet_id.map(|id| parse_fee_faucet_id(&id)).transpose()?;
 
-        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client, fee_faucet)
-            .await?;
+        self.setup_client(
+            web_rpc_client,
+            Some(endpoint.to_string()),
+            store,
+            keystore,
+            rng,
+            note_transport_client,
+            fee_faucet,
+        )
+        .await?;
 
         Ok(JsValue::from_str("Client created successfully"))
     }
@@ -585,8 +600,16 @@ impl WebClient {
 
         let fee_faucet = fee_faucet_id.map(|id| parse_fee_faucet_id(&id)).transpose()?;
 
-        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client, fee_faucet)
-            .await?;
+        self.setup_client(
+            web_rpc_client,
+            Some(endpoint.to_string()),
+            store,
+            keystore,
+            rng,
+            note_transport_client,
+            fee_faucet,
+        )
+        .await?;
 
         Ok(JsValue::from_str("Client created successfully"))
     }
@@ -595,6 +618,7 @@ impl WebClient {
     async fn setup_client(
         &self,
         rpc_client: Arc<dyn NodeRpcClient>,
+        endpoint: Option<String>,
         store: Arc<dyn Store>,
         keystore: WebKeyStore<StdRng>,
         rng: StdRng,
@@ -621,9 +645,10 @@ impl WebClient {
             .await
             .map_err(|err| js_error_with_context(err, "Failed to ensure genesis in place"))?;
 
-        // Published together with `inner`, so a creation that fails leaves neither set: the
-        // accessor reports the faucet of a client that exists, or nothing.
+        // Published together with `inner`, so a creation that fails leaves none of them set: the
+        // accessors report the faucet and endpoint of a client that exists, or nothing.
         *self.fee_faucet.lock().await = fee_faucet;
+        *self.endpoint.write().unwrap_or_else(std::sync::PoisonError::into_inner) = endpoint;
         *self.inner.lock().await = Some(client);
 
         Ok(())
@@ -693,8 +718,16 @@ impl WebClient {
 
         let fee_faucet = fee_faucet_id.map(|id| parse_fee_faucet_id(&id)).transpose()?;
 
-        self.setup_client(rpc_client, store, keystore, rng, note_transport_client, fee_faucet)
-            .await?;
+        self.setup_client(
+            rpc_client,
+            Some(endpoint.to_string()),
+            store,
+            keystore,
+            rng,
+            note_transport_client,
+            fee_faucet,
+        )
+        .await?;
 
         Ok("Client created successfully".to_string())
     }
@@ -703,6 +736,7 @@ impl WebClient {
     async fn setup_client(
         &self,
         rpc_client: Arc<dyn NodeRpcClient>,
+        endpoint: Option<String>,
         store: Arc<dyn Store>,
         keystore: FilesystemKeyStore,
         rng: StdRng,
@@ -735,6 +769,7 @@ impl WebClient {
         .await?;
 
         *self.fee_faucet.lock().await = fee_faucet;
+        *self.endpoint.write().unwrap_or_else(std::sync::PoisonError::into_inner) = endpoint;
         *self.inner.lock().await = Some(client);
 
         Ok(())
@@ -819,6 +854,22 @@ pub(crate) fn js_error_with_context<T>(err: T, context: &str) -> JsErr
 where
     T: Error + 'static,
 {
+    build_js_error(err, context, None)
+}
+
+/// Like [`js_error_with_context`], for a failure that can only follow an accepted submit: the
+/// error always carries [`APPLY_AFTER_SUBMIT_FAILED`], so callers know not to resubmit.
+pub(crate) fn js_post_submit_error<T>(err: T, context: &str) -> JsErr
+where
+    T: Error + 'static,
+{
+    build_js_error(err, context, Some(APPLY_AFTER_SUBMIT_FAILED))
+}
+
+fn build_js_error<T>(err: T, context: &str, forced_code: Option<&'static str>) -> JsErr
+where
+    T: Error + 'static,
+{
     let error_message = build_error_chain(context, &err);
     let help = hint_from_error(&err);
 
@@ -831,7 +882,7 @@ where
         // Stable, machine-readable code for the ClientError variants JS callers
         // branch on, so they don't have to match the (changeable) message text.
         // The worker shim's serializeError forwards both `code` and `help`.
-        if let Some(code) = code_from_error(&err) {
+        if let Some(code) = forced_code.or_else(|| code_from_error(&err)) {
             let _ = Reflect::set(&js_error, &JsValue::from_str("code"), &JsValue::from_str(code));
         }
         js_error
@@ -843,7 +894,12 @@ where
             Some(help) => format!("{error_message} [help: {help}]"),
             None => error_message,
         };
-        napi::Error::from_reason(message)
+        // napi cannot attach a `code`, so the post-submit code prefixes the message
+        // (the `from_str_err_with_code` shape).
+        match forced_code.or_else(|| post_submit_code(&err)) {
+            Some(code) => napi::Error::from_reason(format!("{code}: {message}")),
+            None => napi::Error::from_reason(message),
+        }
     }
 }
 
@@ -866,6 +922,28 @@ fn hint_from_error(err: &(dyn Error + 'static)) -> Option<String> {
     err.source().and_then(hint_from_error)
 }
 
+/// Code for a failure that follows a transaction or batch the node already accepted. The resource
+/// API raises the same string from `transactions.js`; wallets must not resubmit on it.
+pub(crate) const APPLY_AFTER_SUBMIT_FAILED: &str = "ApplyTransactionAfterSubmitFailed";
+
+/// [`APPLY_AFTER_SUBMIT_FAILED`] for the typed variants that report an accepted submission whose
+/// local store update failed. Uncertain outcomes (`BatchSubmissionOutcomeUnknown`) are not
+/// accepted submissions and map to `None`.
+fn post_submit_code(err: &(dyn Error + 'static)) -> Option<&'static str> {
+    if let Some(client_error) = err.downcast_ref::<ClientError>() {
+        return match client_error {
+            ClientError::ApplyTransactionAfterSubmitFailed { .. }
+            | ClientError::BatchBuilder(
+                BatchBuilderError::BatchSubmittedButApplyFailed { .. }
+                | BatchBuilderError::BatchSubmittedButUpdateBuildFailed { .. },
+            ) => Some(APPLY_AFTER_SUBMIT_FAILED),
+            _ => None,
+        };
+    }
+
+    err.source().and_then(post_submit_code)
+}
+
 /// Maps the typed [`ClientError`] variants that JS callers need to distinguish
 /// to stable string codes (exposed as the `code` property on the thrown JS
 /// error). Only the variants consumers branch on are mapped; everything else
@@ -883,6 +961,10 @@ fn code_from_error(err: &(dyn Error + 'static)) -> Option<&'static str> {
             miden_client::note::NoteAcquisitionError::Rejected => "NOTE_ACQUISITION_REJECTED",
         });
     }
+    if let Some(code) = post_submit_code(err) {
+        return Some(code);
+    }
+
     if let Some(client_error) = err.downcast_ref::<ClientError>() {
         if let Some(acquisition) = client_error.note_acquisition_error() {
             return code_from_error(acquisition);
@@ -890,6 +972,7 @@ fn code_from_error(err: &(dyn Error + 'static)) -> Option<&'static str> {
         return match client_error {
             ClientError::AccountNotFoundOnChain(_) => Some("ACCOUNT_NOT_FOUND_ON_CHAIN"),
             ClientError::AccountAlreadyTracked(_) => Some("ACCOUNT_ALREADY_TRACKED"),
+            ClientError::AccountIsPrivate(_) => Some("ACCOUNT_IS_PRIVATE"),
             ClientError::AccountNotAllowlisted(_) => Some("ACCOUNT_NOT_ALLOWLISTED"),
             ClientError::AccountAlreadyAllowed(_) => Some("ACCOUNT_ALREADY_ALLOWED"),
             // The node's verdict on a registration travels inside the RPC error rather than as
@@ -924,4 +1007,76 @@ fn registration_code(err: &RpcError) -> Option<&'static str> {
         RegisterAccountError::AlreadyRegistered => "ALREADY_REGISTERED",
         RegisterAccountError::InvalidRequest(_) => "INVALID_REGISTRATION_REQUEST",
     })
+}
+
+#[cfg(test)]
+mod post_submit_code_tests {
+    use miden_client::block::BlockNumber;
+    use miden_client::store::StoreError;
+    use miden_client::transaction::{BatchBuilderError, TransactionStoreUpdateError};
+
+    use super::*;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("wrapper")]
+    struct Wrapper(#[source] ClientError);
+
+    fn store_error() -> StoreError {
+        StoreError::DatabaseError("disk full".to_string())
+    }
+
+    fn batch_apply_failed() -> ClientError {
+        ClientError::BatchBuilder(BatchBuilderError::BatchSubmittedButApplyFailed {
+            block_num: BlockNumber::from(7u32),
+            source: store_error(),
+        })
+    }
+
+    fn batch_update_build_failed() -> ClientError {
+        ClientError::BatchBuilder(BatchBuilderError::BatchSubmittedButUpdateBuildFailed {
+            block_num: BlockNumber::from(7u32),
+            source: TransactionStoreUpdateError::Store(store_error()),
+        })
+    }
+
+    #[test]
+    fn batch_post_submit_variants_carry_the_code() {
+        assert_eq!(post_submit_code(&batch_apply_failed()), Some(APPLY_AFTER_SUBMIT_FAILED));
+        assert_eq!(post_submit_code(&batch_update_build_failed()), Some(APPLY_AFTER_SUBMIT_FAILED));
+    }
+
+    #[test]
+    fn code_survives_being_wrapped() {
+        assert_eq!(
+            post_submit_code(&Wrapper(batch_apply_failed())),
+            Some(APPLY_AFTER_SUBMIT_FAILED)
+        );
+    }
+
+    #[test]
+    fn other_batch_errors_carry_no_code() {
+        assert_eq!(post_submit_code(&ClientError::BatchBuilder(BatchBuilderError::Empty)), None);
+    }
+
+    #[cfg(feature = "nodejs")]
+    #[test]
+    fn node_prefixes_the_code_once() {
+        let err = js_error_with_context(batch_apply_failed(), "failed to submit transaction batch");
+        assert!(err.reason.starts_with("ApplyTransactionAfterSubmitFailed: failed to submit"));
+        assert_eq!(err.reason.matches(APPLY_AFTER_SUBMIT_FAILED).count(), 1);
+
+        let err = js_post_submit_error(store_error(), "failed to apply transaction result");
+        assert!(
+            err.reason.starts_with(
+                "ApplyTransactionAfterSubmitFailed: failed to apply transaction result"
+            )
+        );
+        assert_eq!(err.reason.matches(APPLY_AFTER_SUBMIT_FAILED).count(), 1);
+
+        let err = js_error_with_context(
+            ClientError::BatchBuilder(BatchBuilderError::Empty),
+            "failed to submit transaction batch",
+        );
+        assert!(!err.reason.contains(APPLY_AFTER_SUBMIT_FAILED));
+    }
 }

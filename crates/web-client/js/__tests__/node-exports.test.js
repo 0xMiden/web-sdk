@@ -9,12 +9,104 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // enumerable) and WebClient records what the client wrapper forwards.
 const fakeNative = vi.hoisted(() => {
   const rawStorage = {};
+  // What the native side was handed, last call last.
+  const received = [];
   class Account {
     storage() {
       return rawStorage;
     }
+    toCommitment(arg) {
+      received.push(arg);
+      return "commitment";
+    }
+  }
+  // napi names the statics p2Id/p2Ide; the browser's p2id/p2ide are aliases.
+  class NoteScript {
+    static p2Id() {
+      return "p2id";
+    }
+    static p2Ide() {
+      return "p2ide";
+    }
   }
   class Word {}
+  // napi returns null for an unset Option<String>; the browser returns undefined.
+  class BasicFungibleFaucetComponent {
+    description() {
+      return null;
+    }
+    logoUri() {
+      return null;
+    }
+    externalLink() {
+      return null;
+    }
+  }
+  class FeeSponsorshipNote {
+    constructor(height = null) {
+      this._height = height;
+    }
+    reclaimHeight() {
+      return this._height;
+    }
+  }
+  // Every optional field reads null from napi, as an unset Option<T> does.
+  class P2ideNote {
+    reclaimHeight() {
+      return null;
+    }
+    timelockHeight() {
+      return null;
+    }
+  }
+  class SwapNote {
+    paybackTarget() {
+      return null;
+    }
+    paybackRecipient() {
+      return null;
+    }
+  }
+  class PswapNote {}
+  class BurnNote {}
+  class MintNote {}
+  class TransactionRequestBuilder {
+    withOwnOutputNotes(notes) {
+      received.push(notes);
+      return this;
+    }
+    withExpectedNtxScripts(scripts) {
+      received.push(scripts);
+      return this;
+    }
+  }
+  class NoteStorage {
+    constructor(felts) {
+      received.push(felts);
+    }
+  }
+  class SigningInputs {
+    toElements() {
+      return ["a", "b"];
+    }
+    arbitraryPayload() {
+      return ["p"];
+    }
+  }
+  class TransactionScriptInputPair {
+    felts() {
+      return ["f"];
+    }
+  }
+  class EthAddress {
+    static fromBytes(bytes) {
+      received.push(bytes);
+      return new EthAddress();
+    }
+  }
+  // The browser entry exports its own wrapper for this class, so the parity
+  // check below needs the Node entry to export one too.
+  class AuthGuardedMultisigConfig {}
   class WebClient {
     constructor() {
       this.newWallet = vi.fn(async () => "wallet");
@@ -27,6 +119,13 @@ const fakeNative = vi.hoisted(() => {
     async createMockClient(storePath) {
       this.storePath = storePath;
     }
+    async executeProgram() {
+      return ["x", "y"];
+    }
+    async newRegisterNoteScriptsTransactionRequest(_sender, scripts) {
+      received.push(scripts);
+      return "request";
+    }
   }
   const AuthScheme = Object.defineProperties(
     {},
@@ -35,14 +134,56 @@ const fakeNative = vi.hoisted(() => {
       AuthRpoFalcon512: { value: 2 },
     }
   );
-  return { Account, Word, WebClient, AuthScheme, rawStorage };
+  // A plain native function export (not a class) also carries a prototype.
+  function exportStore(items) {
+    received.push(items);
+    return "exported";
+  }
+  return {
+    Account,
+    Word,
+    BasicFungibleFaucetComponent,
+    FeeSponsorshipNote,
+    P2ideNote,
+    SwapNote,
+    PswapNote,
+    BurnNote,
+    MintNote,
+    TransactionRequestBuilder,
+    NoteStorage,
+    SigningInputs,
+    TransactionScriptInputPair,
+    EthAddress,
+    WebClient,
+    AuthScheme,
+    AuthGuardedMultisigConfig,
+    exportStore,
+    NoteScript,
+    rawStorage,
+    received,
+  };
 });
 vi.mock("../node/loader.js", () => ({
   loadNativeModule: () => ({
     Account: fakeNative.Account,
     Word: fakeNative.Word,
+    BasicFungibleFaucetComponent: fakeNative.BasicFungibleFaucetComponent,
+    FeeSponsorshipNote: fakeNative.FeeSponsorshipNote,
+    P2ideNote: fakeNative.P2ideNote,
+    SwapNote: fakeNative.SwapNote,
+    PswapNote: fakeNative.PswapNote,
+    BurnNote: fakeNative.BurnNote,
+    MintNote: fakeNative.MintNote,
+    TransactionRequestBuilder: fakeNative.TransactionRequestBuilder,
+    NoteStorage: fakeNative.NoteStorage,
+    SigningInputs: fakeNative.SigningInputs,
+    TransactionScriptInputPair: fakeNative.TransactionScriptInputPair,
+    EthAddress: fakeNative.EthAddress,
     WebClient: fakeNative.WebClient,
     AuthScheme: fakeNative.AuthScheme,
+    AuthGuardedMultisigConfig: fakeNative.AuthGuardedMultisigConfig,
+    exportStore: fakeNative.exportStore,
+    NoteScript: fakeNative.NoteScript,
   }),
 }));
 
@@ -71,13 +212,14 @@ describe("Node array exports", () => {
     const ArrayType = nodeIndex[name];
     expect(ArrayType).toBeTypeOf("function");
     expect(nodeIndex.MidenArrays[name]).toBe(ArrayType);
-    expect(new ArrayType()).toHaveLength(0);
-    expect(new ArrayType([])).toHaveLength(0);
+    expect(new ArrayType().length()).toBe(0);
+    expect(new ArrayType([]).length()).toBe(0);
     const item = {};
     const items = new ArrayType([item]);
 
-    expect(Array.isArray(items)).toBe(true);
-    expect(items).toHaveLength(1);
+    expect(Array.isArray(items)).toBe(false);
+    expect(typeof items.length).toBe("function");
+    expect(items.length()).toBe(1);
     expect(items[0]).toBe(item);
     expect(items.get(0)).toBe(item);
   });
@@ -104,6 +246,11 @@ describe("Node array container contract", () => {
       expect(items.replaceAt(1, replacement)).toBe(items);
       expect(items[0]).toBe(first);
       expect(items[1]).toBe(replacement);
+
+      const third = {};
+      expect(items.push(third)).toBe(items);
+      expect(items.length()).toBe(3);
+      expect(items[2]).toBe(third);
     }
   );
 
@@ -112,6 +259,171 @@ describe("Node array container contract", () => {
 
     expect(items.free()).toBeUndefined();
     expect(items[Symbol.dispose]()).toBeUndefined();
+  });
+});
+
+describe("Node napi boundary", () => {
+  it("hands a raw native method a real array of the container's items", () => {
+    const first = {};
+    const second = {};
+    new nodeIndex.TransactionRequestBuilder().withOwnOutputNotes(
+      new nodeIndex.NoteArray([first, second])
+    );
+
+    const received = fakeNative.received.at(-1);
+    expect(Array.isArray(received)).toBe(true);
+    expect(received).toEqual([first, second]);
+    expect(received[0]).toBe(first);
+  });
+
+  it("unwraps a NoteScriptArray passed to withExpectedNtxScripts", () => {
+    const script = {};
+    new nodeIndex.TransactionRequestBuilder().withExpectedNtxScripts(
+      new nodeIndex.NoteScriptArray([script])
+    );
+
+    const received = fakeNative.received.at(-1);
+    expect(Array.isArray(received)).toBe(true);
+    expect(received).toEqual([script]);
+    expect(received[0]).toBe(script);
+  });
+
+  it("unwraps a NoteScriptArray passed to newRegisterNoteScriptsTransactionRequest", async () => {
+    const script = {};
+    await new fakeNative.WebClient().newRegisterNoteScriptsTransactionRequest(
+      "sender",
+      new nodeIndex.NoteScriptArray([script])
+    );
+
+    const received = fakeNative.received.at(-1);
+    expect(Array.isArray(received)).toBe(true);
+    expect(received[0]).toBe(script);
+  });
+
+  it("hands a native constructor a real array of the container's items", () => {
+    const felt = {};
+    new nodeIndex.NoteStorage(new nodeIndex.FeltArray([felt]));
+
+    const received = fakeNative.received.at(-1);
+    expect(Array.isArray(received)).toBe(true);
+    expect(received).toEqual([felt]);
+  });
+
+  it("calls a plain native function as a function, with a real array", () => {
+    const item = {};
+
+    expect(nodeIndex.exportStore(new nodeIndex.NoteArray([item]))).toBe(
+      "exported"
+    );
+    expect(fakeNative.received.at(-1)).toEqual([item]);
+  });
+
+  it("reads unset faucet metadata as undefined, as the browser does", () => {
+    const faucet = new nodeIndex.BasicFungibleFaucetComponent();
+
+    expect(faucet.description()).toBeUndefined();
+    expect(faucet.logoUri()).toBeUndefined();
+    expect(faucet.externalLink()).toBeUndefined();
+  });
+
+  it("reads FeeSponsorshipNote.reclaimHeight() as undefined when unset and preserves positive numbers", () => {
+    expect(
+      new nodeIndex.FeeSponsorshipNote(null).reclaimHeight()
+    ).toBeUndefined();
+    expect(new nodeIndex.FeeSponsorshipNote(42).reclaimHeight()).toBe(42);
+  });
+
+  it("exports the P2ideNote and SwapNote decoders with unset fields as undefined", () => {
+    expect(nodeIndex.P2ideNote).toBeTypeOf("function");
+    expect(nodeIndex.SwapNote).toBeTypeOf("function");
+    const p2ide = new nodeIndex.P2ideNote();
+    expect(p2ide.reclaimHeight()).toBeUndefined();
+    expect(p2ide.timelockHeight()).toBeUndefined();
+    const swap = new nodeIndex.SwapNote();
+    expect(swap.paybackTarget()).toBeUndefined();
+    expect(swap.paybackRecipient()).toBeUndefined();
+  });
+
+  it("exports the PswapNote and BurnNote decoders", () => {
+    expect(nodeIndex.PswapNote).toBeTypeOf("function");
+    expect(nodeIndex.PswapNote.name).toBe("PswapNote");
+    expect(nodeIndex.BurnNote).toBeTypeOf("function");
+    expect(nodeIndex.BurnNote.name).toBe("BurnNote");
+  });
+
+  it("exports the MintNote decoder", () => {
+    expect(nodeIndex.MintNote).toBeTypeOf("function");
+    expect(nodeIndex.MintNote.name).toBe("MintNote");
+  });
+
+  it("keeps the NoteScript.p2id and p2ide aliases", () => {
+    expect(nodeIndex.NoteScript.p2id()).toBe("p2id");
+    expect(nodeIndex.NoteScript.p2ide()).toBe("p2ide");
+  });
+
+  it("unwraps containers passed to a snake_case alias", () => {
+    const item = {};
+    new fakeNative.Account().to_commitment(new nodeIndex.NoteArray([item]));
+
+    expect(fakeNative.received.at(-1)).toEqual([item]);
+  });
+
+  it("lets a subclass of an exported native class keep its own methods", () => {
+    class Sub extends nodeIndex.NoteStorage {
+      tag() {
+        return 1;
+      }
+    }
+    const sub = new Sub(new nodeIndex.FeltArray([]));
+    expect(sub).toBeInstanceOf(Sub);
+    expect(sub.tag()).toBe(1);
+
+    class W extends nodeIndex.Word {
+      tag() {
+        return 2;
+      }
+    }
+    expect(new W().tag()).toBe(2);
+  });
+
+  it("keeps each wrapped export's class or function name", () => {
+    expect(nodeIndex.TransactionRequestBuilder.name).toBe(
+      "TransactionRequestBuilder"
+    );
+    expect(new nodeIndex.Word().constructor.name).toBe("Word");
+    expect(nodeIndex.exportStore.name).toBe("exportStore");
+  });
+
+  it("reports the export as an instance's constructor", () => {
+    expect(new nodeIndex.TransactionRequestBuilder().constructor).toBe(
+      nodeIndex.TransactionRequestBuilder
+    );
+    expect(new nodeIndex.Word().constructor).toBe(nodeIndex.Word);
+    expect(nodeIndex.Word()).toBeInstanceOf(nodeIndex.Word);
+  });
+
+  it("leaves byte arguments to native methods untouched", () => {
+    const bytes = new Uint8Array(20);
+    nodeIndex.EthAddress.fromBytes(bytes);
+
+    expect(fakeNative.received.at(-1)).toBe(bytes);
+  });
+
+  it.each([
+    ["SigningInputs", "toElements", ["a", "b"]],
+    ["SigningInputs", "arbitraryPayload", ["p"]],
+    ["TransactionScriptInputPair", "felts", ["f"]],
+  ])("returns %s.%s as a container", (cls, method, items) => {
+    const result = new nodeIndex[cls]()[method]();
+
+    expect(result.length()).toBe(items.length);
+    expect(result.get(0)).toBe(items[0]);
+  });
+
+  it("returns executeProgram's felts as a container", async () => {
+    const result = await new fakeNative.WebClient().executeProgram();
+    expect(result.length()).toBe(2);
+    expect(result.get(1)).toBe("y");
   });
 });
 

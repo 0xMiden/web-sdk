@@ -33,6 +33,7 @@ React hooks library for the Miden Web Client. Provides a simple, ergonomic inter
 - **Temporal Note Tracking** - `useNoteStream()` tracks when notes first appear, with built-in filtering, handled-note exclusion, and phase snapshots
 - **Session Wallets** - `useSessionAccount()` manages the create-fund-consume lifecycle for temporary wallets
 - **AggLayer Bridge-Out** - `useBridge()` emits a B2AGG note to bridge a fungible asset out to another network via the AggLayer
+- **USDCx Withdrawal** - `useWithdrawUsdcx()` emits a Circle xReserve burn note that releases USDC on the destination chain
 - **Network Notes** - `useCreateNetworkNote()` creates custom-script network notes
 - **Concurrency Safety** - Transaction hooks prevent double-sends with built-in concurrency guards
 - **Auto Pre-Sync** - Transaction hooks sync before executing by default (opt out with `skipSync`)
@@ -152,8 +153,12 @@ function App() {
   return (
     <MidenProvider
       config={{
-        // RPC endpoint (defaults to testnet). You can also use 'devnet' or 'testnet'.
+        // RPC endpoint (defaults to testnet). You can also use 'mainnet', 'devnet' or 'testnet'.
         rpcUrl: 'devnet',
+
+        // Optional: 'mainnet' | 'testnet' | 'devnet', the address prefix. Wins over the
+        // network inferred from rpcUrl; a custom URL naming no network is mainnet.
+        // network: 'mainnet',
 
         // Optional: the faucet the chain mints its fee asset from, bech32 or hex.
         // The client receives the chain's protocol configuration, which names the
@@ -176,7 +181,11 @@ function App() {
         // noteTransportMaxRetries: 3,
         // noteTransportRetryIntervalMs: 250,
 
-        // Optional: prover selection ('local' | 'devnet' | 'testnet' | URL)
+        // Optional: connected-signer callback wait in ms. Unset leaves sign unlimited.
+        // See "Keystore Callback Timeouts" below.
+        callbackTimeoutMs: 120000,
+
+        // Optional: prover selection ('local' | 'mainnet' | 'devnet' | 'testnet' | URL)
         // prover: 'local',
       }}
       // Optional: Custom loading component
@@ -194,6 +203,42 @@ function App() {
 ```
 
 Keep the `config` object's identity stable: define it outside the component, or memoize it with `useMemo` when the component that renders `MidenProvider` re-renders. Without a signer provider, each new `config` object makes `MidenProvider` re-create its client and leave the replaced one running.
+
+### Keystore Callback Timeouts
+
+Under the Web Worker, a connected signer's callbacks run on the main thread and
+the worker waits for each one. `config.callbackTimeoutMs` sets that wait. A
+callback that outlasts it fails the call that needed it with
+`Callback <id> timed out after <n>ms`.
+
+| `callbackTimeoutMs` | `sign` | `getKey` and `insertKey` |
+| --- | --- | --- |
+| Unset | No limit | 30 seconds |
+| `0` | No limit | No limit |
+| Positive | That value | That value |
+
+A positive value applies to all three callbacks, and a fraction rounds up to a
+whole millisecond. A negative, non-finite or non-number value, or one above
+`2147483647`, throws `TypeError` at creation, with or without a signer, and
+`MidenProvider` passes that error to `errorComponent`. Callbacks use this
+timeout only through the Web Worker: with `useWorker: false`, or without
+`Worker` support, it sets no limit on them.
+
+`sign` has no limit by default because it can wait on a person approving in a
+wallet or on a hardware device. The cost is that a stalled `sign` never fails on
+its own. The worker runs one call at a time, so it holds its batch or
+transaction and leaves later worker calls in the queue. With `useBatch()`,
+`isLoading` stays `true` and another `batch()` throws `BATCH_BUSY`. If a signer
+can stall, set a finite timeout:
+
+```tsx
+<MidenProvider config={{ rpcUrl: 'testnet', callbackTimeoutMs: 120000 }}>
+  <YourApp />
+</MidenProvider>
+```
+
+A batch signs while it is built, so one failed or timed out `sign` fails the
+whole batch.
 
 ## Subpaths: Eager / Lazy × ST / MT
 
@@ -622,7 +667,7 @@ import { useNotes } from '@miden-sdk/react';
 function NotesList() {
   const {
     notes,            // All notes matching filter
-    consumableNotes,  // Notes ready to be consumed
+    consumableNotes,  // Payments (P2ID and P2IDE notes) ready to be consumed
     noteSummaries,    // Summary objects with asset metadata
     isLoading,
     error,
@@ -657,6 +702,42 @@ function NotesList() {
 }
 ```
 
+#### `useNoteConsumability(note, options?)`
+
+Show whether a note can be consumed: now, after a block height, or never. The
+hook screens the note, imported or not, with the screener sync uses, and
+screens it again after each sync. Pass `accountId` to screen for one account;
+omit it to screen every tracked account. An empty screen of
+tracked accounts reads as `never`; with no tracked account, `status` stays
+`null` because nothing was screened.
+
+```tsx
+import { useNoteConsumability } from '@miden-sdk/react';
+
+function NoteStatus({ note, accountId }) {
+  const {
+    status,         // null until screened, then one of the kinds below
+    consumability,  // the screener's NoteConsumability entries
+    isLoading,
+    error,
+    refetch,
+  } = useNoteConsumability(note, { accountId });
+
+  if (!status) return <span>Checking...</span>;
+  if (status.kind === 'immediately') return <span>Claimable now</span>;
+  if (status.kind === 'afterBlock')
+    return <span>Unlocks at block {status.blockHeight}</span>;
+  return <span>Not claimable</span>; // status.kind === 'never'
+}
+```
+
+The hook only presents the screen. What to claim still comes from
+`useNotes().consumableNotes`, which holds payments consumable now: a note this
+hook reports `immediately` may be another trader's PSWAP order, which
+consuming would fill from your vault. `getNoteConsumabilityStatus(entries,
+accountIdHex?)` derives the same status from any `NoteConsumability[]`, such
+as `ConsumableNoteRecord.noteConsumability()`.
+
 #### `useNoteStream(options?)`
 
 Temporal note tracking with a unified model. Replaces the common pattern of
@@ -664,8 +745,12 @@ Temporal note tracking with a unified model. Replaces the common pattern of
 Returns `StreamedNote` objects that merge summary data with the underlying
 record and pre-decode attachments.
 
+A streamed note is any input note in the status, not necessarily a payment.
+Check `note.standardPayment` (true only for a P2ID or P2IDE payment) before
+treating it as incoming funds or consuming it.
+
 Features:
-- **Unified `StreamedNote` type** with sender (bech32), amount, assets, attachment, and `firstSeenAt` timestamp
+- **Unified `StreamedNote` type** with sender (bech32), amount, assets, attachment, `standardPayment`, and `firstSeenAt` timestamp
 - **Built-in filtering** by sender, status, `since` timestamp, `excludeIds`, and custom `amountFilter`
 - **`markHandled` / `markAllHandled`** to exclude processed notes without removing them from the store
 - **`snapshot()`** to capture current note IDs and timestamp for passing to the next phase
@@ -703,7 +788,7 @@ The `StreamedNote` type provides:
 ```typescript
 interface StreamedNote {
   id: string;              // Note ID (hex)
-  sender: string;          // Sender account ID (bech32)
+  sender: string;          // Sender account ID (bech32 for the client's network, hex before a client exists)
   amount: bigint;          // First fungible asset amount (0n if none)
   assets: NoteAsset[];     // All assets on the note
   record: InputNoteRecord; // Underlying record for escape-hatch access
@@ -717,7 +802,9 @@ interface StreamedNote {
 Fetch asset symbols/decimals for a list of asset IDs. This is the lightweight
 way to enrich balances and note lists with human-friendly token info.
 It batches lookups and caches results for reuse across components. That avoids
-repeated RPC calls and inconsistent labels.
+repeated RPC calls and inconsistent labels. Lookups go to the node the
+provider's client was created against (`client.endpoint()`), so nothing is
+fetched until `MidenProvider` is ready.
 
 ```tsx
 import { useAssetMetadata } from '@miden-sdk/react';
@@ -788,7 +875,6 @@ function SendForm() {
 
         // Optional parameters
         noteType: 'private',      // 'private' | 'public' (default: 'private')
-        recallHeight: 1000,       // Sender can reclaim after this block
         attachment: [1n, 2n, 3n], // Arbitrary data payload
         skipSync: false,          // Skip auto-sync before send (default: false)
         sendAll: false,           // Send full balance (ignores amount)
@@ -864,37 +950,68 @@ function MultiSendButton() {
 }
 ```
 
-#### `useInternalTransfer()`
+#### `useBatch()`
 
-Create a P2ID note and immediately consume it. This is useful for transfers
-between accounts you control (e.g., public → private), since the receiver must
-be available in the local client to consume the note.
-It abstracts the two-transaction flow and keeps both steps tied to a single UI
-action. You don't have to juggle temporary note IDs or manual syncs.
+Submit multiple transactions across one or more tracked accounts as one atomic
+batch — every tx lands together or none does. Each item pairs a local account
+with a pre-built `TransactionRequest`. Later items may consume notes produced by
+earlier ones (even across accounts); push order must respect
+producer-before-consumer. The underlying primitive returns a block number
+rather than per-tx ids, so the hook's result is `{ blockNumber }`.
+Each tx is proven inside that primitive by the client's built-in local prover,
+so `MidenProvider`'s `prover` setting and its fallback do not apply to batches.
+In the browser the batch runs in the client's Web Worker, so the page stays
+responsive while it proves; with `useWorker: false`, or without `Worker`
+support, it proves on the calling thread and blocks the page until it settles,
+so keep batches small there. Through the worker, `sign` waits without a limit
+unless `callbackTimeoutMs` sets one, so a stalled signer holds the batch and
+later worker calls; see
+[Keystore Callback Timeouts](#keystore-callback-timeouts) to set a finite
+timeout.
+
+Built-in features:
+- **Auto pre-sync** before submit (disable with `skipSync: true`)
+- **Concurrency guard** rejects a second `batch()` while the first is still
+  in flight (`BATCH_BUSY`)
+- **Atomicity** — the batch path uses the same proven-batch RPC the underlying
+  `submitNewTransactionBatch` exposes; the store applies all per-tx updates
+  in one IndexedDB transaction
 
 ```tsx
-import { useInternalTransfer } from '@miden-sdk/react';
+import { useBatch, useMidenClient } from '@miden-sdk/react';
+import { BatchItem, NoteType } from '@miden-sdk/miden-sdk';
 
-function InternalTransferButton() {
-  const { transfer, isLoading, stage } = useInternalTransfer();
+function BatchButton() {
+  const { batch, isLoading, stage } = useBatch();
+  const client = useMidenClient();
 
-  const handleTransfer = async () => {
-    await transfer({
-      from: '0xsender...',
-      to: '0xrecipient...',
-      assetId: '0xtoken...',
-      amount: 50n,
-      noteType: 'public',
+  const handleBatch = async () => {
+    const sendReq = await client.newSendTransactionRequest(
+      alice, bob, token, NoteType.Private, 50n, null, null,
+    );
+    const consumeReq = await client.newConsumeTransactionRequest([incomingNote], bob);
+
+    const { blockNumber } = await batch({
+      items: [
+        { account: alice, request: sendReq },
+        { account: bob,   request: consumeReq },  // can consume notes from earlier items
+      ],
     });
+    console.log('Batch submitted at chain tip', blockNumber);
   };
 
   return (
-    <button onClick={handleTransfer} disabled={isLoading}>
-      {isLoading ? `Transferring (${stage})...` : 'Transfer'}
+    <button onClick={handleBatch} disabled={isLoading}>
+      {isLoading ? `Submitting (${stage})...` : 'Submit batch'}
     </button>
   );
 }
 ```
+
+Pass `skipSync: true` if you've already synced and want to avoid the pre-submit
+round-trip. The hook itself never serializes the requests: the WASM `BatchItem`
+constructor takes the `TransactionRequest` by reference. A client running a
+Web Worker serializes each request once to hand the batch to the worker.
 
 #### `useWaitForCommit()`
 
@@ -920,8 +1037,11 @@ function WaitForTx({ txId }: { txId: string }) {
 #### `useTransactionHistory()`
 
 Query transaction history and get live state for a single transaction. You can
-pass a single ID, multiple IDs, or a custom `TransactionFilter`. Results refresh
-after each successful sync by default.
+pass a single ID, multiple IDs, or a custom filter. Results refresh
+after each successful sync by default. Pass a custom filter as a factory, e.g.
+`filter: () => TransactionFilter.uncommitted()` defined at module scope: a
+`TransactionFilter` instance is consumed by the first fetch, so a refetch with
+it fails.
 It hides the filter plumbing and provides a single-record convenience view.
 The hook keeps lists fresh on sync so you don't wire manual refreshes.
 
@@ -982,6 +1102,7 @@ function WaitForNotes({ accountId }: { accountId: string }) {
       timeoutMs: 10_000,
       intervalMs: 1_000,
     });
+    // Payments only (P2ID and P2IDE notes), as in useNotes().consumableNotes.
     console.log('Notes ready:', notes.length);
   };
 
@@ -1025,10 +1146,43 @@ function MintForm() {
 }
 ```
 
+Every transaction hook takes an amount as a `bigint` or a `number`. A `number`
+must be a safe integer: anything else (`2 ** 53`, `1.5`, `NaN`) throws
+`<method>: amount must be a safe integer when given as a number` before the
+amount reaches a transaction builder, so pass a `bigint` above `2 ** 53 - 1`.
+
+#### `useWithdrawUsdcx()`
+
+Withdraw USDCx through Circle xReserve. The hook emits one public burn note
+that the USDCx faucet (a public account) consumes and burns, and Circle then
+releases USDC to the recipient on the destination domain. It syncs afterwards
+unless `skipSync` is set.
+
+```tsx
+const { withdrawUsdcx, isLoading, stage } = useWithdrawUsdcx();
+
+await withdrawUsdcx({
+  from: senderAccountId,
+  faucetId: usdcxFaucetId,
+  amount: 1_000_000n,
+  destinationDomain: 6, // Circle domain, for example 6 for Arbitrum
+  // Circle's 32-byte recipient: an EVM address left-padded with zeros
+  destinationRecipient: '0x' + evmAddress.slice(2).padStart(64, '0'),
+});
+```
+
+A `destinationRecipient` that is not a 0x-prefixed 32-byte hex string throws
+before the note is built. There is no hook for claiming an inbound AggLayer
+deposit yet: build the CLAIM note with `Note.createClaimNote(...)` from
+`@miden-sdk/miden-sdk` and submit it as an own output note with `useTransaction`,
+declaring the bridge account as a foreign account.
+
 #### `useConsume()`
 
-Consume notes to claim tokens sent to your account. Supports multiple note IDs
-and handles proof generation and submission automatically.
+Consume notes with your account. Supports multiple note IDs and handles proof
+generation and submission automatically. Consuming runs each note's script: a
+P2ID or P2IDE payment moves its assets in, and a note running another script
+can also move assets out, so check `isStandardPayment(record)` first.
 It wraps the multi-step consume pipeline so you don't have to string calls
 together. That prevents common snags like forgetting to sync or submit.
 
@@ -1672,7 +1826,7 @@ Compare and normalize account IDs across hex and bech32 formats:
 ```typescript
 import { normalizeAccountId, accountIdsEqual } from '@miden-sdk/react';
 
-const bech32 = normalizeAccountId('0x1234...');  // Returns bech32 format
+const bech32 = normalizeAccountId('0x1234...');  // bech32 for the client's network (raw id before a client exists)
 accountIdsEqual('0x1234...', 'miden1abc...');     // true (format-agnostic)
 ```
 
@@ -1744,7 +1898,8 @@ try {
 } catch (e) {
   const wrapped = wrapWasmError(e);
   // MidenError with code: 'WASM_CLASS_MISMATCH' | 'WASM_POINTER_CONSUMED' |
-  //   'WASM_NOT_INITIALIZED' | 'WASM_SYNC_REQUIRED' | 'SEND_BUSY' | 'UNKNOWN'
+  //   'WASM_NOT_INITIALIZED' | 'WASM_SYNC_REQUIRED' | 'SEND_BUSY' |
+  //   'OPERATION_BUSY' | 'BATCH_BUSY' | 'STALE_CLIENT' | 'UNKNOWN'
   console.log(wrapped.message); // Human-readable with fix suggestions
 }
 ```
@@ -2097,9 +2252,9 @@ import type {
   SendOptions,
   MultiSendRecipient,
   MultiSendOptions,
-  InternalTransferOptions,
-  InternalTransferChainOptions,
-  InternalTransferResult,
+  BatchItemInput,
+  BatchOptions,
+  BatchResult,
   WaitForCommitOptions,
   WaitForNotesOptions,
   MintOptions,

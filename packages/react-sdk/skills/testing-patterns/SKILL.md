@@ -117,8 +117,9 @@ the SDK's own `setup.ts` mocks.
 
 **Mutation hooks** return idle state by default. **Every mutation mock needs all six keys** - omitting `reset`, `error` or `result` is a type error, not a shortcut:
 - `useSend()` - `{ send: vi.fn(), result: null, isLoading: false, stage: "idle", error: null, reset: vi.fn() }`. Its `result` type is `SendResult { txId, note }` - distinct from `TransactionResult { transactionId }`. `note` is non-null **only** when the call passed `returnNote: true`.
-- `useMint()`, `useConsume()`, `useSwap()`, `useMultiSend()`, `useBridge()`, `usePswapCreate()`, `usePswapConsume()`, `usePswapCancel()`, `usePswapCancelByOrder()`, `useTransaction()` - same six keys, `result: TransactionResult | null`.
+- `useMint()`, `useConsume()`, `useSwap()`, `useMultiSend()`, `useBridge()`, `useWithdrawUsdcx()`, `usePswapCreate()`, `usePswapConsume()`, `usePswapCancel()`, `usePswapCancelByOrder()`, `useTransaction()` - same six keys, `result: TransactionResult | null`.
 - `useCreateNetworkNote()` - same six keys, `result: NetworkNoteResult | null` (`{ txId, note }`).
+- `useBatch()` - same six keys with `batch` as the action, `result: BatchResult | null` (`{ blockNumber }`).
 - `useCreateWallet()` - `{ createWallet: vi.fn(), wallet: null, isCreating: false, error: null, reset: vi.fn() }`. `useCreateFaucet` mirrors it with `faucet`; `useImportAccount` with `account` and `isImporting`.
 
 **Hooks that do not follow either shape.** These name their own busy flag, and mocking them by analogy with `useSend` gets the field names wrong:
@@ -192,6 +193,7 @@ import {
   MOCK_TRANSACTION_RESULT, // { transactionId: "0x..." } - useMint / useConsume / useSwap / useMultiSend / useBridge / usePswap* / useTransaction
   MOCK_SEND_RESULT,        // { txId: "0x...", note: null }  - useSend
   MOCK_NETWORK_NOTE_RESULT,// { txId: "0x...", note }        - useCreateNetworkNote
+  MOCK_BATCH_RESULT,       // { blockNumber: 100 }           - useBatch
   MOCK_NOTE_SUMMARY,       // { id, assets, sender }
 } from "./fixtures";
 ```
@@ -276,7 +278,7 @@ vi.mocked(useMidenFiWallet).mockReturnValue({
 } as never);
 ```
 
-The real `WalletContextState` has more keys than the five stubbed here (`select`, `wallets`, `publicKey`, an optional `requestTransaction`); the `as never` casts are what let a five-key stub compile. Drop a cast and you will need the rest.
+`useMidenFiWallet()` returns `MidenFiWalletContextState`; `WalletContextState` is the `useWallet()` type. The canonical type has a three-argument `connect(privateDataPermission, network, allowedPrivateData?)` and required request-method properties typed `X | undefined`. The MidenFi type has optional `connect(privateDataPermission?, network?, allowedPrivateData?)`. Under `MidenFiSignerProvider` those arguments are ignored. On the exported-context fallback, `connect` forwards them and rejects with `useMidenFiWallet connect requires privateDataPermission and network` when `privateDataPermission` or `network` is omitted. It also has optional request methods and optional `createAccount`. It has more keys than the five stubbed here (`select`, `wallets`, `publicKey`, an optional `requestTransaction`, and an optional `createAccount`); the `as never` casts are what let a five-key stub compile. Drop a cast and you will need the rest.
 
 (template) See `src/components/__tests__/AppContent.test.tsx` in the [frontend template](https://github.com/0xMiden/frontend-template) for the full pattern (including a `walletState()` helper that cuts per-test boilerplate).
 

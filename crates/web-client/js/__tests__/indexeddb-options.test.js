@@ -99,6 +99,7 @@ describe("IndexedDB construction boundaries", () => {
       undefined,
       undefined,
       undefined,
+      undefined,
       {
         durability: "strict",
         onFailure: () => {
@@ -109,7 +110,7 @@ describe("IndexedDB construction boundaries", () => {
     );
     await receive({ data: { loaded: true } });
     await Promise.resolve();
-    expect(posted[0].args[12]).toEqual({ durability: "strict", notify: true });
+    expect(posted[0].args[13]).toEqual({ durability: "strict", notify: true });
     await receive({ data: { ready: true } });
     const operation = client.callMethodWithWorker("getSetting", 1, "key");
     await Promise.resolve();
@@ -203,17 +204,20 @@ describe("IndexedDB construction boundaries", () => {
           undefined,
           undefined,
           undefined,
+          undefined,
+          undefined,
           indexedDb
         )
       ).rejects.toThrow(/browser IndexedDB/);
       await expect(
         factory.createClientWithExternalKeystore(
-          ...Array(13).fill(undefined),
+          ...Array(15).fill(undefined),
           indexedDb
         )
       ).rejects.toThrow(/browser IndexedDB/);
       await expect(
         createMockWasmWebClient(sdk).createClient(
+          undefined,
           undefined,
           undefined,
           undefined,

@@ -84,6 +84,42 @@ export function isConsumableNow(record, accountIdHex) {
     );
 }
 
+const standardPaymentRoots = new WeakMap();
+
+/**
+ * True when `record`'s note runs the standard P2ID or P2IDE script.
+ *
+ * Consuming such a note only moves its assets into the consuming account, and
+ * the screener reports it consumable only for the account it pays, or for its
+ * sender once a P2IDE note can be reclaimed. Any other script can also spend
+ * from the consumer: anyone holding the requested asset can consume another
+ * trader's public PSWAP order, and doing so fills it from their vault at the
+ * creator's price. A record whose script cannot be read is not a payment.
+ *
+ * @param {ConsumableNoteRecord | InputNoteRecord} record - The note to check.
+ * @param {object} wasm - The WASM module.
+ * @returns {boolean} True for a P2ID or P2IDE note.
+ */
+export function isStandardPaymentNote(record, wasm) {
+  let roots = standardPaymentRoots.get(wasm);
+  if (!roots) {
+    roots = new Set([
+      wasm.NoteScript.p2id().root().toHex(),
+      wasm.NoteScript.p2ide().root().toHex(),
+    ]);
+    standardPaymentRoots.set(wasm, roots);
+  }
+  try {
+    const input =
+      typeof record.inputNoteRecord === "function"
+        ? record.inputNoteRecord()
+        : record;
+    return roots.has(input.details().recipient().script().root().toHex());
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Resolves a NoteVisibility string to a WASM NoteType value.
  *
@@ -159,6 +195,109 @@ export function resolveAuthScheme(scheme, wasm) {
   throw new Error(
     `Unknown auth scheme: "${scheme}". Expected "falcon" or "ecdsa".`
   );
+}
+
+/**
+ * Resolves the auth scheme of a wasm binding that requires one, such as the
+ * `AuthGuardedMultisigConfig` constructor.
+ *
+ * Unlike {@link resolveAuthScheme}, a missing scheme is an error, not Falcon.
+ * In the browser the package's `AuthScheme.AuthEcdsaK256Keccak` reads as
+ * `undefined` (the export is the friendly string const), so defaulting would
+ * turn a caller's ECDSA request into a Falcon key.
+ *
+ * @param {string | number} scheme - "falcon", "ecdsa" or a numeric enum value.
+ * @param {object} wasm - An object whose `AuthScheme` is the native enum.
+ * @param {string} binding - The binding's name, for the error message.
+ * @returns {number} The AuthScheme enum value.
+ */
+export function resolveRequiredAuthScheme(scheme, wasm, binding) {
+  if (scheme == null) {
+    throw new TypeError(
+      `${binding} requires an auth scheme: AuthScheme.ECDSA ("ecdsa") or AuthScheme.Falcon ("falcon").`
+    );
+  }
+  return resolveAuthScheme(scheme, wasm);
+}
+
+/**
+ * Wraps a wasm `AuthGuardedMultisigConfig` class so its constructor accepts
+ * the friendly `AuthScheme` strings as well as the numeric enum.
+ *
+ * Instances are built by the wasm class itself, so they pass the wasm
+ * bindings' class checks, and `instanceof` against the wrapper defers to it.
+ * The wasm class and enum are read through getters at construction time, not
+ * when the wrapper is created.
+ *
+ * @param {() => Function} getClass - Returns the wasm class.
+ * @param {() => object} getWasm - Returns an object whose `AuthScheme` is the
+ *   native enum.
+ * @returns {Function} The wrapper constructor.
+ */
+export function wrapAuthGuardedMultisigConfig(getClass, getWasm) {
+  function AuthGuardedMultisigConfig(
+    approvers,
+    defaultThreshold,
+    guardian,
+    authScheme
+  ) {
+    if (!new.target) {
+      throw new TypeError(
+        "Class constructor AuthGuardedMultisigConfig cannot be invoked without 'new'"
+      );
+    }
+    const scheme = resolveRequiredAuthScheme(
+      authScheme,
+      getWasm(),
+      "AuthGuardedMultisigConfig"
+    );
+    const Cls = getClass();
+    return new Cls(approvers, defaultThreshold, guardian, scheme);
+  }
+  Object.defineProperty(AuthGuardedMultisigConfig, Symbol.hasInstance, {
+    value: (value) => value instanceof getClass(),
+  });
+  return AuthGuardedMultisigConfig;
+}
+
+const AUTH_FROM_COMMITMENT = "createAuthComponentFromCommitment";
+
+/**
+ * Makes `cls.createAuthComponentFromCommitment` accept the friendly
+ * `AuthScheme` strings as well as the numeric enum, in place. Does nothing if
+ * the static is missing, already wrapped, or cannot be redefined.
+ *
+ * @param {Function | undefined} cls - The `AccountComponent` class.
+ * @param {object} wasm - An object whose `AuthScheme` is the native enum.
+ */
+export function installAuthSchemeResolution(cls, wasm) {
+  const descriptor =
+    cls && Object.getOwnPropertyDescriptor(cls, AUTH_FROM_COMMITMENT);
+  if (
+    typeof descriptor?.value !== "function" ||
+    !(descriptor.writable || descriptor.configurable) ||
+    descriptor.value.__resolvesAuthScheme
+  ) {
+    return;
+  }
+  const original = descriptor.value;
+  const resolving = function (commitment, authScheme) {
+    return original.call(
+      this,
+      commitment,
+      resolveRequiredAuthScheme(
+        authScheme,
+        wasm,
+        `AccountComponent.${AUTH_FROM_COMMITMENT}`
+      )
+    );
+  };
+  resolving.__resolvesAuthScheme = true;
+  Object.defineProperty(cls, AUTH_FROM_COMMITMENT, {
+    value: resolving,
+    writable: true,
+    configurable: true,
+  });
 }
 
 /**
@@ -243,6 +382,33 @@ export async function hashSeed(seed) {
 }
 
 /**
+ * Check that `items` is an array of `BatchItem`s before a batch is routed.
+ *
+ * Shared by `WebClient` and `MockWebClient`, and applied before the worker
+ * branch, so a given input fails the same way whether or not a worker exists.
+ * In-thread, wasm-bindgen would reject a wrong element itself, but with a
+ * generic "array contains a value of the wrong type" naming no index; on the
+ * worker path the element would fail later, while being serialized.
+ *
+ * @param {unknown} items
+ * @param {Function} BatchItem - The `BatchItem` class of this thread's WASM
+ *   module, the same `instanceof` check wasm-bindgen applies.
+ */
+export function assertBatchItems(items, BatchItem) {
+  if (!Array.isArray(items)) {
+    throw new TypeError("expected an array of BatchItem");
+  }
+
+  // Indexed rather than `.every`, which skips holes: a sparse array would
+  // otherwise pass and reach WASM with `undefined` entries.
+  for (let index = 0; index < items.length; index++) {
+    if (!(items[index] instanceof BatchItem)) {
+      throw new TypeError(`batch item at index ${index} is not a BatchItem`);
+    }
+  }
+}
+
+/**
  * Bounds for the note transport send-retry options. A retry waits
  * `noteTransportRetryIntervalMs * 2^n` before attempt `n + 1`, so a send can
  * spend `interval * (2^maxRetries - 1)` ms in backoff. Each value has its own
@@ -306,4 +472,66 @@ function checkRetryOption(name, value, cap) {
       `${name} must be an integer from 0 to ${cap}, got ${String(value)}`
     );
   }
+}
+
+// BigInt() rounds an unsafe number silently, so reject one before any WASM call.
+export function toAmount(amount, method) {
+  if (typeof amount === "number" && !Number.isSafeInteger(amount)) {
+    throw new Error(
+      `${method}: amount must be a safe integer when given as a number; pass a bigint above 2^53 - 1`
+    );
+  }
+  return BigInt(amount);
+}
+
+// The live clients on each store, keyed by the id the store lock uses, and how
+// many clients have opened each store while it has a live one, which numbers
+// them. Kept on the realm, not the module: the ST and MT builds, and any
+// duplicate copy of the package, each evaluate this file but share one store.
+const registry = (globalThis[Symbol.for("miden.web-sdk.storeOwnership")] ??= {
+  clients: new Map(),
+  counts: new Map(),
+});
+const storeClients = registry.clients;
+const storeOpenCounts = registry.counts;
+
+/**
+ * Records a client opening `storeId` and returns the function that releases
+ * it; releasing twice is harmless. When a live client already has the store
+ * open this warns naming it, or throws when either client asked for
+ * exclusive use, recording nothing.
+ * @param {string} storeId - The store lock id of the store being opened.
+ * @param {boolean} [exclusive] - Refuse a store that is already open, and
+ *   make later opens of it refuse while this client lives.
+ * @returns {() => void} Releases the store.
+ */
+export function claimStore(storeId, exclusive = false) {
+  const live = storeClients.get(storeId) ?? [];
+  const owner = live.find((client) => client.exclusive) ?? live[0];
+  if (owner) {
+    const held = `Store "${storeId}" is already open in client #${owner.number} of that store (numbered in the order clients opened it)`;
+    if (exclusive || owner.exclusive) {
+      throw new Error(
+        owner.exclusive
+          ? `${held}, which holds it exclusively; terminate it first`
+          : `${held}; terminate it before opening the store exclusively`
+      );
+    }
+    console.warn(
+      `${held}. The two clients do not coordinate; terminate one, or pass exclusive: true to refuse the second open.`
+    );
+  }
+  const number = (storeOpenCounts.get(storeId) ?? 0) + 1;
+  storeOpenCounts.set(storeId, number);
+  const entry = { number, exclusive: exclusive === true };
+  storeClients.set(storeId, [...live, entry]);
+  return () => {
+    const rest = (storeClients.get(storeId) ?? []).filter((c) => c !== entry);
+    if (rest.length > 0) {
+      storeClients.set(storeId, rest);
+    } else {
+      storeClients.delete(storeId);
+      storeOpenCounts.delete(storeId);
+    }
+  };
 }

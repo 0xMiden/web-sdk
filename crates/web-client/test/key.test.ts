@@ -139,6 +139,96 @@ test.describe("public key", () => {
     });
     expect(result.original).toEqual(result.roundtripped);
   });
+
+  test("recoverFrom recovers the signer's public key: Falcon Scheme", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const secretKey = sdk.AuthSecretKey.rpoFalconWithRNG();
+      const message = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
+      const signature = secretKey.sign(message);
+      const recovered = sdk.PublicKey.recoverFrom(message, signature);
+      return {
+        commitmentMatches:
+          recovered.toCommitment().toHex() ===
+          secretKey.publicKey().toCommitment().toHex(),
+        verifies: recovered.verify(message, signature),
+      };
+    });
+    expect(result).toEqual({ commitmentMatches: true, verifies: true });
+  });
+
+  test("recoverFrom recovers the signer's public key: ECDSA Scheme", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const secretKey = sdk.AuthSecretKey.ecdsaWithRNG();
+      const otherSecretKey = sdk.AuthSecretKey.ecdsaWithRNG();
+      const message = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
+      const signature = secretKey.sign(message);
+      const recovered = sdk.PublicKey.recoverFrom(message, signature);
+      return {
+        commitmentMatches:
+          recovered.toCommitment().toHex() ===
+          secretKey.publicKey().toCommitment().toHex(),
+        otherCommitmentDiffers:
+          recovered.toCommitment().toHex() !==
+          otherSecretKey.publicKey().toCommitment().toHex(),
+        verifies: recovered.verify(message, signature),
+      };
+    });
+    expect(result).toEqual({
+      commitmentMatches: true,
+      otherCommitmentDiffers: true,
+      verifies: true,
+    });
+  });
+
+  test("recoverFrom on another word still returns the Falcon key", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const secretKey = sdk.AuthSecretKey.rpoFalconWithRNG();
+      const signed = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
+      const other = new sdk.Word(sdk.u64Array([5, 6, 7, 8]));
+      const signature = secretKey.sign(signed);
+      const recovered = sdk.PublicKey.recoverFrom(other, signature);
+      return {
+        commitmentMatches:
+          recovered.toCommitment().toHex() ===
+          secretKey.publicKey().toCommitment().toHex(),
+        verifyOther: recovered.verify(other, signature),
+        verifySigned: recovered.verify(signed, signature),
+      };
+    });
+    expect(result).toEqual({
+      commitmentMatches: true,
+      verifyOther: false,
+      verifySigned: true,
+    });
+  });
+
+  test("recoverFrom on another word does not return the ECDSA signer", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const secretKey = sdk.AuthSecretKey.ecdsaWithRNG();
+      const signed = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
+      const other = new sdk.Word(sdk.u64Array([5, 6, 7, 8]));
+      const signature = secretKey.sign(signed);
+      try {
+        const recovered = sdk.PublicKey.recoverFrom(other, signature);
+        return {
+          rejected:
+            recovered.toCommitment().toHex() !==
+            secretKey.publicKey().toCommitment().toHex(),
+        };
+      } catch {
+        return { rejected: true };
+      }
+    });
+    expect(result).toEqual({ rejected: true });
+  });
 });
 
 test.describe("signing inputs", () => {
@@ -230,5 +320,87 @@ test.describe("signing inputs", () => {
     });
     expect(result.isValid).toBe(true);
     expect(result.isValidOther).toBe(false);
+  });
+  test("domainSeparatedSignCommitment matches the published tag and vectors", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const b64 = (s: string) =>
+        Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+      const hex = (w: any) => w.toHex();
+      const tag = sdk.Poseidon2.hashElements(
+        new sdk.FeltArray(
+          Array.from(
+            new TextEncoder().encode("miden-wallet/sign-bytes/v1"),
+            (b) => new sdk.Felt(BigInt(b))
+          )
+        )
+      );
+      return {
+        tag: Array.from(tag.toU64s() as BigUint64Array, (v) => v.toString(16)),
+        word: hex(
+          sdk.domainSeparatedSignCommitment(
+            b64("AQAAAAAAAAACAAAAAAAAAAMAAAAAAAAABAAAAAAAAAA="),
+            "word"
+          )
+        ),
+        blind: hex(
+          sdk.domainSeparatedSignCommitment(
+            b64("AgEAAAAAAAAAAgAAAAAAAAADAAAAAAAAAAQAAAAAAAAA"),
+            "signingInputs"
+          )
+        ),
+        arbitrary: hex(
+          sdk.domainSeparatedSignCommitment(
+            b64("AQcFAAAAAAAAAAYAAAAAAAAABwAAAAAAAAA="),
+            "signingInputs"
+          )
+        ),
+      };
+    });
+    expect(result.tag).toEqual([
+      "38a8bcdddf30cacf",
+      "240d1b8455bc2c58",
+      "18162f6af29602dd",
+      "5385955edcd341a4",
+    ]);
+    const wordVector =
+      "0x110a1b1c3b8cc8a4e0ed9acebb00996abdb93e7228280e2547edbdf9c268bee9";
+    expect(result.word).toBe(wordVector);
+    expect(result.blind).toBe(wordVector);
+    expect(result.arbitrary).toBe(
+      "0x8d7fafd3929b6cb5b0375bf0a5ab4f17b1a1948baefea1bb8067807021571d57"
+    );
+  });
+
+  test("a signature over it does not verify as the raw word", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const secretKey = sdk.AuthSecretKey.ecdsaWithRNG();
+      const word = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
+      const tag = sdk.Poseidon2.hashElements(
+        new sdk.FeltArray(
+          Array.from(
+            new TextEncoder().encode("miden-wallet/sign-bytes/v1"),
+            (b) => new sdk.Felt(BigInt(b))
+          )
+        )
+      );
+      const signature = secretKey.signData(
+        sdk.SigningInputs.newArbitrary([...tag.toFelts(), ...word.toFelts()])
+      );
+      const publicKey = secretKey.publicKey();
+      const domain = sdk.domainSeparatedSignCommitment(
+        word.serialize(),
+        "word"
+      );
+      return {
+        domain: publicKey.verify(domain, signature),
+        raw: publicKey.verify(word, signature),
+      };
+    });
+    expect(result.domain).toBe(true);
+    expect(result.raw).toBe(false);
   });
 });

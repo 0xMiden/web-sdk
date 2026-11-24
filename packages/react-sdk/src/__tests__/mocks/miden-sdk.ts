@@ -109,17 +109,28 @@ export const createMockTransactionResult = (
 });
 
 // Mock InputNoteRecord
+// Script roots the `isStandardPayment` mock in `setup.ts` treats as P2ID and
+// P2IDE; any other root stands for a note such as a public PSWAP order.
+const MOCK_P2ID_SCRIPT_ROOT = "0xp2idscript";
+export const MOCK_P2IDE_SCRIPT_ROOT = "0xp2idescript";
+export const MOCK_PSWAP_SCRIPT_ROOT = "0xpswapscript";
+
 export const createMockInputNoteRecord = (
   id: string = "0xnote1",
   consumed: boolean = false,
-  noteOverride?: ReturnType<typeof createMockNote>
+  noteOverride?: ReturnType<typeof createMockNote>,
+  scriptRoot: string = MOCK_P2ID_SCRIPT_ROOT
 ) => {
   const note = noteOverride ?? createMockNote(id);
 
   return {
     id: vi.fn(() => ({ toString: () => id, toHex: () => id })),
     state: vi.fn(() => (consumed ? "consumed" : "committed")),
-    details: vi.fn(() => ({})),
+    details: vi.fn(() => ({
+      recipient: () => ({
+        script: () => ({ root: () => ({ toHex: () => scriptRoot }) }),
+      }),
+    })),
     metadata: vi.fn(() => ({})),
     commitment: vi.fn(() => ({ toString: () => "0xcommitment" })),
     inclusionProof: vi.fn(() => null),
@@ -139,9 +150,12 @@ export const createMockConsumableNoteRecord = (
   // The account the record was screened for; hooks keep only entries matching
   // the account they queried.
   accountIdHex: string = "0x1234567890abcdef",
-  consumableNow: boolean = true
+  consumableNow: boolean = true,
+  scriptRoot: string = MOCK_P2ID_SCRIPT_ROOT
 ) => ({
-  inputNoteRecord: vi.fn(() => createMockInputNoteRecord(noteId)),
+  inputNoteRecord: vi.fn(() =>
+    createMockInputNoteRecord(noteId, false, undefined, scriptRoot)
+  ),
   noteConsumability: vi.fn(() => [
     {
       accountId: vi.fn(() => createMockAccountId(accountIdHex)),
@@ -153,6 +167,20 @@ export const createMockConsumableNoteRecord = (
     },
   ]),
   free: vi.fn(),
+});
+
+// Mock NoteConsumability, as `client.getNoteConsumability` returns it: `now`
+// for Consumable, a height for ConsumableAfter, neither for any other status.
+export const createMockNoteConsumability = (
+  accountIdHex: string,
+  now: boolean,
+  after?: number
+) => ({
+  accountId: vi.fn(() => createMockAccountId(accountIdHex)),
+  consumptionStatus: vi.fn(() => ({
+    isConsumableNow: vi.fn(() => now),
+    consumableAfterBlock: vi.fn(() => after),
+  })),
 });
 
 // Mock SyncSummary
@@ -222,6 +250,9 @@ export const createMockTransactionRequest = () => ({
   authArg: vi.fn(() => undefined),
   feeConversionSalt: vi.fn(() => undefined),
   blockNumbers: vi.fn((): number[] => []),
+  ignoresInvalidInputNotes: vi.fn(() => false),
+  expectedNtxScripts: vi.fn(() => []),
+  accountCodeUpgrade: vi.fn(() => undefined),
   adviceMap: vi.fn(() => ({}) as unknown as AdviceMap),
   extendAdviceMap: vi.fn(
     () => createMockTransactionRequest() as unknown as TransactionRequest
@@ -229,6 +260,7 @@ export const createMockTransactionRequest = () => ({
   withAuthArgs: vi.fn(
     () => createMockTransactionRequest() as unknown as TransactionRequest
   ),
+  equals: vi.fn(() => true),
   serialize: vi.fn(() => new Uint8Array()),
   free: vi.fn(),
   [Symbol.dispose]: vi.fn(),
@@ -330,6 +362,7 @@ const ASYNC_IN_RUST = [
   "newMintTransactionRequest",
   "newSendTransactionRequest",
   "newB2AggTransactionRequest",
+  "newXReserveBurnTransactionRequest",
   "newConsumeTransactionRequest",
   "newSwapTransactionRequest",
   "newPswapCreateTransactionRequest",
@@ -387,6 +420,7 @@ export const createMockWebClient = (
   const defaultClient: MockWebClientType = {
     // Initialization
     createClient: vi.fn().mockResolvedValue(undefined),
+    endpoint: vi.fn(() => "https://rpc.devnet.miden.io"),
 
     // Account methods
     getAccounts: vi.fn().mockResolvedValue([]),
@@ -403,6 +437,8 @@ export const createMockWebClient = (
     // Note methods
     getInputNotes: vi.fn().mockResolvedValue([]),
     getConsumableNotes: vi.fn().mockResolvedValue([]),
+    getNoteConsumability: vi.fn().mockResolvedValue([]),
+    getNoteConsumabilityForAccount: vi.fn().mockResolvedValue([]),
     getInputNote: vi.fn().mockResolvedValue(null),
     getTransactions: vi.fn().mockResolvedValue([createMockTransactionRecord()]),
 
@@ -419,6 +455,9 @@ export const createMockWebClient = (
       .fn()
       .mockResolvedValue(createMockTransactionRequest()),
     newB2AggTransactionRequest: vi
+      .fn()
+      .mockResolvedValue(createMockTransactionRequest()),
+    newXReserveBurnTransactionRequest: vi
       .fn()
       .mockResolvedValue(createMockTransactionRequest()),
     newConsumeTransactionRequest: vi
@@ -467,6 +506,7 @@ export const createMockWebClient = (
       .fn()
       .mockResolvedValue(createMockTransactionRequest()),
 
+    submitNewTransactionBatch: vi.fn().mockResolvedValue(100),
     executeTransaction: vi.fn(async (_accountId: unknown, request: unknown) => {
       assertIsRequest(request, "executeTransaction");
       return createMockTransactionResult();
@@ -541,6 +581,7 @@ export const createMockWebClient = (
 
 type MockWebClientType = {
   createClient: ReturnType<typeof vi.fn>;
+  endpoint: ReturnType<typeof vi.fn>;
   getAccounts: ReturnType<typeof vi.fn>;
   getAccount: ReturnType<typeof vi.fn>;
   newWallet: ReturnType<typeof vi.fn>;
@@ -549,11 +590,14 @@ type MockWebClientType = {
   getSyncHeight: ReturnType<typeof vi.fn>;
   getInputNotes: ReturnType<typeof vi.fn>;
   getConsumableNotes: ReturnType<typeof vi.fn>;
+  getNoteConsumability: ReturnType<typeof vi.fn>;
+  getNoteConsumabilityForAccount: ReturnType<typeof vi.fn>;
   getInputNote: ReturnType<typeof vi.fn>;
   getTransactions: ReturnType<typeof vi.fn>;
   newMintTransactionRequest: ReturnType<typeof vi.fn>;
   newSendTransactionRequest: ReturnType<typeof vi.fn>;
   newB2AggTransactionRequest: ReturnType<typeof vi.fn>;
+  newXReserveBurnTransactionRequest: ReturnType<typeof vi.fn>;
   newConsumeTransactionRequest: ReturnType<typeof vi.fn>;
   newSwapTransactionRequest: ReturnType<typeof vi.fn>;
   newPswapCreateTransactionRequest: ReturnType<typeof vi.fn>;
@@ -566,6 +610,7 @@ type MockWebClientType = {
   getPswapLineagesFor: ReturnType<typeof vi.fn>;
   getPswapLineage: ReturnType<typeof vi.fn>;
   buildPswapCancelByOrder: ReturnType<typeof vi.fn>;
+  submitNewTransactionBatch: ReturnType<typeof vi.fn>;
   executeTransaction: ReturnType<typeof vi.fn>;
   executeTransactionAt: ReturnType<typeof vi.fn>;
   executeForSummary: ReturnType<typeof vi.fn>;

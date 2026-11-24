@@ -32,8 +32,48 @@ format-check: ## Run format using nightly toolchain but only in check mode
 	pnpm --silent exec prettier . --check
 	pnpm --silent exec eslint .
 
+.PHONY: check-wasm-features
+check-wasm-features: ## Verify the ST WASM build still resolves the dependency features it needs
+	# miden_precompiles_air::preprocessed caches its preprocessed STARK bundle
+	# only under air's `std` feature, which crates/web-client turns on via a
+	# feature-only dependency. Nothing else fails if that regresses: the cache
+	# goes quiet and every local batch proof that settles a precompile claim
+	# gets slow again (issue #318).
+	# Two copies of the crate would be as bad as zero. The ST build must also
+	# keep miden-processor and miden-prover without `std`: it un-gates a threaded
+	# trace build that traps on wasm32.
+	@tree="$$(cargo +nightly tree --package miden-client-web \
+		--target wasm32-unknown-unknown --no-default-features \
+		--features browser,testing --edges normal --format '{p} {f}' --prefix none)" \
+		|| { echo "error: cargo tree failed"; exit 1; }; \
+	resolved="$$(printf '%s\n' "$$tree" \
+		| grep '^miden-precompiles-air v' | sed 's/ (\*)$$//' | sort -u)"; \
+	if [ "$$(printf '%s\n' "$$resolved" | grep -c .)" -ne 1 ]; then \
+		echo "error: expected exactly one resolved miden-precompiles-air, found:"; \
+		printf '%s\n' "$$resolved"; \
+		exit 1; \
+	fi; \
+	printf '%s\n' "$$resolved" | grep -Eq '(^| |,)std($$|,)' || { \
+		echo "error: the ST WASM build resolves miden-precompiles-air without 'std',"; \
+		echo "       so the preprocessed-STARK cache is disabled (issue #318). Resolved as:"; \
+		printf '%s\n' "$$resolved"; \
+		exit 1; \
+	}; \
+	vm="$$(printf '%s\n' "$$tree" | grep -E '^miden-(processor|prover) v' | sed 's/ (\*)$$//' | sort -u)"; \
+	if [ "$$(printf '%s\n' "$$vm" | grep -c .)" -eq 0 ]; then \
+		echo "error: found no miden-processor or miden-prover in the ST WASM tree"; \
+		exit 1; \
+	fi; \
+	if printf '%s\n' "$$vm" | grep -Eq '(^| |,)std($$|,)'; then \
+		echo "error: the ST WASM build resolves miden-processor or miden-prover with 'std',"; \
+		echo "       which reaches a threaded trace build that traps on wasm32. Resolved as:"; \
+		printf '%s\n' "$$vm"; \
+		exit 1; \
+	fi; \
+	echo "ok: ST WASM resolves $$resolved; processor and prover without std"
+
 .PHONY: lint
-lint: fix-wasm format clippy-wasm typos-check rust-client-ts-lint web-client-check-methods ## Run all linting tasks at once
+lint: fix-wasm format clippy-wasm typos-check rust-client-ts-lint web-client-check-methods check-wasm-features ## Run all linting tasks at once
 
 .PHONY: toml
 toml: ## Runs Format for all TOML files
@@ -102,6 +142,7 @@ test-web-client-unit: ## Run web-client unit tests with coverage
 .PHONY: test
 test: ## Run the TypeScript unit suites (no Rust toolchain required)
 	pnpm test
+	node --test packages/para/core/tests/utils.test.cjs packages/turnkey/core/tests/utils.test.cjs
 
 .PHONY: hydrate-web-client
 hydrate-web-client: ## Populate crates/web-client/dist from the published npm tarball (no Rust build)
@@ -140,9 +181,9 @@ test-web-client-nodejs: require-fee-faucet ## Run web client tests on Node.js (m
 
 .PHONY: test-web-client-rpc
 RUST_TEST_PROFILE ?= test
-test-web-client-rpc: ## Run native RPC contract tests (no node or local store required)
+test-web-client-rpc: ## Run native RPC contract and error-code tests (no node or local store required)
 	# Dynamic symbols let the Rust test executable link without a Node.js host.
-	cargo test -p miden-client-web --no-default-features --features nodejs,testing,napi/dyn-symbols --profile $(RUST_TEST_PROFILE) --lib rpc_client::
+	cargo test -p miden-client-web --no-default-features --features nodejs,testing,napi/dyn-symbols --profile $(RUST_TEST_PROFILE) --lib rpc_client:: -- post_submit_code_tests header_at_sync_height_tests
 
 .PHONY: test-web-client-rpc-nodejs
 test-web-client-rpc-nodejs: ## Run native RPC binding tests (no Miden node or local store required)

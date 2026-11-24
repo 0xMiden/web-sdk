@@ -238,7 +238,7 @@ function WalletStatus() {
 
   return connected
     ? <button onClick={disconnect}>Disconnect ({address})</button>
-    : <button onClick={connect}>Connect Wallet</button>;
+    : <button onClick={() => { void connect(); }}>Connect Wallet</button>;
 }
 ```
 
@@ -260,8 +260,8 @@ For other use cases, including different front-end libraries and other wallets i
 - **Key Components**:
   - **`BaseWalletAdapter`**: Abstract base class that all wallet adapters must extend
   - **`WalletAdapter` interface**: Defines the contract for wallet adapters
-  - **Event system**: Uses `EventEmitter3` for wallet state changes (connect, disconnect, error, readyStateChange)
-  - **Type definitions**: Network types (`Testnet`, `Localnet`), decrypt permissions, transaction types
+  - **Event system**: Uses `EventEmitter3` for wallet state changes (connect, accountChange, disconnect, error, readyStateChange)
+  - **Type definitions**: Network types (`Mainnet`, `Devnet`, `Testnet`, `Localnet`), decrypt permissions, transaction types
   - **Error handling**: Comprehensive error classes for different failure scenarios
 
 ### 2. **React Integration Package** (`@miden-sdk/miden-wallet-adapter-react`)
