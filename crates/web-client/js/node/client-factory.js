@@ -22,6 +22,23 @@ function createTempDir(label) {
   return dir;
 }
 
+// One identity per SQLite file, so every spelling of its path claims the same
+// store. A parent that does not exist yet keeps its resolved spelling.
+function canonicalPath(file) {
+  const resolved = path.resolve(file);
+  for (const [dir, name] of [
+    [resolved, ""],
+    [path.dirname(resolved), path.basename(resolved)],
+  ]) {
+    try {
+      return path.join(fs.realpathSync(dir), name);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  return resolved;
+}
+
 /**
  * Returns a deterministic data directory for a given store name.
  * Uses ~/.miden/stores/<storeName>/ so data persists across runs.
@@ -88,7 +105,9 @@ export function createWasmWebClient(rawSdk, options) {
             ? defaultDataDir(storeName)
             : createTempDir("client");
 
-      const storePath = dbPath ?? path.join(dir, `${storeName || "store"}.db`);
+      const storePath = canonicalPath(
+        dbPath ?? path.join(dir, `${storeName || "store"}.db`)
+      );
       const releaseStore = claimStore(storePath, exclusive);
       const client = new rawSdk.WebClient();
       try {

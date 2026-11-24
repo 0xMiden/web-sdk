@@ -475,9 +475,15 @@ function checkRetryOption(name, value, cap) {
 }
 
 // The live clients on each store, keyed by the id the store lock uses, and how
-// many clients have opened each store, which numbers them.
-const storeClients = new Map();
-const storeOpenCounts = new Map();
+// many clients have opened each store while it has a live one, which numbers
+// them. Kept on the realm, not the module: the ST and MT builds, and any
+// duplicate copy of the package, each evaluate this file but share one store.
+const registry = (globalThis[Symbol.for("miden.web-sdk.storeOwnership")] ??= {
+  clients: new Map(),
+  counts: new Map(),
+});
+const storeClients = registry.clients;
+const storeOpenCounts = registry.counts;
 
 /**
  * Records a client opening `storeId` and returns the function that releases
@@ -515,6 +521,7 @@ export function claimStore(storeId, exclusive = false) {
       storeClients.set(storeId, rest);
     } else {
       storeClients.delete(storeId);
+      storeOpenCounts.delete(storeId);
     }
   };
 }
