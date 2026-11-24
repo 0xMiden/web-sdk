@@ -734,6 +734,43 @@ for (const record of all) {
 }
 ```
 
+### Decode Standard Notes
+
+`P2idNote`, `P2ideNote` and `SwapNote` decode a standard note into its typed
+fields, so an inbox can show who a note pays, when it unlocks and what a swap
+exchanges without reading raw storage:
+
+```typescript
+import { NoteScript, P2idNote, P2ideNote, SwapNote } from "@miden-sdk/miden-sdk";
+
+const note = record.toNote();
+const root = note.script().root().toHex();
+
+if (root === NoteScript.p2id().root().toHex()) {
+  const p2id = P2idNote.tryFromNote(note);
+  p2id.target(); // who it pays
+  p2id.assets();
+} else if (root === NoteScript.p2ide().root().toHex()) {
+  const p2ide = P2ideNote.tryFromNote(note);
+  p2ide.target();
+  p2ide.timelockHeight(); // number | undefined: not consumable before this block
+  p2ide.reclaimer();
+  p2ide.reclaimHeight(); // number | undefined: the reclaimer may take it back from here
+} else if (root === NoteScript.swap().root().toHex()) {
+  const swap = SwapNote.tryFromNote(note);
+  swap.offeredAsset(); // what the consumer receives
+  swap.requestedAsset(); // what the consumer pays back to swap.sender()
+  swap.paybackNoteType();
+  swap.paybackTarget(); // AccountId | undefined (public payback only)
+  swap.paybackRecipient(); // Word | undefined (private payback only)
+}
+```
+
+Each decoder also exposes `sender()`, `serialNumber()`, `noteType()` and
+`intoNote()`. `tryFromNote` throws when the note runs another script
+(`not a P2ID note`), when its storage does not decode, or, for `SwapNote`, when
+it does not carry exactly one asset.
+
 ### Check Balance
 
 ```typescript
@@ -1088,6 +1125,22 @@ await client.transactions.bridge({
 ```
 
 The 20-byte destination is also available as an `EthAddress` (`EthAddress.fromHex("0x…")`) for the lower-level builders `Note.createB2AggNote(...)` and `client.newB2AggTransactionRequest(...)`.
+
+### Withdraw USDCx (Circle xReserve)
+
+`client.transactions.withdrawUsdcx(...)` emits a single public burn note with the fixed `BURN` tag. The USDCx faucet (a public account) consumes and burns it, and Circle releases USDC to the recipient on the destination domain.
+
+```typescript
+await client.transactions.withdrawUsdcx({
+  account: wallet, // sender (executes the transaction)
+  token: usdcxFaucet, // consumes the note and burns the asset
+  amount: 1_000_000n,
+  destinationDomain: 6, // Circle domain id
+  destinationRecipient: "0x0000000000000000000000001111111111111111111111111111111111111111" // 32 bytes
+});
+```
+
+The lower-level builders are `Note.createXReserveBurnNote(...)` and `client.newXReserveBurnTransactionRequest(...)`, which take the recipient as a 32-byte `Uint8Array`.
 
 ### Network Notes
 

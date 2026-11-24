@@ -162,6 +162,7 @@ const WRITE_METHODS = new Set([
   "newRegisterNoteScriptsTransactionRequest",
   "newSendTransactionRequest",
   "newSwapTransactionRequest",
+  "newXReserveBurnTransactionRequest",
   "pruneAccountHistory",
   "registerAccount",
   "removeAccountAddress",

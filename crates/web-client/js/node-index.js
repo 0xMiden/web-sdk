@@ -297,6 +297,8 @@ export const OutputNoteArray = /* @__PURE__ */ _reexport("OutputNoteArray");
 export const OutputNoteRecord = /* @__PURE__ */ _reexport("OutputNoteRecord");
 export const OutputNoteState = /* @__PURE__ */ _reexport("OutputNoteState");
 export const OutputNotes = /* @__PURE__ */ _reexport("OutputNotes");
+export const P2idNote = /* @__PURE__ */ _reexport("P2idNote");
+export const P2ideNote = /* @__PURE__ */ _reexport("P2ideNote");
 export const Package = /* @__PURE__ */ _reexport("Package");
 export const PartialNote = /* @__PURE__ */ _reexport("PartialNote");
 export const Poseidon2 = /* @__PURE__ */ _reexport("Poseidon2");
@@ -340,6 +342,7 @@ export const StorageSlotArray = /* @__PURE__ */ _reexport("StorageSlotArray");
 export const StorageValueSlotPatch = /* @__PURE__ */ _reexport(
   "StorageValueSlotPatch"
 );
+export const SwapNote = /* @__PURE__ */ _reexport("SwapNote");
 export const SyncSummary = /* @__PURE__ */ _reexport("SyncSummary");
 export const TokenSymbol = /* @__PURE__ */ _reexport("TokenSymbol");
 export const TransactionArgs = /* @__PURE__ */ _reexport("TransactionArgs");
