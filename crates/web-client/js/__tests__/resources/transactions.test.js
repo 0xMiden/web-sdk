@@ -1037,6 +1037,19 @@ describe("TransactionsResource", () => {
       expect(result.result).toBeDefined();
     });
 
+    it("waits for confirmation when waitForConfirmation=true", async () => {
+      const { resource } = makeResource();
+      const waitFor = vi
+        .spyOn(resource, "waitFor")
+        .mockResolvedValue(undefined);
+      const result = await resource.claimAggLayerDeposit(
+        claimOpts({ waitForConfirmation: true, timeout: 5000 })
+      );
+      expect(waitFor).toHaveBeenCalledWith(result.txId.toHex(), {
+        timeout: 5000,
+      });
+    });
+
     it.each([
       ["fractional", 1.5],
       ["negative", -1],
