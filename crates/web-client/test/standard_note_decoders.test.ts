@@ -602,4 +602,155 @@ test.describe("standard note decoders", () => {
     expect(result.shortStorageError).toMatch(/expected 8 storage items/);
     expect(result.twoAssetsError).toMatch(/exactly one asset/);
   });
+
+  test("MintNote.tryFromNote decodes both storage layouts and rejects other notes", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk }) => {
+      if (typeof sdk.MintNote !== "function") return { mintNote: "missing" };
+      await client.syncState();
+      const sender = await client.newWallet(
+        sdk.AccountStorageMode.public(),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const target = await client.newWallet(
+        sdk.AccountStorageMode.public(),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const faucet = await client.newFaucet(
+        sdk.AccountStorageMode.public(),
+        false,
+        "MNT",
+        "MNT",
+        8,
+        sdk.u64(1_000_000),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+
+      function errorOf(fn) {
+        try {
+          fn();
+          return null;
+        } catch (err) {
+          return String(err?.message ?? err);
+        }
+      }
+
+      const felt = (n) => new sdk.Felt(sdk.u64(n));
+      const asset = new sdk.FungibleAsset(faucet.id(), sdk.u64(50));
+      const assetFelts = () => [
+        ...asset.vaultKey().toFelts(),
+        ...asset.intoWord().toFelts(),
+      ];
+      const tag = sdk.NoteTag.withAccountTarget(target.id()).asU32();
+      const digest = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
+      const outputSerial = new sdk.Word(sdk.u64Array([5, 6, 7, 8]));
+      const mintNote = (storage) =>
+        new sdk.Note(
+          new sdk.NoteAssets([]),
+          new sdk.NoteMetadata(
+            sender.id(),
+            sdk.NoteType.Public,
+            sdk.NoteTag.withAccountTarget(faucet.id())
+          ),
+          new sdk.NoteRecipient(
+            new sdk.Word(sdk.u64Array([9, 9, 9, 9])),
+            sdk.NoteScript.mint(),
+            new sdk.NoteStorage(new sdk.FeltArray(storage))
+          )
+        );
+      const privateNote = mintNote([
+        ...digest.toFelts(),
+        ...assetFelts(),
+        felt(tag),
+      ]);
+      const publicNote = mintNote([
+        ...sdk.NoteScript.p2id().root().toFelts(),
+        ...outputSerial.toFelts(),
+        ...assetFelts(),
+        felt(tag),
+        felt(0),
+        felt(0),
+        felt(0),
+        target.id().suffix(),
+        target.id().prefix(),
+      ]);
+      const priv = sdk.MintNote.tryFromNote(privateNote);
+      const pub = sdk.MintNote.tryFromNote(publicNote);
+      const p2id = sdk.Note.createP2IDNote(
+        sender.id(),
+        target.id(),
+        new sdk.NoteAssets([new sdk.FungibleAsset(faucet.id(), sdk.u64(50))]),
+        sdk.NoteType.Public,
+        new sdk.NoteAttachment()
+      );
+      return {
+        sender: priv.sender().toString(),
+        expectedSender: sender.id().toString(),
+        faucet: priv.faucetId().toString(),
+        expectedFaucet: faucet.id().toString(),
+        amount: Number(priv.asset().asFungible().amount()),
+        tag: priv.tag().asU32(),
+        expectedTag: tag,
+        privateDigest: priv.recipientDigest()?.toHex(),
+        expectedDigest: digest.toHex(),
+        privateScriptRoot: priv.recipientScriptRoot() ?? null,
+        publicDigest: pub.recipientDigest() ?? null,
+        publicScriptRoot: pub.recipientScriptRoot()?.toHex(),
+        expectedScriptRoot: sdk.NoteScript.p2id().root().toHex(),
+        publicSerial: pub.recipientSerialNumber()?.toHex(),
+        expectedOutputSerial: outputSerial.toHex(),
+        publicStorage: pub
+          .recipientStorage()
+          ?.items()
+          .map((f) => f.asInt().toString()),
+        expectedStorage: [target.id().suffix(), target.id().prefix()].map((f) =>
+          f.asInt().toString()
+        ),
+        publicAmount: Number(pub.asset().asFungible().amount()),
+        noteType: priv.noteType(),
+        expectedPublic: sdk.NoteType.Public,
+        serial: priv.serialNumber().toHex(),
+        expectedSerial: privateNote.recipient().serialNum().toHex(),
+        roundTripId: pub.intoNote().id().toString(),
+        originalId: publicNote.id().toString(),
+        wrongScriptError: errorOf(() => sdk.MintNote.tryFromNote(p2id)),
+        shortStorageError: errorOf(() =>
+          sdk.MintNote.tryFromNote(mintNote(assetFelts()))
+        ),
+        betweenLayoutsError: errorOf(() =>
+          sdk.MintNote.tryFromNote(
+            mintNote([...digest.toFelts(), ...assetFelts(), felt(tag), felt(0)])
+          )
+        ),
+        wideTagError: errorOf(() =>
+          sdk.MintNote.tryFromNote(
+            mintNote([...digest.toFelts(), ...assetFelts(), felt(2 ** 32)])
+          )
+        ),
+      };
+    });
+
+    expect(result.mintNote).toBeUndefined();
+    expect(result.sender).toBe(result.expectedSender);
+    expect(result.faucet).toBe(result.expectedFaucet);
+    expect(result.amount).toBe(50);
+    expect(result.tag).toBe(result.expectedTag);
+    expect(result.privateDigest).toBe(result.expectedDigest);
+    expect(result.privateScriptRoot).toBeNull();
+    expect(result.publicDigest).toBeNull();
+    expect(result.publicScriptRoot).toBe(result.expectedScriptRoot);
+    expect(result.publicSerial).toBe(result.expectedOutputSerial);
+    expect(result.publicStorage).toEqual(result.expectedStorage);
+    expect(result.publicAmount).toBe(50);
+    expect(result.noteType).toBe(result.expectedPublic);
+    expect(result.serial).toBe(result.expectedSerial);
+    expect(result.roundTripId).toBe(result.originalId);
+    expect(result.wrongScriptError).toMatch(/not a MINT note/);
+    expect(result.shortStorageError).toMatch(
+      /expected 13 or at least 20 storage items, found 8/
+    );
+    expect(result.betweenLayoutsError).toMatch(/found 14/);
+    expect(result.wideTagError).toMatch(/tag exceeds u32/);
+  });
 });
