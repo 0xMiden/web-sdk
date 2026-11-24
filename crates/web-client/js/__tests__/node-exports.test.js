@@ -55,6 +55,10 @@ const fakeNative = vi.hoisted(() => {
       received.push(notes);
       return this;
     }
+    withExpectedNtxScripts(scripts) {
+      received.push(scripts);
+      return this;
+    }
   }
   class NoteStorage {
     constructor(felts) {
@@ -97,6 +101,10 @@ const fakeNative = vi.hoisted(() => {
     }
     async executeProgram() {
       return ["x", "y"];
+    }
+    async newRegisterNoteScriptsTransactionRequest(_sender, scripts) {
+      received.push(scripts);
+      return "request";
     }
   }
   const AuthScheme = Object.defineProperties(
@@ -236,6 +244,30 @@ describe("Node napi boundary", () => {
     expect(Array.isArray(received)).toBe(true);
     expect(received).toEqual([first, second]);
     expect(received[0]).toBe(first);
+  });
+
+  it("unwraps a NoteScriptArray passed to withExpectedNtxScripts", () => {
+    const script = {};
+    new nodeIndex.TransactionRequestBuilder().withExpectedNtxScripts(
+      new nodeIndex.NoteScriptArray([script])
+    );
+
+    const received = fakeNative.received.at(-1);
+    expect(Array.isArray(received)).toBe(true);
+    expect(received).toEqual([script]);
+    expect(received[0]).toBe(script);
+  });
+
+  it("unwraps a NoteScriptArray passed to newRegisterNoteScriptsTransactionRequest", async () => {
+    const script = {};
+    await new fakeNative.WebClient().newRegisterNoteScriptsTransactionRequest(
+      "sender",
+      new nodeIndex.NoteScriptArray([script])
+    );
+
+    const received = fakeNative.received.at(-1);
+    expect(Array.isArray(received)).toBe(true);
+    expect(received[0]).toBe(script);
   });
 
   it("hands a native constructor a real array of the container's items", () => {
