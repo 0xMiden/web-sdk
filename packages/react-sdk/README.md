@@ -155,6 +155,10 @@ function App() {
         // RPC endpoint (defaults to testnet). You can also use 'mainnet', 'devnet' or 'testnet'.
         rpcUrl: 'devnet',
 
+        // Optional: 'mainnet' | 'testnet' | 'devnet', the address prefix. Wins over the
+        // network inferred from rpcUrl; a custom URL naming no network is mainnet.
+        // network: 'mainnet',
+
         // Optional: the faucet the chain mints its fee asset from, bech32 or hex.
         // The client receives the chain's protocol configuration, which names the
         // fee asset, from the node when it syncs; this only sets what

@@ -68,6 +68,7 @@ export { useSyncControl } from "./hooks/useSyncControl";
 export type {
   MidenConfig,
   RpcUrlConfig,
+  MidenNetwork,
   ProverConfig,
   ProverTarget,
   ProverUrls,

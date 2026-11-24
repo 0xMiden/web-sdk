@@ -1,4 +1,4 @@
-import type { RpcUrlConfig } from "../types";
+import type { MidenNetwork, RpcUrlConfig } from "../types";
 
 const RPC_URLS = {
   mainnet: "https://rpc.mainnet.miden.io",
@@ -29,8 +29,11 @@ export function resolveRpcUrl(rpcUrl?: RpcUrlConfig): string | undefined {
   return rpcUrl;
 }
 
-export type MidenNetwork = "mainnet" | "testnet" | "devnet";
-
+/**
+ * The network an address is formatted for. An explicit `network` wins; else the
+ * endpoint's name decides, and an endpoint naming no network is mainnet.
+ * `null` only when there is no endpoint yet (no client).
+ */
 export function resolveNetworkName(
   endpoint: string | undefined,
   network?: MidenNetwork
@@ -39,17 +42,18 @@ export function resolveNetworkName(
   if (!url) {
     return null;
   }
+  if (network) {
+    return network;
+  }
   if (url.includes("devnet") || url.includes("mdev")) {
     return "devnet";
-  }
-  if (url.includes("mainnet")) {
-    return "mainnet";
   }
   if (url.includes("testnet") || url.includes("mtst")) {
     return "testnet";
   }
   if (url.includes("localhost") || url.includes("127.0.0.1")) {
+    // A local node is a development chain, so it takes the devnet prefix.
     return "devnet";
   }
-  return null;
+  return "mainnet";
 }
