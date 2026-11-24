@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { openDatabase, getDatabase } from "./schema.js";
 import {
   getAccountIds,
@@ -18,6 +18,7 @@ import {
   applyFullAccountState,
   upsertAccountRecord,
   insertAccountAddress,
+  insertAccount,
   removeAccountAddress,
   upsertForeignAccountCode,
   getForeignAccountCode,
@@ -1564,5 +1565,135 @@ describe("account code on a patch", () => {
         "0xcommit2"
       )
     ).rejects.toThrow(/without the new code/);
+  });
+});
+
+// ============================================================
+// atomicity: a failure midway leaves no partial state
+// ============================================================
+describe("multi-write account operations are atomic", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("insertAccount leaves no rows when the last write fails", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    vi.spyOn(db.addresses, "put").mockRejectedValue(new Error("boom"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      insertAccount(
+        dbId,
+        ACC,
+        CODE_ROOT,
+        CODE_BYTES,
+        [{ slotName: "s", slotValue: "0x1", slotType: 0 }],
+        [{ slotName: "m", key: "0xk", value: "0xv" }],
+        [{ vaultKey: "0xvk", asset: "0xa" }],
+        STORAGE_ROOT,
+        VAULT_ROOT,
+        NONCE,
+        false,
+        COMMITMENT,
+        undefined,
+        false,
+        new Uint8Array([9])
+      )
+    ).rejects.toThrow("boom");
+
+    expect(await db.accountCodes.count()).toBe(0);
+    expect(await db.latestAccountStorages.count()).toBe(0);
+    expect(await db.latestStorageMapEntries.count()).toBe(0);
+    expect(await db.latestAccountAssets.count()).toBe(0);
+    expect(await db.latestAccountHeaders.count()).toBe(0);
+    expect(await db.addresses.count()).toBe(0);
+  });
+
+  it("upsertAccountStorage keeps old slots when the replacement write fails", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await upsertAccountStorage(dbId, ACC, [
+      { slotName: "old", slotValue: "0x1", slotType: 0 },
+    ]);
+    vi.spyOn(db.latestAccountStorages, "bulkPut").mockRejectedValue(
+      new Error("boom")
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      upsertAccountStorage(dbId, ACC, [
+        { slotName: "new", slotValue: "0x2", slotType: 0 },
+      ])
+    ).rejects.toThrow("boom");
+
+    const rows = await db.latestAccountStorages.toArray();
+    expect(rows.map((r) => r.slotName)).toEqual(["old"]);
+  });
+
+  it("upsertStorageMapEntries keeps old entries when the replacement write fails", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await upsertStorageMapEntries(dbId, ACC, [
+      { slotName: "m", key: "0xold", value: "0x1" },
+    ]);
+    vi.spyOn(db.latestStorageMapEntries, "bulkPut").mockRejectedValue(
+      new Error("boom")
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      upsertStorageMapEntries(dbId, ACC, [
+        { slotName: "m", key: "0xnew", value: "0x2" },
+      ])
+    ).rejects.toThrow("boom");
+
+    const rows = await db.latestStorageMapEntries.toArray();
+    expect(rows.map((r) => r.key)).toEqual(["0xold"]);
+  });
+
+  it("upsertVaultAssets keeps old assets when the replacement write fails", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await upsertVaultAssets(dbId, ACC, [{ vaultKey: "0xold", asset: "0x1" }]);
+    vi.spyOn(db.latestAccountAssets, "bulkPut").mockRejectedValue(
+      new Error("boom")
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      upsertVaultAssets(dbId, ACC, [{ vaultKey: "0xnew", asset: "0x2" }])
+    ).rejects.toThrow("boom");
+
+    const rows = await db.latestAccountAssets.toArray();
+    expect(rows.map((r) => r.vaultKey)).toEqual(["0xold"]);
+  });
+
+  it("upsertForeignAccountCode stores no code when the reference write fails", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    vi.spyOn(db.foreignAccountCode, "put").mockRejectedValue(new Error("boom"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      upsertForeignAccountCode(dbId, "0xforeign1", CODE_BYTES, "0xfcoderoot")
+    ).rejects.toThrow("boom");
+
+    expect(await db.accountCodes.count()).toBe(0);
+  });
+
+  it("lockAccount leaves the latest header unlocked when the historical update fails", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await seedAccount(dbId);
+    vi.spyOn(db.historicalAccountHeaders, "where").mockImplementation(() => {
+      throw new Error("boom");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(lockAccount(dbId, ACC)).rejects.toThrow("boom");
+
+    const header = await db.latestAccountHeaders.get(ACC);
+    expect(header?.locked).toBe(false);
   });
 });
