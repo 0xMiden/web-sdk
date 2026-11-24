@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { openDatabase, getDatabase } from "./schema.js";
 import {
   upsertInputNote,
@@ -53,7 +53,8 @@ const CONSUMED_STATES = new Uint8Array([
   STATE_CONSUMED_EXTERNAL,
 ]);
 
-// Unspent state discriminants (stateDiscriminant 2, 4, 5)
+// Unspent state discriminants (stateDiscriminant 0, 1, 2, 4, 5)
+const STATE_UNVERIFIED = 1;
 const STATE_COMMITTED = 2;
 const STATE_PROCESSING_AUTHENTICATED = 4;
 const STATE_PROCESSING_UNAUTHENTICATED = 5;
@@ -833,7 +834,7 @@ describe("getInputNotesFromNullifiers", () => {
 // ================================================================================================
 
 describe("getUnspentInputNoteNullifiers", () => {
-  it("returns nullifiers for notes with discriminant 2, 4, or 5", async () => {
+  it("returns nullifiers for notes with discriminant 0, 1, 2, 4, or 5", async () => {
     const dbId = await openTestDb();
     await insertNote(dbId, "note-committed", {
       stateDiscriminant: STATE_COMMITTED,
@@ -851,13 +852,38 @@ describe("getUnspentInputNoteNullifiers", () => {
       stateDiscriminant: STATE_EXPECTED,
       nullifier: "0xnull-expected",
     });
+    await insertNote(dbId, "note-unverified", {
+      stateDiscriminant: STATE_UNVERIFIED,
+      nullifier: "0xnull-unverified",
+    });
 
     const nullifiers = await getUnspentInputNoteNullifiers(dbId);
-    expect(nullifiers).toHaveLength(3);
+    expect(nullifiers).toHaveLength(5);
     expect(nullifiers).toContain("0xnull-committed");
     expect(nullifiers).toContain("0xnull-proc-auth");
     expect(nullifiers).toContain("0xnull-proc-unauth");
-    expect(nullifiers).not.toContain("0xnull-expected");
+    expect(nullifiers).toContain("0xnull-expected");
+    expect(nullifiers).toContain("0xnull-unverified");
+  });
+
+  it("reads the [stateDiscriminant+nullifier] index keys instead of scanning notes", async () => {
+    const dbId = await openTestDb();
+    await insertNote(dbId, "note-committed", {
+      stateDiscriminant: STATE_COMMITTED,
+      nullifier: "0xnull-committed",
+    });
+    const notes = getDatabase(dbId).inputNotes;
+    const whereSpy = vi.spyOn(notes, "where");
+    const collection = Object.getPrototypeOf(notes.toCollection());
+    const keysSpy = vi.spyOn(collection, "keys");
+    const toArraySpy = vi.spyOn(collection, "toArray");
+
+    expect(await getUnspentInputNoteNullifiers(dbId)).toEqual([
+      "0xnull-committed",
+    ]);
+    expect(whereSpy).toHaveBeenCalledWith("[stateDiscriminant+nullifier]");
+    expect(keysSpy).toHaveBeenCalledTimes(1);
+    expect(toArraySpy).not.toHaveBeenCalled();
   });
 
   it("returns empty array when no unspent notes", async () => {
