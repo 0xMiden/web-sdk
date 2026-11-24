@@ -378,6 +378,18 @@ export class MidenDatabase {
         this.dexie.version(11).stores({
             [Table.InputNotes]: indexes("detailsCommitment", "noteId", "nullifier", "scriptRoot", "stateDiscriminant", "[consumedBlockHeight+consumedTxOrder+detailsCommitment]", "[stateDiscriminant+nullifier]"),
         });
+        // v12 (#267): index-only, so Dexie builds them without an upgrade hook. The consumer-first
+        // consumption index replaces the v11 one, which no read uses any more (a note with no
+        // consumer is left out of it). `codeRoot` lets account-history pruning ask whether a root is
+        // still referenced instead of scanning three tables; `[tag+sourceNoteId+sourceAccountId]`
+        // serves the exact tag lookup.
+        this.dexie.version(12).stores({
+            [Table.InputNotes]: indexes("detailsCommitment", "noteId", "nullifier", "scriptRoot", "stateDiscriminant", "[consumerAccountId+consumedBlockHeight+consumedTxOrder+detailsCommitment]", "[stateDiscriminant+nullifier]"),
+            [Table.LatestAccountHeaders]: indexes("&id", "accountCommitment", "codeRoot"),
+            [Table.HistoricalAccountHeaders]: indexes("&accountCommitment", "id", "[id+replacedAtNonce]", "codeRoot"),
+            [Table.ForeignAccountCode]: indexes("accountId", "codeRoot"),
+            [Table.Tags]: indexes("id++", "tag", "sourceNoteId", "sourceAccountId", "[tag+sourceNoteId+sourceAccountId]"),
+        });
         this.accountCodes = this.dexie.table(Table.AccountCode);
         this.latestAccountStorages = this.dexie.table(Table.LatestAccountStorage);
         this.historicalAccountStorages = this.dexie.table(Table.HistoricalAccountStorage);
