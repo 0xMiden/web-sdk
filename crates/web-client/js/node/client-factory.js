@@ -25,18 +25,21 @@ function createTempDir(label) {
 // One identity per SQLite file, so every spelling of its path claims the same
 // store. A parent that does not exist yet keeps its resolved spelling.
 function canonicalPath(file) {
-  const resolved = path.resolve(file);
+  // `..` after a symlink means the link target's parent: only a relative path
+  // is made absolute first, and the native realpath, unlike the JS one, does
+  // not collapse `..` lexically.
+  const absolute = path.isAbsolute(file) ? file : path.resolve(file);
   for (const [dir, name] of [
-    [resolved, ""],
-    [path.dirname(resolved), path.basename(resolved)],
+    [absolute, ""],
+    [path.dirname(absolute), path.basename(absolute)],
   ]) {
     try {
-      return path.join(fs.realpathSync(dir), name);
+      return path.join(fs.realpathSync.native(dir), name);
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
   }
-  return resolved;
+  return path.resolve(absolute);
 }
 
 /**

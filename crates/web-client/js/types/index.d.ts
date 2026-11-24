@@ -282,7 +282,7 @@ export declare class WasmWebClient extends WasmWebClientBase {
    * harmless.
    *
    * The release and the rejections are browser-only: on the Node.js binding
-   * WasmWebClient.terminate() is a no-op.
+   * WasmWebClient.terminate() releases only the store's ownership claim.
    */
   terminate(): void;
 }

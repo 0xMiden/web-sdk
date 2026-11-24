@@ -368,8 +368,9 @@ then waits until the wasm client is freed and its store connection released.
 The release waits for calls already queued or running to settle. Use
 `await using client = ...` when the code after the block deletes or reopens
 the same store. The release is browser-only: on the Node.js binding
-`terminate()` releases nothing (its inner client's `terminate()` is a no-op)
-and `[Symbol.asyncDispose]` resolves at once.
+`terminate()` releases only the store's ownership claim (see
+`MidenClient.create`'s `exclusive`) and `[Symbol.asyncDispose]` resolves at
+once.
 
 ## Sync - Always Sync First
 
