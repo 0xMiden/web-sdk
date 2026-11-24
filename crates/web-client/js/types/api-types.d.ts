@@ -47,6 +47,8 @@ import type {
   ForeignAccount,
   FungibleAsset,
   PswapLineageRecord,
+  ClaimProofData,
+  ClaimLeafData,
 } from "./crates/miden_client_web";
 
 // `Account.prototype.storage()` is patched at WASM load time to return the
@@ -709,6 +711,22 @@ export interface WithdrawUsdcxOptions extends TransactionOptions {
    * digits). An EVM address is left-padded with zeros to 32 bytes.
    */
   destinationRecipient: string;
+}
+
+export interface ClaimAggLayerDepositOptions extends TransactionOptions {
+  /** Account that creates the CLAIM note (the sender / executing account). */
+  account: AccountRef;
+  /** Bridge account that consumes the note and mints the deposit; it must be public. */
+  bridgeAccount: AccountRef;
+  /** Proof data from the AggLayer `claimAsset` call. */
+  proof: ClaimProofData;
+  /** Deposit leaf from the AggLayer `claimAsset` call. */
+  leaf: ClaimLeafData;
+  /**
+   * The faucet's decimal scale, an integer from 0 to 18. The Miden amount is
+   * `floor(leaf amount / 10^scale)`.
+   */
+  scale: number;
 }
 
 export interface ConsumeOptions extends TransactionOptions {
@@ -1442,7 +1460,19 @@ export interface TransactionsResource {
    *
    * @param options - Sender, USDCx faucet, amount, and destination.
    */
-  withdrawUsdcx(options: WithdrawUsdcxOptions): Promise<TransactionSubmitResult>;
+  withdrawUsdcx(
+    options: WithdrawUsdcxOptions
+  ): Promise<TransactionSubmitResult>;
+  /**
+   * Claim an inbound AggLayer deposit. Emits the public CLAIM note built by
+   * `Note.createClaimNote`, which the bridge account consumes to mint the
+   * deposit; the bridge is declared as a foreign account.
+   *
+   * @param options - Sender, bridge account, claim proof and leaf, and scale.
+   */
+  claimAggLayerDeposit(
+    options: ClaimAggLayerDepositOptions
+  ): Promise<NetworkNoteResult>;
   /**
    * Consume one or more notes for an account.
    *
