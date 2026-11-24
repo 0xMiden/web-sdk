@@ -984,6 +984,53 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
   });
 
   mockTest(
+    "notes.screen screens a note the client has not imported",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const wallet = await client.accounts.create();
+        const faucet = await client.accounts.create({
+          type: window.FaucetType.FungibleFaucet,
+          symbol: "SCR",
+          decimals: 8,
+          maxSupply: 10_000_000n,
+        });
+        const note = window.createP2IDNote({
+          from: faucet,
+          to: wallet,
+          assets: { token: faucet, amount: 5n },
+        });
+        const view = (entries) =>
+          entries.map((entry) => ({
+            account: entry.accountId().toString(),
+            now: entry.consumptionStatus().isConsumableNow(),
+          }));
+
+        return {
+          wallet: wallet.id().toString(),
+          all: view(await client.notes.screen(note)),
+          byAccount: view(await client.notes.screen(note, { account: wallet })),
+          byHex: view(
+            await client.notes.screen(note, {
+              account: wallet.id().toString(),
+            })
+          ),
+          faucet: view(await client.notes.screen(note, { account: faucet })),
+          imported: (await client.notes.list()).length,
+        };
+      });
+
+      const entry = { account: result.wallet, now: true };
+      expect(result.all).toEqual([entry]);
+      expect(result.byAccount).toEqual([entry]);
+      expect(result.byHex).toEqual([entry]);
+      // An account that can never consume the note is left out.
+      expect(result.faucet).toEqual([]);
+      expect(result.imported).toBe(0);
+    }
+  );
+
+  mockTest(
     "listAvailable and consumeAll leave out a public PSWAP order",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
