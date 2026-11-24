@@ -75,8 +75,7 @@ const webClient = await WebClient.createClientWithExternalKeystore(
   signCb(turnkeyConfig), // Turnkey signing callback
   undefined, // logLevel
   undefined, // useWorker
-  undefined, // observability
-  feeFaucetId // optional: what feeFaucetId() reports before the first sync
+  undefined // observability
 );
 ```
 

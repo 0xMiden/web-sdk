@@ -131,9 +131,8 @@ export class MidenClient {
    * If no `rpcUrl` is provided, defaults to testnet with full configuration
    * (RPC, prover, note transport, autoSync).
    *
-   * `feeFaucetId` is optional: the client receives the chain's protocol
-   * configuration, which names the fee asset, from the node when it syncs. The
-   * option only sets what `feeFaucetId()` reports before that first sync.
+   * `feeFaucetId` is deprecated and not needed: creating the client stores the
+   * chain's protocol configuration, which names the fee asset.
    *
    * `noteTransportMaxRetries` and `noteTransportRetryIntervalMs` are checked
    * before anything is created; an out-of-range value throws a `TypeError`.
@@ -244,9 +243,8 @@ export class MidenClient {
    * Defaults: rpcUrl "testnet", proverUrl "testnet", noteTransportUrl "testnet", autoSync true.
    * All defaults can be overridden via options.
    *
-   * `feeFaucetId` is optional: the client receives the chain's protocol
-   * configuration, which names the fee asset, from the node when it syncs. The
-   * option only sets what `feeFaucetId()` reports before that first sync.
+   * `feeFaucetId` is deprecated and not needed: creating the client stores the
+   * chain's protocol configuration, which names the fee asset.
    *
    * @param {ClientOptions} [options] - Options to override defaults.
    * @returns {Promise<MidenClient>} A fully initialized testnet client.
@@ -267,9 +265,8 @@ export class MidenClient {
    * Defaults: rpcUrl "devnet", proverUrl "devnet", noteTransportUrl "devnet", autoSync true.
    * All defaults can be overridden via options.
    *
-   * `feeFaucetId` is optional: the client receives the chain's protocol
-   * configuration, which names the fee asset, from the node when it syncs. The
-   * option only sets what `feeFaucetId()` reports before that first sync.
+   * `feeFaucetId` is deprecated and not needed: creating the client stores the
+   * chain's protocol configuration, which names the fee asset.
    *
    * @param {ClientOptions} [options] - Options to override defaults.
    * @returns {Promise<MidenClient>} A fully initialized devnet client.
@@ -290,9 +287,8 @@ export class MidenClient {
    * Defaults: rpcUrl "mainnet", proverUrl "mainnet", noteTransportUrl "mainnet", autoSync true.
    * All defaults can be overridden via options.
    *
-   * `feeFaucetId` is optional: the client receives the chain's protocol
-   * configuration, which names the fee asset, from the node when it syncs. The
-   * option only sets what `feeFaucetId()` reports before that first sync.
+   * `feeFaucetId` is deprecated and not needed: creating the client stores the
+   * chain's protocol configuration, which names the fee asset.
    *
    * @param {ClientOptions} [options] - Options to override defaults.
    * @returns {Promise<MidenClient>} A fully initialized mainnet client.
@@ -499,10 +495,10 @@ export class MidenClient {
    * Returns the faucet of the chain's fee asset.
    *
    * Replaces `BlockHeader.feeFaucetId()`: since 0.17 the fee asset lives in the
-   * protocol configuration rather than the block header. The client receives
-   * that configuration from the node when it syncs, so after the first sync
-   * this reports the faucet the chain's configuration names; before it, the
-   * `feeFaucetId` option or, for a mock client, the mock chain's own.
+   * protocol configuration rather than the block header. Creating the client
+   * stores the configuration the genesis block commits to, and syncs store the
+   * one later blocks commit to, so this reports the faucet that configuration
+   * names from creation on.
    *
    * @returns {Promise<AccountId>} The fee faucet's account ID.
    */
@@ -515,9 +511,9 @@ export class MidenClient {
    * Returns the protocol configuration of the connected network, including its
    * fee asset, so a dApp need not hardcode it per network.
    *
-   * The client receives the configuration from the node when it syncs, so this
-   * rejects until the first sync has stored it. Mock clients are seeded with
-   * their chain's configuration.
+   * Creating the client stores the configuration the genesis block commits to,
+   * and syncs store the one later blocks commit to, so this resolves from
+   * creation on.
    *
    * @returns {Promise<ProtocolConfig>} The configuration the synced block commits to.
    */

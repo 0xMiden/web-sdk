@@ -35,11 +35,10 @@ function App() {
 }
 ```
 
-`feeFaucetId` is optional. Since 0.17 the chain's fee asset lives in the
-protocol configuration, which the client receives from the node when it syncs,
-so a provider does not need the option: it only sets what `client.feeFaucetId()`
-reports before the first sync. Before that sync, a client created without it
-rejects `feeFaucetId()` and asks you to sync first.
+`feeFaucetId` is deprecated and not needed. Since 0.17 the chain's fee asset
+lives in the protocol configuration, and creating the client stores the
+configuration the chain commits to, so `client.feeFaucetId()` reports the
+chain's own faucet from the start.
 
 ## Configuration
 
@@ -48,7 +47,6 @@ rejects `feeFaucetId()` and asks you to sync first.
   config={{
     rpcUrl: "testnet",          // "mainnet" | "devnet" | "testnet" | "localhost" | "local" | custom URL
     network: "mainnet",         // optional: "mainnet" | "testnet" | "devnet", address prefix; wins over the rpcUrl inference
-    feeFaucetId: FEE_FAUCET,    // optional: what feeFaucetId() reports before the first sync
     prover: "testnet",          // "local" | "localhost" | "mainnet" | "devnet" | "testnet" | URL
                                 //   | { url, timeoutMs }
                                 //   | { primary, fallback, disableFallback?, onFallback? }

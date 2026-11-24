@@ -52,12 +52,12 @@ import { MidenClient } from "@miden-sdk/miden-sdk";
 
 const client = await MidenClient.create({
   endpoint: "https://rpc.testnet.miden.xyz",
-  // Optional: the faucet the chain mints its fee asset from, bech32 or hex.
-  // The client receives the chain's protocol configuration, which names the
-  // fee asset, from the node when it syncs (`client.protocolConfig()` reads
-  // it); this only sets what `client.feeFaucetId()` reports before that sync.
-  feeFaucetId: FEE_FAUCET,
 });
+
+// Creating the client stores the chain's protocol configuration, which names
+// the fee asset, so no `feeFaucetId` option is needed.
+const config = await client.protocolConfig();
+console.log("Fee faucet:", config.feeFaucetId().toString());
 
 const account = await client.accounts.create({ storage: "public" });
 console.log("New account:", account.id().toBech32());

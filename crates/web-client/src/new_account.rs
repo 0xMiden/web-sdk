@@ -23,9 +23,9 @@ use crate::platform::{ClientAuth, JsErr, from_str_err, js_u64_to_u64, maybe_wrap
 use crate::{WebClient, js_error_with_context};
 
 impl WebClient {
-    /// The chain's fee faucet as `feeFaucetId()` resolves it, or `None` when it is not known yet
-    /// (nothing synced and no creation-time faucet). Storage and protocol-config read failures are
-    /// errors, not `None`.
+    /// The chain's fee faucet as `feeFaucetId()` resolves it, or `None` when it is not known (no
+    /// protocol configuration stored for the sync height and no creation-time faucet). Storage
+    /// and protocol-config read failures are errors, not `None`.
     pub(crate) async fn known_fee_faucet_id(&self) -> Result<Option<AccountId>, JsErr> {
         if let Some(config) = self.synced_protocol_config().await? {
             return Ok(Some(config.fee_asset_id().faucet_id().into()));
@@ -33,8 +33,8 @@ impl WebClient {
         Ok((*self.fee_faucet.lock().await).map(Into::into))
     }
 
-    /// The protocol configuration the block at the sync height commits to, or `None` when nothing
-    /// has been synced yet (see `header_at_sync_height`) so no configuration is stored for it.
+    /// The protocol configuration the block at the sync height commits to, or `None` when the
+    /// store has no header (see `header_at_sync_height`) or no configuration for that block.
     /// Storage read failures are errors.
     pub(crate) async fn synced_protocol_config(&self) -> Result<Option<ProtocolConfig>, JsErr> {
         let mut guard = self.get_mut_inner().await;
@@ -81,8 +81,8 @@ impl WebClient {
     /// chain's (`feeFaucetId()`). The node's network-transaction builder silently refuses such
     /// accounts; catching the mismatch here avoids deploying an account that can never consume
     /// notes. Non-network accounts and accounts whose fee-asset slot cannot be read are left
-    /// alone. When the chain fee faucet is not known yet (no sync / no creation-time faucet),
-    /// the check is skipped rather than blocking insert.
+    /// alone. When the chain fee faucet is not known (no configuration stored for the sync height
+    /// and no creation-time faucet), the check is skipped rather than blocking insert.
     async fn reject_mismatched_network_fee_faucet(
         &self,
         account: &NativeAccount,
