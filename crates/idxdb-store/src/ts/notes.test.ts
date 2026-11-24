@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { openDatabase, getDatabase } from "./schema.js";
 import {
   upsertInputNote,
@@ -858,6 +858,20 @@ describe("getUnspentInputNoteNullifiers", () => {
     expect(nullifiers).toContain("0xnull-proc-auth");
     expect(nullifiers).toContain("0xnull-proc-unauth");
     expect(nullifiers).not.toContain("0xnull-expected");
+  });
+
+  it("reads the [stateDiscriminant+nullifier] index keys instead of scanning notes", async () => {
+    const dbId = await openTestDb();
+    await insertNote(dbId, "note-committed", {
+      stateDiscriminant: STATE_COMMITTED,
+      nullifier: "0xnull-committed",
+    });
+    const whereSpy = vi.spyOn(getDatabase(dbId).inputNotes, "where");
+
+    expect(await getUnspentInputNoteNullifiers(dbId)).toEqual([
+      "0xnull-committed",
+    ]);
+    expect(whereSpy).toHaveBeenCalledWith("[stateDiscriminant+nullifier]");
   });
 
   it("returns empty array when no unspent notes", async () => {

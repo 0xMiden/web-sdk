@@ -470,6 +470,41 @@ describe("MidenDatabase migrations", () => {
     // The notes themselves survive.
     expect(await mdb.inputNotes.count()).toBe(4);
   });
+
+  // v11 (#267): index-only, so a v10 store keeps every row and gains the unspent-nullifier index.
+  it("v11 migration keeps every row and adds the [stateDiscriminant+nullifier] index", async () => {
+    const name = uniqueDbName();
+
+    const dbV10 = trackDb(new Dexie(name));
+    dbV10.version(10).stores(V6_STORES);
+    await dbV10.open();
+    await dbV10.table("settings").put({
+      scope: SETTING_SCOPE_CLIENT,
+      key: CLIENT_VERSION_SETTING_KEY,
+      value: new TextEncoder().encode("0.18.0"),
+    });
+    await dbV10.table("inputNotes").bulkPut([
+      {
+        detailsCommitment: "0xa",
+        noteId: "0xa",
+        nullifier: "0xnull-a",
+        stateDiscriminant: 2,
+      },
+      { detailsCommitment: "0xb", noteId: "0xb", stateDiscriminant: 2 },
+    ]);
+    dbV10.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.18.0")).toBe(true);
+
+    expect(await mdb.inputNotes.count()).toBe(2);
+    expect(
+      await mdb.inputNotes
+        .where("[stateDiscriminant+nullifier]")
+        .between([2, Dexie.minKey], [2, Dexie.maxKey])
+        .keys()
+    ).toEqual([[2, "0xnull-a"]]);
+  });
 });
 
 // ============================================================
