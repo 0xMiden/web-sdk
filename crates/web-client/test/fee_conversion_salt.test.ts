@@ -873,22 +873,62 @@ test.describe("TransactionRequest.equals", () => {
   test("compares structure, not serialized bytes", async ({ run }) => {
     const result = await run(async ({ sdk }) => {
       const salt = (n) => new sdk.Word(sdk.u64Array([n, 2, 3, 4]));
-      const build = (n) =>
+      const withSalt = (n) =>
         new sdk.TransactionRequestBuilder()
           .withFeeConversionSalt(salt(n))
           .build();
 
-      const request = build(1);
-      const copy = sdk.TransactionRequest.deserialize(request.serialize());
+      // The builder has no Merkle store setter, so splice entries into the
+      // serialized bytes. In an untouched request the store's u64 count is
+      // the first run of eight zero bytes, between two 0x01 empty lengths.
+      const base = new Uint8Array(
+        new sdk.TransactionRequestBuilder().build().serialize()
+      );
+      let at = 0;
+      while (base.slice(at, at + 8).some((b) => b !== 0)) at++;
+      if (base[at - 1] !== 1 || base[at + 8] !== 1) {
+        throw new Error("unexpected TransactionRequest layout");
+      }
+
+      // A (key, left, right) entry: three words of four u64 limbs each.
+      const entry = (n) => {
+        const bytes = new Uint8Array(96);
+        [1, 2, 3].forEach((w, k) => {
+          bytes[k * 32] = n;
+          [8, 16, 24].forEach((o) => {
+            bytes[k * 32 + o] = w;
+          });
+        });
+        return bytes;
+      };
+      const request = (ids) => {
+        const out = new Uint8Array(base.length + ids.length * 96);
+        out.set(base.slice(0, at));
+        out[at] = ids.length;
+        ids.forEach((n, k) => out.set(entry(n), at + 8 + k * 96));
+        out.set(base.slice(at + 8), at + 8 + ids.length * 96);
+        return sdk.TransactionRequest.deserialize(out);
+      };
+
+      const ids = Array.from({ length: 64 }, (_, k) => k + 1);
+      const forward = request(ids);
+      const reversed = request([...ids].reverse());
+      const missing = request(ids.slice(1));
+      const a = forward.serialize();
+      const b = reversed.serialize();
       return {
-        sameBuild: request.equals(build(1)),
-        roundTrip: request.equals(copy),
-        otherSalt: request.equals(build(9)),
+        sameEntries: forward.equals(reversed),
+        bytesDiffer: a.length === b.length && a.some((v, k) => v !== b[k]),
+        missingEntry: forward.equals(missing),
+        sameSalt: withSalt(1).equals(withSalt(1)),
+        otherSalt: withSalt(1).equals(withSalt(9)),
       };
     });
 
-    expect(result.sameBuild).toBe(true);
-    expect(result.roundTrip).toBe(true);
+    expect(result.sameEntries).toBe(true);
+    expect(result.bytesDiffer).toBe(true);
+    expect(result.missingEntry).toBe(false);
+    expect(result.sameSalt).toBe(true);
     expect(result.otherSalt).toBe(false);
   });
 });
