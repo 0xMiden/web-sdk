@@ -116,6 +116,7 @@ pub mod signing_inputs;
 pub mod sparse_merkle_path;
 pub mod storage_map;
 pub mod storage_map_info;
+pub mod storage_map_witness;
 pub mod storage_slot;
 pub mod sync_summary;
 pub mod token_symbol;

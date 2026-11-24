@@ -8,6 +8,7 @@ use super::account_id::AccountId;
 use super::account_status::AccountStatus;
 use super::address::Address;
 use super::felt::Felt;
+use super::storage_map_witness::StorageMapWitness;
 use super::word::Word;
 use crate::js_error_with_context;
 use crate::platform::JsErr;
@@ -160,5 +161,22 @@ impl AccountReader {
             .await
             .map(Into::into)
             .map_err(|err| js_error_with_context(err, "failed to get storage map item"))
+    }
+
+    /// Retrieves a storage map slot's value for a key together with its stored witness.
+    #[js_export(js_name = "getStorageMapWitness")]
+    pub async fn get_storage_map_witness(
+        &self,
+        slot_name: String,
+        key: &Word,
+    ) -> Result<StorageMapWitness, JsErr> {
+        let slot_name = StorageSlotName::new(slot_name)
+            .map_err(|err| js_error_with_context(err, "invalid slot name"))?;
+
+        self.0
+            .get_storage_map_witness(slot_name, StorageMapKey::new(*key.as_native()))
+            .await
+            .map(|(_value, witness)| witness.into())
+            .map_err(|err| js_error_with_context(err, "failed to get storage map witness"))
     }
 }
