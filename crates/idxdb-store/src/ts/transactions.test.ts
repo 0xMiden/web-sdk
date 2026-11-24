@@ -191,6 +191,15 @@ describe("transactions", () => {
     expect(results![0].id).toBe("tx-pending");
   });
 
+  it("Uncommitted filter reads the statusVariant index instead of scanning", async () => {
+    const dbId = await openTestDb();
+    const whereSpy = vi.spyOn(getDatabase(dbId).transactions, "where");
+
+    await getTransactions(dbId, "Uncommitted");
+
+    expect(whereSpy).toHaveBeenCalledWith("statusVariant");
+  });
+
   it("Uncommitted filter returns empty array when no pending transactions exist", async () => {
     const dbId = await openTestDb();
     await upsertTransactionRecord(
