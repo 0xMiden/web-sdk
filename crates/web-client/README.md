@@ -796,6 +796,40 @@ A BURN note whose storage does not hold exactly the asset it carries is
 rejected, as the BURN script rejects it at consume time. A PSWAP note with more than one
 attachment is rejected too.
 
+`MintNote` decodes a MINT note, which asks a network faucet to mint an asset
+into a new note:
+
+```typescript
+import { MintNote, NoteScript } from "@miden-sdk/miden-sdk";
+
+if (root === NoteScript.mint().root().toHex()) {
+  const mint = MintNote.tryFromNote(note);
+  mint.asset(); // what the faucet mints
+  mint.faucetId(); // the faucet that consumes the note
+  mint.tag(); // tag of the minted note
+  mint.recipientDigest(); // private minted note: its recipient, else undefined
+  mint.recipientScriptRoot(); // public minted note: script root, serial number
+  mint.recipientStorage(); // and storage, else undefined
+}
+```
+
+To screen a note before importing it, pass it to the client. Each entry is a
+`NoteConsumability`, as `getConsumableNotes` returns:
+
+```typescript
+const all = await client.getNoteConsumability(note); // every tracked account
+const mine = await client.getNoteConsumabilityForAccount(note, wallet.id());
+for (const entry of mine) {
+  const status = entry.consumptionStatus();
+  status.isConsumableNow(); // consumable at the last synced block
+  status.consumableAfterBlock(); // unlock height when locked, else undefined
+}
+```
+
+The screener leaves out accounts that can never consume the note, and accounts
+that cannot consume it under the current conditions, so an empty array means
+no screened account can consume it. Screening does not import the note.
+
 ### Check Balance
 
 ```typescript
