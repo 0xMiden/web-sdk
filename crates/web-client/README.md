@@ -1089,6 +1089,22 @@ await client.transactions.bridge({
 
 The 20-byte destination is also available as an `EthAddress` (`EthAddress.fromHex("0x…")`) for the lower-level builders `Note.createB2AggNote(...)` and `client.newB2AggTransactionRequest(...)`.
 
+### Withdraw USDCx (Circle xReserve)
+
+`client.transactions.withdrawUsdcx(...)` emits a single public burn note with the fixed `BURN` tag. The USDCx faucet (a public account) consumes and burns it, and Circle releases USDC to the recipient on the destination domain.
+
+```typescript
+await client.transactions.withdrawUsdcx({
+  account: wallet, // sender (executes the transaction)
+  token: usdcxFaucet, // consumes the note and burns the asset
+  amount: 1_000_000n,
+  destinationDomain: 6, // Circle domain id
+  destinationRecipient: "0x0000000000000000000000001111111111111111111111111111111111111111" // 32 bytes
+});
+```
+
+The lower-level builders are `Note.createXReserveBurnNote(...)` and `client.newXReserveBurnTransactionRequest(...)`, which take the recipient as a 32-byte `Uint8Array`.
+
 ### Network Notes
 
 A network note is a Public note carrying a `NetworkAccountTarget` attachment; a public network account auto-consumes it once the note lands on-chain — no manual `consume` call needed on the target side.

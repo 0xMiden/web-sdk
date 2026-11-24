@@ -679,6 +679,22 @@ export interface BridgeOptions extends TransactionOptions {
   destinationAddress: string;
 }
 
+export interface WithdrawUsdcxOptions extends TransactionOptions {
+  /** Account that creates and funds the burn note (the sender / executing account). */
+  account: AccountRef;
+  /** USDCx faucet ID. It consumes the note and burns the asset; it must be a public account. */
+  token: AccountRef;
+  /** Amount of USDCx to withdraw. */
+  amount: number | bigint;
+  /** Circle domain of the destination chain (for example 6 for Arbitrum). */
+  destinationDomain: number;
+  /**
+   * Destination recipient as Circle's 32-byte form, 0x-prefixed hex (64 hex
+   * digits). An EVM address is left-padded with zeros to 32 bytes.
+   */
+  destinationRecipient: string;
+}
+
 export interface ConsumeOptions extends TransactionOptions {
   account: AccountRef;
   notes: NoteInput | NoteInput[];
@@ -1396,6 +1412,14 @@ export interface TransactionsResource {
    * @param options - Sender, bridge account, token, amount, and destination.
    */
   bridge(options: BridgeOptions): Promise<TransactionSubmitResult>;
+  /**
+   * Withdraw USDCx through Circle xReserve. Emits a single public burn note
+   * with the fixed `BURN` tag; the USDCx faucet consumes it and Circle releases
+   * USDC to the destination recipient on the destination domain.
+   *
+   * @param options - Sender, USDCx faucet, amount, and destination.
+   */
+  withdrawUsdcx(options: WithdrawUsdcxOptions): Promise<TransactionSubmitResult>;
   /**
    * Consume one or more notes for an account.
    *

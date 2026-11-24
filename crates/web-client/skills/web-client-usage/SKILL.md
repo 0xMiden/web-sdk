@@ -22,7 +22,7 @@ The SDK exposes a top-level `MidenClient` whose state is split across typed
 | Resource             | What it covers                                                                                                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `client.accounts`    | Wallets, faucets, custom contracts, listing, import/export, addresses                                                                                                          |
-| `client.transactions` | `send` / `mint` / `bridge` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
+| `client.transactions` | `send` / `mint` / `bridge` / `withdrawUsdcx` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
 | `client.notes`       | Listing, fetching, importing/exporting, private-note transport                                                                                                                 |
 | `client.tags`        | Note-tag subscriptions                                                                                                                                                         |
 | `client.settings`    | Persistent client settings                                                                                                                                                     |
@@ -845,6 +845,22 @@ const { txId } = await client.transactions.bridge({
   amount: 100n,
   destinationNetwork: 1, // AggLayer-assigned network id
   destinationAddress: "0xabc...", // 0x-prefixed Ethereum hex
+});
+```
+
+### Withdraw USDCx (Circle xReserve)
+
+`withdrawUsdcx` emits a single public burn note with the fixed `BURN` tag. The
+USDCx faucet consumes it and Circle releases USDC to the recipient on the
+destination domain.
+
+```typescript
+const { txId } = await client.transactions.withdrawUsdcx({
+  account: wallet, // sender - the executing account
+  token: usdcxFaucet, // public USDCx faucet; consumes and burns the note
+  amount: 1_000_000n,
+  destinationDomain: 6, // Circle domain id
+  destinationRecipient: "0x" + "00".repeat(12) + "abc...", // 32-byte hex
 });
 ```
 
