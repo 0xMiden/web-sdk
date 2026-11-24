@@ -94,4 +94,80 @@ test.describe("Note.createXReserveBurnNote", () => {
     );
     expect(result.shortRecipientError).toMatch(/32 bytes/);
   });
+
+  test("newXReserveBurnTransactionRequest emits the burn note", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk, helpers }) => {
+      const mockClient = await helpers.createFreshMockClient();
+      const sender = await mockClient.newWallet(
+        sdk.AccountStorageMode.private(),
+        sdk.AuthScheme.AuthRpoFalcon512,
+        new Uint8Array(32).fill(1)
+      );
+      const faucet = await mockClient.newFaucet(
+        sdk.AccountStorageMode.public(),
+        false,
+        "USDC",
+        "USDC",
+        6,
+        sdk.u64(10000000),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const recipient = new Uint8Array(
+        "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30"
+          .match(/../g)
+          .map((byte) => parseInt(byte, 16))
+      );
+
+      const request = await mockClient.newXReserveBurnTransactionRequest(
+        sender.id(),
+        faucet.id(),
+        sdk.u64(250),
+        6,
+        recipient
+      );
+      const notes = request.expectedOutputOwnNotes();
+      const metadata = notes[0].metadata();
+      const [asset] = notes[0].assets().fungibleAssets();
+
+      let shortRecipientError = "";
+      try {
+        await mockClient.newXReserveBurnTransactionRequest(
+          sender.id(),
+          faucet.id(),
+          sdk.u64(250),
+          6,
+          recipient.slice(0, 31)
+        );
+      } catch (err) {
+        shortRecipientError = String(err);
+      }
+
+      return {
+        noteCount: notes.length,
+        isPublic: metadata.noteType() === sdk.NoteType.Public,
+        tag: metadata.tag().asU32(),
+        senderMatches: metadata.sender().toString() === sender.id().toString(),
+        faucetMatches: asset.faucetId().toString() === faucet.id().toString(),
+        amount: asset.amount().toString(),
+        withdrawalWords: notes[0]
+          .attachments()[1]
+          .toWords()
+          .map((word) => Array.from(word.toU64s(), String)),
+        shortRecipientError,
+      };
+    });
+
+    expect(result.noteCount).toBe(1);
+    expect(result.isPublic).toBe(true);
+    expect(result.tag).toBe(0x4255524e);
+    expect(result.senderMatches).toBe(true);
+    expect(result.faucetMatches).toBe(true);
+    expect(result.amount).toBe("250");
+    expect(result.withdrawalWords).toEqual(
+      EXPECTED_WITHDRAWAL_WORDS.map((word) => word.map(String))
+    );
+    expect(result.shortRecipientError).toMatch(/32 bytes/);
+  });
 });
