@@ -26,17 +26,17 @@ impl WebClient {
         let account_id = account_data.account().id().to_string();
         let (account, auth_secret_keys) = account_data.into_parts();
 
-        client
-            .add_account(&account.clone(), false)
-            .await
-            .map_err(|err| js_error_with_context(err, "failed to import account"))?;
-
         for key in &auth_secret_keys {
             keystore
                 .add_key(key, account.id())
                 .await
                 .map_err(|err| from_str_err(&err.to_string()))?;
         }
+
+        client
+            .add_account(&account.clone(), false)
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to import account"))?;
 
         Ok(format!("Imported account with ID: {account_id}"))
     }

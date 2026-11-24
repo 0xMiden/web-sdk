@@ -192,7 +192,12 @@ export async function createParaMidenClient(
     seed: accountSeedFromStr(opts.seed),
     keystore: {
       getKey: async () => undefined,
-      insertKey: async () => {},
+      // Keys handed here would be lost: this client has no store for them.
+      insertKey: async () => {
+        throw new Error(
+          "This client only signs with the Para wallet key; create other accounts with a separate MidenClient"
+        );
+      },
       sign: signCallback,
     },
     callbackTimeoutMs: opts.callbackTimeoutMs,
