@@ -1,6 +1,7 @@
 import type { RpcUrlConfig } from "../types";
 
 const RPC_URLS = {
+  mainnet: "https://rpc.mainnet.miden.io",
   testnet: "https://rpc.testnet.miden.io",
   devnet: "https://rpc.devnet.miden.io",
   localhost: "http://localhost:57291",
@@ -12,6 +13,9 @@ export function resolveRpcUrl(rpcUrl?: RpcUrlConfig): string | undefined {
   }
 
   const normalized = rpcUrl.trim().toLowerCase();
+  if (normalized === "mainnet") {
+    return RPC_URLS.mainnet;
+  }
   if (normalized === "testnet") {
     return RPC_URLS.testnet;
   }

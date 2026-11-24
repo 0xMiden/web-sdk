@@ -68,4 +68,43 @@ describe("MidenProvider fresh-account signer init (wallet-adapter#86)", () => {
       client.importAccountById.mockResolvedValue(undefined);
     }
   });
+
+  it("becomes ready without error when the signer account is private", async () => {
+    const client = await (
+      WebClient.createClientWithExternalKeystore as ReturnType<typeof vi.fn>
+    )();
+    client.importAccountById.mockRejectedValue(
+      Object.assign(
+        new Error(
+          "failed to import public account: account 0xprivateaccount is private and its details cannot be retrieved from the network"
+        ),
+        { code: "ACCOUNT_IS_PRIVATE" }
+      )
+    );
+
+    try {
+      const signer = createMockSignerContext({
+        isConnected: true,
+        storeName: "private_wallet",
+        accountConfig: createMockSignerAccountConfig({
+          importAccountId: "0xprivateaccount",
+        }),
+      });
+
+      render(
+        <SignerContext.Provider value={signer}>
+          <MidenProvider config={{ rpcUrl: "https://rpc.testnet.miden.io" }}>
+            <Status />
+          </MidenProvider>
+        </SignerContext.Provider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ready").textContent).toBe("true");
+      });
+      expect(screen.getByTestId("error").textContent).toBe("none");
+    } finally {
+      client.importAccountById.mockResolvedValue(undefined);
+    }
+  });
 });

@@ -273,6 +273,13 @@ protocol configuration, which the client receives from the node when it syncs,
 so execution never needs the option: it only sets what `client.feeFaucetId()`
 reports before the first sync. Snippets below leave it out.
 
+`client.protocolConfig()` returns that configuration as a `ProtocolConfig`: its
+`feeFaucetId()` is the faucet `client.feeFaucetId()` reports after a sync, and
+its `commitment()` is what block headers carry as `protocolConfigCommitment()`.
+It rejects with "the network's protocol configuration is not known yet" until
+the first sync stores the configuration; a mock client is seeded with its
+chain's.
+
 `noteTransportMaxRetries` (0 to 10, default 3) and
 `noteTransportRetryIntervalMs` (0 to 60000, default 250), with a total computed
 backoff `interval * (2^retries - 1)` of at most 120000 ms, set how
@@ -446,7 +453,7 @@ The following are just a few simple examples to get started. For more details, s
 ```typescript
 import { MidenClient, FaucetType } from "@miden-sdk/miden-sdk";
 
-// 1. Create client (defaults to testnet, or use createTestnet()/createDevnet())
+// 1. Create client (defaults to testnet, or use createTestnet()/createDevnet()/createMainnet())
 const client = await MidenClient.createDevnet();
 
 // 2. Create a wallet and a token (faucet account)
@@ -588,6 +595,11 @@ For `client.accounts.create()`, select visibility with `storage: "public"` or
 `"private"`, and create a fungible faucet with `type: FaucetType.FungibleFaucet`.
 Migrate previous `AccountType.FungibleFaucet` uses to `FaucetType.FungibleFaucet`.
 Omit `type` to create a wallet, or pass `components` to create a contract.
+A contract also needs a raw 32-byte `seed` and `auth`. `auth` is an
+`AuthSecretKey` stored with the account, or `"none"` for a NoAuth contract that
+anyone can call and that stores no key. Omitting `auth` is rejected and does
+not default to NoAuth. `"none"` is only valid on a contract; wallet and faucet
+`auth` stays `AuthScheme.Falcon` or `AuthScheme.ECDSA`.
 The legacy selectors `0`, `1` and `"NonFungibleFaucet"` are still read as
 faucet types (non-fungible faucets are not supported yet and are rejected);
 `0` and `1` are also `AccountType.Private` / `AccountType.Public`, so never pass
@@ -1053,9 +1065,10 @@ To create the receiving account, build a **public** account carrying the network
 ```typescript
 // Each allowed note script carries the fee charged to consume it, in the
 // chain's fee asset. Zero is a valid price. The fee faucet must be the chain's
-// own: the node never runs network transactions for an account whose fee asset
-// differs from the chain's protocol configuration, and says nothing to the
-// client - the account's notes are simply never consumed.
+// own, the one `client.protocolConfig()` names: the node never runs network
+// transactions for an account whose fee asset differs from the chain's
+// protocol configuration, and says nothing to the client - the account's notes
+// are simply never consumed.
 const feeFaucetId = await client.feeFaucetId();
 const components = AccountComponent.createNetworkAuthComponents(
   [new NoteScriptFee(myNoteScript.root(), 0n)],
@@ -1180,7 +1193,7 @@ const client = await MidenClient.create({
 });
 ```
 
-`observer` is a field on `ClientOptions`, so it works on `create`, `createTestnet`, and `createDevnet` alike.
+`observer` is a field on `ClientOptions`, so it works on `create`, `createTestnet`, `createDevnet`, and `createMainnet` alike.
 
 **The SDK never transports an observation.** It hands the object to your callback and forgets about it. There is no telemetry dependency in `@miden-sdk/miden-sdk` — not a direct one, not a peer, not an optional one — and the module that delivers observations has no egress primitive in it and imports nothing at all. Both halves are enforced on every CI run by `js/__tests__/no-telemetry-dependency.test.js`, which parses the module rather than grepping it: it asserts the module reaches for no global object, builds no code at runtime, constructs nothing, and calls nothing but your observer. Where the observations go is entirely your decision, made in your code.
 
@@ -1206,7 +1219,7 @@ interface MidenObservation {
 
 `op` is the name of the underlying client method, not the name of the high-level call you made. One call into a resource API usually produces **several** observations: `client.transactions.send(...)` builds the request and then runs execute → prove → submit → apply, so it reports `newSendTransactionRequest`, `executeTransaction`, `proveTransaction`, `submitProvenTransaction`, and `applyTransaction` as five separate observations. Aggregate by `op` rather than assuming a one-to-one mapping with your own call sites.
 
-`durationMs` is measured with `performance.now()` from when the call's turn on its client's queue starts until the call settles, so time spent queued behind the same client's earlier calls is not in it. It is a fractional millisecond value, not an integer. Round it yourself if your backend wants integers.
+`durationMs` is measured with `performance.now()` from when the call's turn on its client's queue starts until the call settles, so time spent queued behind the same client's earlier calls is not in it. A store-locked call that times out before its turn starts has no turn, so it reports 0, delivered when it rejects, and the wait it spent queued is not counted. It is a fractional millisecond value, not an integer. Round it yourself if your backend wants integers.
 
 Two properties are worth relying on:
 

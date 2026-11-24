@@ -173,3 +173,19 @@ describe("playwright CI shard coverage", () => {
     expect(stale, "stale EXCLUDED entries hide real gaps").toEqual([]);
   });
 });
+
+// The store-read failure ("failed to read the protocol configuration") and the
+// `feeFaucetId()` rejection both contain "protocol configuration", so only the
+// full sentence tells the not-synced rejection apart from them.
+describe("protocolConfig integration assertions", () => {
+  it("pre-sync protocolConfig rejection is pinned to the not-synced sentence", () => {
+    const spec = fs.readFileSync(
+      path.join(testDir, "miden_client_api.test.ts"),
+      "utf8"
+    );
+    expect(spec).toContain(
+      `"the network's protocol configuration is not known yet"`
+    );
+    expect(spec).not.toContain(`toContain("protocol configuration")`);
+  });
+});

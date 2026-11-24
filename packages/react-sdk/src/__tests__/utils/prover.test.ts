@@ -23,6 +23,25 @@ describe("resolveTransactionProver", () => {
     expect(prover).not.toBeNull();
   });
 
+  it("resolves the mainnet remote prover from string", () => {
+    const prover = resolveTransactionProver({ prover: "mainnet" });
+    expect(prover).toMatchObject({
+      type: "remote",
+      url: "https://tx-prover.mainnet.miden.io",
+    });
+  });
+
+  it("uses proverUrls.mainnet for the mainnet prover when provided", () => {
+    const prover = resolveTransactionProver({
+      prover: "mainnet",
+      proverUrls: { mainnet: "https://my-mainnet-prover.example.com" },
+    });
+    expect(prover).toMatchObject({
+      type: "remote",
+      url: "https://my-mainnet-prover.example.com",
+    });
+  });
+
   it("resolves testnet remote prover from string", () => {
     const prover = resolveTransactionProver({ prover: "testnet" });
     expect(prover).not.toBeNull();
