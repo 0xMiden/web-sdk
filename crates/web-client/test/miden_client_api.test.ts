@@ -1760,20 +1760,26 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         const client = new sdk.WebClient();
         const batches = [];
         let refuseSecondBatch = true;
-        await client.createMockClient(undefined, undefined, undefined, {
-          beforeNoteAcquisition: async ({ source, notes }) => {
-            batches.push({
-              source,
-              bytes: notes.reduce((sum, note) => sum + note.length, 0),
-              commitments: notes.map((bytes) =>
-                sdk.NoteFile.deserialize(bytes).detailsCommitment()
-              ),
-            });
-            if (refuseSecondBatch && batches.length === 2) {
-              throw new Error("Recovery data could not be saved");
-            }
-          },
-        });
+        await client.createMockClient(
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          {
+            beforeNoteAcquisition: async ({ source, notes }) => {
+              batches.push({
+                source,
+                bytes: notes.reduce((sum, note) => sum + note.length, 0),
+                commitments: notes.map((bytes) =>
+                  sdk.NoteFile.deserialize(bytes).detailsCommitment()
+                ),
+              });
+              if (refuseSecondBatch && batches.length === 2) {
+                throw new Error("Recovery data could not be saved");
+              }
+            },
+          }
+        );
         try {
           const wallet = await client.newWallet(
             sdk.AccountStorageMode.private(),
@@ -1842,7 +1848,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
           const accepted = await fetch();
           const acceptedBatches = batches.splice(0);
           const imported = (await getNotes()).map((note) =>
-            note.detailsCommitment()
+            note.detailsCommitment().toHex()
           );
           const fetchedAgain = await fetch();
           return {
