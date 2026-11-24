@@ -671,7 +671,8 @@ pool, then submits and applies back in the SW.
 
 The callback runs inside `_serializeWasmCall`, so the WASM borrow is held for
 the duration of `fn` and concurrent SDK calls queue behind it, including calls
-an unrelated task makes during one of `fn`'s awaits. `fn` receives a trusted
+an unrelated task makes during one of `fn`'s awaits, except the raw-bound
+`SYNC_METHODS` accessors and the `keystore` getter, which never queue. `fn` receives a trusted
 handle (`createTrustedHandle` in `index.js`): a proxy over the client proxy
 whose methods run with the handle as `this`, so `_serializeWasmCall` and
 `_withStoreLock` see the handle's private `TRUSTED_CALLS` marker and run
@@ -679,7 +680,8 @@ whose methods run with the handle as `this`, so `_serializeWasmCall` and
 make on `this`. Queueing them would deadlock behind the slot that is awaiting
 `fn`. After `fn` settles the marker reads false, so a kept handle queues like
 the client. A call inside `fn` through any other reference to the client
-queues behind `fn` and deadlocks. (The consumer-facing statement lives in the
+queues behind `fn` and deadlocks. Calls through the handle run inline, so
+`fn` must await them one at a time. (The consumer-facing statement lives in the
 shipped `web-client-usage` skill; the mechanism lives here.)
 
 ### Adding a method

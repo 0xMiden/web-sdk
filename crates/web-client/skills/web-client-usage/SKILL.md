@@ -49,6 +49,10 @@ call that an unrelated task makes during one of `fn`'s `await`s queues behind
 the slot `fn` holds - that is what stops `fn` deadlocking against itself. So
 inside `fn`, call the SDK only through `inner`: a call through `client` or any
 other reference queues behind `fn` and never settles while `fn` awaits it.
+Calls through `inner` run inline, so await them one at a time. The raw-bound
+accessors (`lastAuthError()`, the `keystore` getter, and on mock clients
+`proveBlock()` and `serializeMock*()`) never queue, so do not call them from
+another task while `fn` runs.
 
 Do not let the `inner` reference escape the callback either - once `fn` settles,
 calls through it queue like any other call.

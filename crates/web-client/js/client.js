@@ -67,7 +67,9 @@ export class MidenClient {
    * The callback runs inside `_serializeWasmCall`, so the WASM RefCell is
    * held for the duration of `fn`. Concurrent SDK calls (sync, other
    * transactions, etc.) queue on the same chain and run after `fn`
-   * settles, including calls that land during one of `fn`'s awaits.
+   * settles, including calls that land during one of `fn`'s awaits. The
+   * raw-bound accessors in `SYNC_METHODS` (index.js) and the `keystore`
+   * getter are the exception: they never queue.
    * Without this serialization, raw inner-client access would race the
    * proxy's chain and trip wasm-bindgen's "recursive use of an object
    * detected" panic.
@@ -77,8 +79,9 @@ export class MidenClient {
    * queueing them would deadlock behind `fn` itself. Use the handle, not
    * another reference to the client, inside `fn`: a call through any
    * other reference queues behind `fn` and never settles while `fn`
-   * awaits it. Once `fn` settles, calls through a kept handle queue like
-   * any other.
+   * awaits it. Calls through the handle run inline, so await them one at a
+   * time. Once `fn` settles, calls through a kept handle queue like any
+   * other.
    *
    * A call inside `fn` that takes the store lock (see
    * `WebClient._withStoreLock`) still waits for other clients on the same
