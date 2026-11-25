@@ -673,7 +673,7 @@ const receipt = await client.accounts.requestFundingNote(wallet);
 
 Defaults use `https://faucet-api.testnet.miden.io` /
 `https://faucet-api.devnet.miden.io` from the RPC endpoint. Other networks need
-`faucetUrl`. The mint request is never retried — after a failure that retains a
+`faucetUrl`. The mint request is never retried: after a failure that retains a
 `noteId`, resume that note instead of calling the faucet again. See
 [the funding guide](https://github.com/0xMiden/web-sdk/blob/next/docs/external/src/web-client/library/funding.md).
 

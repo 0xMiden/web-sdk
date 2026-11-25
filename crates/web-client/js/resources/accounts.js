@@ -12,6 +12,7 @@ import {
   normalizeFundingOptions,
   requestNoteFromFaucet,
   sleep,
+  throwIfAborted,
   withinTimeout,
   wrapAfterRequest,
   fundingInvalid,
@@ -435,7 +436,7 @@ export class AccountsResource {
     return withinTimeout(
       opts.timeoutMs,
       "the faucet (minting may already have succeeded)",
-      async () => {
+      async (signal) => {
         await this.#client.syncChain();
         const feeFaucetId = await this.#client.feeFaucetId();
         const feeFaucetIdHex =
@@ -455,6 +456,7 @@ export class AccountsResource {
           amount: opts.amount,
           wasm,
           fetch: opts.fetch,
+          signal,
         });
       }
     );
@@ -493,27 +495,32 @@ export class AccountsResource {
 
     let consumptionTxId = null;
     try {
-      await withinTimeout(opts.timeoutMs, "the funding note", async () => {
-        for (;;) {
-          await this.#client.syncChain();
-          const record = await this.#client.notes.get(receipt.noteId);
-          if (record) {
-            const kind = classifyInputNoteState(
-              record.state?.() ?? record.state,
-              wasm
-            );
-            if (kind === "consumed" || kind === "processing") {
-              throw fundingInvalid(
-                "funding note is already consumed or being processed"
+      await withinTimeout(
+        opts.timeoutMs,
+        "the funding note",
+        async (signal) => {
+          for (;;) {
+            throwIfAborted(signal);
+            await this.#client.syncChain();
+            const record = await this.#client.notes.get(receipt.noteId);
+            if (record) {
+              const kind = classifyInputNoteState(
+                record.state?.() ?? record.state,
+                wasm
               );
+              if (kind === "consumed" || kind === "processing") {
+                throw fundingInvalid(
+                  "funding note is already consumed or being processed"
+                );
+              }
+              if (kind === "committed") {
+                return;
+              }
             }
-            if (kind === "committed") {
-              return;
-            }
+            await sleep(opts.pollIntervalMs);
           }
-          await sleep(opts.pollIntervalMs);
         }
-      });
+      );
 
       const { txId } = await this.#client.transactions.consume({
         account: accountIdHex,

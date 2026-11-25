@@ -105,23 +105,39 @@ export function networkFromBech32(bech32) {
 
 /**
  * Race `work` against a deadline. Same stage-timeout model as the Rust helper.
+ * The signal passed to `work` aborts at the deadline so its loops and fetches
+ * stop instead of running on after the caller has given up.
  * @template T
  * @param {number} timeoutMs
  * @param {string} stage
- * @param {() => Promise<T>} work
+ * @param {(signal: AbortSignal) => Promise<T>} work
  * @returns {Promise<T>}
  */
 export async function withinTimeout(timeoutMs, stage, work) {
+  const controller = new AbortController();
   let timer;
   const timeoutPromise = new Promise((_, reject) => {
     timer = setTimeout(() => {
+      controller.abort();
       reject(fundingTimeout(stage));
     }, timeoutMs);
   });
   try {
-    return await Promise.race([work(), timeoutPromise]);
+    return await Promise.race([work(controller.signal), timeoutPromise]);
   } finally {
     clearTimeout(timer);
+    controller.abort();
+  }
+}
+
+/**
+ * @param {AbortSignal | undefined} signal
+ */
+export function throwIfAborted(signal) {
+  if (signal?.aborted) {
+    const err = new Error("funding stage aborted");
+    err.code = "FundingAborted";
+    throw err;
   }
 }
 
@@ -139,11 +155,16 @@ export function sleep(ms) {
  *
  * @param {string} challengeHex
  * @param {bigint | number | string} target
+ * @param {AbortSignal} [signal] Stops the search when aborted.
  * @returns {Promise<bigint>}
  */
-export async function solvePow(challengeHex, target) {
+export async function solvePow(challengeHex, target, signal) {
   const challenge = String(challengeHex).replace(/^0x/i, "");
-  const targetValue = toU64(target, "PoW target");
+  // JSON.parse rounds a u64 target near u64::MAX up to 2 ** 64 or beyond.
+  const targetValue =
+    typeof target === "number" && target >= 2 ** 64
+      ? 0xffff_ffff_ffff_ffffn
+      : toU64(target, "PoW target");
   if (
     targetValue === 0n ||
     challenge.length === 0 ||
@@ -155,6 +176,7 @@ export async function solvePow(challengeHex, target) {
   }
 
   const bytes = hexToBytes(challenge);
+  throwIfAborted(signal);
   for (let nonce = 0n; nonce <= 0xffff_ffff_ffff_ffffn; nonce++) {
     const hash = await sha256(concatChallengeAndNonce(bytes, nonce));
     const digest = readU64Be(hash, 0);
@@ -163,13 +185,14 @@ export async function solvePow(challengeHex, target) {
     }
     if (nonce % 1000n === 999n) {
       await sleep(1);
+      throwIfAborted(signal);
     }
   }
   throw fundingInvalid("faucet proof of work has no solution");
 }
 
 /**
- * HTTP faucet request: metadata → PoW → get_tokens.
+ * HTTP faucet request: metadata, then PoW, then get_tokens.
  *
  * @param {object} args
  * @param {string} args.faucetUrl
@@ -179,6 +202,7 @@ export async function solvePow(challengeHex, target) {
  * @param {bigint | null} args.amount
  * @param {{ AccountId: { fromHex: Function, fromBech32: Function } }} args.wasm
  * @param {typeof fetch} args.fetch
+ * @param {AbortSignal} [args.signal] Cancels pending requests and the PoW search.
  * @returns {Promise<{ noteId: string, transactionId: string, faucetId: string, amount: bigint }>}
  */
 export async function requestNoteFromFaucet({
@@ -189,9 +213,14 @@ export async function requestNoteFromFaucet({
   amount,
   wasm,
   fetch: fetchFn,
+  signal,
 }) {
   const base = parseFaucetBaseUrl(faucetUrl);
-  const metadata = await getJson(fetchFn, joinUrl(base, "get_metadata"));
+  const metadata = await getJson(
+    fetchFn,
+    joinUrl(base, "get_metadata"),
+    signal
+  );
   if (
     metadata == null ||
     typeof metadata.id !== "string" ||
@@ -219,7 +248,7 @@ export async function requestNoteFromFaucet({
   // Faucet wire names are snake_case.
   powUrl.searchParams.set("account_id", accountIdHex);
   powUrl.searchParams.set("amount", resolvedAmount.toString());
-  const challengeBody = await getJson(fetchFn, powUrl);
+  const challengeBody = await getJson(fetchFn, powUrl, signal);
   if (
     challengeBody == null ||
     typeof challengeBody.challenge !== "string" ||
@@ -228,7 +257,11 @@ export async function requestNoteFromFaucet({
     throw fundingInvalid("invalid faucet proof-of-work response");
   }
 
-  const nonce = await solvePow(challengeBody.challenge, challengeBody.target);
+  const nonce = await solvePow(
+    challengeBody.challenge,
+    challengeBody.target,
+    signal
+  );
 
   const tokensUrl = joinUrl(base, "get_tokens");
   tokensUrl.searchParams.set("account_id", accountIdHex);
@@ -236,7 +269,7 @@ export async function requestNoteFromFaucet({
   tokensUrl.searchParams.set("asset_amount", resolvedAmount.toString());
   tokensUrl.searchParams.set("challenge", challengeBody.challenge);
   tokensUrl.searchParams.set("nonce", nonce.toString());
-  const mint = await getJson(fetchFn, tokensUrl);
+  const mint = await getJson(fetchFn, tokensUrl, signal);
   if (
     mint == null ||
     typeof mint.note_id !== "string" ||
@@ -410,7 +443,7 @@ function joinUrl(base, path) {
   return new URL(path, base);
 }
 
-async function getJson(fetchFn, url) {
+async function getJson(fetchFn, url, signal) {
   if (typeof fetchFn !== "function") {
     throw fundingInvalid("fetch is not available in this environment");
   }
@@ -418,8 +451,9 @@ async function getJson(fetchFn, url) {
   try {
     response = await fetchFn(url.href ?? String(url), {
       method: "GET",
-      // Minting uses GET but changes server state — never auto-retry.
+      // Minting uses GET but changes server state: never auto-retry.
       cache: "no-store",
+      signal,
     });
   } catch (cause) {
     const err = new Error(`faucet request failed: ${cause.message ?? cause}`);
@@ -490,12 +524,11 @@ function readU64Be(bytes, offset) {
   return view.getBigUint64(0, false);
 }
 
+// Web Crypto is global in browsers and Node >= 20; a `node:crypto` fallback
+// would break browser bundlers that cannot resolve the `node:` scheme.
 async function sha256(data) {
-  if (globalThis.crypto?.subtle?.digest) {
-    const digest = await globalThis.crypto.subtle.digest("SHA-256", data);
-    return new Uint8Array(digest);
+  if (!globalThis.crypto?.subtle?.digest) {
+    throw fundingInvalid("Web Crypto (crypto.subtle) is not available");
   }
-  // Node without webcrypto (unlikely in current vitest) — dynamic import.
-  const { createHash } = await import("node:crypto");
-  return new Uint8Array(createHash("sha256").update(data).digest());
+  return new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", data));
 }

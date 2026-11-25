@@ -11,7 +11,7 @@ import { MidenClient } from "@miden-sdk/miden-sdk";
 const client = await MidenClient.createTestnet();
 const wallet = await client.accounts.create({ storage: "private" });
 
-// Request only — resume with consume if a later stage fails.
+// Request only: resume with consume if a later stage fails.
 const receipt = await client.accounts.requestFundingNote(wallet);
 // { noteId, transactionId, faucetId, amount }
 
@@ -30,7 +30,7 @@ Defaults:
 | `pollInterval` | `5_000` ms between chain syncs while waiting for the note |
 
 Other networks have no public faucet default: pass `faucetUrl`. The mint request
-is never retried — a timeout after the faucet accepted the request can leave a
+is never retried: a timeout after the faucet accepted the request can leave a
 note on chain, so resume from `noteId` instead of calling the faucet again.
 
 The account must already be tracked locally (`accounts.create` or `import`).
