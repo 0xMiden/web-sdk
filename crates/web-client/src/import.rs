@@ -45,11 +45,21 @@ impl WebClient {
             ));
         }
 
-        for key in &auth_secret_keys {
-            keystore
-                .add_key(key, account_id)
+        if !auth_secret_keys.is_empty() {
+            let mut saved = keystore
+                .get_account_key_commitments(&account_id)
                 .await
                 .map_err(|err| from_str_err(&err.to_string()))?;
+
+            // An earlier import may have saved some keys before a later write failed.
+            for key in &auth_secret_keys {
+                if saved.insert(key.public_key().to_commitment()) {
+                    keystore
+                        .add_key(key, account_id)
+                        .await
+                        .map_err(|err| from_str_err(&err.to_string()))?;
+                }
+            }
         }
 
         client
