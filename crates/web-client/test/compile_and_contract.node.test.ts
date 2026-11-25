@@ -239,6 +239,7 @@ test.describe("compile.component({ package })", () => {
 
   test("txScript and noteScript build from a package, as Package or bytes", async ({
     sdk,
+    client: rawClient,
   }) => {
     const MidenClient = await createMidenClient(sdk);
     test.skip(!MidenClient, "requires napi binary (Node.js only)");
@@ -250,18 +251,16 @@ test.describe("compile.component({ package })", () => {
         exec.sys::truncate_stack
       end
     `;
-    const [txBytes, noteBytes] = await client._withInnerWebClient(
-      async (inner) => {
-        const builder = await inner.createCodeBuilder();
-        return [
-          builder.buildLibrary("pkg::tx", txSource).asPackage().serialize(),
-          builder
-            .buildLibrary("pkg::note", RECEIVE_NOTE_SCRIPT)
-            .asPackage()
-            .serialize(),
-        ];
-      }
-    );
+    // A raw mock client builds the libraries; the package under test goes through MidenClient.
+    const builder = await rawClient.createCodeBuilder();
+    const txBytes = builder
+      .buildLibrary("pkg::tx", txSource)
+      .asPackage()
+      .serialize();
+    const noteBytes = builder
+      .buildLibrary("pkg::note", RECEIVE_NOTE_SCRIPT)
+      .asPackage()
+      .serialize();
 
     const txFromBytes = await client.compile.txScript({ package: txBytes });
     const txFromPackage = await client.compile.txScript({
