@@ -92,6 +92,9 @@ use utils::{
     patch_code_bytes,
 };
 
+/// Storage slots, map entries and vault assets an incremental patch writes.
+pub(crate) type PatchWritePayload = (Vec<JsStorageSlot>, Vec<JsStorageMapEntry>, Vec<JsVaultAsset>);
+
 impl IdxdbStore {
     pub(super) async fn get_account_ids(&self) -> Result<Vec<AccountId>, StoreError> {
         let promise = idxdb_get_account_ids(self.db_id());
@@ -433,10 +436,9 @@ impl IdxdbStore {
                 "account patch nonce does not advance persisted state for {account_id}",
             )));
         }
-        let new_map_roots = self.apply_patch_to_forest(final_header, patch)?;
-        let code = patch_code_bytes(patch, final_header)?;
         let (updated_slots, changed_map_entries, changed_assets) =
-            build_account_patch_payload(&new_map_roots, patch);
+            self.prepare_patch_write(final_header, patch)?;
+        let code = patch_code_bytes(patch, final_header)?;
 
         Ok(JsAccountPatchUpdate {
             account_id: account_id.to_string(),
@@ -454,6 +456,19 @@ impl IdxdbStore {
         })
     }
 
+    /// Advances the forest by `patch` and builds the storage slots, map entries and vault assets
+    /// its store write needs. This is the part of an incremental patch the sync path
+    /// ([`Self::prepare_incremental_account_patch`]) and the transaction batch path share; each
+    /// wraps it in its own payload.
+    pub(crate) fn prepare_patch_write(
+        &self,
+        final_header: &AccountHeader,
+        patch: &AccountPatch,
+    ) -> Result<PatchWritePayload, StoreError> {
+        let new_map_roots = self.apply_patch_to_forest(final_header, patch)?;
+        Ok(build_account_patch_payload(&new_map_roots, patch))
+    }
+
     /// Applies an account patch to the SMT forest, returning the new root of each map slot it
     /// changed — the only thing the store write needs that the patch does not already carry.
     ///
@@ -463,7 +478,7 @@ impl IdxdbStore {
     /// The forest must be updated before the store write, because the write needs these roots. A
     /// write that then fails leaves the forest ahead of the tables; its readers compare roots with
     /// persisted state and refresh the account, so nothing has to walk it back.
-    pub(crate) fn apply_patch_to_forest(
+    fn apply_patch_to_forest(
         &self,
         final_header: &AccountHeader,
         patch: &AccountPatch,
