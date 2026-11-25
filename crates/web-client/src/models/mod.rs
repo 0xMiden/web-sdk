@@ -116,6 +116,7 @@ pub mod provers;
 pub mod pswap_lineage_record;
 pub mod pswap_note;
 pub mod public_key;
+pub mod rpc_status;
 pub mod rpo256;
 pub mod signature;
 pub mod signing_inputs;

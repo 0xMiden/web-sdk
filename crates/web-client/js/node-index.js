@@ -208,6 +208,9 @@ export const BasicFungibleFaucetComponent = /* @__PURE__ */ _reexport(
 );
 export const BatchItem = /* @__PURE__ */ _reexport("BatchItem");
 export const BlockHeader = /* @__PURE__ */ _reexport("BlockHeader");
+export const BlockProducerStatusInfo = /* @__PURE__ */ _reexport(
+  "BlockProducerStatusInfo"
+);
 export const BurnNote = /* @__PURE__ */ _reexport("BurnNote");
 export const ChainAnchor = /* @__PURE__ */ _reexport("ChainAnchor");
 export const ClaimLeafData = /* @__PURE__ */ _reexport("ClaimLeafData");
@@ -242,6 +245,7 @@ export const InputNoteState = /* @__PURE__ */ _reexport("InputNoteState");
 export const InputNotes = /* @__PURE__ */ _reexport("InputNotes");
 export const Library = /* @__PURE__ */ _reexport("Library");
 export const MerklePath = /* @__PURE__ */ _reexport("MerklePath");
+export const MempoolStatsInfo = /* @__PURE__ */ _reexport("MempoolStatsInfo");
 export const MintNote = /* @__PURE__ */ _reexport("MintNote");
 export const NetworkAccountTarget = /* @__PURE__ */ _reexport(
   "NetworkAccountTarget"
@@ -319,6 +323,7 @@ export const PswapLineageState = /* @__PURE__ */ _reexport("PswapLineageState");
 export const PswapNote = /* @__PURE__ */ _reexport("PswapNote");
 export const PublicKey = /* @__PURE__ */ _reexport("PublicKey");
 export const RpcClient = /* @__PURE__ */ _reexport("RpcClient");
+export const RpcStatusInfo = /* @__PURE__ */ _reexport("RpcStatusInfo");
 export const RpcTransactionRecord = /* @__PURE__ */ _reexport(
   "RpcTransactionRecord"
 );

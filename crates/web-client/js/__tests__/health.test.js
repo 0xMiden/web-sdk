@@ -20,7 +20,9 @@ const status = (overrides = {}) => ({
   ...overrides,
 });
 
-const makeClient = ({ endpoint = "https://rpc.devnet.miden.io" } = {}) => {
+const makeClient = (
+  { endpoint } = { endpoint: "https://rpc.devnet.miden.io" }
+) => {
   const rpc = { getStatus: vi.fn(async () => status()) };
   const wasm = {
     Endpoint: vi.fn(function (url) {

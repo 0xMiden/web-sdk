@@ -38,6 +38,7 @@ use crate::models::note_id::NoteId;
 use crate::models::note_script::NoteScript;
 use crate::models::note_sync::NoteSyncInfo;
 use crate::models::note_tag::NoteTag;
+use crate::models::rpc_status::RpcStatusInfo;
 use crate::models::storage_map_info::StorageMapInfo;
 use crate::models::word::Word;
 use crate::platform::JsErr;
@@ -378,6 +379,24 @@ impl RpcClient {
             .map_err(|err| js_error_with_context(err, "failed to get network note status"))?;
 
         Ok(status_info.into())
+    }
+
+    /// Fetches the node's status: its version, chain tip and genesis commitment, and the block
+    /// producer's status and mempool statistics.
+    ///
+    /// The request skips the client's version and genesis negotiation, so it also answers when
+    /// the node runs an incompatible version.
+    ///
+    /// @returns Promise that resolves to a `RpcStatusInfo` object.
+    #[js_export(js_name = "getStatus")]
+    pub async fn get_status(&self) -> Result<RpcStatusInfo, JsErr> {
+        let status = self
+            .inner
+            .get_status_unversioned()
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to get node status"))?;
+
+        Ok(status.into())
     }
 
     // TODO: This can be generalized to retrieve multiple nullifiers

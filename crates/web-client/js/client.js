@@ -31,6 +31,8 @@ export class MidenClient {
   #terminated = false;
   #defaultProver = null;
   #isMock = false;
+  #healthRpc = null;
+  #healthMonitors = new Set();
 
   constructor(inner, getWasm, defaultProver) {
     this.#inner = inner;
@@ -467,6 +469,7 @@ export class MidenClient {
    */
   terminate() {
     this.#terminated = true;
+    for (const stop of this.#healthMonitors) stop();
     this.#inner.terminate?.();
   }
 
@@ -543,6 +546,105 @@ export class MidenClient {
   endpoint() {
     this.assertNotTerminated();
     return this.#inner.endpoint();
+  }
+
+  /**
+   * Asks the node for its status. Never rejects for a node problem: an
+   * unreachable node, a failed request or a mock client (which has no node)
+   * resolve to `{ reachable: false, error }`. Runs outside the client's call
+   * queue, so it answers while a sync is in flight.
+   *
+   * @returns {Promise<HealthStatus>} The node's health.
+   */
+  async checkHealth() {
+    this.assertNotTerminated();
+    return await this.#probeHealth();
+  }
+
+  /**
+   * Checks the node's health now and then every `intervalMs` after the
+   * previous check settles, and calls `onChange` with the first result and
+   * then whenever reachability or the block producer status changes.
+   * `terminate()` stops it too.
+   *
+   * @param {{ intervalMs: number, onChange: (status: HealthStatus) => void }} options
+   * @returns {() => void} Stops the monitor.
+   */
+  monitorHealth({ intervalMs, onChange } = {}) {
+    this.assertNotTerminated();
+    if (!(Number.isFinite(intervalMs) && intervalMs > 0)) {
+      throw new TypeError(
+        "monitorHealth: intervalMs must be a positive number"
+      );
+    }
+    if (typeof onChange !== "function") {
+      throw new TypeError("monitorHealth: onChange must be a function");
+    }
+    let stopped = false;
+    let timer;
+    let lastState;
+    const stop = () => {
+      stopped = true;
+      clearTimeout(timer);
+      this.#healthMonitors.delete(stop);
+    };
+    const tick = async () => {
+      const status = await this.#probeHealth();
+      if (stopped) return;
+      const state = status.reachable
+        ? `up:${status.blockProducer?.status ?? ""}`
+        : "down";
+      if (state !== lastState) {
+        lastState = state;
+        try {
+          onChange(status);
+        } catch (error) {
+          console.error("monitorHealth: onChange threw", error);
+        }
+      }
+      if (!stopped) timer = setTimeout(tick, intervalMs);
+    };
+    this.#healthMonitors.add(stop);
+    tick();
+    return stop;
+  }
+
+  async #probeHealth() {
+    try {
+      if (!this.#healthRpc) {
+        const endpoint = this.#inner.endpoint();
+        if (!endpoint) throw new Error("A mock client is connected to no node");
+        const wasm = await this.#getWasm();
+        this.#healthRpc ??= new wasm.RpcClient(new wasm.Endpoint(endpoint));
+      }
+      const status = await this.#healthRpc.getStatus();
+      const producer = status.blockProducer;
+      const mempool = producer?.mempoolStats;
+      return {
+        reachable: true,
+        version: status.version,
+        chainTip: status.chainTip,
+        ...(status.genesisCommitment && {
+          genesisCommitment: status.genesisCommitment.toHex(),
+        }),
+        ...(producer && {
+          blockProducer: {
+            version: producer.version,
+            status: producer.status,
+            chainTip: producer.chainTip,
+            ...(mempool && {
+              mempoolStats: {
+                unbatchedTransactions: Number(mempool.unbatchedTransactions),
+                proposedBatches: Number(mempool.proposedBatches),
+                provenBatches: Number(mempool.provenBatches),
+              },
+            }),
+          },
+        }),
+      };
+    } catch (error) {
+      return { reachable: false, error: error?.message ?? String(error) };
+    }
   }
 
   /**
