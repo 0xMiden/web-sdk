@@ -78,8 +78,8 @@ const loadTranspiledTypeScript = (filePath, mocks = {}) => {
 //                    little-endian limb order. The 0.15 line hashed nine felts
 //                    packed from the compressed SEC1 encoding, so these vectors
 //                    differ from the ones on `main` by construction.
-//   * hash family  — the protocol commits with Eidos. Committing with any
-//                    other hash yields a valid-looking Word that is simply wrong
+//   * hash family  — the protocol commits with Eidos. Committing with
+//                    Poseidon2 yields a valid-looking Word that is simply wrong
 //                    and only surfaces as an auth rejection at transaction time.
 //
 // Vectors pin the public key rather than the RNG seed: seed -> key derivation
@@ -139,7 +139,7 @@ const COMMITMENT_VECTORS = [
 
 /** Minimal stand-in for the SDK's hashing surface that records what was called. */
 const makeSdkSpy = () => {
-  const calls = { eidos: [] };
+  const calls = { eidos: [], poseidon2: [] };
   const record = (bucket) => (feltArray) => {
     calls[bucket].push(feltArray.values.map((felt) => Number(felt.value)));
     return { toHex: () => `0x${bucket}` };
@@ -158,6 +158,7 @@ const makeSdkSpy = () => {
         }
       },
       Eidos: { hashElements: record("eidos") },
+      Poseidon2: { hashElements: record("poseidon2") },
     },
   };
 };
@@ -195,7 +196,7 @@ test("evmPkToCommitment builds the pinned Eidos preimage", async () => {
   }
 });
 
-test("evmPkToCommitment hashes once with Eidos", async () => {
+test("evmPkToCommitment hashes with Eidos and never Poseidon2", async () => {
   for (const vector of COMMITMENT_VECTORS) {
     const { sdk, calls } = makeSdkSpy();
     const { evmPkToCommitment } = loadUtils({ "@miden-sdk/miden-sdk": sdk });
@@ -206,6 +207,11 @@ test("evmPkToCommitment hashes once with Eidos", async () => {
       calls.eidos.length,
       1,
       "expected exactly one Eidos hash"
+    );
+    assert.strictEqual(
+      calls.poseidon2.length,
+      0,
+      "commitments must not be hashed with Poseidon2 — the protocol commits with Eidos"
     );
   }
 });
