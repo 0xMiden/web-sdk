@@ -19,16 +19,19 @@ use miden_client::vm::AdviceMap as NativeAdviceMap;
 use miden_client::{Felt as NativeFelt, Word as NativeWord};
 use miden_protocol::WORD_SIZE;
 use miden_protocol::crypto::SequentialCommit;
+use miden_protocol::crypto::merkle::InnerNodeInfo as NativeInnerNodeInfo;
 
 use crate::js_error_with_context;
 use crate::models::account_code::AccountCode;
 use crate::models::advice_map::AdviceMap;
 use crate::models::felt::felt_array_to_native_vec;
 use crate::models::foreign_account::ForeignAccount;
+use crate::models::inner_node_info::InnerNodeInfo;
 use crate::models::input_note::InputNote;
 use crate::models::miden_arrays::{
     FeltArray,
     ForeignAccountArray,
+    InnerNodeInfoArray,
     NoteAndArgsArray,
     NoteArray,
     NoteDetailsAndTagArray,
@@ -156,6 +159,17 @@ impl TransactionRequestBuilder {
     pub fn extend_advice_map(&mut self, advice_map: &AdviceMap) -> Self {
         let native_advice_map: NativeAdviceMap = advice_map.into();
         self.builder = self.builder.clone().extend_advice_map(native_advice_map);
+        self.clone()
+    }
+
+    /// Adds Merkle tree nodes to the Merkle store the transaction executes with, so its scripts
+    /// can read Merkle paths through them. Each `InnerNodeInfo` value is stored under its key as
+    /// given and not checked against its children.
+    #[js_export(js_name = "extendMerkleStore")]
+    pub fn extend_merkle_store(&mut self, nodes: InnerNodeInfoArray) -> Self {
+        let items: Vec<InnerNodeInfo> = nodes.into();
+        let native_nodes: Vec<NativeInnerNodeInfo> = items.into_iter().map(Into::into).collect();
+        self.builder = self.builder.clone().extend_merkle_store(native_nodes);
         self.clone()
     }
 
