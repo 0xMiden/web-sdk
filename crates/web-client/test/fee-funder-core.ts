@@ -19,6 +19,28 @@ export function createFundingRuntime(deps) {
     retryDelayMs = 2_000,
   } = deps;
 
+  const defaultTransferNoteFile = async (
+    funderClient,
+    targetClient,
+    noteId
+  ) => {
+    if (!sdk?.NoteExportFormat?.Full || !sdk?.NoteFile?.deserialize) {
+      return false;
+    }
+    try {
+      const noteFile = await funderClient.exportNoteFile(
+        noteId,
+        sdk.NoteExportFormat.Full
+      );
+      const bytes = noteFile.serialize();
+      await targetClient.importNoteFile(sdk.NoteFile.deserialize(bytes));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const resolveTransferNoteFile = transferNoteFile ?? defaultTransferNoteFile;
+
   const toAccountHex = (accountOrHex) =>
     typeof accountOrHex === "string" ? accountOrHex : accountOrHex.toString();
 
@@ -221,17 +243,15 @@ export function createFundingRuntime(deps) {
       if (record) {
         return record.toNote();
       }
-      if (transferNoteFile) {
-        const imported = await transferNoteFile(
-          funderClient,
-          targetClient,
-          noteId
-        );
-        if (imported) {
-          const synced = await targetClient.getInputNote(noteId);
-          if (synced) {
-            return synced.toNote();
-          }
+      const imported = await resolveTransferNoteFile(
+        funderClient,
+        targetClient,
+        noteId
+      );
+      if (imported) {
+        const synced = await targetClient.getInputNote(noteId);
+        if (synced) {
+          return synced.toNote();
         }
       }
       if (Date.now() >= deadline) {

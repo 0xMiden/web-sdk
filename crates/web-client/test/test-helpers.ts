@@ -17,8 +17,8 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { normalizeArg, wrapClient } from "../js/node/napi-compat.js";
-import { getNodeSdk, WasmWebClient } from "./node-adapter.ts";
-import { createNodeFunderRuntime } from "./fee-funder";
+import { createNodeFunderClient, getNodeSdk } from "./node-adapter.ts";
+import { getSharedNodeFunderRuntime } from "./fee-funder";
 
 let _helperCounter = 0;
 
@@ -863,26 +863,15 @@ export async function createMidenClient(sdk: any): Promise<any> {
 // ── Integration test helpers ─────────────────────────────────────────
 
 let _integrationCounter = 0;
-let _nodeFunderRuntime: ReturnType<typeof createNodeFunderRuntime> | null =
-  null;
 
 function getNodeFunderRuntime() {
-  if (!_nodeFunderRuntime) {
-    _nodeFunderRuntime = createNodeFunderRuntime({
-      sdk: getNodeSdk(),
-      rpcUrl: getRpcUrl(),
-      feeFaucetId: process.env.TEST_MIDEN_FEE_FAUCET_ID,
-      createFunderClient: (rpcUrl, feeFaucetId) =>
-        WasmWebClient.createClient(
-          rpcUrl,
-          undefined,
-          undefined,
-          "funder",
-          feeFaucetId
-        ),
-    });
-  }
-  return _nodeFunderRuntime;
+  return getSharedNodeFunderRuntime({
+    sdk: getNodeSdk(),
+    rpcUrl: getRpcUrl(),
+    feeFaucetId: process.env.TEST_MIDEN_FEE_FAUCET_ID,
+    createFunderClient: createNodeFunderClient,
+    getDefaultClient: () => (globalThis as any).client,
+  });
 }
 
 export async function sendFundingNotes(accountIds: any[], amount?: bigint) {

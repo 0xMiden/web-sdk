@@ -155,3 +155,222 @@ describe("fee-funder worker locking", () => {
     expect(fs.existsSync(reacquiredLockPath)).toBe(false);
   });
 });
+
+function createRuntimeSdkMock() {
+  return {
+    AccountFile: {
+      deserialize: () => ({
+        accountId: () => ({ toString: () => "0xfunder" }),
+      }),
+    },
+    AccountId: { fromHex: (hex) => ({ toString: () => hex }) },
+    FungibleAsset: class {},
+    NoteAssets: class {},
+    NoteAttachment: class {},
+    NoteArray: class {
+      constructor() {
+        this.items = [];
+      }
+      push(n) {
+        this.items.push(n);
+      }
+    },
+    Note: {
+      createP2IDNote: () => ({ id: () => ({ toString: () => "note_1" }) }),
+    },
+    NoteType: { Public: "Public" },
+    TransactionId: { fromHex: (hex) => ({ toHex: () => hex }) },
+    TransactionFilter: {
+      ids: (ids) => ({ ids: ids.map((id) => id.toHex()) }),
+    },
+    TransactionRequestBuilder: class {
+      withOwnOutputNotes() {
+        return this;
+      }
+      build() {
+        return {};
+      }
+    },
+    TransactionProver: {
+      newLocalProver: () => ({ local: true }),
+      newRemoteProver: () => ({ remote: true }),
+    },
+  };
+}
+
+function createHealthyFunderClient() {
+  return {
+    importAccountFile: vi.fn(async () => {}),
+    syncState: vi.fn(async () => {}),
+    feeFaucetId: vi.fn(async () => ({ toString: () => "0xfee" })),
+    executeTransaction: vi.fn(async () => ({ kind: "exec" })),
+    proveTransaction: vi.fn(async () => ({ proven: true })),
+    submitProvenTransaction: vi.fn(async () => 1),
+    applyTransaction: vi.fn(async () => ({
+      executedTransaction: () => ({ id: () => ({ toHex: () => "0xtx_1" }) }),
+    })),
+    getTransactions: vi.fn(async (filter) =>
+      (filter.ids ?? []).map((id) => ({
+        id: () => ({ toHex: () => id }),
+        transactionStatus: () => ({
+          isCommitted: () => true,
+          isDiscarded: () => false,
+        }),
+      }))
+    ),
+    terminate: vi.fn(async () => {}),
+  };
+}
+
+describe("fee-funder runtime recovery and sharing", () => {
+  const createdDirs = [];
+  const originalEnvDir = process.env.TEST_MIDEN_FUNDER_ACCOUNTS_DIR;
+  const originalWindow = globalThis.window;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+    if (typeof feeFunder.releaseWorkerFunderLock === "function") {
+      feeFunder.releaseWorkerFunderLock();
+    }
+    if (originalEnvDir === undefined) {
+      delete process.env.TEST_MIDEN_FUNDER_ACCOUNTS_DIR;
+    } else {
+      process.env.TEST_MIDEN_FUNDER_ACCOUNTS_DIR = originalEnvDir;
+    }
+    while (createdDirs.length > 0) {
+      fs.rmSync(createdDirs.pop(), { recursive: true, force: true });
+    }
+  });
+
+  function setupSingleFunder() {
+    const fundersDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "miden-fee-funder-rt-")
+    );
+    createdDirs.push(fundersDir, lockDirFor(fundersDir));
+    fs.writeFileSync(
+      path.join(fundersDir, "wallet_0000.mac"),
+      Buffer.from([1])
+    );
+    process.env.TEST_MIDEN_FUNDER_ACCOUNTS_DIR = fundersDir;
+  }
+
+  it("clears cached statePromise when createNodeFunderRuntime init fails and retries", async () => {
+    setupSingleFunder();
+    const healthyClient = createHealthyFunderClient();
+    const createFunderClient = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("transient node rpc error"))
+      .mockResolvedValueOnce(healthyClient);
+
+    const runtime = feeFunder.createNodeFunderRuntime({
+      sdk: createRuntimeSdkMock(),
+      rpcUrl: "http://localhost:57291",
+      feeFaucetId: "0xfee",
+      createFunderClient,
+    });
+
+    await expect(runtime.sendFundingNotes(["0xaaa"])).rejects.toThrow(
+      "transient node rpc error"
+    );
+    const res = await runtime.sendFundingNotes(["0xaaa"]);
+    expect(res?.txId).toBe("0xtx_1");
+    expect(createFunderClient).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears cached funderStatePromise in browser helpers after init rejection and retries", async () => {
+    setupSingleFunder();
+    const healthyClient = createHealthyFunderClient();
+    const createClient = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("transient browser rpc error"))
+      .mockResolvedValueOnce(healthyClient);
+
+    const fakeWindow = {
+      ...createRuntimeSdkMock(),
+      WasmWebClient: { createClient },
+    };
+    globalThis.window = fakeWindow;
+
+    const fakePage = {
+      evaluate: async (fn, arg) => await fn(arg),
+    };
+    await feeFunder.installBrowserFunderHelpers(fakePage, {
+      rpcUrl: "http://localhost:57291",
+      localTxProverUrl: "http://localhost:50051",
+      feeFaucetId: "0xfee",
+      funderMacBytes: [1],
+    });
+
+    await expect(
+      fakeWindow.helpers.sendFundingNotes(["0xaaa"])
+    ).rejects.toThrow("transient browser rpc error");
+    const res = await fakeWindow.helpers.sendFundingNotes(["0xaaa"]);
+    expect(res?.txId).toBe("0xtx_1");
+    expect(createClient).toHaveBeenCalledTimes(2);
+  });
+
+  it("shares one worker-cached Node funder client across getSharedNodeFunderRuntime calls", async () => {
+    setupSingleFunder();
+    const healthyClient = createHealthyFunderClient();
+    const createFunderClient = vi.fn(async () => healthyClient);
+    const sdk = createRuntimeSdkMock();
+
+    const makeTargetClient = () => ({
+      feeFaucetId: vi.fn(async () => ({ toString: () => "0xfee-shared" })),
+      syncState: vi.fn(async () => {}),
+      getInputNote: vi.fn(async () => ({ toNote: () => ({ id: "note_1" }) })),
+      newConsumeTransactionRequest: vi.fn(async () => ({ kind: "consume" })),
+      executeTransaction: vi.fn(async () => ({ kind: "consume-exec" })),
+      proveTransaction: vi.fn(async () => ({ proven: true })),
+      submitProvenTransaction: vi.fn(async () => 1),
+      applyTransaction: vi.fn(async () => ({
+        executedTransaction: () => ({
+          id: () => ({ toHex: () => "0xtx_consume" }),
+        }),
+      })),
+      getTransactions: vi.fn(async (filter) =>
+        (filter.ids ?? []).map((id) => ({
+          id: () => ({ toHex: () => id }),
+          transactionStatus: () => ({
+            isCommitted: () => true,
+            isDiscarded: () => false,
+          }),
+        }))
+      ),
+    });
+
+    const c1 = makeTargetClient();
+    const c2 = makeTargetClient();
+
+    expect(typeof feeFunder.getSharedNodeFunderRuntime).toBe("function");
+    const r1 = feeFunder.getSharedNodeFunderRuntime({
+      sdk,
+      rpcUrl: "http://localhost:57291/shared-test",
+      feeFaucetId: "0xfee-shared",
+      createFunderClient,
+      getDefaultClient: () => c1,
+    });
+    const r2 = feeFunder.getSharedNodeFunderRuntime({
+      sdk,
+      rpcUrl: "http://localhost:57291/shared-test",
+      feeFaucetId: "0xfee-shared",
+      createFunderClient,
+      getDefaultClient: () => c2,
+    });
+
+    await r1.fundAccounts(["0xaaa"]);
+    await r2.fundAccounts(["0xbbb"]);
+    expect(createFunderClient).toHaveBeenCalledTimes(1);
+    expect(healthyClient.importAccountFile).toHaveBeenCalledTimes(1);
+    expect(c1.newConsumeTransactionRequest).toHaveBeenCalledTimes(1);
+    expect(c2.newConsumeTransactionRequest).toHaveBeenCalledTimes(1);
+
+    feeFunder.releaseWorkerFunderLock();
+    expect(healthyClient.terminate).toHaveBeenCalledTimes(1);
+  });
+});

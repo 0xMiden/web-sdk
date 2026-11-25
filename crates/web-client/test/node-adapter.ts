@@ -21,7 +21,7 @@ import {
   NODE_ARRAY_TYPES,
   wrapClient,
 } from "../js/node/napi-compat.js";
-import { createNodeFunderRuntime } from "./fee-funder";
+import { getSharedNodeFunderRuntime } from "./fee-funder";
 
 const require = createRequire(import.meta.url);
 
@@ -169,23 +169,29 @@ export const WasmWebClient = {
 
 // ── Helpers (matches window.helpers.*) ────────────────────────────────
 
+export function createNodeFunderClient(
+  targetRpcUrl: string,
+  feeFaucetId?: string
+): Promise<any> {
+  return WasmWebClient.createClient(
+    targetRpcUrl,
+    undefined,
+    undefined,
+    "funder",
+    feeFaucetId
+  );
+}
+
 function createHelpers(
   getClient: () => any,
   setClient: (c: any) => void,
   rpcUrl: string
 ) {
-  const funderRuntime = createNodeFunderRuntime({
+  const funderRuntime = getSharedNodeFunderRuntime({
     sdk: getNodeSdk(),
     rpcUrl,
     feeFaucetId: process.env.TEST_MIDEN_FEE_FAUCET_ID,
-    createFunderClient: (targetRpcUrl, feeFaucetId) =>
-      WasmWebClient.createClient(
-        targetRpcUrl,
-        undefined,
-        undefined,
-        "funder",
-        feeFaucetId
-      ),
+    createFunderClient: createNodeFunderClient,
     getDefaultClient: getClient,
   });
 

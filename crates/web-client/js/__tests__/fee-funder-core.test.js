@@ -446,4 +446,98 @@ describe("fee-funder-core", () => {
       nowSpy.mockRestore();
     }
   });
+
+  it("uses sdk default transferNoteFile fallback when deps.transferNoteFile is omitted", async () => {
+    const sdk = createFakeSdk();
+    sdk.NoteExportFormat = { Full: "Full" };
+    sdk.NoteFile = {
+      deserialize: vi.fn((bytes) => ({ deserialized: bytes })),
+    };
+
+    let now = 0;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => {
+      const val = now;
+      now += 20_000;
+      return val;
+    });
+
+    try {
+      const funderClient = {
+        syncState: vi.fn(async () => {}),
+        feeFaucetId: vi.fn(async () => ({ toString: () => "0xfee" })),
+        executeTransaction: vi.fn(async () => ({ kind: "exec" })),
+        submitProvenTransaction: vi.fn(async () => 42),
+        applyTransaction: vi.fn(async () => ({
+          executedTransaction: () => ({
+            id: () => ({ toHex: () => "0xtx_funder" }),
+          }),
+        })),
+        getTransactions: vi.fn(async (filter) =>
+          filter.ids.map((id) => ({
+            id: () => ({ toHex: () => id }),
+            transactionStatus: () => ({
+              isCommitted: () => true,
+              isDiscarded: () => false,
+            }),
+          }))
+        ),
+        exportNoteFile: vi.fn(async () => ({
+          serialize: () => new Uint8Array([9, 8, 7]),
+        })),
+      };
+
+      let imported = false;
+      const targetClient = {
+        feeFaucetId: vi.fn(async () => ({ toString: () => "0xfee" })),
+        syncState: vi.fn(async () => {}),
+        getInputNote: vi.fn(async () =>
+          imported ? { toNote: () => ({ id: "note_1" }) } : null
+        ),
+        importNoteFile: vi.fn(async () => {
+          imported = true;
+        }),
+        newConsumeTransactionRequest: vi.fn(async () => ({ kind: "consume" })),
+        executeTransaction: vi.fn(async () => ({ kind: "consume-exec" })),
+        submitProvenTransaction: vi.fn(async () => 43),
+        applyTransaction: vi.fn(async () => ({
+          executedTransaction: () => ({
+            id: () => ({ toHex: () => "0xtx_consume" }),
+          }),
+        })),
+        getTransactions: vi.fn(async (filter) =>
+          filter.ids.map((id) => ({
+            id: () => ({ toHex: () => id }),
+            transactionStatus: () => ({
+              isCommitted: () => true,
+              isDiscarded: () => false,
+            }),
+          }))
+        ),
+      };
+
+      const runtime = createFundingRuntime({
+        sdk,
+        getDefaultClient: () => targetClient,
+        getFunderState: async () => ({
+          client: funderClient,
+          funderHex: "0xfunder",
+          feeFaucetHex: "0xfee",
+          queue: Promise.resolve(),
+        }),
+        proveTransactionWithFallback: async () => ({ proven: true }),
+        retryDelayMs: 0,
+      });
+
+      await runtime.fundAccounts(["0xaaa"]);
+      expect(funderClient.exportNoteFile).toHaveBeenCalledWith(
+        "note_1",
+        "Full"
+      );
+      expect(targetClient.importNoteFile).toHaveBeenCalledWith({
+        deserialized: new Uint8Array([9, 8, 7]),
+      });
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
 });

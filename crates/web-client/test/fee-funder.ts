@@ -28,6 +28,8 @@ const STALE_EMPTY_LOCK_GRACE_MS = 10_000;
 let _activeLock: ActiveLock | null = null;
 let _exitHookRegistered = false;
 let _lockSeq = 0;
+const _sharedNodeStates = new Map<string, () => Promise<any>>();
+const _nodeFunderClients = new Set<any>();
 
 function isLocalhostRpc(rpcUrl: string): boolean {
   return rpcUrl.includes("localhost") || rpcUrl.includes("127.0.0.1");
@@ -183,6 +185,15 @@ function sleepSync(ms: number): void {
 export function releaseWorkerFunderLock(): void {
   const lock = _activeLock;
   _activeLock = null;
+  _sharedNodeStates.clear();
+  for (const client of _nodeFunderClients) {
+    try {
+      void client?.terminate?.()?.catch?.(() => {});
+    } catch {
+      // Best-effort cleanup on worker exit.
+    }
+  }
+  _nodeFunderClients.clear();
   if (!lock) return;
   try {
     if (ownsActiveLock(lock)) {
@@ -292,32 +303,39 @@ export async function installBrowserFunderHelpers(
         }
         if (!funderStatePromise) {
           funderStatePromise = (async () => {
-            const funderStoreName = `funder_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-            const client = await w.WasmWebClient.createClient(
-              rpcUrl,
-              undefined,
-              undefined,
-              funderStoreName,
-              undefined,
-              undefined,
-              undefined,
-              feeFaucetId
-            );
-            const accountFile = w.AccountFile.deserialize(
-              new Uint8Array(funderMacBytes)
-            );
-            const funderHex = accountFile.accountId().toString();
-            await client.importAccountFile(accountFile);
-            await client.syncState();
-            const feeFaucetHex =
-              feeFaucetId ?? (await client.feeFaucetId())?.toString();
-            cachedFunderState = {
-              client,
-              funderHex,
-              feeFaucetHex,
-              queue: Promise.resolve(),
-            };
-            return cachedFunderState;
+            let client: any = null;
+            try {
+              const funderStoreName = `funder_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+              client = await w.WasmWebClient.createClient(
+                rpcUrl,
+                undefined,
+                undefined,
+                funderStoreName,
+                undefined,
+                undefined,
+                undefined,
+                feeFaucetId
+              );
+              const accountFile = w.AccountFile.deserialize(
+                new Uint8Array(funderMacBytes)
+              );
+              const funderHex = accountFile.accountId().toString();
+              await client.importAccountFile(accountFile);
+              await client.syncState();
+              const feeFaucetHex =
+                feeFaucetId ?? (await client.feeFaucetId())?.toString();
+              cachedFunderState = {
+                client,
+                funderHex,
+                feeFaucetHex,
+                queue: Promise.resolve(),
+              };
+              return cachedFunderState;
+            } catch (err) {
+              funderStatePromise = null;
+              await client?.terminate?.().catch(() => {});
+              throw err;
+            }
           })();
         }
         return await funderStatePromise;
@@ -355,31 +373,12 @@ export async function installBrowserFunderHelpers(
         );
       };
 
-      const transferNoteFile = async (
-        funderClient: any,
-        targetClient: any,
-        noteId: string
-      ): Promise<boolean> => {
-        try {
-          const noteFile = await funderClient.exportNoteFile(
-            noteId,
-            w.NoteExportFormat.Full
-          );
-          const bytes = noteFile.serialize();
-          await targetClient.importNoteFile(w.NoteFile.deserialize(bytes));
-          return true;
-        } catch {
-          return false;
-        }
-      };
-
       const factory = new Function(`return (${runtimeFactorySource});`)();
       const runtime = factory({
         sdk: w,
         getDefaultClient: () => w.client,
         getFunderState,
         proveTransactionWithFallback,
-        transferNoteFile,
       });
 
       w.helpers.sendFundingNotes = runtime.sendFundingNotes;
@@ -393,20 +392,25 @@ export async function installBrowserFunderHelpers(
   );
 }
 
-export function createNodeFunderRuntime(options: {
+interface NodeFunderRuntimeOptions {
   sdk: any;
   rpcUrl: string;
   feeFaucetId?: string;
   createFunderClient: (rpcUrl: string, feeFaucetId?: string) => Promise<any>;
   getDefaultClient?: () => any;
-}) {
-  const { sdk, rpcUrl, feeFaucetId, createFunderClient, getDefaultClient } =
-    options;
+}
 
+function createNodeFunderStateGetter(options: {
+  sdk: any;
+  rpcUrl: string;
+  feeFaucetId?: string;
+  createFunderClient: (rpcUrl: string, feeFaucetId?: string) => Promise<any>;
+}): () => Promise<any> {
+  const { sdk, rpcUrl, feeFaucetId, createFunderClient } = options;
   let cachedState: any = null;
   let statePromise: Promise<any> | null = null;
 
-  const getFunderState = async () => {
+  return async () => {
     const claimed = claimFunderMacBytes(rpcUrl);
     if (!claimed) {
       return null;
@@ -416,27 +420,41 @@ export function createNodeFunderRuntime(options: {
     }
     if (!statePromise) {
       statePromise = (async () => {
-        const client = await createFunderClient(rpcUrl, feeFaucetId);
-        const accountFile = sdk.AccountFile.deserialize(
-          new Uint8Array(claimed.bytes)
-        );
-        const funderHex = accountFile.accountId().toString();
-        await client.importAccountFile(accountFile);
-        await client.syncState();
-        const resolvedFeeFaucet =
-          feeFaucetId ?? (await client.feeFaucetId())?.toString();
-        cachedState = {
-          client,
-          funderHex,
-          feeFaucetHex: resolvedFeeFaucet,
-          queue: Promise.resolve(),
-        };
-        return cachedState;
+        let client: any = null;
+        try {
+          client = await createFunderClient(rpcUrl, feeFaucetId);
+          const accountFile = sdk.AccountFile.deserialize(
+            new Uint8Array(claimed.bytes)
+          );
+          const funderHex = accountFile.accountId().toString();
+          await client.importAccountFile(accountFile);
+          await client.syncState();
+          const resolvedFeeFaucet =
+            feeFaucetId ?? (await client.feeFaucetId())?.toString();
+          _nodeFunderClients.add(client);
+          cachedState = {
+            client,
+            funderHex,
+            feeFaucetHex: resolvedFeeFaucet,
+            queue: Promise.resolve(),
+          };
+          return cachedState;
+        } catch (err) {
+          statePromise = null;
+          await client?.terminate?.().catch(() => {});
+          throw err;
+        }
       })();
     }
     return await statePromise;
   };
+}
 
+function buildNodeFundingRuntime(
+  sdk: any,
+  getFunderState: () => Promise<any>,
+  getDefaultClient?: () => any
+) {
   return createFundingRuntime({
     sdk,
     getDefaultClient: getDefaultClient ?? (() => undefined),
@@ -450,22 +468,27 @@ export function createNodeFunderRuntime(options: {
         execResult,
         proverOverride ?? sdk.TransactionProver.newLocalProver()
       ),
-    transferNoteFile: async (
-      funderClient: any,
-      targetClient: any,
-      noteId: string
-    ) => {
-      try {
-        const noteFile = await funderClient.exportNoteFile(
-          noteId,
-          sdk.NoteExportFormat.Full
-        );
-        const bytes = noteFile.serialize();
-        await targetClient.importNoteFile(sdk.NoteFile.deserialize(bytes));
-        return true;
-      } catch {
-        return false;
-      }
-    },
   });
+}
+
+export function createNodeFunderRuntime(options: NodeFunderRuntimeOptions) {
+  return buildNodeFundingRuntime(
+    options.sdk,
+    createNodeFunderStateGetter(options),
+    options.getDefaultClient
+  );
+}
+
+export function getSharedNodeFunderRuntime(options: NodeFunderRuntimeOptions) {
+  const cacheKey = `${options.rpcUrl}::${options.feeFaucetId ?? ""}`;
+  let getFunderState = _sharedNodeStates.get(cacheKey);
+  if (!getFunderState) {
+    getFunderState = createNodeFunderStateGetter(options);
+    _sharedNodeStates.set(cacheKey, getFunderState);
+  }
+  return buildNodeFundingRuntime(
+    options.sdk,
+    getFunderState,
+    options.getDefaultClient
+  );
 }
