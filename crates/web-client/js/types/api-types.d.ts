@@ -1910,7 +1910,7 @@ export interface TransactionsResource {
    * a sync does not insert the missing records: look the ids up on the node.
    *
    * Browser builds only: the Node.js build prefixes the message with the code but
-   * cannot attach the submission, so it cannot retry yet.
+   * cannot attach the submission or `transactionIds`, so it cannot retry yet.
    *
    * Accepting an externally proved transaction as a batch member
    * (`push_proven_transaction`) needs a rust-sdk release that exposes it on

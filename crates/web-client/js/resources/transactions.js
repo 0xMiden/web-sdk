@@ -1143,7 +1143,7 @@ export class TransactionsResource {
    * a sync does not insert the missing records: look the ids up on the node.
    *
    * Browser builds only: the Node.js build prefixes the message with the code but
-   * cannot attach the submission, so it cannot retry yet.
+   * cannot attach the submission or `transactionIds`, so it cannot retry yet.
    *
    * @param {object|string} submission - ProvenBatchSubmission, worker
    *   `submissionId`, or `{ submissionId }` from the unknown-outcome error.
