@@ -178,7 +178,7 @@ export async function getAccountCode(dbId, codeRoot) {
 export async function getAccountStorage(dbId, accountId, slotNames) {
     try {
         const db = getDatabase(dbId);
-        let query = db.latestAccountStorages.where("accountId").equals(accountId);
+        const query = db.latestAccountStorages.where("accountId").equals(accountId);
         let allMatchingRecords;
         if (slotNames.length) {
             const nameSet = new Set(slotNames);
@@ -215,7 +215,7 @@ export async function getAccountStorageMaps(dbId, accountId) {
 export async function getAccountVaultAssets(dbId, accountId, vaultKeys) {
     try {
         const db = getDatabase(dbId);
-        let query = db.latestAccountAssets.where("accountId").equals(accountId);
+        const query = db.latestAccountAssets.where("accountId").equals(accountId);
         let records;
         if (vaultKeys.length) {
             const keySet = new Set(vaultKeys);

@@ -12,8 +12,6 @@ export default tseslint.config(
         tsconfigRootDir: import.meta.dirname,
       },
     },
-    // This can be a bit annoying since we're used to use `let` coming from rust, but we can add it back.
-    rules: { "prefer-const": "off" },
   },
   {
     ignores: [

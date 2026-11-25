@@ -32,9 +32,9 @@ import Dexie from "dexie";
 export async function getNoteTags(dbId: string) {
   try {
     const db = getDatabase(dbId);
-    let records = await db.tags.toArray();
+    const records = await db.tags.toArray();
 
-    let processedRecords = records.map((record) => {
+    const processedRecords = records.map((record) => {
       record.sourceNoteId =
         record.sourceNoteId == "" ? undefined : record.sourceNoteId;
       record.sourceAccountId =
@@ -57,7 +57,7 @@ export async function getSyncHeight(dbId: string) {
     const db = getDatabase(dbId);
     const record = await db.blockchainCheckpoint.get(1);
     if (record) {
-      let data = {
+      const data = {
         blockNum: record.blockNum,
       };
       return data;
@@ -97,8 +97,8 @@ export async function addNoteTag(
 ) {
   try {
     const db = getDatabase(dbId);
-    let tagArray = new Uint8Array(tag);
-    let tagBase64 = uint8ArrayToBase64(tagArray);
+    const tagArray = new Uint8Array(tag);
+    const tagBase64 = uint8ArrayToBase64(tagArray);
     await db.tags.add({
       tag: tagBase64,
       sourceNoteId: sourceNoteId ? sourceNoteId : "",
@@ -119,8 +119,8 @@ export async function removeNoteTag(
 ) {
   try {
     const db = getDatabase(dbId);
-    let tagArray = new Uint8Array(tag);
-    let tagBase64 = uint8ArrayToBase64(tagArray);
+    const tagArray = new Uint8Array(tag);
+    const tagBase64 = uint8ArrayToBase64(tagArray);
     const subscriptionKey = sourceSubscriptionKey ? sourceSubscriptionKey : "";
 
     return await db.tags
@@ -375,7 +375,7 @@ export async function applyStateSync(
       ),
       Promise.all(
         transactionUpdates.map((transactionRecord) => {
-          let promises = [
+          const promises = [
             upsertTransactionRecord(
               dbId,
               transactionRecord.id,

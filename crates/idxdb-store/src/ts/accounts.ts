@@ -227,7 +227,7 @@ export async function getAccountStorage(
 ) {
   try {
     const db = getDatabase(dbId);
-    let query = db.latestAccountStorages.where("accountId").equals(accountId);
+    const query = db.latestAccountStorages.where("accountId").equals(accountId);
 
     let allMatchingRecords;
     if (slotNames.length) {
@@ -276,7 +276,7 @@ export async function getAccountVaultAssets(
 ) {
   try {
     const db = getDatabase(dbId);
-    let query = db.latestAccountAssets.where("accountId").equals(accountId);
+    const query = db.latestAccountAssets.where("accountId").equals(accountId);
 
     let records;
     if (vaultKeys.length) {
