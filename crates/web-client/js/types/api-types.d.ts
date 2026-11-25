@@ -2309,7 +2309,8 @@ export interface TagsResource {
  * endpoint, so the reads are available while a sync or transaction is in
  * flight. They reject on a mock client, which has no node, and after
  * `terminate()`. Use the standalone `RpcClient` for node calls this resource
- * does not cover.
+ * does not cover. Returned `BlockHeader`, `MmrProof` and `NullifierUpdate`
+ * objects are WASM wrappers: call `free()` on them when done.
  */
 export interface ChainResource {
   /**

@@ -144,6 +144,7 @@ describe("MidenClient.chain hygiene", () => {
       hex,
       toHex: () => hex,
       free: vi.fn(),
+      // eslint-disable-next-line camelcase
       __wbg_ptr: 0,
     }));
     await client.chain.getNullifierCommitHeights(["0xcc"]);
@@ -162,13 +163,23 @@ describe("MidenClient.chain hygiene", () => {
 
   it("frees the header-with-proof wrapper after cloning its parts", async () => {
     const { client, rpc } = makeClient();
+    let freed = false;
+    const readLive = (value) => () => {
+      if (freed) throw new Error("wrapper used after free");
+      return value;
+    };
     const result = {
-      header: () => "header-3",
-      mmrProof: () => "proof-3",
-      free: vi.fn(),
+      header: readLive("header-3"),
+      mmrProof: readLive("proof-3"),
+      free: vi.fn(() => {
+        freed = true;
+      }),
     };
     rpc.getBlockHeaderWithProof.mockResolvedValue(result);
-    await client.chain.getBlockHeaderWithProof(3);
+    await expect(client.chain.getBlockHeaderWithProof(3)).resolves.toEqual({
+      header: "header-3",
+      mmrProof: "proof-3",
+    });
     expect(result.free).toHaveBeenCalledTimes(1);
   });
 
@@ -212,7 +223,7 @@ describe("MidenClient.chain hygiene", () => {
   });
 
   it("rejects every read after terminate without calling the RPC", async () => {
-    const { client, rpc } = makeClient();
+    const { client, rpc, wasm } = makeClient();
     client.terminate();
     for (const call of [
       () => client.chain.getBlockHeader(),
@@ -222,6 +233,14 @@ describe("MidenClient.chain hygiene", () => {
     ]) {
       await expect(call()).rejects.toThrow(/Client terminated/);
     }
-    expect(rpc.getBlockHeaderByNumber).not.toHaveBeenCalled();
+    for (const method of [
+      "getBlockHeaderByNumber",
+      "getBlockHeaderWithProof",
+      "getNullifierCommitHeights",
+      "syncNullifiers",
+    ]) {
+      expect(rpc[method]).not.toHaveBeenCalled();
+    }
+    expect(wasm.RpcClient).not.toHaveBeenCalled();
   });
 });

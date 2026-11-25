@@ -18,6 +18,13 @@ const tip = await client.chain.getBlockHeader(); // latest block
 const { header, mmrProof } = await client.chain.getBlockHeaderWithProof(100);
 ```
 
+## Freeing results
+
+`BlockHeader`, `MmrProof` and each `NullifierUpdate` (with the `Word` its
+`nullifier()` returns) are WASM objects that garbage collection does not
+reclaim. Call `.free()` on them when you are done, especially in loops or
+polling. `getNullifierCommitHeights` returns plain numbers, so it needs nothing.
+
 ## Block headers and MMR proofs
 
 `getBlockHeader(blockNum?)` returns the header of a block, or of the latest
