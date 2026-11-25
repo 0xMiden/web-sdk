@@ -37,6 +37,7 @@
 
 ### Fixes
 
+* [FIX][docs] Added `crates/js-export-macro/README.md` and configured `readme = "README.md"` in `crates/js-export-macro/Cargo.toml` so the published `js-export-macro` crate includes documentation on crates.io ([#191](https://github.com/0xMiden/web-sdk/issues/191)).
 * [FIX][web] Development faucet funding preserves the full integer value of proof-of-work targets sent as JSON numbers ([#626](https://github.com/0xMiden/web-sdk/pull/626)).
 
 * [FIX][web] Safari and other AppleWebKit hosts no longer fail to load the WASM asset after a Vite or webpack production build. The classic worker receives the hashed WASM URL from the main thread (as a string because WebKit cannot structured-clone a `URL` object over `postMessage`) instead of resolving an unhashed path relative to the worker script ([#286](https://github.com/0xMiden/web-sdk/issues/286)).
