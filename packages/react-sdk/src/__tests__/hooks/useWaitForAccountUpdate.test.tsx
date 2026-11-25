@@ -789,12 +789,22 @@ describe("useWaitForAccountUpdate", () => {
       expect(result.current.account).toBe(updated);
 
       // Start a second wait, then reset() while it is sleeping
+      let pending!: Promise<unknown>;
+      let pendingStatus = "pending";
       act(() => {
-        void result.current.waitForAccountUpdate("0xacc", {
+        pending = result.current.waitForAccountUpdate("0xacc", {
           baselineCommitment: "0xsame",
           timeoutMs: 5000,
           intervalMs: 100,
         });
+        void pending.then(
+          () => {
+            pendingStatus = "resolved";
+          },
+          (err: unknown) => {
+            pendingStatus = `rejected:${err instanceof Error ? err.message : String(err)}`;
+          }
+        );
       });
       await act(async () => {
         await Promise.resolve();
@@ -805,7 +815,12 @@ describe("useWaitForAccountUpdate", () => {
       act(() => {
         result.current.reset();
       });
+      await act(async () => {
+        await Promise.resolve();
+      });
 
+      expect(pendingStatus).toBe("rejected:Account update wait was reset");
+      await expect(pending).rejects.toThrow("Account update wait was reset");
       expect(vi.getTimerCount()).toBe(0);
       expect(result.current.account).toBeNull();
       expect(result.current.error).toBeNull();
@@ -815,6 +830,29 @@ describe("useWaitForAccountUpdate", () => {
         await vi.advanceTimersByTimeAsync(1000);
       });
       expect(syncState).toHaveBeenCalledTimes(2);
+
+      // Reactive mode reset() clears state cleanly without setting error
+      const { result: reactive } = renderHook(() =>
+        useWaitForAccountUpdate("0xacc", {
+          enabled: true,
+          baselineCommitment: "0xsame",
+          timeoutMs: 5000,
+          intervalMs: 100,
+        })
+      );
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(reactive.current.isWaiting).toBe(true);
+      act(() => {
+        reactive.current.reset();
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(reactive.current.account).toBeNull();
+      expect(reactive.current.error).toBeNull();
+      expect(reactive.current.isWaiting).toBe(false);
     });
 
     it("supports reactive enabled mode and stops when disabled or unmounted", async () => {

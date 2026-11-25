@@ -66,5 +66,6 @@ poll loop declaratively on mount and whenever watched inputs change.
 
 - Each poll runs `syncState()` and `getAccount()` sequentially through `runExclusive`.
 - Calling `unsubscribe()` rejects the in-flight `waitForAccountUpdate` promise, clears any pending timer, and stops polling.
-- Component unmount or `reset()` stops polling and clears timers cleanly without leaving background `syncState()` calls or rejecting unawaited promises.
+- Calling `reset()` rejects any in-flight `waitForAccountUpdate` promise, stops polling, clears pending timers, and resets `account`, `error`, and `isWaiting`.
+- Component unmount stops polling and clears timers cleanly without leaving background `syncState()` calls or rejecting unawaited promises.
 - Calling `waitForAccountUpdate()` while another wait from the same hook instance is active supersedes the previous wait.

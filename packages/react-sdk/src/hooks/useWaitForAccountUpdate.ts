@@ -51,7 +51,10 @@ export interface UseWaitForAccountUpdateResult {
   isWaiting: boolean;
   /** Error from the most recent wait, or `null`. */
   error: Error | null;
-  /** Cancel any active wait and reset `account` and `error` state. */
+  /**
+   * Cancel any active wait, reset `account` and `error` state, and reject
+   * an in-flight `waitForAccountUpdate` promise.
+   */
   reset: () => void;
 }
 
@@ -316,13 +319,9 @@ export function useWaitForAccountUpdate(
           wakeSleep?.();
           wakeSleep = null;
 
-          if (
-            mode === "unmount" ||
-            mode === "reset" ||
-            mode === "effect-cleanup"
-          ) {
+          if (mode === "unmount" || mode === "effect-cleanup") {
             // Stop timers and polling without rejecting an unawaited promise
-            // during component teardown, explicit reset, or reactive cleanup.
+            // during component teardown or reactive cleanup.
             settled = true;
             cleanupActive();
             if (
@@ -352,7 +351,9 @@ export function useWaitForAccountUpdate(
           const message =
             mode === "unsubscribe"
               ? "Unsubscribed from account update"
-              : "Account update wait was superseded";
+              : mode === "reset"
+                ? "Account update wait was reset"
+                : "Account update wait was superseded";
           finishReject(new Error(message));
         };
 
