@@ -5,6 +5,7 @@ edition.workspace      = true
 keywords               = ["macro", "miden", "napi", "wasm"]
 license.workspace      = true
 name                   = "js-export-macro"
+readme                 = "README.md"
 repository.workspace   = true
 rust-version.workspace = true
 version.workspace      = true
