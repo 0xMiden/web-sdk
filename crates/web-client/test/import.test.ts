@@ -32,6 +32,7 @@ test.describe("import from seed", () => {
 
       // Mint
       await intClient.syncState();
+      await helpers.fundAccounts([faucetId, initialWalletId], intClient);
       const mintRequest = await intClient.newMintTransactionRequest(
         initialWalletId,
         faucetId,
@@ -252,6 +253,7 @@ test.describe("import public account by id", () => {
 
       // Mint
       await intClient.syncState();
+      await helpers.fundAccounts([faucetId, initialWalletId], intClient);
       const mintRequest = await intClient.newMintTransactionRequest(
         initialWalletId,
         faucetId,

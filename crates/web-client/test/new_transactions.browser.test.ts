@@ -117,6 +117,10 @@ export const discardedTransaction = async (
       window.AuthScheme.AuthRpoFalcon512
     );
     await client.syncState();
+    await window.helpers.fundAccounts(
+      [senderAccount.id(), targetAccount.id(), faucetAccount.id()],
+      client
+    );
 
     let mintTransactionRequest = await client.newMintTransactionRequest(
       senderAccount.id(),
@@ -350,12 +354,17 @@ export const counterAccountComponent = async (
     let accountBuilderResult = new window.AccountBuilder(walletSeed)
       .storageMode(window.AccountStorageMode.public())
       .withNoAuthComponent()
+      .withBasicWalletComponent()
       .withComponent(counterAccountComponent)
       .build();
 
     await client.newAccount(accountBuilderResult.account, false);
 
     await client.syncState();
+    await window.helpers.fundAccounts(
+      [accountBuilderResult.account.id()],
+      client
+    );
 
     // Link the exact code installed on the counter account.
     builder.linkDynamicAccountComponentCode(

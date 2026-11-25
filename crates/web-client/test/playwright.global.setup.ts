@@ -5,6 +5,7 @@ import {
   createFakePage,
   WasmWebClient,
 } from "./node-adapter.ts";
+import { claimFunderMacBytes, installBrowserFunderHelpers } from "./fee-funder";
 
 // Unique per test run so concurrent suites don't share IndexedDB stores.
 export const RUN_ID = crypto.randomUUID().slice(0, 8);
@@ -345,6 +346,15 @@ export const test = base.extend<{ forEachTest: void }>({
             feeFaucetId: getFeeFaucetId(),
           }
         );
+
+        const rpcUrl = getRpcUrl();
+        const feeFaucetId = getFeeFaucetId();
+        await installBrowserFunderHelpers(page, {
+          rpcUrl,
+          localTxProverUrl: `http://localhost:${REMOTE_TX_PROVER_PORT}`,
+          feeFaucetId,
+          funderMacBytes: claimFunderMacBytes(rpcUrl)?.bytes ?? null,
+        });
       }
       await use();
     },

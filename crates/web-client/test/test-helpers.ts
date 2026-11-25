@@ -17,7 +17,8 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { normalizeArg, wrapClient } from "../js/node/napi-compat.js";
-import { getNodeSdk } from "./node-adapter.ts";
+import { getNodeSdk, WasmWebClient } from "./node-adapter.ts";
+import { createNodeFunderRuntime } from "./fee-funder";
 
 let _helperCounter = 0;
 
@@ -862,6 +863,59 @@ export async function createMidenClient(sdk: any): Promise<any> {
 // ── Integration test helpers ─────────────────────────────────────────
 
 let _integrationCounter = 0;
+let _nodeFunderRuntime: ReturnType<typeof createNodeFunderRuntime> | null =
+  null;
+
+function getNodeFunderRuntime() {
+  if (!_nodeFunderRuntime) {
+    _nodeFunderRuntime = createNodeFunderRuntime({
+      sdk: getNodeSdk(),
+      rpcUrl: getRpcUrl(),
+      feeFaucetId: process.env.TEST_MIDEN_FEE_FAUCET_ID,
+      createFunderClient: (rpcUrl, feeFaucetId) =>
+        WasmWebClient.createClient(
+          rpcUrl,
+          undefined,
+          undefined,
+          "funder",
+          feeFaucetId
+        ),
+    });
+  }
+  return _nodeFunderRuntime;
+}
+
+export async function sendFundingNotes(accountIds: any[], amount?: bigint) {
+  return await getNodeFunderRuntime().sendFundingNotes(accountIds, amount);
+}
+
+export async function fundAccounts(
+  accountIds: any[],
+  targetClient?: any,
+  prover?: any,
+  amount?: bigint
+) {
+  return await getNodeFunderRuntime().fundAccounts(
+    accountIds,
+    targetClient,
+    prover,
+    amount
+  );
+}
+
+export async function ensureFunded(
+  accountIds: any[],
+  targetClient?: any,
+  prover?: any,
+  amount?: bigint
+) {
+  return await getNodeFunderRuntime().ensureFunded(
+    accountIds,
+    targetClient,
+    prover,
+    amount
+  );
+}
 
 /**
  * Creates an integration client connected to a real node.

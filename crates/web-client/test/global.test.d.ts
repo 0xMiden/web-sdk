@@ -209,6 +209,34 @@ declare global {
       ) => Promise<any>;
       parseNetworkId: (networkId: string) => NetworkId;
       generateKeyWithScheme: (signatureScheme: string) => AuthSecretKey;
+      sendFundingNotes: (
+        accountIds: Array<AccountId | string>,
+        amount?: bigint
+      ) => Promise<{
+        txId: string;
+        noteIds: string[];
+        targetNotes: Array<{ accountId: string; noteId: string }>;
+      } | null>;
+      fundAccounts: (
+        accountIds: Array<AccountId | string>,
+        targetClient?: any,
+        prover?: TransactionProver,
+        amount?: bigint
+      ) => Promise<{
+        txId: string;
+        noteIds: string[];
+        targetNotes: Array<{ accountId: string; noteId: string }>;
+      } | null>;
+      ensureFunded: (
+        accountIds: Array<AccountId | string>,
+        targetClient?: any,
+        prover?: TransactionProver,
+        amount?: bigint
+      ) => Promise<{
+        txId: string;
+        noteIds: string[];
+        targetNotes: Array<{ accountId: string; noteId: string }>;
+      } | null>;
     };
   }
 }

@@ -34,6 +34,7 @@ import {
 } from "./playwright.global.setup";
 import { wrapClient } from "../js/node/napi-compat.js";
 import { getNodeSdk, loadNodeSdk } from "./node-adapter.ts";
+import { claimFunderMacBytes, installBrowserFunderHelpers } from "./fee-funder";
 
 const require = createRequire(import.meta.url);
 
@@ -1001,6 +1002,13 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
     },
     { rpcUrl, storeName, feeFaucetId }
   );
+
+  await installBrowserFunderHelpers(page, {
+    rpcUrl,
+    localTxProverUrl: "http://localhost:50051",
+    feeFaucetId,
+    funderMacBytes: claimFunderMacBytes(rpcUrl)?.bytes ?? null,
+  });
 }
 
 /**
@@ -1122,6 +1130,20 @@ async function createNodeRunHelpers(client: any, sdk: any): Promise<any> {
         serializedNoteTransport
       ),
     createIntegrationClient: () => h.createIntegrationClient(),
+    sendFundingNotes: (accountIds: any[], amount?: bigint) =>
+      h.sendFundingNotes(accountIds, amount),
+    fundAccounts: (
+      accountIds: any[],
+      targetClient?: any,
+      prover?: any,
+      amount?: bigint
+    ) => h.fundAccounts(accountIds, targetClient, prover, amount),
+    ensureFunded: (
+      accountIds: any[],
+      targetClient?: any,
+      prover?: any,
+      amount?: bigint
+    ) => h.ensureFunded(accountIds, targetClient, prover, amount),
     createMidenMockClient: async (options?: any) => {
       const MidenClient = await h.createMidenClient(sdk);
       if (!MidenClient) throw new Error("MidenClient unavailable");

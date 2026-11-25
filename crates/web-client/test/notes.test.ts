@@ -60,6 +60,7 @@ test.describe("get_input_note", () => {
 
       // Mint
       await intClient.syncState();
+      await helpers.fundAccounts([walletId, faucetId], intClient);
       const mintRequest = await intClient.newMintTransactionRequest(
         walletId,
         faucetId,
@@ -206,6 +207,7 @@ test.describe("get_input_note", () => {
 
       // Mint (public note)
       await intClient.syncState();
+      await helpers.fundAccounts([walletId, faucetId], intClient);
       const mintRequest = await intClient.newMintTransactionRequest(
         walletId,
         faucetId,
@@ -348,6 +350,7 @@ test.describe("get_input_note", () => {
 
       // Mint (public note)
       await intClient.syncState();
+      await helpers.fundAccounts([walletId, faucetId], intClient);
       const mintRequest = await intClient.newMintTransactionRequest(
         walletId,
         faucetId,
@@ -551,6 +554,7 @@ test.describe("get_input_notes", () => {
 
       // Mint
       await intClient.syncState();
+      await helpers.fundAccounts([walletId, faucetId], intClient);
       const mintRequest = await intClient.newMintTransactionRequest(
         walletId,
         faucetId,
@@ -681,6 +685,7 @@ test.describe("get_consumable_notes", () => {
 
       // Mint
       await intClient.syncState();
+      await helpers.fundAccounts([walletIdStr, faucetIdStr], intClient);
       const mintRequest = await intClient.newMintTransactionRequest(
         walletIdObj,
         faucetIdObj,
@@ -784,6 +789,7 @@ test.describe("get_consumable_notes", () => {
         const faucetId = faucet.id();
 
         await intClient.syncState();
+        await helpers.fundAccounts([walletId, faucetId], intClient);
         const mintRequest = await intClient.newMintTransactionRequest(
           walletId,
           faucetId,
@@ -913,6 +919,10 @@ test.describe("get_consumable_notes", () => {
 
       // Mint
       await intClient.syncState();
+      await helpers.fundAccounts(
+        [senderWalletId, senderFaucetId, targetWalletId],
+        intClient
+      );
       const mintRequest = await intClient.newMintTransactionRequest(
         senderWalletId,
         senderFaucetId,
@@ -1093,6 +1103,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
 
       // Mint (public note) and wait
       await intClient.syncState();
+      await helpers.fundAccounts([senderId, faucetId, targetId], intClient);
       const mintRequest = await intClient.newMintTransactionRequest(
         senderId,
         faucetId,
@@ -1289,6 +1300,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
 
       // Mint (public note) and wait
       await intClient.syncState();
+      await helpers.fundAccounts([senderId, faucetId, targetId], intClient);
       const mintRequest = await intClient.newMintTransactionRequest(
         senderId,
         faucetId,

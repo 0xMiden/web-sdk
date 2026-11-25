@@ -41,6 +41,15 @@ export const mintTransaction = async (
       _publicNote: boolean;
     }) => {
       const client = window.client;
+      const prover =
+        _withRemoteProver && window.remoteProverUrl != null
+          ? window.remoteProverInstance
+          : undefined;
+      await window.helpers.ensureFunded(
+        [_faucetAccountId, _targetAccountId],
+        client,
+        prover
+      );
       await client.syncState();
 
       const targetAccountId = window.AccountId.fromHex(_targetAccountId);
@@ -52,10 +61,6 @@ export const mintTransaction = async (
         _publicNote ? window.NoteType.Public : window.NoteType.Private,
         BigInt(1000)
       );
-      const prover =
-        _withRemoteProver && window.remoteProverUrl != null
-          ? window.remoteProverInstance
-          : undefined;
 
       const mintTransactionResult =
         await window.helpers.executeAndApplyTransaction(
@@ -111,6 +116,15 @@ export const mintPublicTransaction = async (
       _sync: boolean;
     }) => {
       const client = window.client;
+      const prover =
+        _withRemoteProver && window.remoteProverUrl != null
+          ? window.remoteProverInstance
+          : undefined;
+      await window.helpers.ensureFunded(
+        [_faucetAccountId, _targetAccountId],
+        client,
+        prover
+      );
       await client.syncState();
 
       const targetAccountId = window.AccountId.fromHex(_targetAccountId);
@@ -122,10 +136,6 @@ export const mintPublicTransaction = async (
         window.NoteType.Public,
         BigInt(1000)
       );
-      const prover =
-        _withRemoteProver && window.remoteProverUrl != null
-          ? window.remoteProverInstance
-          : undefined;
       const mintTransactionUpdate =
         await window.helpers.executeAndApplyTransaction(
           faucetAccountId,
@@ -759,6 +769,15 @@ export const mintAndConsumeTransaction = async (
       _sync,
     }) => {
       const client = window.client;
+      const prover =
+        _withRemoteProver && window.remoteProverUrl != null
+          ? window.remoteProverInstance
+          : undefined;
+      await window.helpers.ensureFunded(
+        [_faucetAccountId, _targetAccountId],
+        client,
+        prover
+      );
 
       await client.syncState();
 
@@ -771,11 +790,6 @@ export const mintAndConsumeTransaction = async (
         window.NoteType.Private,
         BigInt(1000)
       );
-
-      const prover =
-        _withRemoteProver && window.remoteProverUrl != null
-          ? window.remoteProverInstance
-          : undefined;
 
       const mintTransactionUpdate =
         await window.helpers.executeAndApplyTransaction(
@@ -893,9 +907,18 @@ export const setupWalletAndFaucet = async (
       window.AuthScheme.AuthRpoFalcon512
     );
 
+    const prover =
+      window.remoteProverUrl != null ? window.remoteProverInstance : undefined;
+    await window.helpers.fundAccounts(
+      [account.id(), faucetAccount.id()],
+      client,
+      prover
+    );
+    const updatedAccount = await client.getAccount(account.id());
+
     return {
       accountId: account.id().toString(),
-      accountCommitment: account.to_commitment().toHex(),
+      accountCommitment: (updatedAccount ?? account).to_commitment().toHex(),
       faucetId: faucetAccount.id().toString(),
     };
   });

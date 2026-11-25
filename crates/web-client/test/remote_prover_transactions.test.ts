@@ -113,6 +113,14 @@ test.describe("remote prover transaction tests", () => {
         window.AccountStorageMode.private(),
         window.AuthScheme.AuthRpoFalcon512
       );
+      const prover =
+        window.remoteProverUrl != null
+          ? window.TransactionProver.newRemoteProver(
+              window.remoteProverUrl,
+              null
+            )
+          : undefined;
+      await window.helpers.fundAccounts([wallet.id()], client, prover);
 
       const txScript = `
         @transaction_script
@@ -128,14 +136,6 @@ test.describe("remote prover transaction tests", () => {
       const transactionRequest = new window.TransactionRequestBuilder()
         .withCustomScript(transactionScript)
         .build();
-
-      const prover =
-        window.remoteProverUrl != null
-          ? window.TransactionProver.newRemoteProver(
-              window.remoteProverUrl,
-              null
-            )
-          : undefined;
 
       await window.helpers.executeAndApplyTransaction(
         wallet.id(),
