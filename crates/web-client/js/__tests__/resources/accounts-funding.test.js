@@ -11,6 +11,7 @@ const OTHER_ROOT = "0xother";
 
 function noteRecord(state, root = P2ID_ROOT) {
   return {
+    free: vi.fn(),
     state: () => state,
     details: () => ({
       recipient: () => ({
@@ -250,6 +251,49 @@ describe("AccountsResource.requestFundingNote / fundAccount", () => {
       pollInterval: 1,
     });
     expect(free).toHaveBeenCalledTimes(1);
+  });
+
+  it("fundAccount fails fast on an invalid funding note and frees every polled record", async () => {
+    const { resource, client, fetchFn } = setup(happyFetch);
+    const pending = noteRecord("Expected");
+    const invalid = noteRecord("Invalid");
+    client.notes.get
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce(invalid);
+
+    await expect(
+      resource.fundAccount(ACC, {
+        fetch: fetchFn,
+        timeout: 5_000,
+        pollInterval: 1,
+      })
+    ).rejects.toMatchObject({
+      code: "FundingAfterRequest",
+      noteId: NOTE,
+      sourceCode: "FundingInvalid",
+    });
+    expect(pending.free).toHaveBeenCalledTimes(1);
+    expect(invalid.free).toHaveBeenCalledTimes(1);
+    expect(client.transactions.consume).not.toHaveBeenCalled();
+  });
+
+  it("requestFundingNote hands its deadline signal to the faucet requests and sends none after it", async () => {
+    const signals = [];
+    const requested = [];
+    const hanging = vi.fn((url, init) => {
+      const href = typeof url === "string" ? url : url.href;
+      requested.push(href);
+      signals.push(init.signal);
+      if (href.includes("/pow")) return new Promise(() => {});
+      return happyFetch.find((h) => h.match(href)).response();
+    });
+    const { resource } = setup(happyFetch);
+    await expect(
+      resource.requestFundingNote(ACC, { fetch: hanging, timeout: 50 })
+    ).rejects.toMatchObject({ code: "FundingTimeout" });
+    expect(signals.length).toBeGreaterThan(0);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(requested.some((href) => href.includes("/get_tokens"))).toBe(false);
   });
 
   it("fundAccount clears the poll timer when the note wait times out first", async () => {

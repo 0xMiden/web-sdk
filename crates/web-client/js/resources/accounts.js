@@ -506,18 +506,29 @@ export class AccountsResource {
             await this.#client.syncChain();
             const record = await this.#client.notes.get(receipt.noteId);
             if (record) {
-              const kind = classifyInputNoteState(
-                record.state?.() ?? record.state,
-                wasm
-              );
+              let kind;
+              let standard = false;
+              try {
+                kind = classifyInputNoteState(
+                  record.state?.() ?? record.state,
+                  wasm
+                );
+                // Any other script can spend from the account when consumed.
+                standard =
+                  kind === "committed" && isStandardPaymentNote(record, wasm);
+              } finally {
+                record.free?.();
+              }
               if (kind === "consumed" || kind === "processing") {
                 throw fundingInvalid(
                   "funding note is already consumed or being processed"
                 );
               }
+              if (kind === "invalid") {
+                throw fundingInvalid("funding note is invalid");
+              }
               if (kind === "committed") {
-                // Any other script can spend from the account when consumed.
-                if (!isStandardPaymentNote(record, wasm)) {
+                if (!standard) {
                   throw fundingInvalid(
                     "funding note is not a standard payment note"
                   );

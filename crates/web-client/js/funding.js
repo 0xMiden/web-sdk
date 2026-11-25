@@ -302,12 +302,13 @@ export async function requestNoteFromFaucet({
  * Classify an `InputNoteRecord.state()` value.
  * @param {unknown} state
  * @param {object} [wasm]
- * @returns {"committed" | "consumed" | "processing" | "other"}
+ * @returns {"committed" | "consumed" | "invalid" | "processing" | "other"}
  */
 export function classifyInputNoteState(state, wasm) {
   const InputNoteState = wasm?.InputNoteState;
   if (InputNoteState) {
     if (state === InputNoteState.Committed) return "committed";
+    if (state === InputNoteState.Invalid) return "invalid";
     if (
       state === InputNoteState.ProcessingAuthenticated ||
       state === InputNoteState.ProcessingUnauthenticated
@@ -331,6 +332,7 @@ export function classifyInputNoteState(state, wasm) {
         : String(state?.toString?.() ?? state ?? "");
 
   if (name === "Committed" || name.endsWith(".Committed")) return "committed";
+  if (name === "Invalid" || name.endsWith(".Invalid")) return "invalid";
   if (PROCESSING_STATES.has(name) || name.includes("Processing")) {
     return "processing";
   }
@@ -339,6 +341,7 @@ export function classifyInputNoteState(state, wasm) {
   }
   // Numeric wasm-bindgen order: Expected=0 … Committed=2 …
   if (name === "2") return "committed";
+  if (name === "3") return "invalid";
   if (name === "4" || name === "5") return "processing";
   if (name === "6" || name === "7" || name === "8") return "consumed";
   return "other";
@@ -473,6 +476,8 @@ async function getJson(fetchFn, url, signal) {
   if (typeof fetchFn !== "function") {
     throw fundingInvalid("fetch is not available in this environment");
   }
+  // A request that starts after the deadline can still mint a note nobody learns about.
+  throwIfAborted(signal);
   let response;
   try {
     response = await fetchFn(url.href ?? String(url), {

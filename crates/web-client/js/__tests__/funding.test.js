@@ -155,6 +155,14 @@ describe("classifyInputNoteState", () => {
     expect(classifyInputNoteState(80, wasm)).toBe("consumed");
     expect(classifyInputNoteState(2, wasm)).toBe("committed");
   });
+
+  it("classifies an invalid note", () => {
+    expect(classifyInputNoteState("Invalid")).toBe("invalid");
+    expect(classifyInputNoteState(3)).toBe("invalid");
+    expect(
+      classifyInputNoteState(30, { InputNoteState: { Invalid: 30 } })
+    ).toBe("invalid");
+  });
 });
 
 describe("sleep", () => {
@@ -272,6 +280,25 @@ describe("requestNoteFromFaucet", () => {
     expect(tokensCall).toContain(`asset_amount=${baseAmount.toString()}`);
     expect(tokensCall).toContain("is_private_note=false");
     expect(tokensCall).toContain(`account_id=${accountHex}`);
+  });
+
+  it("sends no request once its signal has aborted", async () => {
+    const fetchFn = mockFetch([]);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      requestNoteFromFaucet({
+        faucetUrl: "http://127.0.0.1:9/api",
+        accountIdHex: accountHex,
+        feeFaucetIdHex: faucetHex,
+        network: "testnet",
+        amount: null,
+        wasm,
+        fetch: fetchFn,
+        signal: controller.signal,
+      })
+    ).rejects.toMatchObject({ code: "FundingAborted" });
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 
   it("rejects an unsafe numeric faucet base_amount", async () => {
