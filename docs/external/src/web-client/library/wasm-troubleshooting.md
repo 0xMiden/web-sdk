@@ -33,6 +33,8 @@ is true. Check the provider's `error` if initialization fails.
 
 Overlapping calls on the same low-level WASM `WebClient` can trigger this
 error. Prefer the high-level `MidenClient` methods, which queue calls that
-need exclusive access. In React, wrap direct calls in `runExclusive` from
-`useMiden()` and await each call before starting the next. If the error came
+need exclusive access. In React, use `runExclusive` from `useMiden()` to
+coordinate callers that share the provider lock. Await each operation before
+starting the next. Wait until the client is idle before using synchronous raw
+accessors such as `lastAuthError()` or the `keystore` getter. If the error came
 from a transaction flow, check its submission status before trying again.
