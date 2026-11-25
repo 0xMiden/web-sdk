@@ -1885,11 +1885,13 @@ describe("TransactionsResource", () => {
         "submitBatch",
         // Never execute a transaction against a reference block, so there is
         // no tip for an ignored anchor to silently fall back to: executeProgram
-        // runs a program, submitProven submits an already-proven result, and
+        // runs a program, submitProven submits an already-proven result,
+        // retryProvenBatch resends a proven batch without executing, and
         // list and waitFor do not execute anything. None takes an options bag
         // an anchor could hide in, except waitFor, whose opts is a timeout.
         "executeProgram",
         "submitProven",
+        "retryProvenBatch",
         "list",
         "waitFor",
         // Receives the request directly and has no options bag.
@@ -2206,6 +2208,37 @@ describe("TransactionsResource", () => {
       const update = await submitted.apply();
       expect(inner.applyTransaction).toHaveBeenCalledWith(inner._txResult, 55);
       expect(update).toBe("storeUpdate");
+    });
+
+    it("retryProvenBatch resends a submission without calling submitNewTransactionBatch", async () => {
+      const submission = {
+        transactionCount: () => 2,
+        transactionIds: () => [
+          { toHex: () => "0xaaa" },
+          { toHex: () => "0xbbb" },
+        ],
+      };
+      const { resource, inner } = makeResource({
+        retryProvenBatch: vi.fn().mockResolvedValue(88),
+        submitNewTransactionBatch: vi.fn(),
+        proveTransaction: vi.fn(),
+      });
+      const result = await resource.retryProvenBatch(submission);
+      expect(result).toEqual({ blockNumber: 88 });
+      expect(inner.retryProvenBatch).toHaveBeenCalledTimes(1);
+      expect(inner.retryProvenBatch).toHaveBeenCalledWith(submission);
+      expect(inner.submitNewTransactionBatch).not.toHaveBeenCalled();
+      expect(inner.proveTransaction).not.toHaveBeenCalled();
+    });
+
+    it("retryProvenBatch accepts a worker submissionId handle", async () => {
+      const { resource, inner } = makeResource({
+        retryProvenBatch: vi.fn().mockResolvedValue(91),
+      });
+      await resource.retryProvenBatch({ submissionId: "7" });
+      expect(inner.retryProvenBatch).toHaveBeenCalledWith({
+        submissionId: "7",
+      });
     });
 
     it("the staged chain drives the same pipeline submit() runs, one liveness check per stage", async () => {

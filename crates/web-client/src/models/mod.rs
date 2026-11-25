@@ -112,6 +112,7 @@ pub mod partial_note;
 pub mod poseidon2;
 pub mod program;
 pub mod protocol_config;
+pub mod proven_batch_submission;
 pub mod proven_transaction;
 pub mod provers;
 pub mod pswap_lineage_record;
