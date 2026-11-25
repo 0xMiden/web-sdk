@@ -110,6 +110,75 @@ test.describe("send transaction tests", () => {
 // =======================================================================================================
 
 test.describe("custom transaction tests", () => {
+  test("exposes a custom MASM assertion as a browser diagnostic", async ({
+    run,
+  }, testInfo) => {
+    test.skip(testInfo.project.name === "nodejs", "browser error properties");
+
+    const { source, withSource, withoutSource } = await run(
+      async ({ client, sdk, helpers }) => {
+        const builder = await client.createCodeBuilder();
+        const source = `
+        @transaction_script
+        pub proc main
+          push.0
+          assert.err="custom transaction assertion"
+        end
+      `;
+        const script = builder.compileTxScript(source);
+        const request = new sdk.TransactionRequestBuilder()
+          .withCustomScript(script)
+          .build();
+
+        const execute = async (target: typeof client) => {
+          const wallet = await target.newWallet(
+            sdk.AccountStorageMode.private(),
+            sdk.AuthScheme.AuthRpoFalcon512
+          );
+          try {
+            await target.executeTransaction(wallet.id(), request);
+          } catch (error) {
+            return { message: error.message, masm: error.masm };
+          }
+          return null;
+        };
+
+        const withSource = await execute(client);
+        // The script retains its debug map, but the other client's source
+        // manager hasn't loaded the source text.
+        const separateClient = await helpers.createFreshMockClient();
+        try {
+          return {
+            source,
+            withSource,
+            withoutSource: await execute(separateClient),
+          };
+        } finally {
+          await separateClient.terminate();
+        }
+      }
+    );
+
+    // The VM derives this Felt from the first eight BLAKE3 bytes, little-endian.
+    const diagnostic = {
+      errorCode: "722436235612435567",
+      assertionMessage: "custom transaction assertion",
+    };
+    expect(withSource?.message).toContain(diagnostic.assertionMessage);
+    expect(withSource?.masm).toMatchObject(diagnostic);
+    expect(withSource?.masm.file).toBe("::tx_script");
+    const { start, end } = withSource!.masm.span;
+    expect(Number.isInteger(start) && Number.isInteger(end)).toBe(true);
+    const bytes = Buffer.from(source);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(end).toBeLessThanOrEqual(bytes.length);
+    expect(bytes.subarray(start, end).toString()).toContain("assert");
+
+    expect(withoutSource?.message).toContain(diagnostic.assertionMessage);
+    expect(withoutSource?.masm).toStrictEqual(diagnostic);
+  });
+
   test("custom transaction completes successfully", async ({ run }) => {
     const result = await run(async ({ client, sdk }) => {
       const wallet = await client.newWallet(

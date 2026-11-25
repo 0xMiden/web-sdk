@@ -82,6 +82,7 @@ const serializeError = (error) => {
       // here, a worker-backed failure is less diagnosable than the identical
       // failure on the main thread.
       help: error.help,
+      masm: error.masm,
       submissionId: error.submissionId,
       transactionIds: error.transactionIds,
     };
