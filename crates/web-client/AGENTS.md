@@ -131,6 +131,13 @@ Account witnesses refresh when another client changes that state, preserving
 untouched vault assets and storage maps. This does not fetch new chain state;
 continue to sync before relying on on-chain balances.
 
+**One client per store.** Two live clients on one store do not coordinate.
+Opening a store another live client in the realm has open (the same IndexedDB
+name in the browser, the same SQLite file on Node.js) logs a `console.warn`
+naming that client as `client #N`. `MidenClient.create({ ..., exclusive: true })`
+makes the open throw instead, naming the owner, and refuses every later open of
+the store while that client lives. `terminate()` releases the store.
+
 For browser stores, `apply` requires the stored account to match the
 transaction's execution input. A mismatch rejects before changing account state
 or transaction history. A submitted transaction is already accepted by the node when
@@ -242,6 +249,107 @@ decoded.tag();
 decoded.serialNumber();
 decoded.intoNote();
 ```
+
+## Decode standard notes
+
+`P2idNote`, `P2ideNote` and `SwapNote` decode a standard note into its typed
+fields, so an inbox can show who a note pays, when it unlocks and what a swap
+exchanges without reading raw storage:
+
+```typescript
+import { NoteScript, P2idNote, P2ideNote, SwapNote } from "@miden-sdk/miden-sdk";
+
+const note = record.toNote();
+const root = note.script().root().toHex();
+
+if (root === NoteScript.p2id().root().toHex()) {
+  const p2id = P2idNote.tryFromNote(note);
+  p2id.target(); // who it pays
+  p2id.assets();
+} else if (root === NoteScript.p2ide().root().toHex()) {
+  const p2ide = P2ideNote.tryFromNote(note);
+  p2ide.target();
+  p2ide.timelockHeight(); // number | undefined: not consumable before this block
+  p2ide.reclaimer();
+  p2ide.reclaimHeight(); // number | undefined: the reclaimer may take it back from here
+} else if (root === NoteScript.swap().root().toHex()) {
+  const swap = SwapNote.tryFromNote(note);
+  swap.offeredAsset(); // what the consumer receives
+  swap.requestedAsset(); // what the consumer pays back to swap.sender()
+  swap.paybackNoteType();
+  swap.paybackTarget(); // AccountId | undefined (public payback only)
+  swap.paybackRecipient(); // Word | undefined (private payback only)
+}
+```
+
+Each decoder also exposes `sender()`, `serialNumber()`, `noteType()` and
+`intoNote()`. `tryFromNote` throws when the note runs another script
+(`not a P2ID note`), when its storage does not decode, or, for `SwapNote`, when
+it does not carry exactly one asset.
+
+`PswapNote` and `BurnNote` decode a partial-fill swap order and a burn the same
+way:
+
+```typescript
+import { BurnNote, NoteScript, PswapNote } from "@miden-sdk/miden-sdk";
+
+if (root === NoteScript.pswap().root().toHex()) {
+  const pswap = PswapNote.tryFromNote(note);
+  pswap.offeredAsset(); // FungibleAsset on offer
+  pswap.requestedAsset(); // FungibleAsset asked for the whole offer
+  pswap.minFillStep(); // smallest fill, 0 when unbounded
+  pswap.creatorAccountId(); // receives every payback
+  pswap.orderId(); // decimal string, as PswapLineageRecord.orderId()
+  pswap.parentDepth(); // 0 for the original order, +1 per remainder
+} else if (root === NoteScript.burn().root().toHex()) {
+  const burn = BurnNote.tryFromNote(note);
+  burn.asset(); // what the faucet burns
+  burn.faucetId(); // the faucet that consumes the note
+}
+```
+
+A BURN note whose storage does not hold exactly the asset it carries is
+rejected, as the BURN script rejects it at consume time. A PSWAP note with more than one
+attachment is rejected too.
+
+`MintNote` decodes a MINT note, which asks a network faucet to mint an asset
+into a new note:
+
+```typescript
+import { MintNote, NoteScript } from "@miden-sdk/miden-sdk";
+
+if (root === NoteScript.mint().root().toHex()) {
+  const mint = MintNote.tryFromNote(note);
+  mint.asset(); // what the faucet mints
+  mint.faucetId(); // the faucet that consumes the note
+  mint.tag(); // tag of the minted note
+  mint.recipientDigest(); // private minted note: its recipient, else undefined
+  mint.recipientScriptRoot(); // public minted note: its script root,
+  mint.recipientSerialNumber(); // serial number
+  mint.recipientStorage(); // and storage, else undefined
+}
+```
+
+To screen a note before importing it, pass it to `client.notes.screen`. Each
+entry is a `NoteConsumability`, as `ConsumableNoteRecord.noteConsumability()`
+lists them:
+
+```typescript
+const all = await client.notes.screen(note); // every tracked account
+const mine = await client.notes.screen(note, { account: wallet });
+for (const entry of mine) {
+  const status = entry.consumptionStatus();
+  status.isConsumableNow(); // consumable at the last synced block
+  status.consumableAfterBlock(); // unlock height when locked, else undefined
+}
+```
+
+The screener leaves out accounts that can never consume the note, and accounts
+that cannot consume it under the current conditions, so an empty array means
+no screened account can consume it now. It is also empty when the client
+tracks no accounts, so do not read it as never consumable. Screening does
+not import the note. The low-level `WebClient` exposes the same screen as
+`getNoteConsumability(note)` and `getNoteConsumabilityForAccount(note, accountId)`.
 
 ## Going deeper
 

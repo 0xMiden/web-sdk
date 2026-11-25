@@ -22,7 +22,7 @@ The SDK exposes a top-level `MidenClient` whose state is split across typed
 | Resource             | What it covers                                                                                                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `client.accounts`    | Wallets, faucets, custom contracts, listing, import/export, addresses                                                                                                          |
-| `client.transactions` | `send` / `mint` / `bridge` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
+| `client.transactions` | `send` / `mint` / `bridge` / `withdrawUsdcx` / `claimAggLayerDeposit` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
 | `client.notes`       | Listing, fetching, importing/exporting, private-note transport                                                                                                                 |
 | `client.tags`        | Note-tag subscriptions                                                                                                                                                         |
 | `client.settings`    | Persistent client settings                                                                                                                                                     |
@@ -205,6 +205,7 @@ const client = await MidenClient.create({
   noteTransportMaxRetries: 3, // optional - in-call retries of a private note send; see below
   noteTransportRetryIntervalMs: 250, // optional - delay before the first retry, in ms
   storeName: "my-store",
+  exclusive: false, // optional - true refuses a store another live client has open; see below
   seed: new Uint8Array(32), // optional - string or Uint8Array; see below
   proverUrl: "testnet", // optional - sets a default prover
   autoSync: true, // optional - call sync() after init
@@ -225,6 +226,12 @@ const client = await MidenClient.create({
 ```
 
 If `rpcUrl` is omitted, `create()` delegates to `createTestnet()`.
+
+Keep one live client per store: two clients on the same store do not
+coordinate. Opening a store another live client in the realm has open warns
+(`console.warn`, naming the owner as `client #N`); with `exclusive: true` the
+open throws an error naming the owner instead, and while an exclusive client
+lives every other open of its store throws. `terminate()` releases the store.
 
 `client.endpoint()` returns the resolved node URL synchronously, e.g.
 `"https://rpc.testnet.miden.io"` when `rpcUrl` was omitted; a `createMock()`
@@ -361,8 +368,9 @@ then waits until the wasm client is freed and its store connection released.
 The release waits for calls already queued or running to settle. Use
 `await using client = ...` when the code after the block deletes or reopens
 the same store. The release is browser-only: on the Node.js binding
-`terminate()` releases nothing (its inner client's `terminate()` is a no-op)
-and `[Symbol.asyncDispose]` resolves at once.
+`terminate()` releases only the store's ownership claim (see
+`MidenClient.create`'s `exclusive`) and `[Symbol.asyncDispose]` resolves at
+once.
 
 ## Sync - Always Sync First
 
@@ -578,6 +586,107 @@ decoded.tag();
 decoded.serialNumber();
 decoded.intoNote();
 ```
+
+## Decode Standard Notes
+
+`P2idNote`, `P2ideNote` and `SwapNote` decode a standard note into its typed
+fields, so an inbox can show who a note pays, when it unlocks and what a swap
+exchanges without reading raw storage:
+
+```typescript
+import { NoteScript, P2idNote, P2ideNote, SwapNote } from "@miden-sdk/miden-sdk";
+
+const note = record.toNote();
+const root = note.script().root().toHex();
+
+if (root === NoteScript.p2id().root().toHex()) {
+  const p2id = P2idNote.tryFromNote(note);
+  p2id.target(); // who it pays
+  p2id.assets();
+} else if (root === NoteScript.p2ide().root().toHex()) {
+  const p2ide = P2ideNote.tryFromNote(note);
+  p2ide.target();
+  p2ide.timelockHeight(); // number | undefined: not consumable before this block
+  p2ide.reclaimer();
+  p2ide.reclaimHeight(); // number | undefined: the reclaimer may take it back from here
+} else if (root === NoteScript.swap().root().toHex()) {
+  const swap = SwapNote.tryFromNote(note);
+  swap.offeredAsset(); // what the consumer receives
+  swap.requestedAsset(); // what the consumer pays back to swap.sender()
+  swap.paybackNoteType();
+  swap.paybackTarget(); // AccountId | undefined (public payback only)
+  swap.paybackRecipient(); // Word | undefined (private payback only)
+}
+```
+
+Each decoder also exposes `sender()`, `serialNumber()`, `noteType()` and
+`intoNote()`. `tryFromNote` throws when the note runs another script
+(`not a P2ID note`), when its storage does not decode, or, for `SwapNote`, when
+it does not carry exactly one asset.
+
+`PswapNote` and `BurnNote` decode a partial-fill swap order and a burn the same
+way:
+
+```typescript
+import { BurnNote, NoteScript, PswapNote } from "@miden-sdk/miden-sdk";
+
+if (root === NoteScript.pswap().root().toHex()) {
+  const pswap = PswapNote.tryFromNote(note);
+  pswap.offeredAsset(); // FungibleAsset on offer
+  pswap.requestedAsset(); // FungibleAsset asked for the whole offer
+  pswap.minFillStep(); // smallest fill, 0 when unbounded
+  pswap.creatorAccountId(); // receives every payback
+  pswap.orderId(); // decimal string, as PswapLineageRecord.orderId()
+  pswap.parentDepth(); // 0 for the original order, +1 per remainder
+} else if (root === NoteScript.burn().root().toHex()) {
+  const burn = BurnNote.tryFromNote(note);
+  burn.asset(); // what the faucet burns
+  burn.faucetId(); // the faucet that consumes the note
+}
+```
+
+A BURN note whose storage does not hold exactly the asset it carries is
+rejected, as the BURN script rejects it at consume time. A PSWAP note with more than one
+attachment is rejected too.
+
+`MintNote` decodes a MINT note, which asks a network faucet to mint an asset
+into a new note:
+
+```typescript
+import { MintNote, NoteScript } from "@miden-sdk/miden-sdk";
+
+if (root === NoteScript.mint().root().toHex()) {
+  const mint = MintNote.tryFromNote(note);
+  mint.asset(); // what the faucet mints
+  mint.faucetId(); // the faucet that consumes the note
+  mint.tag(); // tag of the minted note
+  mint.recipientDigest(); // private minted note: its recipient, else undefined
+  mint.recipientScriptRoot(); // public minted note: its script root,
+  mint.recipientSerialNumber(); // serial number
+  mint.recipientStorage(); // and storage, else undefined
+}
+```
+
+To screen a note before importing it, pass it to `client.notes.screen`. Each
+entry is a `NoteConsumability`, as `ConsumableNoteRecord.noteConsumability()`
+lists them:
+
+```typescript
+const all = await client.notes.screen(note); // every tracked account
+const mine = await client.notes.screen(note, { account: wallet });
+for (const entry of mine) {
+  const status = entry.consumptionStatus();
+  status.isConsumableNow(); // consumable at the last synced block
+  status.consumableAfterBlock(); // unlock height when locked, else undefined
+}
+```
+
+The screener leaves out accounts that can never consume the note, and accounts
+that cannot consume it under the current conditions, so an empty array means
+no screened account can consume it now. It is also empty when the client
+tracks no accounts, so do not read it as never consumable. Screening does
+not import the note. The low-level `WebClient` exposes the same screen as
+`getNoteConsumability(note)` and `getNoteConsumabilityForAccount(note, accountId)`.
 
 ## Account Creation
 
@@ -848,6 +957,57 @@ const { txId } = await client.transactions.bridge({
 });
 ```
 
+### Claim an inbound AggLayer deposit
+
+`Note.createClaimNote(...)` builds the public CLAIM note that asks the AggLayer bridge to mint an inbound deposit. The proof and leaf come from the AggLayer `claimAsset` data; the Miden amount is derived from the leaf's uint256 amount and the faucet's decimal scale, `floor(amount / 10^scale)`, which is what the bridge verifies.
+
+```typescript
+const proof = new ClaimProofData(
+  smtProofLocalExitRoot, // 32 hex nodes
+  smtProofRollupExitRoot, // 32 hex nodes
+  globalIndex,
+  mainnetExitRoot,
+  rollupExitRoot
+);
+const leaf = new ClaimLeafData(
+  originNetwork,
+  EthAddress.fromHex(originTokenAddress),
+  destinationNetwork,
+  EthAddress.fromHex(destinationAddress),
+  "100000000000000000000", // uint256 amount as a decimal string
+  metadataHash
+);
+const note = Note.createClaimNote(proof, leaf, 10, bridgeAccountId, senderId);
+```
+
+A scale above 18, or a scaled amount above the maximum fungible amount, throws. Submit it with `client.transactions.claimAggLayerDeposit(...)`, which builds the same note, sends it as an own output note of the sender and declares the bridge account as a foreign account. It returns `{ txId, note, result }`; a `scale` that is not an integer from 0 to 18 throws before any WASM call.
+
+```typescript
+const { txId, note } = await client.transactions.claimAggLayerDeposit({
+  account: wallet, // sender, the executing account
+  bridgeAccount: bridgeAccountId, // public bridge; consumes the note and mints the deposit
+  proof,
+  leaf,
+  scale: 10, // the faucet's decimal scale
+});
+```
+
+### Withdraw USDCx (Circle xReserve)
+
+`withdrawUsdcx` emits a single public burn note with the fixed `BURN` tag. The
+USDCx faucet consumes it and Circle releases USDC to the recipient on the
+destination domain.
+
+```typescript
+const { txId } = await client.transactions.withdrawUsdcx({
+  account: wallet, // sender - the executing account
+  token: usdcxFaucet, // public USDCx faucet; consumes and burns the note
+  amount: 1_000_000n,
+  destinationDomain: 6, // Circle domain id
+  destinationRecipient: "0x0000000000000000000000001111111111111111111111111111111111111111", // 32-byte hex
+});
+```
+
 ### Network notes
 
 `transactions.createNetworkNote(options)` builds a **public** custom-script note
@@ -1036,6 +1196,27 @@ await client.transactions.submit(account, request);
 Only the accounts you name are fetched; this does not discover accounts the
 transaction loads on its own, such as faucets whose asset callbacks it triggers.
 
+### Watch-only accounts and witnesses
+
+A watch-only account is a public on-chain account the client follows without subscribing to its note tag. Sync keeps its commitment, nonce and storage current, but notes addressed to it are not pulled.
+
+```typescript
+const account = await client.accounts.importWatched(oracleId);
+```
+
+Tracking an account's witness keeps it current: the first sync fetches it and every sync that advances the chain refreshes it, so a transaction that uses the account as a foreign account resolves its witness locally instead of asking the node:
+
+```typescript
+await client.accounts.trackWitness(oracleId); // true if it was not tracked before
+await client.sync(); // fetches the witness
+await client.accounts.trackedWitnesses(); // [oracleId]
+await client.accounts.untrackWitness(oracleId); // true if it was tracked
+```
+
+The tracked set persists across client reopens. `trackWitness` does not validate the account: sync fails while a tracked account has no witness the node can return, so an account that is not in the account tree blocks sync until `untrackWitness` removes it.
+
+`getStorageMapWitness(account, slotName, key)` reads the stored witness for a key of a storage map slot. The result has `get(key)` for the value and `root()` for the map root.
+
 ### Multi-party requests
 
 When several clients must execute the *same* request and agree on the resulting
@@ -1048,6 +1229,30 @@ When several clients must execute the *same* request and agree on the resulting
 - Prefetched foreign-account inputs (above) pin the foreign state.
 - A `ChainAnchor` pins the reference block - see the `chain-anchored-execution`
   skill.
+
+### Skipping Invalid Notes, Network Scripts and Code Upgrades
+
+`ignoreInvalidInputNotes()` makes execution drop an input note the account can no longer consume, without an error, and consume the rest. `request.ignoresInvalidInputNotes()` reports the flag. Execution screens at most 20 input notes this way and fails with `invalid input note count` above that, so split a larger batch across requests.
+
+```typescript
+const request = new TransactionRequestBuilder()
+  .withInputNotes(notes)
+  .ignoreInvalidInputNotes()
+  .build();
+```
+
+`withExpectedNtxScripts(scripts)` declares the note scripts the network will run for the request, and `request.expectedNtxScripts()` reads the declared list back, standard scripts included. The web client submits exactly the request it is given and registers nothing, so register each custom script the node does not know yet first. `client.newRegisterNoteScriptsTransactionRequest(sender, scripts)` builds a request that emits one public note per script, with no assets and no storage; submit it from `sender` before the network transaction that needs the scripts. The node resolves standard scripts itself.
+
+```typescript
+const scripts = new NoteScriptArray([customScript]);
+const register = await client.newRegisterNoteScriptsTransactionRequest(
+  sender,
+  scripts
+);
+await client.submitNewTransaction(sender, register);
+```
+
+`buildAccountCodeUpgrade(code)` finalizes a request that upgrades the executing account to `code`. The account needs the `UpgradeManager` component with `AuthControlled` authority, and `code` must keep the storage layout. It replaces any custom script and script argument, and fails when own output notes or an expiration delta are set. `withAccountCodeUpgrade(code)` only places the code in the advice map, and `request.accountCodeUpgrade()` returns it.
 
 ### Staged transaction lifecycle
 

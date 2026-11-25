@@ -25,6 +25,7 @@ import {
 import { proveWithFallback } from "../utils/prover";
 import { useMidenStore } from "../store/MidenStore";
 import { runExclusiveDirect } from "../utils/runExclusive";
+import { toAmount } from "../utils/amounts";
 
 export interface UseMultiSendResult {
   /** Create multiple P2ID output notes in one transaction */
@@ -124,7 +125,7 @@ export function useMultiSend(): UseMultiSendResult {
             const iterAssetId = parseAccountId(options.assetId);
             const receiverId = parseAccountId(to);
             const assets = new NoteAssets([
-              new FungibleAsset(iterAssetId, BigInt(amount)),
+              new FungibleAsset(iterAssetId, toAmount(amount, "sendMany")),
             ]);
             const resolvedNoteType = recipientNoteType
               ? getNoteType(recipientNoteType)

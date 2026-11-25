@@ -20,6 +20,9 @@ import {
   WalletTransactionError,
   Asset,
   GuardianInfo,
+  StorageReadRequest,
+  WalletPrivateDataPermissionError,
+  WalletStorageUnsupportedError,
   CreateAccountParams,
   InputNoteDetails,
   TransactionOutput,
@@ -72,6 +75,8 @@ export interface MidenWallet extends EventEmitter<MidenWalletEvents> {
   importPrivateNote(note: Uint8Array): Promise<{ noteId: string }>;
   requestConsumableNotes(): Promise<{ consumableNotes: InputNoteDetails[] }>;
   createAccount(params?: CreateAccountParams): Promise<{ accountId: string }>;
+  /** Optional: wallets that predate storage reads do not implement it. */
+  requestStorage?(request: StorageReadRequest): Promise<{ value: string }>;
   connect(
     privateDataPermission: PrivateDataPermission,
     network: WalletAdapterNetwork,
@@ -132,6 +137,7 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
   private _address: string | null;
   private _publicKey: Uint8Array | null;
   private _privateDataPermission: string;
+  private _allowedPrivateData: AllowedPrivateData;
   // Providers update these fields before emitting accountChange. Reuse the
   // adapter's connect/disconnect events so every existing consumer refreshes.
   private readonly _handleAccountChange = () => {
@@ -143,13 +149,17 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
       this._wallet = null;
       this._address = null;
       this._publicKey = null;
+      this._allowedPrivateData = AllowedPrivateData.None;
       this.emit("disconnect");
       return;
     }
 
-    this._address = wallet.address;
+    const address = wallet.address;
+    this._address = address;
     this._publicKey = wallet.publicKey ?? null;
-    this.emit("connect", this._address);
+    this.emit("accountChange", address, this._publicKey);
+    // A listener may have disconnected synchronously; emit is not reentrant-safe.
+    if (this._wallet === wallet) this.emit("connect", address);
   };
   private _readyState: WalletReadyState =
     typeof window === "undefined" || typeof document === "undefined"
@@ -164,6 +174,7 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
     this._address = null;
     this._publicKey = null;
     this._privateDataPermission = PrivateDataPermission.UponRequest;
+    this._allowedPrivateData = AllowedPrivateData.None;
 
     if (this._readyState !== WalletReadyState.Unsupported) {
       // Bread's own browser defines window.bread before any page script runs
@@ -194,6 +205,13 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
 
   get privateDataPermission() {
     return this._privateDataPermission;
+  }
+
+  get supportsStorageReads(): boolean {
+    return (
+      typeof this._wallet?.requestStorage === "function" &&
+      (this._allowedPrivateData & AllowedPrivateData.Storage) !== 0
+    );
   }
 
   get connecting() {
@@ -311,6 +329,26 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
       try {
         const result = await wallet.requestAssets();
         return result.assets;
+      } catch (error: any) {
+        throw new WalletTransactionError(error?.message, error);
+      }
+    } catch (error: any) {
+      this.emit("error", error);
+      throw error;
+    }
+  }
+
+  async requestStorage(request: StorageReadRequest): Promise<string> {
+    try {
+      const wallet = this._wallet;
+      if (!wallet || !this.address) throw new WalletNotConnectedError();
+      if (typeof wallet.requestStorage !== "function")
+        throw new WalletStorageUnsupportedError();
+      if (!(this._allowedPrivateData & AllowedPrivateData.Storage))
+        throw new WalletPrivateDataPermissionError();
+      try {
+        const result = await wallet.requestStorage(request);
+        return result.value;
       } catch (error: any) {
         throw new WalletTransactionError(error?.message, error);
       }
@@ -520,6 +558,7 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
       this._wallet = wallet;
       wallet.on("accountChange", this._handleAccountChange);
       this._privateDataPermission = privateDataPermission;
+      this._allowedPrivateData = allowedPrivateData ?? AllowedPrivateData.None;
 
       this.emit("connect", this._address);
     } catch (error: any) {
@@ -537,6 +576,7 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
       this._wallet = null;
       this._address = null;
       this._publicKey = null;
+      this._allowedPrivateData = AllowedPrivateData.None;
 
       try {
         await wallet.disconnect();

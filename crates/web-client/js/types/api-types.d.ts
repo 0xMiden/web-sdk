@@ -9,6 +9,7 @@ import type {
   AccountCode,
   AssetVault,
   Word,
+  StorageMapWitness,
   Felt,
   TransactionId,
   TransactionRequest,
@@ -23,6 +24,7 @@ import type {
   InputNoteRecord,
   OutputNoteRecord,
   ConsumableNoteRecord,
+  NoteConsumability,
   NoteId,
   NoteInclusionProof,
   NoteFile,
@@ -45,6 +47,8 @@ import type {
   ForeignAccount,
   FungibleAsset,
   PswapLineageRecord,
+  ClaimProofData,
+  ClaimLeafData,
 } from "./crates/miden_client_web";
 
 // `Account.prototype.storage()` is patched at WASM load time to return the
@@ -250,6 +254,14 @@ export interface ClientOptions {
   /** Store isolation key. */
   storeName?: string;
   /**
+   * Refuse to share the store. Opening a store that another live client in
+   * this realm has open warns by default, naming that client; with
+   * `exclusive: true` the open throws instead, and while this client lives
+   * every other open of its store throws too. `terminate()` releases the
+   * store. Defaults to `false`.
+   */
+  exclusive?: boolean;
+  /**
    * Faucet of the chain's fee asset, as a bech32 address or a hex account ID.
    *
    * Optional. Miden 0.17 moved the fee asset out of the block header and into the protocol
@@ -386,7 +398,7 @@ export type AccountRef = string | Account | AccountHeader | AccountId;
 export interface Asset {
   /** Token identifier (faucet account ID). */
   token: AccountRef;
-  /** Auto-converted to bigint internally. */
+  /** Auto-converted to bigint internally. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
 }
 
@@ -423,6 +435,7 @@ export interface FaucetCreateOptions {
   name?: string;
   symbol: string;
   decimals: number;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   maxSupply: number | bigint;
   storage?: StorageMode;
   auth?: AuthSchemeType;
@@ -577,6 +590,7 @@ export interface SendOptionsDefault extends TransactionOptions {
   account: AccountRef;
   to: AccountRef;
   token: AccountRef;
+  /** Amount to send. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   type?: NoteVisibility;
   returnNote?: false;
@@ -590,6 +604,7 @@ export interface SendOptionsReturnNote extends TransactionOptions {
   account: AccountRef;
   to: AccountRef;
   token: AccountRef;
+  /** Amount to send. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   type?: NoteVisibility;
   returnNote: true;
@@ -657,7 +672,7 @@ export interface MintOptions extends TransactionOptions {
   account: AccountRef;
   /** Recipient account. */
   to: AccountRef;
-  /** Amount to mint. */
+  /** Amount to mint. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   /** Note visibility. Defaults to "public". */
   type?: NoteVisibility;
@@ -670,12 +685,48 @@ export interface BridgeOptions extends TransactionOptions {
   bridgeAccount: AccountRef;
   /** Faucet / token ID of the fungible asset to bridge. */
   token: AccountRef;
-  /** Amount of the asset to bridge. */
+  /** Amount of the asset to bridge. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   /** AggLayer-assigned network ID of the destination chain. */
   destinationNetwork: number;
   /** Destination Ethereum address on the destination network (0x-prefixed hex). */
   destinationAddress: string;
+}
+
+export interface WithdrawUsdcxOptions extends TransactionOptions {
+  /** Account that creates and funds the burn note (the sender / executing account). */
+  account: AccountRef;
+  /** USDCx faucet ID. It consumes the note and burns the asset; it must be a public account. */
+  token: AccountRef;
+  /**
+   * Amount of USDCx to withdraw. A `number` must be a safe integer; any other
+   * `number` throws before a burn note is built, so pass a `bigint` above
+   * `2 ** 53 - 1`.
+   */
+  amount: number | bigint;
+  /** Circle domain of the destination chain (for example 6 for Arbitrum). */
+  destinationDomain: number;
+  /**
+   * Destination recipient as Circle's 32-byte form, 0x-prefixed hex (64 hex
+   * digits). An EVM address is left-padded with zeros to 32 bytes.
+   */
+  destinationRecipient: string;
+}
+
+export interface ClaimAggLayerDepositOptions extends TransactionOptions {
+  /** Account that creates the CLAIM note (the sender / executing account). */
+  account: AccountRef;
+  /** Bridge account that consumes the note and mints the deposit; it must be public. */
+  bridgeAccount: AccountRef;
+  /** Proof data from the AggLayer `claimAsset` call. */
+  proof: ClaimProofData;
+  /** Deposit leaf from the AggLayer `claimAsset` call. */
+  leaf: ClaimLeafData;
+  /**
+   * The faucet's decimal scale, an integer from 0 to 18. The Miden amount is
+   * `floor(leaf amount / 10^scale)`.
+   */
+  scale: number;
 }
 
 export interface ConsumeOptions extends TransactionOptions {
@@ -703,6 +754,7 @@ export type BatchOperation =
       account: AccountRef;
       to: AccountRef;
       token: AccountRef;
+      /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
       amount: number | bigint;
       type?: NoteVisibility;
       reclaimAfter?: number;
@@ -712,6 +764,7 @@ export type BatchOperation =
       kind: "mint";
       account: AccountRef;
       to: AccountRef;
+      /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
       amount: number | bigint;
       type?: NoteVisibility;
     }
@@ -820,6 +873,9 @@ export interface TransactionProof {
   /**
    * Submit the proof to the network, then persist with
    * {@link TransactionSubmission.apply}. Does NOT persist locally on its own.
+   * It registers no script the request declared through
+   * `withExpectedNtxScripts`; submit `newRegisterNoteScriptsTransactionRequest`
+   * first.
    */
   submit(): Promise<TransactionSubmission>;
 }
@@ -894,9 +950,9 @@ export interface PswapConsumeOptions extends TransactionOptions {
   account: AccountRef;
   /** PSWAP note to consume — accepts a note id (hex), `NoteId`, `InputNoteRecord`, or `Note`. */
   note: NoteInput;
-  /** Requested-asset amount the consumer supplies from its own vault; a partial amount emits a remainder PSWAP note. */
+  /** Requested-asset amount the consumer supplies from its own vault; a partial amount emits a remainder PSWAP note. A `number` must be a safe integer. */
   fillAmount: number | bigint;
-  /** Requested-asset amount supplied by other in-flight notes in the same tx. Defaults to `0`; leave unset normally. */
+  /** Requested-asset amount supplied by other in-flight notes in the same tx. Defaults to `0`; leave unset normally. A `number` must be a safe integer. */
   noteFillAmount?: number | bigint;
 }
 
@@ -950,6 +1006,7 @@ export interface PreviewSendOptions {
   account: AccountRef;
   to: AccountRef;
   token: AccountRef;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   type?: NoteVisibility;
   reclaimAfter?: number;
@@ -960,6 +1017,7 @@ export interface PreviewMintOptions {
   operation: "mint";
   account: AccountRef;
   to: AccountRef;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   type?: NoteVisibility;
 }
@@ -969,6 +1027,7 @@ export interface PreviewBridgeOptions {
   account: AccountRef;
   bridgeAccount: AccountRef;
   token: AccountRef;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
   destinationNetwork: number;
   destinationAddress: string;
@@ -1002,7 +1061,9 @@ export interface PreviewPswapConsumeOptions {
   operation: "pswapConsume";
   account: AccountRef;
   note: NoteInput;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   fillAmount: number | bigint;
+  /** A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   noteFillAmount?: number | bigint;
 }
 
@@ -1277,6 +1338,50 @@ export interface AccountsResource {
    */
   import(input: ImportAccountInput): Promise<Account>;
   /**
+   * Start watching a public on-chain account by ID, without subscribing to its
+   * note tag. Sync keeps the account's commitment, nonce and storage current,
+   * but notes addressed to it are not pulled.
+   *
+   * @param accountId - The public account to watch.
+   */
+  importWatched(accountId: AccountRef): Promise<Account>;
+  /**
+   * Keep the account's witness up to date on every sync, so transactions that
+   * use it as a foreign account resolve the witness locally. The first sync
+   * after this call fetches it. Resolves to `true` if the account was not
+   * tracked before.
+   *
+   * The account is not validated against the network here. Sync fails while a
+   * tracked account has no witness the node can return, so an account that is
+   * not in the account tree blocks sync until it is untracked.
+   *
+   * @param accountId - The account whose witness to track.
+   */
+  trackWitness(accountId: AccountRef): Promise<boolean>;
+  /**
+   * Stop tracking the account's witness and drop the cached one. Resolves to
+   * `true` if the account was tracked.
+   *
+   * @param accountId - The account to stop tracking.
+   */
+  untrackWitness(accountId: AccountRef): Promise<boolean>;
+  /**
+   * List the accounts whose witness is tracked.
+   */
+  trackedWitnesses(): Promise<AccountId[]>;
+  /**
+   * Read the stored witness for a key of a storage map slot.
+   *
+   * @param accountId - The account that owns the slot.
+   * @param slotName - The name of the storage map slot.
+   * @param key - The map key.
+   */
+  getStorageMapWitness(
+    accountId: AccountRef,
+    slotName: string,
+    key: Word
+  ): Promise<StorageMapWitness>;
+  /**
    * Export an account to an {@link AccountFile} for backup or transfer.
    *
    * @param accountId - The account to export.
@@ -1348,6 +1453,26 @@ export interface TransactionsResource {
    * @param options - Sender, bridge account, token, amount, and destination.
    */
   bridge(options: BridgeOptions): Promise<TransactionSubmitResult>;
+  /**
+   * Withdraw USDCx through Circle xReserve. Emits a single public burn note
+   * with the fixed `BURN` tag; the USDCx faucet consumes it and Circle releases
+   * USDC to the destination recipient on the destination domain.
+   *
+   * @param options - Sender, USDCx faucet, amount, and destination.
+   */
+  withdrawUsdcx(
+    options: WithdrawUsdcxOptions
+  ): Promise<TransactionSubmitResult>;
+  /**
+   * Claim an inbound AggLayer deposit. Emits the public CLAIM note built by
+   * `Note.createClaimNote`, which the bridge account consumes to mint the
+   * deposit; the bridge is declared as a foreign account.
+   *
+   * @param options - Sender, bridge account, claim proof and leaf, and scale.
+   */
+  claimAggLayerDeposit(
+    options: ClaimAggLayerDepositOptions
+  ): Promise<NetworkNoteResult>;
   /**
    * Consume one or more notes for an account.
    *
@@ -1453,6 +1578,11 @@ export interface TransactionsResource {
    * {@link MidenClient.withFeeAwareAuth}. Raises the same fee errors
    * {@link executeRequest} does.
    *
+   * The request is submitted as given: scripts it declares through
+   * `withExpectedNtxScripts` are not registered, so submit
+   * `newRegisterNoteScriptsTransactionRequest` first. `executeRequest` and the
+   * staged `prove` and `submit` calls behave the same.
+   *
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
    * @param options - Optional transaction options (prover, confirmation, anchor).
@@ -1508,6 +1638,10 @@ export interface TransactionsResource {
    * const submitted = await proven.submit();
    * await submitted.apply();
    * ```
+   *
+   * No stage registers the scripts the request declares through
+   * `withExpectedNtxScripts`; submit `newRegisterNoteScriptsTransactionRequest`
+   * first.
    *
    * {@link submit} runs every stage in one call. The stages are not atomic as a
    * group: awaiting other mutating calls on the same account between them can
@@ -1764,6 +1898,26 @@ export interface NotesResource {
   listConsumable(options?: {
     account?: AccountRef;
   }): Promise<ConsumableNoteRecord[]>;
+
+  /**
+   * Screen a note the client has not imported, with the screener sync uses.
+   * The note is not stored.
+   *
+   * Returns one {@link NoteConsumability} per account that can consume the
+   * note now, after a block, or with authorization. The screener drops
+   * accounts that can never consume the note, and accounts that cannot
+   * consume it under the current conditions, so an empty array means no
+   * screened account can consume it now. It is also empty when the client
+   * tracks no accounts, so it does not mean never consumable.
+   *
+   * @param note - The note to screen.
+   * @param options - Optional account to screen against; it must be in the
+   *   client's store. Omit to screen against every tracked account.
+   */
+  screen(
+    note: Note,
+    options?: { account?: AccountRef }
+  ): Promise<NoteConsumability[]>;
 
   /**
    * Import a note from a {@link NoteFile}.
@@ -2351,8 +2505,8 @@ export declare class MidenClient {
   /**
    * Terminates the client, then resolves once its wasm client is freed and its
    * store connection released, so the store can be deleted or reopened once
-   * this settles. On the Node.js binding it releases nothing and resolves at
-   * once.
+   * this settles. On the Node.js binding it releases only the store's
+   * ownership claim and resolves at once.
    * A store handle you obtain yourself, such as an AccountReader from
    * `accountReader`, keeps the connection open until you free it.
    */

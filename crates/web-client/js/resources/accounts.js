@@ -3,6 +3,7 @@ import {
   resolveStorageMode,
   resolveAuthScheme,
   hashSeed,
+  toAmount,
 } from "../utils.js";
 
 // Legacy numeric 0/1 and "NonFungibleFaucet" are still accepted; non-fungible
@@ -77,7 +78,7 @@ export class AccountsResource {
         opts.name ?? opts.symbol,
         opts.symbol,
         opts.decimals,
-        BigInt(opts.maxSupply),
+        toAmount(opts.maxSupply, "create maxSupply"),
         authScheme
       );
     }
@@ -272,6 +273,45 @@ export class AccountsResource {
     const id = resolveAccountRef(input, wasm);
     await this.#inner.importAccountById(id);
     return await this.#inner.getAccount(id);
+  }
+
+  async importWatched(ref) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const id = resolveAccountRef(ref, wasm);
+    await this.#inner.importWatchedAccountById(id);
+    return await this.#inner.getAccount(id);
+  }
+
+  async trackWitness(ref) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    return await this.#inner.trackAccountWitness(resolveAccountRef(ref, wasm));
+  }
+
+  async untrackWitness(ref) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    return await this.#inner.untrackAccountWitness(
+      resolveAccountRef(ref, wasm)
+    );
+  }
+
+  async trackedWitnesses() {
+    this.#client.assertNotTerminated();
+    return Array.from(await this.#inner.trackedAccountWitnesses());
+  }
+
+  async getStorageMapWitness(ref, slotName, key) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const id = resolveAccountRef(ref, wasm);
+    const reader = await this.#inner.accountReader(id);
+    try {
+      return await reader.getStorageMapWitness(slotName, key);
+    } finally {
+      reader.free?.();
+    }
   }
 
   async export(ref) {

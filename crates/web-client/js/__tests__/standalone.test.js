@@ -681,3 +681,52 @@ describe("createFeeSponsorshipNote docs", () => {
     }
   });
 });
+
+// ── number amounts ────────────────────────────────────────────────────────────
+
+describe("number amounts", () => {
+  let wasm;
+  let swapTagMock;
+
+  beforeEach(() => {
+    wasm = makeWasm();
+    _setWasm(wasm);
+    swapTagMock = vi.fn().mockReturnValue("swapTag");
+    _setWebClient({ buildSwapTag: swapTagMock });
+  });
+
+  afterEach(() => {
+    _setWasm(null);
+    _setWebClient(null);
+  });
+
+  const unsafe = Number.MAX_SAFE_INTEGER + 2;
+  const swap = (offer, request) =>
+    buildSwapTag({
+      type: "public",
+      offer: { token: "0xa", amount: offer },
+      request: { token: "0xb", amount: request },
+    });
+
+  it("buildSwapTag rejects an unsafe number on either side", () => {
+    expect(() => swap(unsafe, 1n)).toThrow(/amount must be a safe integer/);
+    expect(() => swap(1n, 1.5)).toThrow(/amount must be a safe integer/);
+  });
+
+  it("buildSwapTag forwards a bigint above 2^53 - 1 exactly", () => {
+    expect(swap(9007199254740993n, 9007199254740995n)).toBe("swapTag");
+    expect(swapTagMock.mock.calls[0][2]).toBe(9007199254740993n);
+    expect(swapTagMock.mock.calls[0][4]).toBe(9007199254740995n);
+  });
+
+  it("createP2IDNote rejects an unsafe asset number before building it", () => {
+    expect(() =>
+      createP2IDNote({
+        from: "0xsender",
+        to: "0xrecipient",
+        assets: { token: "0xfaucet", amount: unsafe },
+      })
+    ).toThrow(/amount must be a safe integer/);
+    expect(wasm.FungibleAsset).not.toHaveBeenCalled();
+  });
+});

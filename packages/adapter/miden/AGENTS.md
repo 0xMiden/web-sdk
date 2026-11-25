@@ -97,10 +97,15 @@ prompt if the wallet locked meanwhile. A failed disconnect arrives as a
 
 **Account changes propagate through the normal adapter lifecycle.** After a
 connection, the adapter follows the injected wallet's `accountChange` event.
-Switching to another granted account updates `address` and `publicKey` and
-emits `connect` again, so React consumers refresh in place. Switching to an
+Switching to another granted account updates `address` and `publicKey`, emits
+the adapter's own `accountChange(address, publicKey)` event and then `connect`
+again, so React consumers refresh in place. Switching to an
 account without a grant, or revoking the current grant, clears those fields
-and emits `disconnect`. Calling `disconnect()` removes the subscription.
+and emits `disconnect`. Calling `disconnect()` removes the subscription. `requestStorage(request)`
+reads one storage slot (or map entry) when the connection holds the `Storage`
+grant; `supportsStorageReads` is a preflight for wallet support and the recorded
+grant; the call can still reject, for example when the wallet revoked consent. The React hooks do not forward either
+yet; use the adapter instance.
 
 ## Checking a provider
 

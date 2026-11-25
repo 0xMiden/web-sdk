@@ -145,6 +145,7 @@ function makeWasm(overrides = {}) {
     Note: {
       createP2IDNote: vi.fn().mockReturnValue("p2idNote"),
       withAttachments: vi.fn().mockReturnValue("networkNote"),
+      createClaimNote: vi.fn().mockReturnValue("claimNote"),
     },
     NoteAssets: vi.fn().mockReturnValue("noteAssets"),
     FungibleAsset: vi.fn().mockReturnValue("fungibleAsset"),
@@ -240,6 +241,9 @@ function makeInner(overrides = {}) {
     newSendTransactionRequest: vi.fn().mockResolvedValue("sendRequest"),
     newMintTransactionRequest: vi.fn().mockResolvedValue("mintRequest"),
     newB2AggTransactionRequest: vi.fn().mockResolvedValue("b2aggRequest"),
+    newXReserveBurnTransactionRequest: vi
+      .fn()
+      .mockResolvedValue("xreserveBurnRequest"),
     newConsumeTransactionRequest: vi.fn().mockResolvedValue("consumeRequest"),
     // Keep the builder the resource actually used, so a test can assert what was
     // declared on it rather than only that one was asked for.
@@ -921,6 +925,322 @@ describe("TransactionsResource", () => {
       expect(inner.syncChain).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
     });
+  });
+
+  describe("number amounts", () => {
+    const calls = {
+      send: (resource, amount) =>
+        resource.send({ account: "0xa", to: "0xb", token: "0xf", amount }),
+      "send with returnNote": (resource, amount) =>
+        resource.send({
+          account: "0xa",
+          to: "0xb",
+          token: "0xf",
+          amount,
+          returnNote: true,
+        }),
+      mint: (resource, amount) =>
+        resource.mint({ account: "0xf", to: "0xb", amount }),
+      bridge: (resource, amount) =>
+        resource.bridge({
+          account: "0xa",
+          bridgeAccount: "0xbridge",
+          token: "0xf",
+          amount,
+          destinationNetwork: 1,
+          destinationAddress: "0x000000000000000000000000000000000000dEaD",
+        }),
+    };
+
+    describe.each(Object.keys(calls))("%s", (method) => {
+      it.each([
+        ["above 2^53 - 1", Number.MAX_SAFE_INTEGER + 2],
+        ["fractional", 1.5],
+        ["NaN", NaN],
+      ])(
+        "rejects a number that is %s before any WASM call",
+        async (_l, amount) => {
+          const { resource, wasm } = makeResource();
+          await expect(calls[method](resource, amount)).rejects.toThrow(
+            /amount must be a safe integer/
+          );
+          expect(wasm.AccountId.fromHex).not.toHaveBeenCalled();
+          expect(wasm.FungibleAsset).not.toHaveBeenCalled();
+        }
+      );
+
+      it("forwards a bigint above 2^53 - 1 exactly", async () => {
+        const { resource, inner, wasm } = makeResource();
+        await calls[method](resource, 9007199254740993n);
+        const forwarded = {
+          send: () => inner.newSendTransactionRequest.mock.calls[0][4],
+          "send with returnNote": () => wasm.FungibleAsset.mock.calls[0][1],
+          mint: () => inner.newMintTransactionRequest.mock.calls[0][3],
+          bridge: () => inner.newB2AggTransactionRequest.mock.calls[0][3],
+        }[method]();
+        expect(forwarded).toBe(9007199254740993n);
+      });
+    });
+  });
+
+  describe("number amounts on swap, pswap and network notes", () => {
+    const pswapNote = { note: "0xpswapNote", account: "0xaccHex" };
+    const calls = {
+      "swap offer": (r, amount) =>
+        r.swap({
+          account: "0xaccHex",
+          offer: { token: "0xo", amount },
+          request: { token: "0xw", amount: 5n },
+          type: "public",
+        }),
+      "swap request": (r, amount) =>
+        r.swap({
+          account: "0xaccHex",
+          offer: { token: "0xo", amount: 5n },
+          request: { token: "0xw", amount },
+          type: "public",
+        }),
+      "pswapCreate offer": (r, amount) =>
+        r.pswapCreate({
+          account: "0xaccHex",
+          offer: { token: "0xo", amount },
+          request: { token: "0xw", amount: 5n },
+          type: "public",
+        }),
+      "pswapCreate request": (r, amount) =>
+        r.pswapCreate({
+          account: "0xaccHex",
+          offer: { token: "0xo", amount: 5n },
+          request: { token: "0xw", amount },
+          type: "public",
+        }),
+      "pswapConsume fillAmount": (r, amount) =>
+        r.pswapConsume({ ...pswapNote, fillAmount: amount }),
+      "pswapConsume noteFillAmount": (r, amount) =>
+        r.pswapConsume({
+          ...pswapNote,
+          fillAmount: 1n,
+          noteFillAmount: amount,
+        }),
+      "createNetworkNote asset": (r, amount) =>
+        r.createNetworkNote({
+          account: "0xsender",
+          target: "0xtarget",
+          script: "myScript",
+          assets: { token: "0xf", amount },
+        }),
+    };
+
+    describe.each(Object.keys(calls))("%s", (name) => {
+      it.each([
+        ["above 2^53 - 1", Number.MAX_SAFE_INTEGER + 2],
+        ["fractional", 1.5],
+      ])("rejects a number that is %s", async (_l, amount) => {
+        const { resource, inner, wasm } = makeResource();
+        await expect(calls[name](resource, amount)).rejects.toThrow(
+          /amount must be a safe integer/
+        );
+        expect(inner.newSwapTransactionRequest).not.toHaveBeenCalled();
+        expect(inner.newPswapCreateTransactionRequest).not.toHaveBeenCalled();
+        expect(inner.newPswapConsumeTransactionRequest).not.toHaveBeenCalled();
+        expect(wasm.FungibleAsset).not.toHaveBeenCalled();
+      });
+
+      it("forwards a bigint above 2^53 - 1 exactly", async () => {
+        const { resource, inner, wasm } = makeResource();
+        await calls[name](resource, 9007199254740993n);
+        const forwarded = {
+          "swap offer": () => inner.newSwapTransactionRequest.mock.calls[0][2],
+          "swap request": () =>
+            inner.newSwapTransactionRequest.mock.calls[0][4],
+          "pswapCreate offer": () =>
+            inner.newPswapCreateTransactionRequest.mock.calls[0][2],
+          "pswapCreate request": () =>
+            inner.newPswapCreateTransactionRequest.mock.calls[0][4],
+          "pswapConsume fillAmount": () =>
+            inner.newPswapConsumeTransactionRequest.mock.calls[0][2],
+          "pswapConsume noteFillAmount": () =>
+            inner.newPswapConsumeTransactionRequest.mock.calls[0][3],
+          "createNetworkNote asset": () => wasm.FungibleAsset.mock.calls[0][1],
+        }[name]();
+        expect(forwarded).toBe(9007199254740993n);
+      });
+    });
+  });
+
+  describe("withdrawUsdcx", () => {
+    const RECIPIENT =
+      "0x1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30";
+
+    it("builds an xReserve burn request and submits", async () => {
+      const { resource, inner } = makeResource();
+      const result = await resource.withdrawUsdcx({
+        account: "0xsender",
+        token: "0xfaucet",
+        amount: 250,
+        destinationDomain: 6,
+        destinationRecipient: RECIPIENT,
+      });
+
+      // Pin the argument order: a sender/faucet swap burns from the wrong side.
+      expect(inner.newXReserveBurnTransactionRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xsender" }),
+        expect.objectContaining({ hex: "0xfaucet" }),
+        250n,
+        6,
+        Uint8Array.from(
+          RECIPIENT.slice(2)
+            .match(/../g)
+            .map((byte) => parseInt(byte, 16))
+        )
+      );
+      expect(inner.executeTransaction).toHaveBeenCalled();
+      expect(result.txId).toBeDefined();
+    });
+
+    it.each([
+      ["missing 0x prefix", RECIPIENT.slice(2)],
+      ["31 bytes", RECIPIENT.slice(0, -2)],
+      ["non-hex digit", RECIPIENT.slice(0, -1) + "g"],
+    ])("rejects a destinationRecipient with %s", async (_label, recipient) => {
+      const { resource, inner } = makeResource();
+      await expect(
+        resource.withdrawUsdcx({
+          account: "0xsender",
+          token: "0xfaucet",
+          amount: 250,
+          destinationDomain: 6,
+          destinationRecipient: recipient,
+        })
+      ).rejects.toThrow(/destinationRecipient/);
+      expect(inner.newXReserveBurnTransactionRequest).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["above 2^53 - 1", Number.MAX_SAFE_INTEGER + 2],
+      ["fractional", 1.5],
+      ["NaN", NaN],
+    ])(
+      "rejects a number amount that is %s before any WASM call",
+      async (_label, amount) => {
+        const { resource, inner, wasm } = makeResource();
+        await expect(
+          resource.withdrawUsdcx({
+            account: "0xsender",
+            token: "0xfaucet",
+            amount,
+            destinationDomain: 6,
+            destinationRecipient: RECIPIENT,
+          })
+        ).rejects.toThrow(/amount/);
+        expect(wasm.AccountId.fromHex).not.toHaveBeenCalled();
+        expect(inner.newXReserveBurnTransactionRequest).not.toHaveBeenCalled();
+      }
+    );
+
+    it("forwards a bigint amount above 2^53 - 1 exactly", async () => {
+      const { resource, inner } = makeResource();
+      await resource.withdrawUsdcx({
+        account: "0xsender",
+        token: "0xfaucet",
+        amount: 9007199254740993n,
+        destinationDomain: 6,
+        destinationRecipient: RECIPIENT,
+      });
+      expect(inner.newXReserveBurnTransactionRequest.mock.calls[0][2]).toBe(
+        9007199254740993n
+      );
+    });
+
+    it("documents a destinationRecipient the validator accepts", () => {
+      const skill = readFileSync(
+        new URL("../../../skills/web-client-usage/SKILL.md", import.meta.url),
+        "utf8"
+      );
+      const documented = skill.match(
+        /withdrawUsdcx\(\{[^}]*?destinationRecipient: ([^,\n]+),/s
+      )?.[1];
+      expect(documented).toBeDefined();
+      expect(documented).toMatch(/^"0x[0-9a-fA-F]{64}"$/);
+    });
+  });
+
+  describe("claimAggLayerDeposit", () => {
+    const claimOpts = (overrides = {}) => ({
+      account: "0xsender",
+      bridgeAccount: "0xbridge",
+      proof: "proofData",
+      leaf: "leafData",
+      scale: 10,
+      ...overrides,
+    });
+
+    it("submits the CLAIM note as the sender with the bridge declared", async () => {
+      const { resource, inner, wasm } = makeResource();
+      const result = await resource.claimAggLayerDeposit(claimOpts());
+
+      // Pin the argument order: a bridge/sender swap targets the wrong account.
+      expect(wasm.Note.createClaimNote).toHaveBeenCalledWith(
+        "proofData",
+        "leafData",
+        10,
+        expect.objectContaining({ hex: "0xbridge" }),
+        expect.objectContaining({ hex: "0xsender" })
+      );
+      const [executing] = inner.feeAwareTransactionRequestBuilder.mock.calls[0];
+      expect(executing.hex).toBe("0xsender");
+      const [outputs] = lastBuilder.withOwnOutputNotes.mock.calls[0];
+      expect(outputs._items).toEqual(["claimNote"]);
+      const [declared] = lastBuilder.withForeignAccounts.mock.calls[0];
+      expect(declared.pushed).toHaveLength(1);
+      expect(wasm.ForeignAccount.public.mock.calls[0][0].hex).toBe("0xbridge");
+      expect(inner.executeTransaction.mock.calls[0][0].hex).toBe("0xsender");
+      // The built request, not the builder, is what gets submitted.
+      expect(inner.executeTransaction.mock.calls[0][1]).toBe("txRequest");
+      expect(result.note).toBe("claimNote");
+      expect(result.txId).toBeDefined();
+      expect(result.result).toBeDefined();
+    });
+
+    it("waits for confirmation when waitForConfirmation=true", async () => {
+      const { resource } = makeResource();
+      let confirmed = false;
+      const waitFor = vi.spyOn(resource, "waitFor").mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(() => {
+              confirmed = true;
+              resolve();
+            }, 0)
+          )
+      );
+      const result = await resource.claimAggLayerDeposit(
+        claimOpts({ waitForConfirmation: true, timeout: 5000 })
+      );
+      expect(waitFor).toHaveBeenCalledWith(result.txId.toHex(), {
+        timeout: 5000,
+      });
+      // A call that does not await the confirmation resolves first.
+      expect(confirmed).toBe(true);
+    });
+
+    it.each([
+      ["fractional", 1.5],
+      ["negative", -1],
+      ["above 18", 19],
+      ["NaN", NaN],
+      ["a string", "10"],
+    ])(
+      "rejects a scale that is %s before any WASM call",
+      async (_label, scale) => {
+        const { resource, wasm } = makeResource();
+        await expect(
+          resource.claimAggLayerDeposit(claimOpts({ scale }))
+        ).rejects.toThrow(/scale must be an integer from 0 to 18/);
+        expect(wasm.AccountId.fromHex).not.toHaveBeenCalled();
+        expect(wasm.Note.createClaimNote).not.toHaveBeenCalled();
+      }
+    );
   });
 
   describe("consume", () => {
@@ -1681,6 +2001,8 @@ describe("TransactionsResource", () => {
       "createNetworkNote",
       "mint",
       "bridge",
+      "withdrawUsdcx",
+      "claimAggLayerDeposit",
       "consume",
       "consumeAll",
       "swap",

@@ -13,6 +13,7 @@ use miden_client::note::{
     BlockNumber,
     Note as NativeNote,
     NoteAssets as NativeNoteAssets,
+    NoteScript as NativeNoteScript,
     PswapNote,
 };
 #[cfg(feature = "testing")]
@@ -29,6 +30,7 @@ use miden_client::transaction::{
     TransactionRequest as NativeTransactionRequest,
     TransactionRequestBuilder as NativeTransactionRequestBuilder,
 };
+use miden_client::usdcx::note::xreserve_burn::XReserveBurnNote;
 use miden_client::{Client, ClientError, Word as NativeWord};
 #[cfg(feature = "browser")]
 use wasm_bindgen::JsValue;
@@ -41,8 +43,9 @@ use crate::models::chain_anchor::ChainAnchor;
 use crate::models::eth_address::EthAddress;
 use crate::models::felt::Felt;
 use crate::models::foreign_account::ForeignAccount;
-use crate::models::miden_arrays::{FeltArray, ForeignAccountArray};
-use crate::models::note::Note;
+use crate::models::miden_arrays::{FeltArray, ForeignAccountArray, NoteScriptArray};
+use crate::models::note::{Note, xreserve_burn_items};
+use crate::models::note_script::NoteScript;
 use crate::models::proven_transaction::ProvenTransaction;
 use crate::models::provers::TransactionProver;
 use crate::models::transaction_id::TransactionId;
@@ -193,6 +196,76 @@ impl WebClient {
             })?;
 
         Ok(b2agg_transaction_request.into())
+    }
+
+    /// Builds a transaction request that withdraws `USDCx` through Circle xReserve.
+    ///
+    /// The request emits a single public xReserve burn note holding `amount` units of the
+    /// `faucet_id` asset. The faucet consumes and burns it, and Circle releases USDC to
+    /// `destination_recipient` (32 bytes) on `destination_domain`.
+    #[js_export(js_name = "newXReserveBurnTransactionRequest")]
+    pub async fn new_xreserve_burn_transaction_request(
+        &self,
+        sender_account_id: &AccountId,
+        faucet_id: &AccountId,
+        amount: JsU64,
+        destination_domain: u32,
+        destination_recipient: Vec<u8>,
+    ) -> Result<TransactionRequest, JsErr> {
+        let items = xreserve_burn_items(destination_domain, destination_recipient)?;
+        let amount = AssetAmount::new(js_u64_to_u64(amount)?)
+            .map_err(|err| js_error_with_context(err, "failed to create burn amount"))?;
+
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| {
+            from_str_err("Client not initialized while generating transaction request")
+        })?;
+
+        let burn_note = XReserveBurnNote::create(
+            sender_account_id.into(),
+            faucet_id.into(),
+            amount,
+            items,
+            client.rng(),
+        )
+        .map_err(|err| js_error_with_context(err, "failed to create xreserve burn note"))?;
+
+        let builder = fee_aware_builder(client, sender_account_id.into()).await?;
+        let request = builder.own_output_notes(vec![burn_note]).build().map_err(|err| {
+            js_error_with_context(err, "failed to create xreserve burn transaction request")
+        })?;
+
+        Ok(request.into())
+    }
+
+    /// Builds a transaction request that registers custom note scripts in the node's script
+    /// registry, so a network account can later run them.
+    ///
+    /// The request emits one public note per script, with no assets and no storage. Submit it from
+    /// `sender_account_id` before the network transaction that needs the scripts: the submit
+    /// methods never register the scripts a request declares through `withExpectedNtxScripts`.
+    #[js_export(js_name = "newRegisterNoteScriptsTransactionRequest")]
+    pub async fn new_register_note_scripts_transaction_request(
+        &self,
+        sender_account_id: &AccountId,
+        scripts: NoteScriptArray,
+    ) -> Result<TransactionRequest, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| {
+            from_str_err("Client not initialized while generating transaction request")
+        })?;
+
+        let items: Vec<NoteScript> = scripts.into();
+        let native_scripts: Vec<NativeNoteScript> = items.into_iter().map(Into::into).collect();
+
+        let builder = fee_aware_builder(client, sender_account_id.into()).await?;
+        let request = builder
+            .build_register_note_scripts(sender_account_id.into(), native_scripts, client.rng())
+            .map_err(|err| {
+                js_error_with_context(err, "failed to create register note scripts request")
+            })?;
+
+        Ok(request.into())
     }
 
     #[js_export(js_name = "newSwapTransactionRequest")]
@@ -400,7 +473,9 @@ impl WebClient {
     /// Executes a transaction specified by the request against the specified account,
     /// proves it, submits it to the network, and updates the local database.
     ///
-    /// Uses the prover configured for this client.
+    /// Uses the prover configured for this client. It submits exactly this request: scripts the
+    /// request declares through `withExpectedNtxScripts` are not registered here, so submit
+    /// `newRegisterNoteScriptsTransactionRequest` first.
     ///
     /// If the transaction utilizes foreign account data, there is a chance that the client doesn't
     /// have the required block header in the local database. In these scenarios, a sync to
@@ -426,6 +501,9 @@ impl WebClient {
 
     /// Executes a transaction specified by the request against the specified account, proves it
     /// with the user provided prover, submits it to the network, and updates the local database.
+    /// It submits exactly this request: scripts the request declares through
+    /// `withExpectedNtxScripts` are not registered here, so submit
+    /// `newRegisterNoteScriptsTransactionRequest` first.
     ///
     /// If the transaction utilizes foreign account data, there is a chance that the client doesn't
     /// have the required block header in the local database. In these scenarios, a sync to the
@@ -455,6 +533,9 @@ impl WebClient {
     /// individually and as a batch, submits the batch to the network, and atomically applies
     /// the per-tx updates to the local store. Returns the node's chain tip as of submission, not
     /// the block the batch commits in, which only a later sync reveals.
+    ///
+    /// Like the single submit, it registers no script a request declares through
+    /// `withExpectedNtxScripts`.
     ///
     /// Every proof is produced inside the batch primitive by the client's built-in local prover.
     /// Unlike `submitNewTransactionWithProver`, this takes no prover, so a JS-side `proverUrl` or

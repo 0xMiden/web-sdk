@@ -1,6 +1,10 @@
 use js_export_macro::js_export;
-use miden_client::agglayer::B2AggNote;
-use miden_client::asset::{Asset as NativeAsset, FungibleAsset as NativeFungibleAsset};
+use miden_client::agglayer::{B2AggNote, ClaimNote, ClaimNoteStorage};
+use miden_client::asset::{
+    Asset as NativeAsset,
+    AssetAmount,
+    FungibleAsset as NativeFungibleAsset,
+};
 use miden_client::block::BlockNumber as NativeBlockNumber;
 use miden_client::note::{
     FeeSponsorshipNote as NativeFeeSponsorshipNote,
@@ -11,11 +15,18 @@ use miden_client::note::{
     P2ideNote,
 };
 use miden_client::rng::draw_word;
+use miden_client::usdcx::note::xreserve_burn::XReserveBurnNote;
+use miden_client::usdcx::xreserve::encoding::{
+    CircleDomain,
+    ForeignChainAddress,
+    XReserveBurnItems,
+};
 use miden_client::{Felt as NativeFelt, Word as NativeWord};
 use miden_protocol::crypto::rand::RandomCoin;
 
 use super::NoteType;
 use super::account_id::AccountId;
+use super::claim_note::{ClaimLeafData, ClaimProofData};
 use super::eth_address::EthAddress;
 use super::fungible_asset::FungibleAsset;
 use super::note_assets::NoteAssets;
@@ -26,7 +37,7 @@ use super::note_recipient::NoteRecipient;
 use super::note_script::NoteScript;
 use super::word::Word;
 use crate::js_error_with_context;
-use crate::platform::{JsBytes, JsErr, from_str_err};
+use crate::platform::{JsBytes, JsErr, from_str_err, js_u64_to_u64};
 use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
 
 /// A note bundles public metadata with private details: assets, script, inputs, and a serial number
@@ -263,6 +274,66 @@ impl Note {
         Ok(native_note.into())
     }
 
+    /// Builds the public xReserve burn note that withdraws `amount` `USDCx` issued by `faucet_id`
+    /// to `destination_recipient` (32 bytes) on the Circle `destination_domain`.
+    ///
+    /// The note carries the fixed `BURN` tag Circle's attester discovers it by and is consumed by
+    /// the faucet, which must be a public account.
+    #[js_export(js_name = "createXReserveBurnNote")]
+    pub fn create_xreserve_burn_note(
+        sender: &AccountId,
+        faucet_id: &AccountId,
+        amount: JsU64,
+        destination_domain: u32,
+        destination_recipient: Vec<u8>,
+    ) -> Result<Self, JsErr> {
+        let items = xreserve_burn_items(destination_domain, destination_recipient)?;
+        let amount = AssetAmount::new(js_u64_to_u64(amount)?)
+            .map_err(|err| js_error_with_context(err, "create xreserve burn note"))?;
+        let coin_seed: [u64; 4] = rand::random();
+        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
+
+        let native_note =
+            XReserveBurnNote::create(sender.into(), faucet_id.into(), amount, items, &mut rng)
+                .map_err(|err| js_error_with_context(err, "create xreserve burn note"))?;
+
+        Ok(native_note.into())
+    }
+
+    /// Builds the public CLAIM note that asks `bridge_account` to mint an inbound `AggLayer`
+    /// deposit.
+    ///
+    /// The Miden amount is the leaf's amount scaled down by `scale` (the faucet's decimal
+    /// scale), `floor(amount / 10^scale)`, which is the value the bridge verifies. Returns an
+    /// error if `scale` exceeds 18 or the scaled amount exceeds the maximum fungible amount.
+    #[js_export(js_name = "createClaimNote")]
+    pub fn create_claim_note(
+        proof: &ClaimProofData,
+        leaf: &ClaimLeafData,
+        scale: u32,
+        bridge_account: &AccountId,
+        sender: &AccountId,
+    ) -> Result<Self, JsErr> {
+        let leaf_data = leaf.as_native().clone();
+        let miden_claim_amount = leaf_data
+            .amount
+            .scale_to_asset_amount(scale)
+            .map_err(|err| js_error_with_context(err, "create claim note"))?;
+        let storage = ClaimNoteStorage {
+            proof_data: proof.as_native().clone(),
+            leaf_data,
+            miden_claim_amount,
+        };
+        let coin_seed: [u64; 4] = rand::random();
+        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
+
+        let native_note =
+            ClaimNote::create(storage, bridge_account.into(), sender.into(), &mut rng)
+                .map_err(|err| js_error_with_context(err, "create claim note"))?;
+
+        Ok(native_note.into())
+    }
+
     /// Creates a note carrying the provided attachments, using the metadata's
     /// sender / note type / tag (attachments on the metadata itself are ignored).
     ///
@@ -350,3 +421,17 @@ impl From<&crate::models::miden_arrays::NoteArray> for Vec<NativeNote> {
 }
 
 impl_napi_from_value!(Note);
+
+/// Validates the xReserve withdrawal destination shared by the note and request builders.
+pub(crate) fn xreserve_burn_items(
+    destination_domain: u32,
+    destination_recipient: Vec<u8>,
+) -> Result<XReserveBurnItems, JsErr> {
+    let recipient: [u8; 32] = destination_recipient
+        .try_into()
+        .map_err(|_| from_str_err("destination recipient must be exactly 32 bytes"))?;
+    Ok(XReserveBurnItems {
+        dest_domain: CircleDomain::new(destination_domain),
+        dest_recipient: ForeignChainAddress::new(recipient),
+    })
+}

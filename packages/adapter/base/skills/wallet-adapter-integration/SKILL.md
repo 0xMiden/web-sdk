@@ -123,11 +123,11 @@ The fallback `connect` keeps the identity of the canonical `connect` it forwards
 
 `WalletReadyState` on the adapter, mirrored per wallet in `useWallet().wallets`:
 
-| State         | Meaning                                                                                                                                                                                           |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Unsupported` | No DOM. `MidenWalletAdapter` enters this state when `window` or `document` is undefined at construction, and never leaves it.                                                                     |
-| `NotDetected` | DOM present, nothing injected yet. The starting state in a desktop browser.                                                                                                                       |
-| `Installed`   | The wallet injected itself. `MidenWalletAdapter` polls for `window.midenWallet` or `window.miden` once a second, on `DOMContentLoaded`, on `load` and immediately, then emits `readyStateChange`. |
+| State         | Meaning                                                                                                                                                                                                                                           |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Unsupported` | No DOM. `MidenWalletAdapter` enters this state when `window` or `document` is undefined at construction, and never leaves it.                                                                                                                     |
+| `NotDetected` | DOM present, nothing injected yet. The starting state in a desktop browser.                                                                                                                                                                       |
+| `Installed`   | The wallet injected itself. `MidenWalletAdapter` polls for `window.midenWallet` or `window.miden` once a second, on `DOMContentLoaded`, on `load` and immediately, then emits `readyStateChange`.                                                 |
 | `Loadable`    | A phone browser with nothing injected that has the User Activation API, outside Bread's own browser. `MidenWalletAdapter` starts here on iOS, iPadOS and Android, and `openInBread()` or `connect()` opens the page in the Bread app (see below). |
 
 The connect path is: `select(name)` writes the wallet name to
@@ -195,7 +195,7 @@ with `WalletNotConnectedError` while disconnected. Always guard.
 | `requestTransaction(tx)`                | transaction id            | A `MidenTransaction` envelope. Dispatches by `type` to the send and consume endpoints; anything else goes to the wallet's generalized endpoint. |
 | `waitForTransaction(txId, timeout?)`    | `{ txHash, outputNotes }` | `outputNotes` are `Note` objects from `@miden-sdk/miden-sdk`.                                                                                   |
 | `requestAssets()`                       | `{ faucetId, amount }[]`  | `amount` is a string.                                                                                                                           |
-| `requestConsumableNotes()`              | `InputNoteDetails[]`      | From the wallet's store. `standardPayment` is true only for a P2ID or P2IDE payment; check it before treating a note as incoming funds.        |
+| `requestConsumableNotes()`              | `InputNoteDetails[]`      | From the wallet's store. `standardPayment` is true only for a P2ID or P2IDE payment; check it before treating a note as incoming funds.         |
 | `requestPrivateNotes(filter, noteIds?)` | `InputNoteDetails[]`      | `filter` is a `NoteFilterTypes` from `@miden-sdk/miden-sdk`.                                                                                    |
 | `importPrivateNote(bytes)`              | note id                   | `bytes` is a serialized note.                                                                                                                   |
 | `signBytes(data, kind)`                 | `Uint8Array`              | `kind` is `"word"` or `"signingInputs"`. The result carries no scheme signal.                                                                   |
@@ -282,22 +282,23 @@ wallet's `errorMessage`.
 Every error extends `WalletError`, which carries the underlying failure on
 `.error` and a stable `.name`. Switch on `error.name` or use `instanceof`.
 
-| Error                      | Thrown when                                                                                                                                | Do                                                          |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
-| `WalletNotSelectedError`   | `connect()` with no wallet selected.                                                                                                       | Call `select(name)`, or open the modal.                     |
-| `WalletNotReadyError`      | `connect()` while the adapter is not `Installed` or `Loadable`. The provider has already opened the install page.                          | Tell the user to install or unlock, then retry.             |
-| `WalletConnectionError`    | The wallet rejected the handshake, or returned no address.                                                                                 | Surface it. A rejection here is usually the user declining. |
-| `WalletNotConnectedError`  | Any request while no wallet is connected.                                                                                                  | Gate your UI on `connected`.                                |
-| `WalletTransactionError`   | The wallet rejected a request, returned no transaction id, or reported a failed transaction.                                               | Read `.error` for the wallet's own message.                 |
-| `WalletDisconnectionError` | `disconnect()` failed wallet-side. Emitted on the `error` event, never thrown: `disconnect()` still resolves and still emits `disconnect`. | Do not rely on try/catch around `disconnect()`.             |
+| Error                              | Thrown when                                                                                                                                | Do                                                          |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| `WalletNotSelectedError`           | `connect()` with no wallet selected.                                                                                                       | Call `select(name)`, or open the modal.                     |
+| `WalletNotReadyError`              | `connect()` while the adapter is not `Installed` or `Loadable`. The provider has already opened the install page.                          | Tell the user to install or unlock, then retry.             |
+| `WalletConnectionError`            | The wallet rejected the handshake, or returned no address.                                                                                 | Surface it. A rejection here is usually the user declining. |
+| `WalletNotConnectedError`          | Any request while no wallet is connected.                                                                                                  | Gate your UI on `connected`.                                |
+| `WalletTransactionError`           | The wallet rejected a request, returned no transaction id, or reported a failed transaction.                                               | Read `.error` for the wallet's own message.                 |
+| `WalletPrivateDataPermissionError` | `requestStorage()` when the connection was not granted `AllowedPrivateData.Storage`. The wallet is not called.                             | Reconnect with the `Storage` grant, or skip the read.       |
+| `WalletStorageUnsupportedError`    | `requestStorage()` when the wallet does not implement storage reads. Checked before the grant.                                             | Gate the call on `supportsStorageReads`.                    |
+| `WalletDisconnectionError`         | `disconnect()` failed wallet-side. Emitted on the `error` event, never thrown: `disconnect()` still resolves and still emits `disconnect`. | Do not rely on try/catch around `disconnect()`.             |
 
 `base` exports many more (`WalletLoadError`, `WalletConfigError`,
 `WalletDisconnectedError`, `WalletAccountError`, `WalletAddressError`,
 `WalletKeypairError`, `WalletSendTransactionError`, `WalletSignMessageError`,
 `WalletSignTransactionError`, `WalletTimeoutError`, `WalletWindowBlockedError`,
 `WalletWindowClosedError`, `WalletDecryptionError`,
-`WalletDecryptionNotAllowedError`, `WalletPrivateDataPermissionError`,
-`WalletRecordsError`). Nothing in these packages throws them; they exist for
+`WalletDecryptionNotAllowedError`, `WalletRecordsError`). Nothing in these packages throws them; they exist for
 other adapters to use. Do not write handlers that wait for them.
 
 Errors reach you twice: the provider calls `onError` (or `console.error` when
@@ -316,9 +317,12 @@ emit the wallet's raw error rather than a `WalletError` subclass, so an
   `@miden-sdk/miden-sdk` and the client calls back into `signBytes` for the
   signature. Reach for this when you need transaction shapes the wallet's
   endpoints do not express, or you want the client's local state.
-- **Reads.** `requestAssets`, `requestConsumableNotes` and
-  `requestPrivateNotes` answer from the wallet's store and only within the
-  permission you connected with. If you need chain state your app controls,
+- **Reads.** `requestAssets`, `requestConsumableNotes`,
+  `requestPrivateNotes` and `requestStorage` answer from the wallet's store and
+  only within the permission you connected with. `requestStorage` needs the
+  `Storage` grant, rejects with `WalletNotConnectedError` when disconnected and
+  with `WalletStorageUnsupportedError` when the wallet lacks it. The React hooks
+  do not forward it yet; call it on the adapter instance. If you need chain state your app controls,
   sync your own client instead.
 
 The two are not exclusive: a `CustomTransaction` carries a serialized
@@ -375,7 +379,7 @@ installed, something awaited between the tap and `connect()`.
 
 Extend `BaseMessageSignerWalletAdapter` from
 `@miden-sdk/miden-wallet-adapter-base`. It is an `EventEmitter` over
-`connect`, `disconnect`, `error` and `readyStateChange`, and requires
+`connect`, `accountChange`, `disconnect`, `error` and `readyStateChange`, and requires
 `name` (branded `WalletName`), `url`, `icon`, `readyState`, `address`,
 `publicKey`, `connecting`, `supportedTransactionVersions`, `connect`,
 `disconnect` and the full request surface. `connected` is derived from

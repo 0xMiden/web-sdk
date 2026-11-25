@@ -50,9 +50,33 @@ const fakeNative = vi.hoisted(() => {
       return this._height;
     }
   }
+  // Every optional field reads null from napi, as an unset Option<T> does.
+  class P2ideNote {
+    reclaimHeight() {
+      return null;
+    }
+    timelockHeight() {
+      return null;
+    }
+  }
+  class SwapNote {
+    paybackTarget() {
+      return null;
+    }
+    paybackRecipient() {
+      return null;
+    }
+  }
+  class PswapNote {}
+  class BurnNote {}
+  class MintNote {}
   class TransactionRequestBuilder {
     withOwnOutputNotes(notes) {
       received.push(notes);
+      return this;
+    }
+    withExpectedNtxScripts(scripts) {
+      received.push(scripts);
       return this;
     }
   }
@@ -98,6 +122,10 @@ const fakeNative = vi.hoisted(() => {
     async executeProgram() {
       return ["x", "y"];
     }
+    async newRegisterNoteScriptsTransactionRequest(_sender, scripts) {
+      received.push(scripts);
+      return "request";
+    }
   }
   const AuthScheme = Object.defineProperties(
     {},
@@ -116,6 +144,11 @@ const fakeNative = vi.hoisted(() => {
     Word,
     BasicFungibleFaucetComponent,
     FeeSponsorshipNote,
+    P2ideNote,
+    SwapNote,
+    PswapNote,
+    BurnNote,
+    MintNote,
     TransactionRequestBuilder,
     NoteStorage,
     SigningInputs,
@@ -136,6 +169,11 @@ vi.mock("../node/loader.js", () => ({
     Word: fakeNative.Word,
     BasicFungibleFaucetComponent: fakeNative.BasicFungibleFaucetComponent,
     FeeSponsorshipNote: fakeNative.FeeSponsorshipNote,
+    P2ideNote: fakeNative.P2ideNote,
+    SwapNote: fakeNative.SwapNote,
+    PswapNote: fakeNative.PswapNote,
+    BurnNote: fakeNative.BurnNote,
+    MintNote: fakeNative.MintNote,
     TransactionRequestBuilder: fakeNative.TransactionRequestBuilder,
     NoteStorage: fakeNative.NoteStorage,
     SigningInputs: fakeNative.SigningInputs,
@@ -238,6 +276,30 @@ describe("Node napi boundary", () => {
     expect(received[0]).toBe(first);
   });
 
+  it("unwraps a NoteScriptArray passed to withExpectedNtxScripts", () => {
+    const script = {};
+    new nodeIndex.TransactionRequestBuilder().withExpectedNtxScripts(
+      new nodeIndex.NoteScriptArray([script])
+    );
+
+    const received = fakeNative.received.at(-1);
+    expect(Array.isArray(received)).toBe(true);
+    expect(received).toEqual([script]);
+    expect(received[0]).toBe(script);
+  });
+
+  it("unwraps a NoteScriptArray passed to newRegisterNoteScriptsTransactionRequest", async () => {
+    const script = {};
+    await new fakeNative.WebClient().newRegisterNoteScriptsTransactionRequest(
+      "sender",
+      new nodeIndex.NoteScriptArray([script])
+    );
+
+    const received = fakeNative.received.at(-1);
+    expect(Array.isArray(received)).toBe(true);
+    expect(received[0]).toBe(script);
+  });
+
   it("hands a native constructor a real array of the container's items", () => {
     const felt = {};
     new nodeIndex.NoteStorage(new nodeIndex.FeltArray([felt]));
@@ -269,6 +331,29 @@ describe("Node napi boundary", () => {
       new nodeIndex.FeeSponsorshipNote(null).reclaimHeight()
     ).toBeUndefined();
     expect(new nodeIndex.FeeSponsorshipNote(42).reclaimHeight()).toBe(42);
+  });
+
+  it("exports the P2ideNote and SwapNote decoders with unset fields as undefined", () => {
+    expect(nodeIndex.P2ideNote).toBeTypeOf("function");
+    expect(nodeIndex.SwapNote).toBeTypeOf("function");
+    const p2ide = new nodeIndex.P2ideNote();
+    expect(p2ide.reclaimHeight()).toBeUndefined();
+    expect(p2ide.timelockHeight()).toBeUndefined();
+    const swap = new nodeIndex.SwapNote();
+    expect(swap.paybackTarget()).toBeUndefined();
+    expect(swap.paybackRecipient()).toBeUndefined();
+  });
+
+  it("exports the PswapNote and BurnNote decoders", () => {
+    expect(nodeIndex.PswapNote).toBeTypeOf("function");
+    expect(nodeIndex.PswapNote.name).toBe("PswapNote");
+    expect(nodeIndex.BurnNote).toBeTypeOf("function");
+    expect(nodeIndex.BurnNote.name).toBe("BurnNote");
+  });
+
+  it("exports the MintNote decoder", () => {
+    expect(nodeIndex.MintNote).toBeTypeOf("function");
+    expect(nodeIndex.MintNote.name).toBe("MintNote");
   });
 
   it("keeps the NoteScript.p2id and p2ide aliases", () => {

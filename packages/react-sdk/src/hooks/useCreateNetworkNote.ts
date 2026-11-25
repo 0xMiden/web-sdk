@@ -25,6 +25,7 @@ import type {
 import { parseAccountId } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
 import { createNoteAttachment } from "../utils/noteAttachment";
+import { toAmount } from "../utils/amounts";
 
 export interface UseCreateNetworkNoteResult {
   /** Build + submit a Public custom-script network note. */
@@ -86,7 +87,7 @@ export function useCreateNetworkNote(): UseCreateNetworkNoteResult {
               ? new NoteAssets([
                   new FungibleAsset(
                     parseAccountId(options.assetId),
-                    BigInt(options.amount ?? 0)
+                    toAmount(options.amount ?? 0, "createNetworkNote")
                   ),
                 ])
               : new NoteAssets();

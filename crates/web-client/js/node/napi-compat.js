@@ -115,8 +115,9 @@ const AUTH_SCHEME_ARG_INDEX = new Map([
  * - BigInt/Uint8Array args normalized
  * - AuthScheme args resolved against `rawSdk.AuthScheme`, as the browser
  *   WebClient resolves them against the wasm enum
+ * - terminate() calls `releaseStore`, when given
  */
-export function wrapClient(rawClient, storeName, rawSdk) {
+export function wrapClient(rawClient, storeName, rawSdk, releaseStore) {
   return new Proxy(rawClient, {
     get(target, prop) {
       if (prop === "syncState") {
@@ -137,9 +138,10 @@ export function wrapClient(rawClient, storeName, rawSdk) {
       if (prop === "storeIdentifier") {
         return () => target.storeIdentifier?.() ?? storeName ?? "unknown";
       }
-      // terminate is a no-op on Node.js (no Web Worker to terminate)
+      // There is no Web Worker to stop on Node.js; terminate only releases
+      // the store's claim (see `claimStore`).
       if (prop === "terminate") {
-        return () => {};
+        return () => releaseStore?.();
       }
       // onStateChanged is browser-only (uses BroadcastChannel)
       if (prop === "onStateChanged") {
@@ -242,6 +244,8 @@ function patchSdkPrototypes(rawSdk) {
     [rawSdk.ExecutedTransaction, ["feeNote"]],
     [rawSdk.FeeSponsorshipNote, ["reclaimHeight"]],
     [rawSdk.NoteConsumptionStatus, ["consumableAfterBlock"]],
+    [rawSdk.P2ideNote, ["reclaimHeight", "timelockHeight"]],
+    [rawSdk.SwapNote, ["paybackTarget", "paybackRecipient"]],
     // `authArg` and `feeConversionSalt` are how a caller checks what a request
     // declared about paying its fee, so they have to read the same on both
     // bindings — the salt tests in `fee_conversion_salt.test.ts` compare with
@@ -405,6 +409,7 @@ export const NODE_ARRAY_TYPES = Object.freeze([
   "NoteDetailsAndTagArray",
   "NoteIdAndArgsArray",
   "NoteRecipientArray",
+  "NoteScriptArray",
   "OutputNoteArray",
   "StorageSlotArray",
   "TransactionScriptInputPairArray",
@@ -544,6 +549,7 @@ export function createSdkWrapper(rawSdk) {
     AuthSecretKey: wrapClass(rawSdk.AuthSecretKey),
     Felt: wrapClass(rawSdk.Felt),
     FungibleAsset: wrapClass(rawSdk.FungibleAsset),
+    Note: wrapClass(rawSdk.Note),
     Word: wrapClass(rawSdk.Word),
     NoteTag: wrapClass(rawSdk.NoteTag),
     // Array type polyfills

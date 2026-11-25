@@ -222,6 +222,81 @@ Each call adds one note. The optional second argument is the note's arguments, t
 
 To consume an authenticated note, the executing client must be able to serve the header of the note's creation block, from its store or from the [chain anchor](#chain-anchored-execution) the request executes against.
 
+## Skipping Invalid Notes, Network Scripts and Code Upgrades
+
+`ignoreInvalidInputNotes()` makes execution drop an input note the account can no longer consume, without an error, and consume the rest. `request.ignoresInvalidInputNotes()` reports the flag. Execution screens at most 20 input notes this way and fails with `invalid input note count` above that, so split a larger batch across requests.
+
+```typescript
+const request = new TransactionRequestBuilder()
+  .withInputNotes(notes)
+  .ignoreInvalidInputNotes()
+  .build();
+```
+
+`withExpectedNtxScripts(scripts)` declares the note scripts the network will run for the request, and `request.expectedNtxScripts()` reads the declared list back, standard scripts included. The web client submits exactly the request it is given and registers nothing, so register each custom script the node does not know yet first. `client.newRegisterNoteScriptsTransactionRequest(sender, scripts)` builds a request that emits one public note per script, with no assets and no storage; submit it from `sender` before the network transaction that needs the scripts. The node resolves standard scripts itself.
+
+```typescript
+const scripts = new NoteScriptArray([customScript]);
+const register = await client.newRegisterNoteScriptsTransactionRequest(
+  sender,
+  scripts
+);
+await client.submitNewTransaction(sender, register);
+```
+
+`buildAccountCodeUpgrade(code)` finalizes a request that upgrades the executing account to `code`. The account needs the `UpgradeManager` component with `AuthControlled` authority, and `code` must keep the storage layout. It replaces any custom script and script argument, and fails when own output notes or an expiration delta are set. `withAccountCodeUpgrade(code)` only places the code in the advice map, and `request.accountCodeUpgrade()` returns it.
+
+## Claiming an inbound AggLayer deposit
+
+`Note.createClaimNote(...)` builds the public CLAIM note that asks the AggLayer bridge to mint an inbound deposit. The proof and leaf come from the AggLayer `claimAsset` data; the Miden amount is derived from the leaf's uint256 amount and the faucet's decimal scale, `floor(amount / 10^scale)`, which is what the bridge verifies.
+
+```typescript
+const proof = new ClaimProofData(
+  smtProofLocalExitRoot, // 32 hex nodes
+  smtProofRollupExitRoot, // 32 hex nodes
+  globalIndex,
+  mainnetExitRoot,
+  rollupExitRoot
+);
+const leaf = new ClaimLeafData(
+  originNetwork,
+  EthAddress.fromHex(originTokenAddress),
+  destinationNetwork,
+  EthAddress.fromHex(destinationAddress),
+  "100000000000000000000", // uint256 amount as a decimal string
+  metadataHash
+);
+const note = Note.createClaimNote(proof, leaf, 10, bridgeAccountId, senderId);
+```
+
+A scale above 18, or a scaled amount above the maximum fungible amount, throws. Submit it with `client.transactions.claimAggLayerDeposit(...)`, which builds the same note, sends it as an own output note of the sender and declares the bridge account as a foreign account, as for any network note. It returns `{ txId, note, result }`. A `scale` that is not an integer from 0 to 18 throws before any WASM call.
+
+```typescript
+const { txId, note } = await client.transactions.claimAggLayerDeposit({
+  account: wallet, // sender, the executing account
+  bridgeAccount: bridgeAccountId, // public bridge; consumes the note and mints the deposit
+  proof,
+  leaf,
+  scale: 10, // the faucet's decimal scale
+});
+```
+
+## Withdrawing USDCx (Circle xReserve)
+
+`client.transactions.withdrawUsdcx(...)` emits a single public burn note with the fixed `BURN` tag. The USDCx faucet, a public account, consumes and burns it, and Circle releases USDC to the recipient on the destination domain.
+
+```typescript
+await client.transactions.withdrawUsdcx({
+  account: wallet, // sender, the executing account
+  token: usdcxFaucet, // public USDCx faucet; consumes the note and burns the asset
+  amount: 1_000_000n, // a number must be a safe integer; use a bigint above 2 ** 53 - 1
+  destinationDomain: 6, // Circle domain id
+  destinationRecipient: "0x0000000000000000000000001111111111111111111111111111111111111111", // 32 bytes
+});
+```
+
+`destinationRecipient` is a `0x`-prefixed 64-digit hex string, validated before any WASM call. An EVM address is left-padded with zeros to 32 bytes. The lower-level builders are `Note.createXReserveBurnNote(...)` and `client.newXReserveBurnTransactionRequest(...)`, which take the recipient as a 32-byte `Uint8Array`.
+
 ## Paying Transaction Fees
 
 Since protocol 0.16 a chain can charge a verification fee, and the fee is paid from inside the account's auth procedure rather than by the transaction kernel. `fee::pay_fee` reads the asset and rate to pay in out of the transaction's auth argument: `AUTH_ARGS` has to be `hash(CONVERSION_INFO || SALT)`, with the preimage reachable in the advice map. A procedure that reaches `pay_fee` without that commitment aborts with `ERR_FEE_CONVERSION_INFO_MISSING`.
@@ -248,9 +323,9 @@ On a chain that charges nothing, a request for an account that is not a multisig
 
 ### The convenience constructors handle it
 
-`newSendTransactionRequest`, `newMintTransactionRequest`, `newConsumeTransactionRequest`, `newSwapTransactionRequest`, `newB2AggTransactionRequest`, `newPswapCreateTransactionRequest`, `newPswapConsumeTransactionRequest` and `newPswapCancelTransactionRequest` declare a salt themselves where the executing account needs one. Each returns a finished `TransactionRequest`, which takes no salt declaration afterwards, so they declare it while they build. A finished request from anywhere else gets the multisig auth args from `withFeeAwareAuth`; see [Executing a request someone else built](#executing-a-request-someone-else-built).
+`newSendTransactionRequest`, `newMintTransactionRequest`, `newConsumeTransactionRequest`, `newSwapTransactionRequest`, `newB2AggTransactionRequest`, `newXReserveBurnTransactionRequest`, `newPswapCreateTransactionRequest`, `newPswapConsumeTransactionRequest` and `newPswapCancelTransactionRequest` declare a salt themselves where the executing account needs one. Each returns a finished `TransactionRequest`, which takes no salt declaration afterwards, so they declare it while they build. A finished request from anywhere else gets the multisig auth args from `withFeeAwareAuth`; see [Executing a request someone else built](#executing-a-request-someone-else-built).
 
-The `client.transactions` operations that build their own request - `send`, `mint`, `consume`, `consumeAll`, `swap`, `bridge`, `createNetworkNote`, `execute`, `pswapCreate`, `pswapConsume`, `pswapCancel`, and the named operations of `batch` and `preview` - declare it too. The ones that take a finished request **from you** never do: `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview`. Those are the paths the next two sections are for.
+The `client.transactions` operations that build their own request - `send`, `mint`, `consume`, `consumeAll`, `swap`, `bridge`, `withdrawUsdcx`, `createNetworkNote`, `execute`, `pswapCreate`, `pswapConsume`, `pswapCancel`, and the named operations of `batch` and `preview` - declare it too. The ones that take a finished request **from you** never do: `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview`. Those are the paths the next two sections are for.
 
 `submitBatch` is worth calling out because a batch proves each transaction as it is pushed, on the client's built-in local prover rather than `proverUrl`. A multisig request that declares no salt is rejected by miden-client during preparation, after the proofs of everything ahead of it in the batch have already been paid for. Build multisig requests from `feeAwareTransactionRequestBuilder`, or pass a finished one through `withFeeAwareAuth`, before batching them.
 
@@ -447,7 +522,7 @@ await client.transactions.submit(account, proposedRequest, {
 
 Notes on anchors:
 
-- **The request travels with the anchor.** A co-signer has to re-derive the summary from the proposer's request bytes, not from a request they build themselves. On a fee-charging chain a multisig request carries fee conversion info whose salt is drawn fresh on every build, and the multisig auth procedure uses that auth argument as the summary's replay-guard salt — so two independently built requests produce two different summaries even when they describe the identical transfer. Rebuilding locally therefore fails the comparison below and reads as tampering when nothing is wrong. `TransactionRequest.serialize()` / `.deserialize()` are the transport.
+- **The request travels with the anchor.** A co-signer has to re-derive the summary from the proposer's request bytes, not from a request they build themselves. On a fee-charging chain a multisig request carries fee conversion info whose salt is drawn fresh on every build, and the multisig auth procedure uses that auth argument as the summary's replay-guard salt — so two independently built requests produce two different summaries even when they describe the identical transfer. Rebuilding locally therefore fails the comparison below and reads as tampering when nothing is wrong. `TransactionRequest.serialize()` / `.deserialize()` are the transport. To check that a received request equals one you hold, use `request.equals(other)`, not a byte comparison: a Merkle store serializes its entries beyond the empty-subtree defaults in hash-map order, so equal requests can differ in bytes.
 
 - **Signature collection is a separate concern.** An anchor makes signatures *reproducible* across heights; it does not transport them. Signatures are returned to the executor and attached to the request with `request.extendAdviceMap(...)` before submission, which is unchanged by anchoring.
 

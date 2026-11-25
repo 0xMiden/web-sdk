@@ -61,6 +61,8 @@ function makeInner() {
     getInputNote: vi.fn(),
     getOutputNotes: vi.fn(),
     getConsumableNotes: vi.fn(),
+    getNoteConsumability: vi.fn(),
+    getNoteConsumabilityForAccount: vi.fn(),
     importNoteFile: vi.fn(),
     exportNoteFile: vi.fn(),
     fetchPrivateNotes: vi.fn(),
@@ -583,6 +585,33 @@ describe("NotesResource", () => {
         inclusionProof: proof,
       });
       expect(wasm.Address.fromBech32).toHaveBeenCalledWith("mBech32Address");
+    });
+  });
+
+  describe("screen", () => {
+    const note = { id: () => "note" };
+
+    it("screens against every tracked account without an account", async () => {
+      const entries = [{ entry: 1 }];
+      inner.getNoteConsumability.mockResolvedValue(entries);
+      const resource = makeResource();
+      expect(await resource.screen(note)).toBe(entries);
+      expect(client.assertNotTerminated).toHaveBeenCalledOnce();
+      expect(inner.getNoteConsumability).toHaveBeenCalledWith(note);
+      expect(inner.getNoteConsumabilityForAccount).not.toHaveBeenCalled();
+    });
+
+    it("screens against the resolved account when one is given", async () => {
+      const entries = [{ entry: 2 }];
+      inner.getNoteConsumabilityForAccount.mockResolvedValue(entries);
+      const resource = makeResource();
+      expect(await resource.screen(note, { account: "0xacc" })).toBe(entries);
+      expect(wasm.AccountId.fromHex).toHaveBeenCalledWith("0xacc");
+      expect(inner.getNoteConsumabilityForAccount).toHaveBeenCalledWith(
+        note,
+        expect.objectContaining({ hex: "0xacc" })
+      );
+      expect(inner.getNoteConsumability).not.toHaveBeenCalled();
     });
   });
 

@@ -4,6 +4,7 @@ import {
   resolveAccountRef,
   resolveNoteType,
   resolveTransactionIdHex,
+  toAmount,
 } from "../utils.js";
 
 /** Preview operations that build their own request, and so cannot be anchored. */
@@ -181,6 +182,7 @@ export class TransactionsResource {
         );
       }
 
+      const amount = toAmount(opts.amount, "send");
       const senderId = resolveAccountRef(opts.account, wasm);
       const receiverId = resolveAccountRef(opts.to, wasm);
       const faucetId = resolveAccountRef(opts.token, wasm);
@@ -189,9 +191,7 @@ export class TransactionsResource {
       const note = wasm.Note.createP2IDNote(
         senderId,
         receiverId,
-        new wasm.NoteAssets([
-          new wasm.FungibleAsset(faucetId, BigInt(opts.amount)),
-        ]),
+        new wasm.NoteAssets([new wasm.FungibleAsset(faucetId, amount)]),
         noteType,
         new wasm.NoteAttachment()
       );
@@ -264,7 +264,7 @@ export class TransactionsResource {
             (a) =>
               new wasm.FungibleAsset(
                 resolveAccountRef(a.token, wasm),
-                BigInt(a.amount)
+                toAmount(a.amount, "createNetworkNote")
               )
           )
         )
@@ -380,6 +380,90 @@ export class TransactionsResource {
     }
 
     return { txId, result };
+  }
+
+  /**
+   * Withdraws USDCx through Circle xReserve by emitting one public burn note
+   * that the USDCx faucet consumes. The amount and the recipient are validated
+   * before any WASM call.
+   */
+  async withdrawUsdcx(opts) {
+    rejectUnexpectedAnchor(opts, "withdrawUsdcx", "submit()");
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const { accountId, request } = await this.#buildXReserveBurnRequest(
+      opts,
+      wasm
+    );
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      accountId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, result };
+  }
+
+  /**
+   * Claims an inbound AggLayer deposit by emitting the public CLAIM note that
+   * `bridgeAccount` consumes to mint it. The note is built with
+   * `Note.createClaimNote` and submitted as an own output note of `account`.
+   */
+  async claimAggLayerDeposit(opts) {
+    rejectUnexpectedAnchor(opts, "claimAggLayerDeposit", "submit()");
+    this.#client.assertNotTerminated();
+    // wasm-bindgen truncates or wraps a non-integer into the `u32` parameter.
+    const scale = opts.scale;
+    if (!Number.isInteger(scale) || scale < 0 || scale > 18) {
+      throw new Error(
+        "claimAggLayerDeposit: scale must be an integer from 0 to 18"
+      );
+    }
+    const wasm = await this.#getWasm();
+    const senderId = resolveAccountRef(opts.account, wasm);
+    const bridgeId = resolveAccountRef(opts.bridgeAccount, wasm);
+
+    const note = wasm.Note.createClaimNote(
+      opts.proof,
+      opts.leaf,
+      scale,
+      bridgeId,
+      senderId
+    );
+    const ownOutputs = new wasm.NoteArray();
+    ownOutputs.push(note);
+    // A CLAIM note targets the bridge, so it is priced against the bridge like
+    // any network note; see createNetworkNote.
+    const bridgeAccounts = new wasm.ForeignAccountArray();
+    bridgeAccounts.push(
+      wasm.ForeignAccount.public(
+        bridgeId,
+        new wasm.AccountStorageRequirements()
+      )
+    );
+    const builder =
+      await this.#inner.feeAwareTransactionRequestBuilder(senderId);
+    const request = builder
+      .withOwnOutputNotes(ownOutputs)
+      .withForeignAccounts(bridgeAccounts)
+      .build();
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      senderId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, note, result };
   }
 
   async consume(opts) {
@@ -1204,11 +1288,11 @@ export class TransactionsResource {
   // ── Shared request builders ──
 
   async #buildSendRequest(opts, wasm) {
+    const amount = toAmount(opts.amount, "send");
     const accountId = resolveAccountRef(opts.account, wasm);
     const targetId = resolveAccountRef(opts.to, wasm);
     const faucetId = resolveAccountRef(opts.token, wasm);
     const noteType = resolveNoteType(opts.type, wasm);
-    const amount = BigInt(opts.amount);
 
     const request = await this.#inner.newSendTransactionRequest(
       accountId,
@@ -1223,10 +1307,10 @@ export class TransactionsResource {
   }
 
   async #buildMintRequest(opts, wasm) {
+    const amount = toAmount(opts.amount, "mint");
     const accountId = resolveAccountRef(opts.account, wasm);
     const targetId = resolveAccountRef(opts.to, wasm);
     const noteType = resolveNoteType(opts.type, wasm);
-    const amount = BigInt(opts.amount);
 
     // WASM signature: newMintTransactionRequest(target, faucet, noteType, amount)
     const request = await this.#inner.newMintTransactionRequest(
@@ -1239,10 +1323,10 @@ export class TransactionsResource {
   }
 
   async #buildB2AggRequest(opts, wasm) {
+    const amount = toAmount(opts.amount, "bridge");
     const accountId = resolveAccountRef(opts.account, wasm);
     const bridgeAccountId = resolveAccountRef(opts.bridgeAccount, wasm);
     const faucetId = resolveAccountRef(opts.token, wasm);
-    const amount = BigInt(opts.amount);
     const destinationAddress = wasm.EthAddress.fromHex(opts.destinationAddress);
 
     const request = await this.#inner.newB2AggTransactionRequest(
@@ -1252,6 +1336,34 @@ export class TransactionsResource {
       amount,
       opts.destinationNetwork,
       destinationAddress
+    );
+    return { accountId, request };
+  }
+
+  async #buildXReserveBurnRequest(opts, wasm) {
+    const amount = toAmount(opts.amount, "withdrawUsdcx");
+    const recipientHex = opts.destinationRecipient;
+    if (
+      typeof recipientHex !== "string" ||
+      !/^0x[0-9a-fA-F]{64}$/.test(recipientHex)
+    ) {
+      throw new Error(
+        "withdrawUsdcx: destinationRecipient must be a 0x-prefixed 32-byte hex string"
+      );
+    }
+    const accountId = resolveAccountRef(opts.account, wasm);
+    const faucetId = resolveAccountRef(opts.token, wasm);
+    const recipient = Uint8Array.from(
+      recipientHex.slice(2).match(/../g),
+      (byte) => parseInt(byte, 16)
+    );
+
+    const request = await this.#inner.newXReserveBurnTransactionRequest(
+      accountId,
+      faucetId,
+      amount,
+      opts.destinationDomain,
+      recipient
     );
     return { accountId, request };
   }
@@ -1315,9 +1427,9 @@ export class TransactionsResource {
     const request = await this.#inner.newSwapTransactionRequest(
       accountId,
       offeredFaucetId,
-      BigInt(opts.offer.amount),
+      toAmount(opts.offer.amount, "swap"),
       requestedFaucetId,
-      BigInt(opts.request.amount),
+      toAmount(opts.request.amount, "swap"),
       noteType,
       paybackNoteType
     );
@@ -1337,9 +1449,9 @@ export class TransactionsResource {
     const request = await this.#inner.newPswapCreateTransactionRequest(
       accountId,
       offeredFaucetId,
-      BigInt(opts.offer.amount),
+      toAmount(opts.offer.amount, "pswapCreate"),
       requestedFaucetId,
-      BigInt(opts.request.amount),
+      toAmount(opts.request.amount, "pswapCreate"),
       noteType,
       paybackNoteType
     );
@@ -1354,8 +1466,8 @@ export class TransactionsResource {
     const request = await this.#inner.newPswapConsumeTransactionRequest(
       note,
       accountId,
-      BigInt(opts.fillAmount),
-      BigInt(noteFillAmount)
+      toAmount(opts.fillAmount, "pswapConsume"),
+      toAmount(noteFillAmount, "pswapConsume")
     );
     return { accountId, request };
   }
@@ -1403,6 +1515,9 @@ export class TransactionsResource {
     return input;
   }
 
+  // Submits exactly `request`: scripts it declares through withExpectedNtxScripts
+  // are not registered here (the native submit does, this pipeline does not), so
+  // a caller submits newRegisterNoteScriptsTransactionRequest first.
   async #submitOrSubmitWithProver(accountId, request, perCallProver, anchor) {
     const result = anchor
       ? await this.#inner.executeTransactionAt(accountId, request, anchor)

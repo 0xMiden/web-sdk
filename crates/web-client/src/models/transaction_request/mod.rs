@@ -6,9 +6,11 @@ use miden_client::vm::AdviceMap as NativeAdviceMap;
 use miden_client::{Felt as NativeFelt, Word as NativeWord};
 use miden_protocol::crypto::SequentialCommit;
 
+use crate::models::account_code::AccountCode;
 use crate::models::advice_map::AdviceMap;
 use crate::models::felt::Felt;
 use crate::models::note::Note;
+use crate::models::note_script::NoteScript;
 use crate::models::word::Word;
 use crate::platform::{JsBytes, JsErr};
 use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
@@ -41,6 +43,16 @@ impl TransactionRequest {
         deserialize_from_bytes::<NativeTransactionRequest>(&bytes).map(TransactionRequest)
     }
 
+    /// Returns whether `other` has the same fields as this request.
+    ///
+    /// This compares the request's structure, not its serialized bytes. A `MerkleStore` serializes
+    /// the entries beyond its empty-subtree defaults in hash-map order, so two requests with every
+    /// field equal can serialize differently, for example after a `deserialize`. Use this to check
+    /// that a request kept its fields through a copy or a transport.
+    pub fn equals(&self, other: &TransactionRequest) -> bool {
+        self.0 == other.0
+    }
+
     /// Returns output notes created by the sender account.
     #[js_export(js_name = "expectedOutputOwnNotes")]
     pub fn expected_output_own_notes(&self) -> Result<Vec<Note>, JsErr> {
@@ -59,6 +71,27 @@ impl TransactionRequest {
                 Ok(NoteDetailsAndTag::new(note_details.into(), note_tag.into()))
             })
             .collect::<Result<Vec<NoteDetailsAndTag>, _>>()
+    }
+
+    /// Whether execution skips input notes that are no longer consumable instead of failing.
+    /// Skipping screens at most 20 input notes and fails with `invalid input note count` above
+    /// that.
+    #[js_export(js_name = "ignoresInvalidInputNotes")]
+    pub fn ignores_invalid_input_notes(&self) -> bool {
+        self.0.ignore_invalid_input_notes()
+    }
+
+    /// Returns the note scripts declared for the network to execute, standard scripts included.
+    /// Only registration ignores the standard ones.
+    #[js_export(js_name = "expectedNtxScripts")]
+    pub fn expected_ntx_scripts(&self) -> Vec<NoteScript> {
+        self.0.expected_ntx_scripts().iter().map(Into::into).collect()
+    }
+
+    /// Returns the new account code carried for an account code upgrade, if any.
+    #[js_export(js_name = "accountCodeUpgrade")]
+    pub fn account_code_upgrade(&self) -> Option<AccountCode> {
+        self.0.account_code_upgrade().map(|upgrade| upgrade.code().into())
     }
 
     /// Returns the transaction script argument if present.
