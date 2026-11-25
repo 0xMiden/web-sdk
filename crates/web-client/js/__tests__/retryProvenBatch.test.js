@@ -66,6 +66,34 @@ describe("retryProvenBatch (#571)", () => {
     expect(call).toHaveBeenCalledWith(MethodName.RETRY_PROVEN_BATCH, "3");
   });
 
+  it("surfaces a worker's unknown-outcome error with its retry handle", async () => {
+    const { client, worker } = createWorkerClient();
+    const pending = client.retryProvenBatch({ submissionId: "3" });
+    pending.catch(() => {});
+    await vi.waitFor(() => expect(worker.posted.length).toBeGreaterThan(0));
+    const request = worker.posted.at(-1);
+    expect(request.methodName).toBe(MethodName.RETRY_PROVEN_BATCH);
+    expect(request.args).toEqual(["3"]);
+    worker.emit("message", {
+      data: {
+        requestId: request.requestId,
+        methodName: request.methodName,
+        error: {
+          name: "Error",
+          message: "outcome unknown",
+          code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN",
+          submissionId: "3",
+          transactionIds: ["0x1"],
+        },
+      },
+    });
+    await expect(pending).rejects.toMatchObject({
+      code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN",
+      submissionId: "3",
+      transactionIds: ["0x1"],
+    });
+  });
+
   it("rejects under a worker when submissionId is missing", async () => {
     const { client } = createWorkerClient();
     await expect(client.retryProvenBatch({})).rejects.toThrow(

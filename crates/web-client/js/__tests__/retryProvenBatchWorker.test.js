@@ -155,4 +155,19 @@ describe("worker retryProvenBatch (#571)", () => {
     ]);
     expect(again.error.message).toMatch(/Unknown proven batch submission id/);
   });
+
+  it("caps abandoned submissions and frees the oldest handle", async () => {
+    const handles = [];
+    const ids = [];
+    for (let i = 0; i < 9; i++) {
+      const submission = makeSubmission([`0x${i}`]);
+      handles.push(submission);
+      outcomes = [unknownOutcome(submission)];
+      ids.push((await submitBatch()).error.submissionId);
+    }
+    expect(handles[0].free).toHaveBeenCalledTimes(1);
+    expect(handles[1].free).not.toHaveBeenCalled();
+    const evicted = await call(MethodName.RETRY_PROVEN_BATCH, [ids[0]]);
+    expect(evicted.error.message).toMatch(/Unknown proven batch submission id/);
+  });
 });
