@@ -76,7 +76,7 @@ test("rejects an unregistered wallet's first transaction", async ({
       window.AccountStorageMode.private(),
       "falcon"
     );
-    return wallet.id().toHex();
+    return wallet.id().toString();
   });
 
   // Execution precedes the allowlist check, so the wallet needs a test fee note.
