@@ -1,4 +1,5 @@
 use js_export_macro::js_export;
+use miden_protocol::note::NoteId as NativeNoteId;
 use miden_protocol::transaction::TransactionMeasurements as NativeTransactionMeasurements;
 
 use super::note_id::NoteId;
@@ -7,7 +8,7 @@ use super::note_id::NoteId;
 #[derive(Clone)]
 #[js_export]
 pub struct NoteExecutionCycles {
-    note_id: NoteId,
+    note_id: NativeNoteId,
     cycles: u32,
 }
 
@@ -16,7 +17,7 @@ impl NoteExecutionCycles {
     /// Returns the ID of the executed note.
     #[js_export(getter, js_name = "noteId")]
     pub fn note_id(&self) -> NoteId {
-        self.note_id.clone()
+        (&self.note_id).into()
     }
 
     /// Returns the cycles the note's script took.
@@ -52,7 +53,7 @@ impl TransactionMeasurements {
             .note_execution
             .iter()
             .map(|(note_id, count)| NoteExecutionCycles {
-                note_id: note_id.into(),
+                note_id: *note_id,
                 cycles: cycles(*count),
             })
             .collect()
