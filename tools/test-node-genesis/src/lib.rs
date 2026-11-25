@@ -23,15 +23,14 @@ use miden_protocol::account::{
 use miden_protocol::asset::{Asset, AssetAmount, FungibleAsset, TokenSymbol};
 use miden_protocol::utils::serde::Serializable;
 use miden_protocol::{ONE, Word};
-use miden_standards::account::access::AccessControl;
 use miden_standards::account::auth::{Approver, AuthSingleSig};
 use miden_standards::account::faucets::{
     FungibleFaucet,
     TokenName,
-    create_network_fungible_faucet,
+    create_native_fungible_faucet_for_genesis,
     create_singlesig_user_fungible_faucet,
 };
-use miden_standards::account::fees::{BasicConstantFeePolicy, FeePolicyManager};
+use miden_standards::account::fees::BasicConstantFeePolicy;
 use miden_standards::account::policies::{
     BurnPolicy,
     MintPolicy,
@@ -318,26 +317,19 @@ fn generate_native_faucet(operator_id: AccountId) -> anyhow::Result<Account> {
         .active_receive_policy(TransferPolicy::allow_all())
         .build();
 
-    let fee_policy = BasicConstantFeePolicy::new()
-        .with_fees([
-            (MintNote::script_root(), AssetAmount::ZERO),
-            (BurnNote::script_root(), AssetAmount::ZERO),
-        ])
-        .into();
-    let fee_policies = FeePolicyManager::builder()
-        .fee_faucet_id(operator_id)
-        .active_fee_policy(fee_policy)
-        .build();
+    let fee_policy = BasicConstantFeePolicy::new().with_fees([
+        (MintNote::script_root(), AssetAmount::ZERO),
+        (BurnNote::script_root(), AssetAmount::ZERO),
+    ]);
 
-    let faucet = create_network_fungible_faucet(
+    create_native_fungible_faucet_for_genesis(
         rng.random(),
         faucet,
-        AccessControl::Ownable2Step { owner: operator_id },
+        operator_id,
         token_policies,
-        fee_policies,
-    )?;
-
-    Ok(faucet)
+        fee_policy,
+    )
+    .context("failed to create native fungible faucet")
 }
 
 /// Marks `account` as deployed at genesis and gives it a balance of the native fee asset.
