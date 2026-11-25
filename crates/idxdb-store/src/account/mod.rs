@@ -183,7 +183,8 @@ impl IdxdbStore {
         &self,
         account_id: AccountId,
     ) -> Result<Option<AccountRecord>, StoreError> {
-        let Some(snapshot) = self.get_account_snapshot(account_id, true, true).await? else {
+        let Some(snapshot) = self.get_account_snapshot(account_id, true, true, true, true).await?
+        else {
             return Ok(None);
         };
         let (header, status, client_type) = parse_account_record_idxdb_object(snapshot.header)?;
@@ -211,11 +212,20 @@ impl IdxdbStore {
     async fn get_account_snapshot(
         &self,
         account_id: AccountId,
+        code: bool,
+        storage: bool,
         maps: bool,
         assets: bool,
     ) -> Result<Option<AccountSnapshotIdxdbObject>, StoreError> {
         await_js(
-            idxdb_get_account_snapshot(self.db_id(), account_id.to_string(), maps, assets),
+            idxdb_get_account_snapshot(
+                self.db_id(),
+                account_id.to_string(),
+                code,
+                storage,
+                maps,
+                assets,
+            ),
             "failed to fetch account snapshot",
         )
         .await
@@ -260,7 +270,9 @@ impl IdxdbStore {
         &self,
         account_id: AccountId,
     ) -> Result<Option<AccountRecord>, StoreError> {
-        let Some(snapshot) = self.get_account_snapshot(account_id, false, false).await? else {
+        let Some(snapshot) =
+            self.get_account_snapshot(account_id, true, true, false, false).await?
+        else {
             return Ok(None);
         };
         let (header, status, client_type) = parse_account_record_idxdb_object(snapshot.header)?;
@@ -489,7 +501,7 @@ impl IdxdbStore {
         account_id: AccountId,
     ) -> Result<AssetVault, StoreError> {
         let snapshot = self
-            .get_account_snapshot(account_id, false, true)
+            .get_account_snapshot(account_id, false, false, false, true)
             .await?
             .ok_or(StoreError::AccountDataNotFound(account_id))?;
 
@@ -501,7 +513,9 @@ impl IdxdbStore {
         &self,
         account_id: AccountId,
     ) -> Result<Option<AccountCode>, StoreError> {
-        let Some(snapshot) = self.get_account_snapshot(account_id, false, false).await? else {
+        let Some(snapshot) =
+            self.get_account_snapshot(account_id, true, false, false, false).await?
+        else {
             return Ok(None);
         };
         let code = snapshot
@@ -516,7 +530,7 @@ impl IdxdbStore {
         filter: AccountStorageFilter,
     ) -> Result<AccountStorage, StoreError> {
         let snapshot = self
-            .get_account_snapshot(account_id, true, false)
+            .get_account_snapshot(account_id, false, true, true, false)
             .await?
             .ok_or(StoreError::AccountDataNotFound(account_id))?;
         let account_storage_idxdb = snapshot.storage;

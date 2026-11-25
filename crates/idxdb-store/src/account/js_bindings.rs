@@ -38,6 +38,8 @@ extern "C" {
     pub fn idxdb_get_account_snapshot(
         db_id: &str,
         account_id: String,
+        code: bool,
+        storage: bool,
         maps: bool,
         assets: bool,
     ) -> js_sys::Promise;
