@@ -2,6 +2,10 @@
 
 ## 0.18.2 (TBD)
 
+### Enhancements
+
+* [FEATURE][web] `AccountStorage.getMapEntriesPage(slotName, offset, limit)` (also on `account.storage()`) returns at most `limit` entries of a storage map from `offset`, in the order `getMapEntries` returns, so a large map can be read in bounded pages instead of copied into JS whole on every call; `getMapEntries` is unchanged ([#97](https://github.com/0xMiden/web-sdk/issues/97)).
+
 ### Fixes
 
 * [FIX][web] Development faucet funding preserves the full integer value of proof-of-work targets sent as JSON numbers ([#626](https://github.com/0xMiden/web-sdk/pull/626)).
