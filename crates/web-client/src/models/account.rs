@@ -21,10 +21,12 @@ use miden_protocol::account::component::AUTH_SCRIPT_ATTRIBUTE;
 
 use crate::models::account_code::AccountCode;
 use crate::models::account_id::AccountId;
+use crate::models::account_patch::AccountPatch;
 use crate::models::account_storage::AccountStorage;
 use crate::models::asset_vault::AssetVault;
 use crate::models::felt::Felt;
 use crate::models::word::Word;
+use crate::js_error_with_context;
 use crate::platform::{JsBytes, JsErr, from_str_err};
 use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
 
@@ -139,6 +141,23 @@ impl Account {
                 .map(|root| Word::from(NativeWord::from(*root)))
                 .collect()
         })
+    }
+
+    /// Returns a copy of this account with `patch` applied, leaving this account unchanged.
+    ///
+    /// The patch sets the new absolute state (vault, storage, nonce and, if present, code), for
+    /// example the `accountPatch()` of an `ExecutedTransaction`, so an off-chain update can be
+    /// folded into a stored account without refetching it in full.
+    ///
+    /// Throws if the patch is for another account, if its nonce does not increase the account's
+    /// nonce, or if its vault or storage changes do not apply to this account's state.
+    #[js_export(js_name = "applyPatch")]
+    pub fn apply_patch(&self, patch: &AccountPatch) -> Result<Account, JsErr> {
+        let mut account = self.0.clone();
+        account
+            .apply_patch(&patch.into())
+            .map_err(|err| js_error_with_context(err, "failed to apply account patch"))?;
+        Ok(Account(account))
     }
 
     /// Serializes the account into bytes.

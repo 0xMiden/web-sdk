@@ -2,6 +2,10 @@
 
 ## 0.18.2 (TBD)
 
+### Enhancements
+
+* [FEATURE][web] `Account.applyPatch(patch)` returns a copy of the account with an `AccountPatch` applied, for example `ExecutedTransaction.accountPatch()`, so an off-chain update can be folded into a stored account without refetching it. It throws for a patch of another account, a nonce that does not increase, or changes that do not apply. Converting a relative `AccountDelta` into a patch is not part of this ([#439](https://github.com/0xMiden/web-sdk/issues/439), [#637](https://github.com/0xMiden/web-sdk/pull/637)).
+
 ### Fixes
 
 * [FIX][web] Development faucet funding preserves the full integer value of proof-of-work targets sent as JSON numbers ([#626](https://github.com/0xMiden/web-sdk/pull/626)).

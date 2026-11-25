@@ -1317,7 +1317,13 @@ test.describe("Account.applyPatch tests", () => {
     const executed = (
       await client.executeTransaction(faucet.id(), request)
     ).executedTransaction();
-    return { wallet, before, executed, patch: executed.accountPatch() };
+    return {
+      wallet,
+      faucet,
+      before,
+      executed,
+      patch: executed.accountPatch(),
+    };
   };
 
   test("applying a transaction's patch reproduces the post-transaction account", async ({
@@ -1349,25 +1355,40 @@ test.describe("Account.applyPatch tests", () => {
       const { wallet, patch } = await mintPatch(ctx);
       try {
         wallet.applyPatch(patch);
-        return { threw: false };
-      } catch {
-        return { threw: true };
+        return { message: null };
+      } catch (e) {
+        return { message: String(e?.message ?? e) };
       }
     });
-    expect(result.threw).toBe(true);
+    expect(result.message).toMatch(/patch is for account ID/);
   });
 
-  test("rejects a patch whose nonce does not increase", async ({ run }) => {
+  test("rejects a patch whose nonce is below the account's", async ({
+    run,
+  }) => {
     const result = await run(async (ctx) => {
-      const { before, patch } = await mintPatch(ctx);
-      const updated = before.applyPatch(patch);
+      const { client, sdk } = ctx;
+      const { wallet, faucet, patch } = await mintPatch(ctx);
+      // Two real transactions move the faucet past the patch's nonce.
+      for (const amount of [3, 4]) {
+        const request = await client.newMintTransactionRequest(
+          wallet.id(),
+          faucet.id(),
+          sdk.NoteType.Public,
+          BigInt(amount)
+        );
+        await client.submitNewTransaction(faucet.id(), request);
+        await client.proveBlock();
+        await client.syncState();
+      }
+      const current = await client.getAccount(faucet.id());
       try {
-        updated.applyPatch(patch);
-        return { threw: false };
-      } catch {
-        return { threw: true };
+        current.applyPatch(patch);
+        return { message: null };
+      } catch (e) {
+        return { message: String(e?.message ?? e) };
       }
     });
-    expect(result.threw).toBe(true);
+    expect(result.message).toMatch(/nonce/);
   });
 });
