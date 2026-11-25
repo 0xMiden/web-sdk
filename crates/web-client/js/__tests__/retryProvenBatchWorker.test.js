@@ -121,6 +121,8 @@ describe("worker retryProvenBatch (#571)", () => {
       failed.error.submissionId,
     ]);
     expect(retried.error.message).toContain("auth-detail");
+    outcomes = [];
+    await call(MethodName.RETRY_PROVEN_BATCH, [failed.error.submissionId]);
   });
 
   it("frees the handle when the retry was accepted but the local apply failed", async () => {
@@ -143,20 +145,23 @@ describe("worker retryProvenBatch (#571)", () => {
     expect(again.error.message).toMatch(/Unknown proven batch submission id/);
   });
 
-  it("frees the handle when the node definitively rejects the retry", async () => {
+  it("keeps the handle when the retry failed before the batch was accepted", async () => {
     const submission = makeSubmission(["0x1"]);
     outcomes = [unknownOutcome(submission)];
     const failed = await submitBatch();
-    outcomes = [Object.assign(new Error("conflict"), { code: "Rejected" })];
+    outcomes = [Object.assign(new Error("stale key"), { code: "Rejected" })];
     const retried = await call(MethodName.RETRY_PROVEN_BATCH, [
       failed.error.submissionId,
     ]);
-    expect(retried.error.message).toContain("conflict");
-    expect(submission.free).toHaveBeenCalledTimes(1);
-    const again = await call(MethodName.RETRY_PROVEN_BATCH, [
+    expect(retried.error.message).toContain("stale key");
+    expect(submission.free).not.toHaveBeenCalled();
+    outcomes = [];
+    const ok = await call(MethodName.RETRY_PROVEN_BATCH, [
       failed.error.submissionId,
     ]);
-    expect(again.error.message).toMatch(/Unknown proven batch submission id/);
+    expect(ok.result).toBe(9);
+    expect(retried.error.submissionId).toBeUndefined();
+    expect(submission.free).toHaveBeenCalledTimes(1);
   });
 
   it("caps abandoned submissions and frees the oldest handle", async () => {
