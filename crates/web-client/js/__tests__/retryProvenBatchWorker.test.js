@@ -119,4 +119,24 @@ describe("worker retryProvenBatch (#571)", () => {
     ]);
     expect(retried.error.message).toContain("auth-detail");
   });
+
+  it("frees the handle when the retry was accepted but the local apply failed", async () => {
+    const submission = makeSubmission(["0x1"]);
+    outcomes = [unknownOutcome(submission)];
+    const failed = await submitBatch();
+    outcomes = [
+      Object.assign(new Error("applying to the store failed"), {
+        code: "ApplyTransactionAfterSubmitFailed",
+      }),
+    ];
+    const retried = await call(MethodName.RETRY_PROVEN_BATCH, [
+      failed.error.submissionId,
+    ]);
+    expect(retried.error.code).toBe("ApplyTransactionAfterSubmitFailed");
+    expect(submission.free).toHaveBeenCalledTimes(1);
+    const again = await call(MethodName.RETRY_PROVEN_BATCH, [
+      failed.error.submissionId,
+    ]);
+    expect(again.error.message).toMatch(/Unknown proven batch submission id/);
+  });
 });
