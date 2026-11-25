@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { openDatabase, getDatabase } from "./schema.js";
+import * as notesModule from "./notes.js";
 import {
   upsertInputNote,
   upsertOutputNote,
@@ -113,6 +114,35 @@ const SCRIPT_B = new Uint8Array([2]);
 // base64 of [1] and [2].
 const SCRIPT_A_BASE64 = "AQ==";
 const SCRIPT_B_BASE64 = "Ag==";
+
+it("pages raw input note rows by an exclusive metadata-independent key", async () => {
+  const dbId = await openTestDb();
+  await insertNote(dbId, "b", {
+    stateDiscriminant: STATE_EXPECTED,
+    noteId: undefined,
+  });
+  await insertNote(dbId, "c");
+  await insertNote(dbId, "a");
+
+  const page = Reflect.get(notesModule, "getInputNotesPage");
+  expect(typeof page).toBe("function");
+  const query = vi.spyOn(getDatabase(dbId).inputNotes, "orderBy");
+  try {
+    const first = await page(dbId, undefined, 2);
+    const next = await page(dbId, "b", 2);
+    expect(first.map((row: { createdAt: string }) => row.createdAt)).toEqual([
+      "a",
+      "b",
+    ]);
+    expect(next.map((row: { createdAt: string }) => row.createdAt)).toEqual([
+      "c",
+    ]);
+    expect(query).toHaveBeenCalledWith("detailsCommitment");
+    await expect(page(dbId, "c", 2)).resolves.toEqual([]);
+  } finally {
+    query.mockRestore();
+  }
+});
 
 // The noteId is stored in `createdAt` so each processed input note can be identified.
 async function insertInputNoteWithScript(

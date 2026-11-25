@@ -937,6 +937,15 @@ describe("callback time limits", () => {
     expect(callbackTimeoutFor("insertKey", 120_000)).toBe(120_000);
   });
 
+  it.each([undefined, 0, 1000])(
+    "keeps the note-retention deadline independent of callbackTimeoutMs=%s",
+    (signerTimeout) => {
+      expect(
+        callbackTimeoutFor(CallbackType.BEFORE_NOTE_ACQUISITION, signerTimeout)
+      ).toBe(30_000);
+    }
+  );
+
   it("rejects an invalid callbackTimeoutMs", () => {
     expect(validateCallbackTimeoutMs(undefined)).toBeUndefined();
     expect(validateCallbackTimeoutMs(0)).toBe(0);

@@ -3,6 +3,8 @@
 // same requestId. This module holds the two pieces both sides must agree on:
 // how a failed callback travels back, and how long the worker waits.
 
+import { CallbackType } from "./constants.js";
+
 /** Per-callback limit for `getKey` and `insertKey` when `callbackTimeoutMs` is unset. */
 export const DEFAULT_CALLBACK_TIMEOUT_MS = 30000;
 /** Largest delay `setTimeout` can store, in milliseconds. */
@@ -193,15 +195,21 @@ export function validateCallbackTimeoutMs(value) {
  * With `callbackTimeoutMs` unset, `sign` waits without a limit, since it can
  * wait on a person approving in a wallet, and `getKey` and `insertKey` keep
  * the 30 second limit. A positive `callbackTimeoutMs` applies to all three,
- * and `0` removes the limit for all three.
+ * and `0` removes the limit for all three. Note retention always has a
+ * 30 second limit.
  *
  * @param {string} callbackType - A `CallbackType` value.
  * @param {number | undefined} callbackTimeoutMs
  * @returns {number | undefined}
  */
 export function callbackTimeoutFor(callbackType, callbackTimeoutMs) {
+  if (callbackType === CallbackType.BEFORE_NOTE_ACQUISITION) {
+    return DEFAULT_CALLBACK_TIMEOUT_MS;
+  }
   if (callbackTimeoutMs === undefined) {
-    return callbackType === "sign" ? undefined : DEFAULT_CALLBACK_TIMEOUT_MS;
+    return callbackType === CallbackType.SIGN
+      ? undefined
+      : DEFAULT_CALLBACK_TIMEOUT_MS;
   }
   return callbackTimeoutMs === 0 ? undefined : Math.ceil(callbackTimeoutMs);
 }

@@ -20,6 +20,8 @@ use idxdb_store::IdxdbStore;
 use js_export_macro::js_export;
 #[cfg(feature = "browser")]
 use js_sys::{Function, Reflect};
+#[cfg(feature = "browser")]
+use miden_client::NoteAcquisitionGate;
 use miden_client::account::AccountId as NativeAccountId;
 use miden_client::builder::{ClientBuilder, DEFAULT_GRPC_TIMEOUT_MS};
 #[cfg(feature = "nodejs")]
@@ -59,6 +61,8 @@ pub mod mock;
 pub mod models;
 pub mod new_account;
 pub mod new_transactions;
+#[cfg(feature = "browser")]
+mod note_acquisition;
 pub mod note_transport;
 pub mod notes;
 pub(crate) mod platform;
@@ -476,8 +480,10 @@ impl WebClient {
         fee_faucet_id: Option<String>,
         note_transport_max_retries: Option<u32>,
         note_transport_retry_interval_ms: Option<u32>,
+        storage_options: JsValue,
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_endpoint(node_url)?;
+        let (note_gate, storage_policy) = note_acquisition::options(&storage_options)?;
 
         let web_rpc_client =
             Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
@@ -494,7 +500,7 @@ impl WebClient {
 
         let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
-            IdxdbStore::new(store_name.clone())
+            IdxdbStore::new_with_options(store_name.clone(), storage_policy)
                 .await
                 .map_err(|err| idxdb_store_init_error(&err))?,
         );
@@ -516,6 +522,7 @@ impl WebClient {
             rng,
             note_transport_client,
             fee_faucet,
+            note_gate,
         )
         .await?;
 
@@ -558,8 +565,10 @@ impl WebClient {
         sign_cb: Option<Function>,
         note_transport_max_retries: Option<u32>,
         note_transport_retry_interval_ms: Option<u32>,
+        storage_options: JsValue,
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_endpoint(node_url)?;
+        let (note_gate, storage_policy) = note_acquisition::options(&storage_options)?;
 
         let web_rpc_client =
             Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
@@ -576,7 +585,7 @@ impl WebClient {
 
         let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
-            IdxdbStore::new(store_name.clone())
+            IdxdbStore::new_with_options(store_name.clone(), storage_policy)
                 .await
                 .map_err(|err| idxdb_store_init_error(&err))?,
         );
@@ -598,6 +607,7 @@ impl WebClient {
             rng,
             note_transport_client,
             fee_faucet,
+            note_gate,
         )
         .await?;
 
@@ -614,6 +624,7 @@ impl WebClient {
         rng: StdRng,
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
         fee_faucet: Option<NativeAccountId>,
+        note_gate: Option<Arc<dyn NoteAcquisitionGate>>,
     ) -> Result<(), JsValue> {
         let mut builder = ClientBuilder::new()
             .rpc(rpc_client)
@@ -623,6 +634,9 @@ impl WebClient {
 
         if let Some(transport) = note_transport_client {
             builder = builder.note_transport(transport);
+        }
+        if let Some(gate) = note_gate {
+            builder = builder.note_acquisition_gate(gate);
         }
 
         let mut client = builder
@@ -943,6 +957,7 @@ fn code_from_error(err: &(dyn Error + 'static)) -> Option<&'static str> {
             ClientError::AccountIsPrivate(_) => Some("ACCOUNT_IS_PRIVATE"),
             ClientError::AccountNotAllowlisted(_) => Some("ACCOUNT_NOT_ALLOWLISTED"),
             ClientError::AccountAlreadyAllowed(_) => Some("ACCOUNT_ALREADY_ALLOWED"),
+            ClientError::NoteAcquisition(_) => Some("NOTE_ACQUISITION_REFUSED"),
             // The node's verdict on a registration travels inside the RPC error rather than as
             // a `ClientError` variant of its own.
             ClientError::RpcError(rpc_error) => registration_code(rpc_error),

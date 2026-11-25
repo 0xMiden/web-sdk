@@ -21,12 +21,105 @@ export const RPC_LIMITS_SETTING_KEY = "rpc_limits";
 export const STORAGE_SLOT_TYPE_MAP = 1;
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+const kindByName = new Map([
+    ["QuotaExceededError", "quota"],
+    ["UnknownError", "io"],
+    ["SecurityError", "unavailable"],
+    ["InvalidStateError", "unavailable"],
+    ["MissingAPIError", "unavailable"],
+]);
+function storageFailure(phase, error) {
+    const seen = new WeakSet();
+    while (error && typeof error === "object" && !seen.has(error)) {
+        seen.add(error);
+        const name = error.name;
+        if (typeof name === "string") {
+            const kind = kindByName.get(name);
+            if (kind)
+                return { phase, kind, errorName: name };
+        }
+        error = error.inner;
+    }
+    return undefined;
+}
+function notify(policies, failure) {
+    if (!policies)
+        return;
+    for (const { onFailure } of policies) {
+        try {
+            void Promise.resolve(onFailure?.({ ...failure })).catch(() => { });
+        }
+        catch {
+            // A notification cannot replace the original IndexedDB error.
+        }
+    }
+}
+function reportOpenFailure(policies, error) {
+    const failure = storageFailure("open", error);
+    if (failure)
+        notify(policies, failure);
+}
+function installStoragePolicy(db, policies, isRegistered) {
+    db.use({
+        stack: "dbcore",
+        name: "miden-storage-policy",
+        create: (downlevel) => ({
+            ...downlevel,
+            transaction(stores, mode, options) {
+                const active = policies();
+                if (!active?.size)
+                    return downlevel.transaction(stores, mode, options);
+                const durabilities = Array.from(active.values(), ({ durability }) => durability);
+                const durability = ["strict", "default", "relaxed"].find((value) => durabilities.includes(value));
+                const requestPhase = mode === "readonly" ? "read" : "write";
+                // The open operation reports initialization failures.
+                const reportTransactions = isRegistered();
+                let reported = false;
+                const report = (phase, error) => {
+                    if (!reportTransactions || reported)
+                        return;
+                    const failure = storageFailure(phase, error);
+                    if (!failure)
+                        return;
+                    reported = true;
+                    notify(policies()?.values(), failure);
+                };
+                let transaction;
+                try {
+                    transaction = downlevel.transaction(stores, mode, durability && mode === "readwrite"
+                        ? { ...options, durability }
+                        : options);
+                }
+                catch (error) {
+                    report(requestPhase, error);
+                    throw error;
+                }
+                if (!reportTransactions)
+                    return transaction;
+                // Dexie stops request errors at their target.
+                transaction.addEventListener("error", (event) => report(requestPhase, event.target?.error), { capture: true });
+                transaction.addEventListener("abort", () => report(requestPhase === "read" ? "read" : "commit", transaction.error));
+                return transaction;
+            },
+        }),
+    });
+}
 // Since we can't have a pointer to a JS Object from rust, we'll
 // use this instead to keep track of open DBs. A client can have
 // a DB for mainnet, devnet, testnet or a custom one, so this should be ok.
 // Each name has one connection, held by every live Rust `IdxdbStore` on it.
 const databaseRegistry = new Map();
 const pendingOpens = new Map();
+const storagePolicies = new Map();
+let nextStorageHolder = 0;
+function removeStoragePolicy(network, holder) {
+    const policies = storagePolicies.get(network);
+    if (!policies?.delete(holder))
+        return false;
+    if (!policies.size)
+        storagePolicies.delete(network);
+    return true;
+}
 /**
  * Get a database instance from the registry by its ID.
  * Throws if the database hasn't been opened yet.
@@ -42,7 +135,9 @@ export function getDatabase(dbId) {
  * Releases one holder of the database registered for `network`, closing and
  * unregistering it when the last holder is gone. No-op for an unknown name.
  */
-export function closeDatabase(network) {
+export function closeDatabase(network, holder) {
+    if (holder !== undefined && !removeStoragePolicy(network, holder))
+        return;
     const entry = databaseRegistry.get(network);
     if (!entry) {
         return;
@@ -53,6 +148,23 @@ export function closeDatabase(network) {
     }
     entry.db.dexie.close();
     databaseRegistry.delete(network);
+}
+export async function openDatabaseWithOptions(network, clientVersion, options) {
+    const holder = String(++nextStorageHolder);
+    let policies = storagePolicies.get(network);
+    if (!policies) {
+        policies = new Map();
+        storagePolicies.set(network, policies);
+    }
+    policies.set(holder, options);
+    try {
+        await openDatabase(network, clientVersion);
+        return holder;
+    }
+    catch (error) {
+        removeStoragePolicy(network, holder);
+        throw error;
+    }
 }
 /**
  * Opens the database for `network`, or joins the connection already open or
@@ -242,6 +354,7 @@ export class MidenDatabase {
     accountWitnesses;
     constructor(network) {
         this.dexie = new Dexie(network);
+        installStoragePolicy(this.dexie, () => storagePolicies.get(network), () => databaseRegistry.get(network)?.db === this);
         // --- Schema versioning ---
         //
         // A store survives client upgrades, so every change to a table's shape or to a stored
@@ -436,6 +549,7 @@ export class MidenDatabase {
             /* v8 ignore next 4 — logWebStoreError always re-throws, so `return false` and this catch block are unreachable */
         }
         catch (err) {
+            reportOpenFailure(storagePolicies.get(this.dexie.name)?.values(), err);
             logWebStoreError(err, "Failed to open database");
             return false;
         }

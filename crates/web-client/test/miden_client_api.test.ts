@@ -10,7 +10,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
   mockTest.describe.configure({ timeout: 720000 });
 
   mockTest(
-    "full flow: create accounts, mint, consume, check balance",
+    "full flow: create accounts, mint, replay, consume, check balance",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
         const client = await window.MidenClient.createMock();
@@ -43,6 +43,18 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
           .id()
           .toString();
 
+        const committedNote = (
+          await client.notes.list({ status: "committed" })
+        ).find((note) => note.id()?.toString() === mintedNoteId);
+        if (!committedNote) throw new Error("Minted note is not committed");
+        const recoveryFile = window.NoteFile.fromExpectedNote(
+          committedNote.details(),
+          committedNote.metadata().tag(),
+          0
+        );
+        const retainedCommitment = recoveryFile.detailsCommitment();
+        const replayedCommitment = await client.notes.import(recoveryFile);
+
         // Consume the minted note
         const { txId: consumeTxId } = await client.transactions.consume({
           account: wallet,
@@ -61,6 +73,8 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
           faucetId: faucet.id().toString(),
           mintTxId: mintTxId.toHex(),
           consumeTxId: consumeTxId.toHex(),
+          retainedCommitment,
+          replayedCommitment,
           balance: balance.toString(),
         };
       });
@@ -69,6 +83,8 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       expect(result.faucetId).toBeDefined();
       expect(result.mintTxId).toBeDefined();
       expect(result.consumeTxId).toBeDefined();
+      expect(result.retainedCommitment).toMatch(/^0x/);
+      expect(result.replayedCommitment).toBe(result.retainedCommitment);
       expect(result.balance).toBe("1000");
     }
   );
@@ -1592,6 +1608,292 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     expect(result.chainSize).toBeGreaterThan(0);
     expect(result.height).toBeGreaterThan(0);
   });
+
+  for (const useWorker of [false, true]) {
+    mockTest(
+      `retains note bytes before WASM import and releases the lock on timeout (worker ${useWorker})`,
+      async ({ page }) => {
+        const result = await page.evaluate(async (useWorker) => {
+          const creator = await window.MidenClient.createMock();
+          let client;
+          try {
+            const wallet = await creator.accounts.create();
+            const faucet = await creator.accounts.create({
+              type: window.FaucetType.FungibleFaucet,
+              symbol: "TST",
+              decimals: 6,
+              maxSupply: 1000n,
+            });
+            const note = window.createP2IDNote({
+              from: faucet,
+              to: wallet,
+              assets: { token: faucet, amount: 1n },
+            });
+            const outputFile = window.NoteFile.fromOutputNote(
+              window.OutputNote.full(note)
+            );
+            // Keep the synthetic note beyond the local sync height to skip RPC.
+            const afterBlockNum = (await creator.getSyncHeight()) + 1;
+            const tag = new window.NoteTag(42);
+            const file = window.NoteFile.fromExpectedNote(
+              outputFile.noteDetails(),
+              tag,
+              afterBlockNum
+            );
+            const bytes = file.serialize();
+            const expected = file.detailsCommitment();
+            let action = "stall";
+            let signalRetained;
+            const stalled = new Promise((resolve) => {
+              signalRetained = resolve;
+            });
+            const retained = [];
+            client = await window.MidenClient.create({
+              rpcUrl: "http://localhost:65535",
+              storeName: await creator.storeIdentifier(),
+              useWorker,
+              indexedDb: { durability: "strict" },
+              beforeNoteAcquisition: async ({ source, notes }) => {
+                retained.push({
+                  source,
+                  commitment: window.NoteFile.deserialize(
+                    notes[0]
+                  ).detailsCommitment(),
+                });
+                if (action === "stall") {
+                  await stalled;
+                }
+                if (action === "refuse") {
+                  throw new Error("Recovery data could not be saved");
+                }
+              },
+            });
+            const realSetTimeout = window.setTimeout;
+            window.setTimeout = (handler, delay, ...args) =>
+              realSetTimeout(handler, delay === 30_000 ? 20 : delay, ...args);
+            let timeout;
+            let watchdog;
+            try {
+              const pending = client.notes
+                .import(window.NoteFile.deserialize(bytes))
+                .then(
+                  () => "imported",
+                  (error) => error.code
+                );
+              timeout = await Promise.race([
+                pending,
+                new Promise((resolve) => {
+                  watchdog = realSetTimeout(resolve, 1000, "watchdog");
+                }),
+              ]);
+              signalRetained();
+              await pending;
+            } finally {
+              window.clearTimeout(watchdog);
+              window.setTimeout = realSetTimeout;
+            }
+            action = "refuse";
+            let refusal;
+            try {
+              await client.notes.import(window.NoteFile.deserialize(bytes));
+            } catch (error) {
+              refusal = error.code;
+            }
+            const before = await client.notes.listPage({ limit: 1 });
+            action = "accept";
+            await client.notes.import(window.NoteFile.deserialize(bytes));
+            const page = await client.notes.listPage({ limit: 1 });
+            const lookup = await client.notes.list({
+              detailsCommitments: [expected],
+            });
+            const recovery = lookup[0]?.recoveryNoteFile?.();
+            return {
+              expected,
+              afterBlockNum,
+              recovered: recovery && {
+                detailsCommitment: recovery.detailsCommitment(),
+                tag: recovery.noteTag().asU32(),
+                afterBlockNum: recovery.afterBlockNum(),
+              },
+              refusal,
+              timeout,
+              before: before.length,
+              retained,
+              page: page.map((record) => record.detailsCommitment().toHex()),
+              lookup: lookup.map((record) =>
+                record.detailsCommitment().toHex()
+              ),
+            };
+          } finally {
+            client?.terminate();
+            creator.terminate();
+          }
+        }, useWorker);
+        expect(result.expected).toMatch(/^0x/);
+        expect(result.timeout).toBe("NOTE_ACQUISITION_REFUSED");
+        expect(result.refusal).toBe("NOTE_ACQUISITION_REFUSED");
+        expect(result.before).toBe(0);
+        expect(result.retained).toEqual([
+          { source: "import", commitment: result.expected },
+          { source: "import", commitment: result.expected },
+          { source: "import", commitment: result.expected },
+        ]);
+        expect(result.page).toEqual([result.expected]);
+        expect(result.lookup).toEqual([result.expected]);
+        expect(
+          result.recovered,
+          "Expected note recovery preserves its hint"
+        ).toEqual({
+          detailsCommitment: result.expected,
+          tag: 42,
+          afterBlockNum: result.afterBlockNum,
+        });
+      }
+    );
+  }
+
+  mockTest(
+    "retains large private-note deliveries in bounded batches before importing",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const sdk = await window.getWasmOrThrow();
+        const client = new sdk.WebClient();
+        const batches = [];
+        let refuseSecondBatch = true;
+        await client.createMockClient(
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          {
+            beforeNoteAcquisition: async ({ source, notes }) => {
+              batches.push({
+                source,
+                bytes: notes.reduce((sum, note) => sum + note.length, 0),
+                commitments: notes.map((bytes) =>
+                  sdk.NoteFile.deserialize(bytes).detailsCommitment()
+                ),
+              });
+              if (refuseSecondBatch && batches.length === 2) {
+                throw new Error("Recovery data could not be saved");
+              }
+            },
+          }
+        );
+        try {
+          const wallet = await client.newWallet(
+            sdk.AccountStorageMode.private(),
+            sdk.AuthScheme.AuthRpoFalcon512
+          );
+          const faucet = await client.newFaucet(
+            sdk.AccountStorageMode.private(),
+            false,
+            "TST",
+            "TST",
+            6,
+            1000n,
+            sdk.AuthScheme.AuthRpoFalcon512
+          );
+          const tag = sdk.NoteTag.withAccountTarget(wallet.id());
+          await client.addTag(String(tag.asU32()));
+          const metadata = new sdk.NoteMetadata(
+            wallet.id(),
+            sdk.NoteType.Private,
+            tag
+          );
+          const program = Array.from(
+            { length: 11_000 },
+            (_, i) => `push.${4_294_967_296 + i} drop`
+          ).join("\n");
+          const builder = await client.createCodeBuilder();
+          const script = builder.compileNoteScript(
+            `@note_script\npub proc main\n${program}\nend`
+          );
+          const storage = new sdk.NoteStorage(new sdk.FeltArray([]));
+          const assets = new sdk.NoteAssets([
+            new sdk.FungibleAsset(faucet.id(), 1n),
+          ]);
+          const notes = [];
+          for (let i = 0; i < 32; i++) {
+            const serial = new sdk.Word(
+              new BigUint64Array([BigInt(i + 1), 0n, 0n, 0n])
+            );
+            const recipient = new sdk.NoteRecipient(serial, script, storage);
+            const note = new sdk.Note(assets, metadata, recipient);
+            const file = sdk.NoteFile.fromOutputNote(sdk.OutputNote.full(note));
+            notes.push({
+              commitment: file.detailsCommitment(),
+              bytes: file.serialize().length,
+            });
+            await client.sendPrivateNote(
+              note,
+              sdk.Address.fromAccountId(wallet.id(), "BasicWallet"),
+              sdk.NoteInclusionProof.mockAtBlock(0)
+            );
+          }
+          const getNotes = () =>
+            client.getInputNotes(new sdk.NoteFilter(sdk.NoteFilterTypes.All));
+          const fetch = async () => {
+            try {
+              await client.fetchPrivateNotes();
+              return "accepted";
+            } catch (error) {
+              return error.code ?? error.message ?? String(error);
+            }
+          };
+          const refused = await fetch();
+          const refusedBatches = batches.splice(0);
+          const before = (await getNotes()).length;
+          refuseSecondBatch = false;
+          const accepted = await fetch();
+          const acceptedBatches = batches.splice(0);
+          const imported = (await getNotes()).map((note) =>
+            note.detailsCommitment().toHex()
+          );
+          const fetchedAgain = await fetch();
+          return {
+            notes,
+            refused,
+            refusedBatches,
+            before,
+            accepted,
+            acceptedBatches,
+            imported,
+            fetchedAgain,
+            afterAcknowledgement: batches.length,
+          };
+        } finally {
+          client.free();
+        }
+      });
+
+      const maxBatchBytes = 2 * 1024 * 1024;
+      expect(
+        result.notes.reduce((sum, note) => sum + note.bytes, 0)
+      ).toBeGreaterThan(maxBatchBytes);
+      expect(
+        Math.max(...result.notes.map(({ bytes }) => bytes))
+      ).toBeLessThanOrEqual(512_000);
+      expect(result.refused).toBe("NOTE_ACQUISITION_REFUSED");
+      expect(result.refusedBatches).toHaveLength(2);
+      expect(result.before).toBe(0);
+      expect(result.accepted).toBe("accepted");
+      expect(result.acceptedBatches.slice(0, 2)).toEqual(result.refusedBatches);
+      expect(
+        result.acceptedBatches.every(
+          ({ source, bytes }) =>
+            source === "note-transport" && bytes > 0 && bytes <= maxBatchBytes
+        )
+      ).toBe(true);
+      const expected = result.notes.map(({ commitment }) => commitment).sort();
+      expect(
+        result.acceptedBatches.flatMap(({ commitments }) => commitments).sort()
+      ).toEqual(expected);
+      expect(result.imported.sort()).toEqual(expected);
+      expect(result.fetchedAgain).toBe("accepted");
+      expect(result.afterAcknowledgement).toBe(0);
+    }
+  );
 });
 
 // ════════════════════════════════════════════════════════════════

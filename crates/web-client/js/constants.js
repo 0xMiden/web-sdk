@@ -4,12 +4,14 @@ export const WorkerAction = Object.freeze({
   INIT_THREAD_POOL: "initThreadPool",
   CALL_METHOD: "callMethod",
   EXECUTE_CALLBACK: "executeCallback",
+  INDEXED_DB_FAILURE: "indexedDbFailure",
 });
 
 export const CallbackType = Object.freeze({
   GET_KEY: "getKey",
   INSERT_KEY: "insertKey",
   SIGN: "sign",
+  BEFORE_NOTE_ACQUISITION: "beforeNoteAcquisition",
 });
 
 export const MethodName = Object.freeze({

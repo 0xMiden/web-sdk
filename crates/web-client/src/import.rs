@@ -103,26 +103,16 @@ impl WebClient {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
         let native_note_file: NativeNoteFile = note_file.into();
-        let note_id = match &native_note_file {
-            NativeNoteFile::NoteId(id) => Some(id.to_string()),
-            NativeNoteFile::Committed { note, .. } => Some(note.id().to_string()),
-            NativeNoteFile::ExpectedNote { .. } => None,
+        let identity = match &native_note_file {
+            NativeNoteFile::NoteId(id) => id.to_string(),
+            NativeNoteFile::Committed { note, .. } => note.id().to_string(),
+            NativeNoteFile::ExpectedNote { details, .. } => details.commitment().to_hex(),
         };
-        let commitments = client
+        client
             .import_notes(&[native_note_file])
             .await
-            .map_err(|err| js_error_with_context(err, "failed to import note"))?;
-        match note_id {
-            Some(id) => Ok(id),
-            // Only reached for the `ExpectedNote` variant, which `import_notes`
-            // always imports (details are self-contained), so the vec is
-            // non-empty here. Guard against an empty result regardless rather
-            // than index blindly.
-            None => commitments
-                .first()
-                .map(miden_client::note::NoteDetailsCommitment::to_hex)
-                .ok_or_else(|| from_str_err("import produced no note commitment")),
-        }
+            .map(|_| identity)
+            .map_err(|err| js_error_with_context(err, "failed to import note"))
     }
 }
 

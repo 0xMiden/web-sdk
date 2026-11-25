@@ -129,6 +129,8 @@ const callbackProxies = {
     callbackForwarder.forward(CallbackType.INSERT_KEY, [pubKey, secretKey]),
   sign: async (pubKey, signingInputs) =>
     callbackForwarder.forward(CallbackType.SIGN, [pubKey, signingInputs]),
+  beforeNoteAcquisition: async (batch) =>
+    callbackForwarder.forward(CallbackType.BEFORE_NOTE_ACQUISITION, [batch]),
 };
 
 // Define a mapping from method names to handler functions.
@@ -511,6 +513,7 @@ async function processMessage(event) {
         noteTransportMaxRetries,
         noteTransportRetryIntervalMs,
         initCallbackTimeoutMs,
+        storageOptions,
       ] = args;
       callbackTimeoutMs = initCallbackTimeoutMs;
       const wasm = await getWasmOrThrow();
@@ -537,6 +540,26 @@ async function processMessage(event) {
 
       // Check if any callbacks are provided
       const useExternalKeystore = hasGetKeyCb || hasInsertKeyCb || hasSignCb;
+      const indexedDb = storageOptions?.indexedDb;
+      const storageArgs = storageOptions
+        ? [
+            {
+              beforeNoteAcquisition: storageOptions.beforeNoteAcquisition
+                ? callbackProxies.beforeNoteAcquisition
+                : undefined,
+              indexedDb: indexedDb && {
+                durability: indexedDb.durability,
+                onFailure: indexedDb.notify
+                  ? (failure) =>
+                      self.postMessage({
+                        action: WorkerAction.INDEXED_DB_FAILURE,
+                        failure,
+                      })
+                  : undefined,
+              },
+            },
+          ]
+        : [];
 
       if (useExternalKeystore) {
         // Use callback proxies that communicate with the main thread
@@ -550,7 +573,8 @@ async function processMessage(event) {
           hasInsertKeyCb ? callbackProxies.insertKey : undefined,
           hasSignCb ? callbackProxies.sign : undefined,
           noteTransportMaxRetries,
-          noteTransportRetryIntervalMs
+          noteTransportRetryIntervalMs,
+          ...storageArgs
         );
       } else {
         await wasmWebClient.createClient(
@@ -560,7 +584,8 @@ async function processMessage(event) {
           storeName,
           feeFaucetId,
           noteTransportMaxRetries,
-          noteTransportRetryIntervalMs
+          noteTransportRetryIntervalMs,
+          ...storageArgs
         );
       }
 
