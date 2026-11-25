@@ -334,26 +334,17 @@ describe("useWaitForAccountUpdate", () => {
       expect(mockClient.syncState).toHaveBeenCalledTimes(3);
     });
 
-    it("falls back to storage.getItem when getCommitment is unavailable (including StorageMap entries)", async () => {
+    it("uses StorageView.getCommitment for map slots and falls back to raw AccountStorage.getItem", async () => {
       vi.useFakeTimers();
-      // First entry stays identical, second entry changes -> must still detect update!
+      const getItem1 = vi.fn(() => createWord("0xunused1"));
+      const getItem2 = vi.fn(() => createWord("0xunused2"));
       const acc1 = createAccountWithCommitment("0xcomm1", {
-        getItem: vi.fn(() => ({
-          isMap: true,
-          entries: [
-            { key: "0xk1", value: "0xv1" },
-            { key: "0xk2", value: "0xv2" },
-          ],
-        })),
+        getCommitment: vi.fn(() => createWord("0xmaproot1")),
+        getItem: getItem1,
       });
       const acc2 = createAccountWithCommitment("0xcomm2", {
-        getItem: vi.fn(() => ({
-          isMap: true,
-          entries: [
-            { key: "0xk1", value: "0xv1" },
-            { key: "0xk2", value: "0xv2_updated" },
-          ],
-        })),
+        getCommitment: vi.fn(() => createWord("0xmaproot2")),
+        getItem: getItem2,
       });
 
       const mockClient = createMockWebClient({
@@ -383,6 +374,36 @@ describe("useWaitForAccountUpdate", () => {
       });
 
       await expect(pending).resolves.toBe(acc2);
+      expect(getItem1).not.toHaveBeenCalled();
+      expect(getItem2).not.toHaveBeenCalled();
+
+      // Raw AccountStorage fallback (no getCommitment): compares Word from getItem()
+      const raw1 = createAccountWithCommitment("0xcomm3", {
+        getItem: vi.fn(() => createWord("0xraw_slot_v1")),
+      });
+      const raw2 = createAccountWithCommitment("0xcomm4", {
+        getItem: vi.fn(() => createWord("0xraw_slot_v2")),
+      });
+      mockClient.getAccount = vi
+        .fn()
+        .mockResolvedValueOnce(raw1)
+        .mockResolvedValueOnce(raw2);
+
+      let rawPending!: Promise<unknown>;
+      act(() => {
+        rawPending = result.current.waitForAccountUpdate({
+          accountId: "0xacc",
+          slot: "raw::counter",
+          timeoutMs: 500,
+          intervalMs: 25,
+        });
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30);
+      });
+
+      await expect(rawPending).resolves.toBe(raw2);
     });
 
     it("resolves when storage mapKey entry changes from absent to present or to a new Word", async () => {
@@ -1196,6 +1217,408 @@ describe("useWaitForAccountUpdate", () => {
         });
       });
       expect(callerWord.free).not.toHaveBeenCalled();
+    });
+
+    it("keeps an imperative wait alive when a superseded reactive subscription cleans up", async () => {
+      vi.useFakeTimers();
+      const unchanged = createAccountWithCommitment("0xbase");
+      const updated = createAccountWithCommitment("0xnew");
+      const mockClient = createMockWebClient({
+        syncState: vi.fn().mockResolvedValue({}),
+        getAccount: vi
+          .fn()
+          .mockResolvedValueOnce(unchanged)
+          .mockResolvedValueOnce(unchanged)
+          .mockResolvedValueOnce(updated),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      useMidenStore.getState().setClient(mockClient as never);
+
+      const { result, rerender } = renderHook(
+        ({ enabled }) =>
+          useWaitForAccountUpdate("0xacc", {
+            enabled,
+            timeoutMs: 5000,
+            intervalMs: 100,
+          }),
+        { initialProps: { enabled: true } }
+      );
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      let imperativePromise!: Promise<unknown>;
+      await act(async () => {
+        imperativePromise = result.current.waitForAccountUpdate("0xacc", {
+          baselineCommitment: "0xbase",
+          timeoutMs: 5000,
+          intervalMs: 100,
+        });
+        await Promise.resolve();
+      });
+
+      // Disabling reactive mode cleans up only the superseded reactive token.
+      rerender({ enabled: false });
+      expect(result.current.isWaiting).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      await expect(imperativePromise).resolves.toBe(updated);
+      expect(result.current.isWaiting).toBe(false);
+    });
+
+    it("compares full four-limb Words before scalar toBigInt when baselineValue is bigint", async () => {
+      vi.useFakeTimers();
+      const wordSame = new Word([1n, 0n, 0n, 0n]);
+      const wordUpperChanged = new Word([1n, 2n, 0n, 0n]);
+      const mapAcc1 = createAccountWithCommitment("0x1", {
+        getMapItem: vi.fn(() => wordSame),
+      });
+      const mapAcc2 = createAccountWithCommitment("0x2", {
+        getMapItem: vi.fn(() => wordUpperChanged),
+      });
+
+      const slotSame = {
+        toBigInt: vi.fn(() => 1n),
+        toU64s: vi.fn(() => [1n, 0n, 0n, 0n]),
+        free: vi.fn(),
+      };
+      const slotUpperChanged = {
+        toBigInt: vi.fn(() => 1n),
+        toU64s: vi.fn(() => [1n, 2n, 0n, 0n]),
+        free: vi.fn(),
+      };
+      const slotAcc1 = createAccountWithCommitment("0x3", {
+        getItem: vi.fn(() => slotSame),
+      });
+      const slotAcc2 = createAccountWithCommitment("0x4", {
+        getItem: vi.fn(() => slotUpperChanged),
+      });
+
+      const mockClient = createMockWebClient({
+        syncState: vi.fn().mockResolvedValue({}),
+        getAccount: vi
+          .fn()
+          .mockResolvedValueOnce(mapAcc1)
+          .mockResolvedValueOnce(mapAcc2)
+          .mockResolvedValueOnce(slotAcc1)
+          .mockResolvedValueOnce(slotAcc2),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      useMidenStore.getState().setClient(mockClient as never);
+
+      const { result } = renderHook(() => useWaitForAccountUpdate());
+
+      let mapPending!: Promise<unknown>;
+      act(() => {
+        mapPending = result.current.waitForAccountUpdate("0xacc", {
+          slot: "counter::map",
+          mapKey: "0x01",
+          baselineValue: 1n,
+          timeoutMs: 1000,
+          intervalMs: 50,
+        });
+      });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+      await expect(mapPending).resolves.toBe(mapAcc2);
+
+      let slotPending!: Promise<unknown>;
+      act(() => {
+        slotPending = result.current.waitForAccountUpdate("0xacc", {
+          slot: "counter::value",
+          baselineValue: 1n,
+          timeoutMs: 1000,
+          intervalMs: 50,
+        });
+      });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+      await expect(slotPending).resolves.toBe(slotAcc2);
+    });
+
+    it("isolates mode and target baselines in mergeOptions without leaking hook defaults", async () => {
+      vi.useFakeTimers();
+      const slotPoll1 = createAccountWithCommitment("0xcommit_new", {
+        getCommitment: vi.fn(() => createWord("0xslot_v1")),
+      });
+      const slotPoll2 = createAccountWithCommitment("0xcommit_new", {
+        getCommitment: vi.fn(() => createWord("0xslot_v2")),
+      });
+      const mockClient = createMockWebClient({
+        syncState: vi.fn().mockResolvedValue({}),
+        getAccount: vi
+          .fn()
+          .mockResolvedValueOnce(slotPoll1)
+          .mockResolvedValueOnce(slotPoll2),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      useMidenStore.getState().setClient(mockClient as never);
+
+      // Account-level baselineCommitment must not leak into imperative { slot } wait.
+      const { result: commitHook } = renderHook(() =>
+        useWaitForAccountUpdate("0xacc", {
+          baselineCommitment: "0xcommit_old",
+          timeoutMs: 500,
+          intervalMs: 50,
+        })
+      );
+
+      let slotPending!: Promise<unknown>;
+      act(() => {
+        slotPending = commitHook.current.waitForAccountUpdate({
+          slot: "counter::value",
+        });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60);
+      });
+      await expect(slotPending).resolves.toBe(slotPoll2);
+
+      // Slot/mapKey/baselineValue must not leak across baselineCommitment, slot, or mapKey overrides.
+      const c1 = createAccountWithCommitment("0xcommit_old", {
+        getMapItem: vi.fn(() => createWord("0xslot_different")),
+      });
+      const c2 = createAccountWithCommitment("0xcommit_changed");
+      const s1 = createAccountWithCommitment("0xcommit_changed", {
+        getCommitment: vi.fn(() => createWord("0xs2_v1")),
+        getMapItem: vi.fn(() => createWord("0xk2_v1")),
+      });
+      const s2 = createAccountWithCommitment("0xcommit_changed", {
+        getCommitment: vi.fn(() => createWord("0xs2_v2")),
+        getMapItem: vi.fn(() => createWord("0xk2_v2")),
+      });
+      mockClient.getAccount = vi
+        .fn()
+        .mockResolvedValueOnce(c1)
+        .mockResolvedValueOnce(c2)
+        .mockResolvedValueOnce(s1)
+        .mockResolvedValueOnce(s2)
+        .mockResolvedValueOnce(s1)
+        .mockResolvedValueOnce(s2);
+
+      const { result: slotHook } = renderHook(() =>
+        useWaitForAccountUpdate("0xacc", {
+          slot: "s1",
+          mapKey: "0x01",
+          baselineValue: "0xslot_different",
+          timeoutMs: 500,
+          intervalMs: 50,
+        })
+      );
+
+      let commitPending!: Promise<unknown>;
+      act(() => {
+        commitPending = slotHook.current.waitForAccountUpdate({
+          baselineCommitment: "0xcommit_old",
+        });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60);
+      });
+      await expect(commitPending).resolves.toBe(c2);
+
+      let diffSlotPending!: Promise<unknown>;
+      act(() => {
+        diffSlotPending = slotHook.current.waitForAccountUpdate("0xacc2", {
+          slot: "s2",
+        });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60);
+      });
+      await expect(diffSlotPending).resolves.toBe(s2);
+
+      let diffKeyPending!: Promise<unknown>;
+      act(() => {
+        diffKeyPending = slotHook.current.waitForAccountUpdate({
+          mapKey: "0x02",
+        });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60);
+      });
+      await expect(diffKeyPending).resolves.toBe(s2);
+    });
+
+    it("handles throwing AccountRef safely during disabled render, imperative rejection, and enabled error state", async () => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      useMidenStore.getState().setClient(mockClient as never);
+
+      const badRef = {
+        id: vi.fn(() => {
+          throw new Error("corrupt handle");
+        }),
+      };
+
+      const { result: disabledHook } = renderHook(() =>
+        useWaitForAccountUpdate(badRef as never, { enabled: false })
+      );
+      expect(disabledHook.current.error).toBeNull();
+      expect(disabledHook.current.isWaiting).toBe(false);
+
+      await act(async () => {
+        await expect(
+          disabledHook.current.waitForAccountUpdate()
+        ).rejects.toThrow("corrupt handle");
+      });
+      expect(disabledHook.current.error?.message).toBe("corrupt handle");
+
+      const { result: enabledHook } = renderHook(() =>
+        useWaitForAccountUpdate(badRef as never, { enabled: true })
+      );
+      await waitFor(() => {
+        expect(enabledHook.current.error?.message).toBe("corrupt handle");
+      });
+      expect(enabledHook.current.isWaiting).toBe(false);
+    });
+
+    it("skips getAccount when syncState crosses the deadline and validates Word.fromHex / Word.deserialize", async () => {
+      vi.useFakeTimers();
+      const runExclusive = vi.fn(<T,>(fn: () => Promise<T>) => fn());
+      const mockClient = createMockWebClient({
+        syncState: vi.fn(async () => {
+          await vi.advanceTimersByTimeAsync(60);
+          return {};
+        }),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        runExclusive,
+      });
+      useMidenStore.getState().setClient(mockClient as never);
+
+      const { result } = renderHook(() => useWaitForAccountUpdate());
+
+      let pending!: Promise<unknown>;
+      act(() => {
+        pending = result.current.waitForAccountUpdate("0xacc", {
+          baselineCommitment: "0xbase",
+          timeoutMs: 50,
+          intervalMs: 100,
+        });
+      });
+
+      await act(async () => {
+        await expect(pending).rejects.toThrow(
+          "Timeout waiting for account update"
+        );
+      });
+      expect(runExclusive).toHaveBeenCalledTimes(1);
+      expect(mockClient.getAccount).not.toHaveBeenCalled();
+
+      // Invalid hex mapKey is rejected by Word.fromHex and populates error state
+      await act(async () => {
+        await expect(
+          result.current.waitForAccountUpdate("0xacc", {
+            slot: "s",
+            mapKey: "not-hex",
+          })
+        ).rejects.toThrow("Invalid hex string for Word");
+      });
+      expect(result.current.error?.message).toBe("Invalid hex string for Word");
+
+      const parsed = Word.fromHex(
+        "0x0000000000000001000000000000000200000000000000000000000000000000"
+      );
+      expect(parsed).toBeInstanceOf(Word);
+      expect(parsed.toU64s()).toEqual([1n, 2n, 0n, 0n]);
+      expect(parsed.toHex()).toBe(
+        "0x0000000000000001000000000000000200000000000000000000000000000000"
+      );
+      expect(() => parsed.free()).not.toThrow();
+
+      const deserialized = Word.deserialize(new Uint8Array());
+      expect(deserialized).toBeInstanceOf(Word);
+      expect(deserialized.toU64s()).toEqual([0n, 0n, 0n, 0n]);
+      expect(deserialized.toHex()).toBe(
+        "0x0000000000000000000000000000000000000000000000000000000000000000"
+      );
+    });
+
+    it("preserves active wait error nullability across secondary invalid calls and frees transient WASM handles", async () => {
+      vi.useFakeTimers();
+      const poll1Word = createWord("0xold");
+      const poll2Word = createWord("0xnew");
+      const poll1Raw = { free: vi.fn() };
+      const poll2Raw = { free: vi.fn() };
+      const acc1 = createAccountWithCommitment("0x1", {
+        getCommitment: vi.fn(() => poll1Word),
+        raw: poll1Raw,
+      });
+      const acc2 = createAccountWithCommitment("0x2", {
+        getCommitment: vi.fn(() => poll2Word),
+        raw: poll2Raw,
+      });
+      const mockClient = createMockWebClient({
+        syncState: vi.fn().mockResolvedValue({}),
+        getAccount: vi
+          .fn()
+          .mockResolvedValueOnce(acc1)
+          .mockResolvedValueOnce(acc2),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      useMidenStore.getState().setClient(mockClient as never);
+
+      const accountHeader = createMockAccountHeader("0xheader_free");
+      const { result } = renderHook(() => useWaitForAccountUpdate());
+
+      let activePending!: Promise<unknown>;
+      act(() => {
+        activePending = result.current.waitForAccountUpdate(
+          accountHeader as never,
+          {
+            slot: "s",
+            timeoutMs: 1000,
+            intervalMs: 50,
+          }
+        );
+      });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(result.current.isWaiting).toBe(true);
+
+      // Invalid second call must reject without clobbering active wait error/isWaiting
+      await act(async () => {
+        await expect(
+          result.current.waitForAccountUpdate("0xacc", { mapKey: "0x01" })
+        ).rejects.toThrow(
+          "Storage slot name is required when mapKey is specified"
+        );
+      });
+      expect(result.current.error).toBeNull();
+      expect(result.current.isWaiting).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+      await expect(activePending).resolves.toBe(acc2);
+      expect(result.current.error).toBeNull();
+      expect(result.current.isWaiting).toBe(false);
+
+      expect(acc1.free).toHaveBeenCalledTimes(1);
+      expect(acc2.free).not.toHaveBeenCalled();
+      expect(poll1Word.free).toHaveBeenCalledTimes(1);
+      expect(poll2Word.free).toHaveBeenCalledTimes(1);
+      expect(poll1Raw.free).toHaveBeenCalledTimes(1);
+      expect(poll2Raw.free).toHaveBeenCalledTimes(1);
+      expect(accountHeader.free).not.toHaveBeenCalled();
     });
   });
 });

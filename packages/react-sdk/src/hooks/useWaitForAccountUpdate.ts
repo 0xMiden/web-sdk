@@ -144,10 +144,13 @@ export function useWaitForAccountUpdate(
     baselineValue: hookBaselineValue,
   };
 
-  const hookAccountKey = useMemo(
-    () => normalizeAccountRefKey(hookAccountId),
-    [hookAccountId]
-  );
+  const hookAccountKey = useMemo(() => {
+    try {
+      return normalizeAccountRefKey(hookAccountId);
+    } catch (err) {
+      return `__invalid__:${err instanceof Error ? err.message : String(err)}`;
+    }
+  }, [hookAccountId]);
   const hookBaselineCommitmentKey = useMemo(
     () => readWordHex(hookBaselineCommitment),
     [hookBaselineCommitment]
@@ -158,9 +161,18 @@ export function useWaitForAccountUpdate(
     [hookBaselineValue]
   );
 
-  const cancelActiveWait = useCallback((mode: CancelMode) => {
-    activeWaitRef.current?.cancel(mode);
-  }, []);
+  const cancelActiveWait = useCallback(
+    (mode: CancelMode, expectedToken?: number) => {
+      if (
+        expectedToken !== undefined &&
+        activeWaitRef.current?.token !== expectedToken
+      ) {
+        return;
+      }
+      activeWaitRef.current?.cancel(mode);
+    },
+    []
+  );
 
   useEffect(() => {
     mountedRef.current = true;
@@ -244,22 +256,13 @@ export function useWaitForAccountUpdate(
           }
         }
       } catch (err) {
-        if (allocatedMapKeyWord) {
-          const toFree = allocatedMapKeyWord;
-          allocatedMapKeyWord = undefined;
-          try {
-            (toFree as { free?: () => void }).free?.();
-          } catch {
-            // Ignore cleanup errors during pre-poll validation failure.
-          }
-        }
+        safeFree(allocatedMapKeyWord);
+        allocatedMapKeyWord = undefined;
         const resolvedError =
           err instanceof Error ? err : new Error(String(err));
-        if (mountedRef.current) {
+        if (mountedRef.current && !activeWaitRef.current) {
           setError(resolvedError);
-          if (!activeWaitRef.current) {
-            setIsWaiting(false);
-          }
+          setIsWaiting(false);
         }
         throw resolvedError;
       }
@@ -289,15 +292,8 @@ export function useWaitForAccountUpdate(
             clearTimeout(timerId);
             timerId = null;
           }
-          if (allocatedMapKeyWord) {
-            const toFree = allocatedMapKeyWord;
-            allocatedMapKeyWord = undefined;
-            try {
-              (toFree as { free?: () => void }).free?.();
-            } catch {
-              // Ignore free errors when tearing down internal Word.
-            }
-          }
+          safeFree(allocatedMapKeyWord);
+          allocatedMapKeyWord = undefined;
           if (activeWaitRef.current?.token === token) {
             activeWaitRef.current = null;
           }
@@ -393,13 +389,21 @@ export function useWaitForAccountUpdate(
 
               await runExclusiveSafe(() => client.syncState());
               if (shouldStop()) return;
-
-              const fetched = await runExclusiveSafe(() => {
-                const accountIdObj = parseAccountId(requiredAccountIdStr);
-                return client.getAccount(accountIdObj);
-              });
-              if (shouldStop()) return;
               if (Date.now() >= deadline) break;
+
+              const fetched = await runExclusiveSafe(async () => {
+                const accountIdObj = parseAccountId(requiredAccountIdStr);
+                try {
+                  return await client.getAccount(accountIdObj);
+                } finally {
+                  safeFree(accountIdObj);
+                }
+              });
+              if (shouldStop() || Date.now() >= deadline) {
+                safeFree(fetched);
+                if (shouldStop()) return;
+                break;
+              }
 
               if (fetched) {
                 const snapshot = readAccountSnapshot(
@@ -410,15 +414,19 @@ export function useWaitForAccountUpdate(
                 );
                 if (baseline === undefined) {
                   baseline = snapshot;
+                  safeFree(fetched);
                 } else if (snapshot !== baseline) {
                   ensureAccountBech32(fetched);
                   setAccountDetails(requiredAccountIdStr, fetched);
                   if (isActive()) {
                     setAccount(fetched);
+                    setError(null);
                     setIsWaiting(false);
                   }
                   finishResolve(fetched);
                   return;
+                } else {
+                  safeFree(fetched);
                 }
               }
 
@@ -473,11 +481,16 @@ export function useWaitForAccountUpdate(
       return;
     }
 
+    const beforeToken = waitTokenRef.current;
     // Reactive subscriptions mirror query hooks: errors live in `error` state.
     void startWait().catch(() => {});
+    const reactiveToken =
+      waitTokenRef.current > beforeToken ? waitTokenRef.current : undefined;
 
     return () => {
-      cancelActiveWait("effect-cleanup");
+      if (reactiveToken !== undefined) {
+        cancelActiveWait("effect-cleanup", reactiveToken);
+      }
     };
   }, [
     hookEnabled,
@@ -531,23 +544,93 @@ function mergeOptions(
   arg1?: AccountRef | WaitForAccountUpdateOptions,
   arg2?: Omit<WaitForAccountUpdateOptions, "accountId">
 ): WaitForAccountUpdateOptions {
-  const base: WaitForAccountUpdateOptions = {
-    accountId: hookAccountId,
-    slot: hookSlot,
-    timeoutMs: hookTimeoutMs,
-    intervalMs: hookIntervalMs,
-    baselineCommitment: hookBaselineCommitment,
-    mapKey: hookMapKey,
-    baselineValue: hookBaselineValue,
-  };
+  const overrides: WaitForAccountUpdateOptions | undefined =
+    arg1 === undefined
+      ? undefined
+      : isAccountRef(arg1)
+        ? { ...arg2, accountId: arg1 }
+        : arg1;
 
-  if (arg1 === undefined) {
-    return base;
+  const accountId = overrides?.accountId ?? hookAccountId;
+  const timeoutMs = overrides?.timeoutMs ?? hookTimeoutMs;
+  const intervalMs = overrides?.intervalMs ?? hookIntervalMs;
+
+  if (overrides?.slot !== undefined) {
+    const sameSlot = overrides.slot === hookSlot;
+    const mapKey = sameSlot
+      ? (overrides.mapKey ?? hookMapKey)
+      : overrides.mapKey;
+    const sameKey =
+      sameSlot &&
+      (overrides.mapKey === undefined ||
+        readWordHex(overrides.mapKey) === readWordHex(hookMapKey));
+    const baselineValue = sameKey
+      ? overrides.baselineValue !== undefined
+        ? overrides.baselineValue
+        : hookBaselineValue
+      : overrides.baselineValue;
+    return {
+      accountId,
+      timeoutMs,
+      intervalMs,
+      slot: overrides.slot,
+      mapKey,
+      baselineValue,
+      baselineCommitment: overrides.baselineCommitment,
+    };
   }
-  if (isAccountRef(arg1)) {
-    return { ...base, ...arg2, accountId: arg1 };
+
+  if (overrides?.mapKey !== undefined) {
+    const sameKey = readWordHex(overrides.mapKey) === readWordHex(hookMapKey);
+    const baselineValue = sameKey
+      ? overrides.baselineValue !== undefined
+        ? overrides.baselineValue
+        : hookBaselineValue
+      : overrides.baselineValue;
+    return {
+      accountId,
+      timeoutMs,
+      intervalMs,
+      slot: hookSlot,
+      mapKey: overrides.mapKey,
+      baselineValue,
+      baselineCommitment: overrides.baselineCommitment,
+    };
   }
-  return { ...base, ...arg1 };
+
+  if (overrides?.baselineCommitment !== undefined) {
+    return {
+      accountId,
+      timeoutMs,
+      intervalMs,
+      baselineCommitment: overrides.baselineCommitment,
+    };
+  }
+
+  return {
+    accountId,
+    timeoutMs,
+    intervalMs,
+    slot: hookSlot,
+    mapKey: hookMapKey,
+    baselineValue:
+      overrides?.baselineValue !== undefined
+        ? overrides.baselineValue
+        : hookBaselineValue,
+    baselineCommitment: hookBaselineCommitment,
+  };
+}
+
+function safeFree(value: unknown): void {
+  if (!value || typeof value !== "object") return;
+  const free = (value as { free?: unknown }).free;
+  if (typeof free === "function") {
+    try {
+      (free as () => void).call(value);
+    } catch {
+      // Ignore WASM double-free or mock cleanup errors.
+    }
+  }
 }
 
 function normalizeAccountRefKey(
@@ -558,7 +641,14 @@ function normalizeAccountRefKey(
     const trimmed = accountId.trim();
     return trimmed ? trimmed : undefined;
   }
-  return parseAccountId(accountId).toString();
+  const parsed = parseAccountId(accountId);
+  try {
+    return parsed.toString();
+  } finally {
+    if (parsed !== accountId) {
+      safeFree(parsed);
+    }
+  }
 }
 
 function readWordHex(value: unknown): string | null {
@@ -572,18 +662,35 @@ function readWordHex(value: unknown): string | null {
   return str && str !== "[object Object]" ? str.trim().toLowerCase() : null;
 }
 
-function readWordBigInt(value: unknown): bigint | null {
+function readNumericSnapshot(value: unknown): string | null {
   if (value === undefined || value === null) return null;
   const record = value as {
     toBigInt?: () => bigint;
     toU64s?: () => ArrayLike<bigint>;
   };
-  if (typeof record.toBigInt === "function") {
-    return record.toBigInt();
-  }
   if (typeof record.toU64s === "function") {
     const u64s = record.toU64s();
-    if (u64s.length > 0) return BigInt(u64s[0]);
+    if (u64s.length > 0) {
+      let upperNonZero = false;
+      for (let i = 1; i < u64s.length; i++) {
+        if (BigInt(u64s[i]) !== 0n) {
+          upperNonZero = true;
+          break;
+        }
+      }
+      if (!upperNonZero) {
+        return String(BigInt(u64s[0]));
+      }
+      return (
+        "word:" +
+        Array.from({ length: u64s.length }, (_, i) =>
+          BigInt(u64s[i]).toString(16).padStart(16, "0")
+        ).join("")
+      );
+    }
+  }
+  if (typeof record.toBigInt === "function") {
+    return String(record.toBigInt());
   }
   return null;
 }
@@ -615,6 +722,7 @@ type StorageLike = {
   getCommitment?: (slotName: string) => unknown;
   getItem?: (slotName: string) => unknown;
   getMapItem?: (slotName: string, key: WordType) => unknown;
+  raw?: unknown;
 };
 
 function readAccountSnapshot(
@@ -624,44 +732,60 @@ function readAccountSnapshot(
   numericBaseline: boolean
 ): string | null {
   if (!slot) {
-    return readWordHex(account.to_commitment());
+    const commitment = account.to_commitment();
+    try {
+      return readWordHex(commitment);
+    } finally {
+      safeFree(commitment);
+    }
   }
 
   const storage = account.storage() as unknown as StorageLike;
+  try {
+    if (mapKeyWord !== undefined) {
+      const entry = storage.getMapItem?.(slot, mapKeyWord);
+      try {
+        if (numericBaseline) {
+          return readNumericSnapshot(entry);
+        }
+        return readWordHex(entry);
+      } finally {
+        safeFree(entry);
+      }
+    }
 
-  if (mapKeyWord !== undefined) {
-    const entry = storage.getMapItem?.(slot, mapKeyWord);
     if (numericBaseline) {
-      const val = readWordBigInt(entry);
-      return val === null ? null : String(val);
+      const item = storage.getItem?.(slot);
+      try {
+        return readNumericSnapshot(item);
+      } finally {
+        if (item && typeof item === "object") {
+          safeFree((item as { word?: unknown }).word);
+        }
+        safeFree(item);
+      }
     }
-    return readWordHex(entry);
-  }
 
-  if (numericBaseline) {
+    if (typeof storage.getCommitment === "function") {
+      const commitment = storage.getCommitment(slot);
+      try {
+        return readWordHex(commitment);
+      } finally {
+        safeFree(commitment);
+      }
+    }
+
     const item = storage.getItem?.(slot);
-    const val = readWordBigInt(item);
-    return val === null ? null : String(val);
-  }
-
-  if (typeof storage.getCommitment === "function") {
-    return readWordHex(storage.getCommitment(slot));
-  }
-
-  const item = storage.getItem?.(slot);
-  if (item && typeof item === "object") {
-    const maybeMap = item as {
-      isMap?: boolean;
-      entries?: Array<{ key: string; value: string }>;
-    };
-    if (maybeMap.isMap && Array.isArray(maybeMap.entries)) {
-      return maybeMap.entries
-        .map(
-          (entry) => `${entry.key.toLowerCase()}:${entry.value.toLowerCase()}`
-        )
-        .sort()
-        .join("|");
+    try {
+      return readWordHex(item);
+    } finally {
+      if (item && typeof item === "object") {
+        safeFree((item as { word?: unknown }).word);
+      }
+      safeFree(item);
     }
+  } finally {
+    safeFree(storage?.raw);
+    safeFree(storage);
   }
-  return readWordHex(item);
 }
