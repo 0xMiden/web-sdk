@@ -92,7 +92,7 @@ describe("MidenClient.chain", () => {
   });
 
   it("rejects on a mock client, which has no node", async () => {
-    const { client } = makeClient({ endpoint: undefined });
+    const { client } = makeClient({ endpoint: null });
     await expect(client.chain.getBlockHeader()).rejects.toThrow(/no node/);
   });
 

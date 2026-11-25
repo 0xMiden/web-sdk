@@ -244,7 +244,7 @@ fn genesis_header_response() -> (miden_client::block::BlockHeader, Vec<u8>) {
 }
 
 #[tokio::test]
-async fn block_header_with_proof_returns_the_mmr_proof_the_node_sent() {
+async fn chain_reads_block_header_with_proof_returns_the_mmr_proof_the_node_sent() {
     let (genesis, response) = genesis_header_response();
     let (rpc, server) = serve(move |_| response.clone()).await;
     let result = rpc.get_block_header_with_proof(0).await.unwrap();
@@ -258,7 +258,7 @@ async fn block_header_with_proof_returns_the_mmr_proof_the_node_sent() {
 }
 
 #[tokio::test]
-async fn nullifier_commit_heights_match_full_nullifiers_and_omit_unspent_ones() {
+async fn chain_reads_nullifier_commit_heights_match_full_nullifiers_and_omit_unspent_ones() {
     let (_, header_response) = genesis_header_response();
     let spent = miden_client::Word::from([1_u32, 2, 3, 4]);
     // Same 16-bit prefix as `spent`, so the node returns it for both lookups.
