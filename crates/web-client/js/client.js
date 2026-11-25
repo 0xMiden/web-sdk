@@ -7,6 +7,7 @@ import { SettingsResource } from "./resources/settings.js";
 import { CompilerResource } from "./resources/compiler.js";
 import { KeystoreResource } from "./resources/keystore.js";
 import { PswapResource } from "./resources/pswap.js";
+import { ContractsResource } from "./resources/contracts.js";
 import {
   hashSeed,
   resolveAccountRef,
@@ -52,6 +53,7 @@ export class MidenClient {
     this.compile = new CompilerResource(inner, getWasm, this);
     this.keystore = new KeystoreResource(inner, this);
     this.pswap = new PswapResource(inner, getWasm, this);
+    this.contracts = new ContractsResource(getWasm, this);
   }
 
   /**

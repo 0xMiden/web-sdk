@@ -272,6 +272,17 @@ describe("client.chain documentation", () => {
     ).toContain("`tags`, `chain`, `settings`");
   });
 
+  it("the source guide lists every resource namespace on MidenClient", () => {
+    const guide = readFileSync(
+      new URL(
+        "crates/web-client/skills/frontend-source-guide/SKILL.md",
+        REPO_ROOT
+      ),
+      "utf8"
+    );
+    expect(guide).toContain("`contracts`");
+  });
+
   it("the React guide no longer says block headers are not on the client", () => {
     expect(
       readFileSync(new URL("packages/react-sdk/AGENTS.md", REPO_ROOT), "utf8")

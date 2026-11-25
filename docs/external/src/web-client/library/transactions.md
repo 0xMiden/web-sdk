@@ -206,6 +206,25 @@ local apply fails, so `apply` and the single-transaction `transactions.*` helper
 local update fails after the node accepted it rejects with the same `code` and the
 accepted block in its message, without those fields. Do not submit it again.
 
+## Cycle counts
+
+`ExecutedTransaction.measurements()` reports how many VM cycles each phase of an execution took, so you can see what a transaction costs before you prove it. It returns a `TransactionMeasurements`:
+
+```typescript
+const executed = (await webClient.executeTransaction(accountId, request)).executedTransaction();
+const m = executed.measurements();
+
+m.totalCycles;       // prologue + notesProcessing + txScriptProcessing + epilogue
+m.prologue;
+m.notesProcessing;   // all input notes together
+m.noteExecution;     // [{ noteId, cycles }], one per executed note
+m.txScriptProcessing;
+m.epilogue;
+m.authProcedure;     // measured separately, not part of totalCycles
+```
+
+These are cycle counts only. The SDK adds no wall-clock timing; time the stages yourself if you need it.
+
 ## Pinning How Input Notes Are Consumed
 
 `withInputNotes` adds notes and leaves the executing client to decide how each one is consumed: authenticated when its store holds the note's inclusion proof, unauthenticated otherwise. That is what you want for a request you build and execute yourself. It is not what you want for a request that travels — two clients with different stores produce different transaction summaries for the same request, and a multisig flow comparing summaries then fails for no visible reason.

@@ -771,6 +771,86 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
 });
 
 // ════════════════════════════════════════════════════════════════
+// contracts.deploy()
+// ════════════════════════════════════════════════════════════════
+
+test.describe("contracts.deploy()", () => {
+  test("generates seed and auth, and matches accounts.create defaults", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const component = await client.compile.component({
+      code: COUNTER_CODE,
+      namespace: "external_contract::counter_contract",
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+
+    const first = await client.contracts.deploy({ components: [component] });
+    const second = await client.contracts.deploy({ components: [component] });
+
+    expect(first.seed).toHaveLength(32);
+    expect(first.auth).not.toBe("none");
+    expect(first.account.isRegularAccount()).toBe(true);
+    // accounts.create's contract default, not a private account.
+    expect(first.account.isPublic()).toBe(true);
+    expect(first.account.id().toString()).not.toBe(
+      second.account.id().toString()
+    );
+    expect(
+      (await client.accounts.get(first.account.id()))?.id().toString()
+    ).toBe(first.account.id().toString());
+  });
+
+  test("honours a given seed, storage and NoAuth", async ({ sdk }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const component = await client.compile.component({
+      code: COUNTER_CODE,
+      namespace: "external_contract::counter_contract",
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+    const seed = new Uint8Array(32).fill(0x05);
+
+    const { account, auth } = await client.contracts.deploy({
+      components: [component],
+      seed,
+      auth: "none",
+      storage: "private",
+    });
+
+    expect(auth).toBe("none");
+    expect(account.isPublic()).toBe(false);
+    // A second client: the same account cannot be tracked twice by one.
+    const other = await MidenClient.createMock();
+    const again = await other.accounts.create({
+      seed,
+      auth: "none",
+      storage: "private",
+      components: [component],
+    });
+    expect(again.id().toString()).toBe(account.id().toString());
+  });
+
+  test("rejects missing components and a component without a procedure", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+
+    await expect(client.contracts.deploy({} as any)).rejects.toThrow(
+      /requires `components`/
+    );
+    await expect(client.contracts.deploy({ components: [] })).rejects.toThrow(
+      /non-auth procedure/
+    );
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
 // transactions.execute()
 // ════════════════════════════════════════════════════════════════
 

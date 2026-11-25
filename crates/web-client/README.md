@@ -485,6 +485,10 @@ console.log(`Balance: ${balance}`); // 900n
 client.terminate();
 ```
 
+### Transaction cycle counts
+
+`ExecutedTransaction.measurements()` reports the VM cycles of each execution phase (`prologue`, `notesProcessing`, `noteExecution`, `txScriptProcessing`, `epilogue`, `authProcedure` and `totalCycles`). See the [transactions guide](https://docs.miden.xyz/builder/tools/clients/web-client/) for details.
+
 ### Stateless RPC queries and submission
 
 Use `RpcClient` when your application keeps its own state or submits
@@ -620,6 +624,14 @@ a visibility value as `type`. `create()` throws a `TypeError` for any other
 faucet type, for `components` on a faucet, and for a faucet missing `symbol`,
 `decimals` or `maxSupply`, so a missed migration fails instead of creating a
 wallet.
+
+`client.contracts.deploy({ components, seed?, auth?, storage? })` is
+`accounts.create` for a contract with the missing inputs filled in: a random
+32-byte `seed` and a freshly generated Falcon `AuthSecretKey` (stored with the
+account) when you omit them, and `"public"` storage unless you pass `storage`.
+It resolves to `{ account, seed, auth }`, the values it used, and shares
+`accounts.create`'s validation. It throws a `TypeError` without `components`
+rather than creating a wallet.
 
 ### Create a New Wallet
 

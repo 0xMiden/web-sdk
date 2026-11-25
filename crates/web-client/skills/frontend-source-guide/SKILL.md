@@ -94,7 +94,7 @@ The primary reference for all frontend development.
 
 The public client plus the Rust-to-WASM bridge underneath it.
 
-- **`js/client.js`** - the `MidenClient` class, the recommended public entry point. Nine resource namespaces: `accounts`, `transactions`, `notes`, `tags`, `chain`, `settings`, `compile`, `keystore`, `pswap`.
+- **`js/client.js`** - the `MidenClient` class, the recommended public entry point. Ten resource namespaces: `accounts`, `transactions`, `notes`, `tags`, `chain`, `settings`, `compile`, `keystore`, `pswap`, `contracts`.
 - **`js/resources/<area>.js`** - the implementation of each resource. Read these for behavior: locking, atomicity, polling semantics.
 - **`js/types/api-types.d.ts`** - the single source of truth for the public TypeScript surface, with full JSDoc on every method and option field. Read this FIRST when asking "what can the client do".
 - **`js/index.js`** - the JS `WebClient` wrapper exported as `WasmWebClient`, its method-classification sets, the forwarding `Proxy`, and the WASM call-serialization chain.

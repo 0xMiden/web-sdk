@@ -133,6 +133,7 @@ pub mod token_symbol;
 pub mod transaction_args;
 pub mod transaction_filter;
 pub mod transaction_id;
+pub mod transaction_measurements;
 pub mod transaction_record;
 pub mod transaction_request;
 pub mod transaction_result;
