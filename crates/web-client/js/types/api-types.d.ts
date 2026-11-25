@@ -2438,20 +2438,16 @@ export declare class MidenClient {
   /** Returns the current sync height. */
   getSyncHeight(): Promise<number>;
   /**
-   * Resolves once every serialized WASM call that was already on the
-   * internal call chain when `waitForIdle()` was called (execute, submit,
-   * prove, apply, sync, or account creation) has settled. Use this from
-   * callers that need to perform a non-WASM-side action — e.g. clearing
-   * an in-memory auth key on wallet lock — after the kernel finishes, so
-   * its auth callback doesn't race with the key being cleared. Does NOT
-   * wait for calls enqueued after `waitForIdle()` returns.
+   * Waits for the ordered WASM calls and concurrent sync-height reads already
+   * in flight when called. Calls made later are outside this wait.
    *
-   * A call that takes the store lock, a Web Lock shared by every client on
-   * the same store, is on the internal chain from the moment it is made,
-   * like every other call; the `frontend-pitfalls` skill shipped with this
-   * package lists those calls.
+   * Use this before clearing app-side state, such as an in-memory auth key,
+   * that a pending operation may still need.
    *
-   * Returns immediately if nothing was in flight.
+   * During sync or proof work on a live Web Worker, `getSyncHeight()` can
+   * return the committed height if no later ordered call is already queued.
+   * Note screening and account reader acquisition stay ordered. The
+   * balance lookup on an acquired reader runs outside the idle wait.
    */
   waitForIdle(): Promise<void>;
   /**
