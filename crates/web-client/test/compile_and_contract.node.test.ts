@@ -1154,3 +1154,171 @@ test.describe("transactions.executeProgram()", () => {
     expect(result.count).toBe("1");
   });
 });
+
+// ════════════════════════════════════════════════════════════════
+// Stable error codes for MASM failures
+// ════════════════════════════════════════════════════════════════
+
+// napi cannot attach a `code`, so the stable code prefixes the message.
+test.describe("MASM error codes", () => {
+  test("compile.txScript() rejects invalid MASM with a MASM_COMPILE_FAILED prefix", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+
+    let message = null;
+    try {
+      await client.compile.txScript({
+        code: `
+          @transaction_script
+          pub proc main
+            not_an_instruction
+          end
+        `,
+      });
+    } catch (e: any) {
+      message = e.message ?? String(e);
+    }
+
+    expect(message).not.toBeNull();
+    expect(message).toMatch(
+      /^MASM_COMPILE_FAILED: .*failed to compile transaction script/s
+    );
+  });
+
+  test("compile.component() rejects an invalid source library with a MASM_COMPILE_FAILED prefix", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+
+    let message = null;
+    try {
+      await client.compile.component({
+        code: "pub proc noop push.1 drop end",
+        libraries: [
+          {
+            namespace: "external_contract::broken",
+            code: "pub proc broken not_an_instruction end",
+          },
+        ],
+      });
+    } catch (e: any) {
+      message = e.message ?? String(e);
+    }
+
+    expect(message).not.toBeNull();
+    expect(message).toMatch(/^MASM_COMPILE_FAILED: /);
+  });
+
+  test("an inline txScript library that fails to build carries the MASM_COMPILE_FAILED prefix", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+
+    let message = null;
+    try {
+      await client.compile.txScript({
+        code: `
+          @transaction_script
+          pub proc main
+            push.1 drop
+          end
+        `,
+        libraries: [
+          {
+            namespace: "external_contract::broken",
+            code: "pub proc broken not_an_instruction end",
+          },
+        ],
+      });
+    } catch (e: any) {
+      message = e.message ?? String(e);
+    }
+
+    expect(message).not.toBeNull();
+    expect(message).toMatch(/^MASM_COMPILE_FAILED: /);
+  });
+
+  test("an invalid module path is a validation error without a MASM code prefix", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+
+    const attempt = async (run: () => Promise<unknown>) => {
+      try {
+        await run();
+        return null;
+      } catch (e: any) {
+        return e.message ?? String(e);
+      }
+    };
+    const component = await attempt(() =>
+      client.compile.component({
+        code: "pub proc noop push.1 drop end",
+        namespace: "not a valid path",
+      })
+    );
+    const library = await attempt(() =>
+      client.compile.txScript({
+        code: `
+          @transaction_script
+          pub proc main
+            push.1 drop
+          end
+        `,
+        libraries: [
+          {
+            namespace: "not a valid path",
+            code: "pub proc noop push.1 drop end",
+          },
+        ],
+      })
+    );
+
+    expect(component).toContain("invalid account component module path");
+    expect(component).not.toMatch(/^MASM_COMPILE_FAILED/);
+    expect(library).toContain("invalid path");
+    expect(library).not.toMatch(/^MASM_COMPILE_FAILED/);
+  });
+
+  test("a failing assertion rejects with a TRANSACTION_EXECUTION_FAILED prefix and its cause", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const wallet = await client.accounts.create();
+    client.proveBlock();
+    await client.sync();
+
+    const script = await client.compile.txScript({
+      code: `
+        @transaction_script
+        pub proc main
+          push.0 push.1
+          assert_eq
+        end
+      `,
+    });
+
+    let message = null;
+    try {
+      await client.transactions.execute({ account: wallet.id(), script });
+    } catch (e: any) {
+      message = e.message ?? String(e);
+    }
+
+    expect(message).not.toBeNull();
+    expect(message).toMatch(
+      /^TRANSACTION_EXECUTION_FAILED: .*failed to execute transaction kernel program/s
+    );
+  });
+});

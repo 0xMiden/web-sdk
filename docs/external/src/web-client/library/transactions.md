@@ -590,3 +590,21 @@ Notes on anchors:
   ```
 - **Foreign account proofs are fetched at the anchor's block**, so requests with foreign accounts additionally need the node to serve account state at that height.
 - **The anchor handle is reusable.** Unlike a `TransactionProver`, it is borrowed rather than consumed, so one anchor can drive the preview and the execution.
+
+## MASM failures
+
+Two stable codes tell a failing script from other errors, so a contract developer can branch on them instead of matching message text:
+
+- `code: "MASM_COMPILE_FAILED"`: MASM source does not assemble or link. Raised by `client.compile.component`, `txScript` and `noteScript`.
+- `code: "TRANSACTION_EXECUTION_FAILED"`: the transaction program failed in the VM, for example a failing `assert`. The message carries the VM diagnostic.
+
+```js
+try {
+  await client.transactions.execute({ account, script });
+} catch (e) {
+  if (e.code === "TRANSACTION_EXECUTION_FAILED") console.error(e.message);
+  else throw e;
+}
+```
+
+Browser builds set `code` on the error, including across the Web Worker boundary. Node.js errors prefix the message with the code (`"TRANSACTION_EXECUTION_FAILED: ..."`). Structured procedure and span fields are not part of this ([#192](https://github.com/0xMiden/web-sdk/issues/192)).
