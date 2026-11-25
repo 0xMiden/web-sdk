@@ -21,6 +21,8 @@ const browserTestIgnore = [
   "test/*.node.test.ts",
 ];
 
+const enforcedAllowlistTest = "test/allowlist_enforced.browser.test.ts";
+
 // CI-only shard projects, manually rebalanced to even out wall-clock time
 // across the integration-test matrix.
 //
@@ -142,6 +144,11 @@ const ciShardProjects = process.env.CI
         ],
         testIgnore: browserTestIgnore,
       },
+      {
+        name: "ci-shard-account-allowlist",
+        use: { ...devices["Desktop Chrome"] },
+        testMatch: ["test/allowlist_enforced.browser.test.ts"],
+      },
     ]
   : [];
 
@@ -188,7 +195,7 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
       testMatch: "*.test.ts",
-      testIgnore: browserTestIgnore,
+      testIgnore: [...browserTestIgnore, enforcedAllowlistTest],
     },
 
     // CI-only manually-balanced shard projects (definitions above the
@@ -198,7 +205,7 @@ export default defineConfig({
     {
       name: "webkit",
       use: { ...devices["Desktop Safari"] },
-      testIgnore: browserTestIgnore,
+      testIgnore: [...browserTestIgnore, enforcedAllowlistTest],
     },
 
     // Node.js project: exercises the napi binding against a mock chain.
