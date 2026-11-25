@@ -25,6 +25,7 @@ const EXCLUDED = {
   "compile_and_contract.node.test.ts": "napi variant, runs in `nodejs`",
   "miden_client_api.node.test.ts": "napi variant, runs in `nodejs`",
   "note_transport.node.test.ts": "napi variant, runs in `nodejs`",
+  "notes_page.node.test.ts": "napi variant, runs in `nodejs`",
   "rpc_client.node.test.ts": "napi variant, runs in `nodejs`",
 
   // Require a live prover / node, which CLAUDE.md keeps out of CI.
