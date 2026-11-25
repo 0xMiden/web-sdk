@@ -212,17 +212,7 @@ export function useWaitForAccountUpdate(
 
       try {
         const defaults = hookDefaultsRef.current;
-        resolved = mergeOptions(
-          defaults.accountId,
-          defaults.slot,
-          defaults.timeoutMs,
-          defaults.intervalMs,
-          defaults.baselineCommitment,
-          defaults.mapKey,
-          defaults.baselineValue,
-          accountIdOrOptions,
-          maybeOptions
-        );
+        resolved = mergeOptions(defaults, accountIdOrOptions, maybeOptions);
 
         accountIdStr = normalizeAccountRefKey(resolved.accountId);
         if (!accountIdStr) {
@@ -533,72 +523,46 @@ function isAccountRef(value: unknown): value is AccountRef {
   );
 }
 
+function tryNormalizeAccountRefKey(
+  accountId: AccountRef | null | undefined
+): string | undefined {
+  try {
+    return normalizeAccountRefKey(accountId ?? undefined);
+  } catch {
+    return undefined;
+  }
+}
+
 function mergeOptions(
-  hookAccountId: AccountRef | undefined,
-  hookSlot: string | undefined,
-  hookTimeoutMs: number | undefined,
-  hookIntervalMs: number | undefined,
-  hookBaselineCommitment: string | WordType | undefined,
-  hookMapKey: string | WordType | undefined,
-  hookBaselineValue: string | WordType | bigint | null | undefined,
+  defaults: WaitForAccountUpdateOptions,
   arg1?: AccountRef | WaitForAccountUpdateOptions,
   arg2?: Omit<WaitForAccountUpdateOptions, "accountId">
 ): WaitForAccountUpdateOptions {
   const overrides: WaitForAccountUpdateOptions | undefined =
     arg1 === undefined
-      ? undefined
-      : isAccountRef(arg1)
-        ? { ...arg2, accountId: arg1 }
-        : arg1;
+      ? arg2
+      : arg1 === null
+        ? { ...arg2, accountId: null as unknown as AccountRef }
+        : isAccountRef(arg1)
+          ? { ...arg2, accountId: arg1 }
+          : arg1;
 
-  const accountId = overrides?.accountId ?? hookAccountId;
-  const timeoutMs = overrides?.timeoutMs ?? hookTimeoutMs;
-  const intervalMs = overrides?.intervalMs ?? hookIntervalMs;
+  const hasExplicitNullAccountId =
+    overrides !== undefined &&
+    "accountId" in overrides &&
+    overrides.accountId === null;
+  const accountId = hasExplicitNullAccountId
+    ? overrides.accountId
+    : (overrides?.accountId ?? defaults.accountId);
+  const timeoutMs = overrides?.timeoutMs ?? defaults.timeoutMs;
+  const intervalMs = overrides?.intervalMs ?? defaults.intervalMs;
+  const hasExplicitMapKey = overrides !== undefined && "mapKey" in overrides;
 
-  if (overrides?.slot !== undefined) {
-    const sameSlot = overrides.slot === hookSlot;
-    const mapKey = sameSlot
-      ? (overrides.mapKey ?? hookMapKey)
-      : overrides.mapKey;
-    const sameKey =
-      sameSlot &&
-      (overrides.mapKey === undefined ||
-        readWordHex(overrides.mapKey) === readWordHex(hookMapKey));
-    const baselineValue = sameKey
-      ? overrides.baselineValue !== undefined
-        ? overrides.baselineValue
-        : hookBaselineValue
-      : overrides.baselineValue;
-    return {
-      accountId,
-      timeoutMs,
-      intervalMs,
-      slot: overrides.slot,
-      mapKey,
-      baselineValue,
-      baselineCommitment: overrides.baselineCommitment,
-    };
-  }
-
-  if (overrides?.mapKey !== undefined) {
-    const sameKey = readWordHex(overrides.mapKey) === readWordHex(hookMapKey);
-    const baselineValue = sameKey
-      ? overrides.baselineValue !== undefined
-        ? overrides.baselineValue
-        : hookBaselineValue
-      : overrides.baselineValue;
-    return {
-      accountId,
-      timeoutMs,
-      intervalMs,
-      slot: hookSlot,
-      mapKey: overrides.mapKey,
-      baselineValue,
-      baselineCommitment: overrides.baselineCommitment,
-    };
-  }
-
-  if (overrides?.baselineCommitment !== undefined) {
+  if (
+    overrides?.baselineCommitment !== undefined &&
+    overrides.slot === undefined &&
+    !hasExplicitMapKey
+  ) {
     return {
       accountId,
       timeoutMs,
@@ -606,18 +570,48 @@ function mergeOptions(
       baselineCommitment: overrides.baselineCommitment,
     };
   }
+
+  const slot = overrides?.slot ?? defaults.slot;
+  const sameSlot = slot === defaults.slot;
+  const mapKey = hasExplicitMapKey
+    ? overrides.mapKey
+    : sameSlot
+      ? defaults.mapKey
+      : undefined;
+
+  const sameAccount =
+    defaults.accountId === undefined ||
+    accountId === defaults.accountId ||
+    (() => {
+      const targetKey = tryNormalizeAccountRefKey(accountId);
+      const defaultKey = tryNormalizeAccountRefKey(defaults.accountId);
+      return targetKey !== undefined && targetKey === defaultKey;
+    })();
+  const sameKey =
+    sameSlot && readWordHex(mapKey) === readWordHex(defaults.mapKey);
+  const sameTarget = sameAccount && sameSlot && sameKey;
+
+  const baselineValue =
+    overrides?.baselineValue !== undefined
+      ? overrides.baselineValue
+      : sameTarget && overrides?.baselineCommitment === undefined
+        ? defaults.baselineValue
+        : undefined;
+  const baselineCommitment =
+    overrides?.baselineCommitment !== undefined
+      ? overrides.baselineCommitment
+      : sameTarget && overrides?.baselineValue === undefined
+        ? defaults.baselineCommitment
+        : undefined;
 
   return {
     accountId,
     timeoutMs,
     intervalMs,
-    slot: hookSlot,
-    mapKey: hookMapKey,
-    baselineValue:
-      overrides?.baselineValue !== undefined
-        ? overrides.baselineValue
-        : hookBaselineValue,
-    baselineCommitment: hookBaselineCommitment,
+    slot,
+    mapKey,
+    baselineValue,
+    baselineCommitment,
   };
 }
 

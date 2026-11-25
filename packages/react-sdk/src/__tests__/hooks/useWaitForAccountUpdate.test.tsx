@@ -1620,5 +1620,297 @@ describe("useWaitForAccountUpdate", () => {
       expect(poll2Raw.free).toHaveBeenCalledTimes(1);
       expect(accountHeader.free).not.toHaveBeenCalled();
     });
+
+    describe("fixes mergeOptions baseline preservation, cross-account isolation, nullish args, and explicit mapKey clearing", () => {
+      it("preserves hookBaselineCommitment on matching slot and mapKey overrides", async () => {
+        vi.useFakeTimers();
+        const settle = (p: Promise<unknown>) =>
+          p.then(
+            (value) => ({ ok: true as const, value }),
+            (error) => ({ ok: false as const, error })
+          );
+        const slotChanged = createAccountWithCommitment("0xcommit", {
+          getCommitment: vi.fn(() => createWord("0xslot_new")),
+        });
+        const mapChanged = createAccountWithCommitment("0xcommit", {
+          getCommitment: vi.fn(() => createWord("0xmap_new")),
+          getMapItem: vi.fn(() => createWord("0xmap_new")),
+        });
+        const slotClient = createMockWebClient({
+          syncState: vi.fn().mockResolvedValue({}),
+          getAccount: vi.fn().mockResolvedValue(slotChanged),
+        });
+        mockUseMiden.mockReturnValue({ client: slotClient, isReady: true });
+        useMidenStore.getState().setClient(slotClient as never);
+
+        const { result: slotHook } = renderHook(() =>
+          useWaitForAccountUpdate("0xacc", {
+            slot: "s1",
+            baselineCommitment: "0xold",
+            timeoutMs: 200,
+            intervalMs: 50,
+          })
+        );
+
+        let slotOutcome!: Promise<
+          { ok: true; value: unknown } | { ok: false; error: unknown }
+        >;
+        act(() => {
+          slotOutcome = settle(
+            slotHook.current.waitForAccountUpdate({
+              slot: "s1",
+              timeoutMs: 200,
+              intervalMs: 50,
+            })
+          );
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(250);
+        });
+        expect(await slotOutcome).toEqual({ ok: true, value: slotChanged });
+
+        const mapClient = createMockWebClient({
+          syncState: vi.fn().mockResolvedValue({}),
+          getAccount: vi.fn().mockResolvedValue(mapChanged),
+        });
+        mockUseMiden.mockReturnValue({ client: mapClient, isReady: true });
+        useMidenStore.getState().setClient(mapClient as never);
+
+        const { result: mapHook } = renderHook(() =>
+          useWaitForAccountUpdate("0xacc", {
+            slot: "s1",
+            mapKey: "0x01",
+            baselineCommitment: "0xold",
+            timeoutMs: 200,
+            intervalMs: 50,
+          })
+        );
+
+        let mapOutcome!: Promise<
+          { ok: true; value: unknown } | { ok: false; error: unknown }
+        >;
+        act(() => {
+          mapOutcome = settle(
+            mapHook.current.waitForAccountUpdate({
+              mapKey: "0x01",
+              timeoutMs: 200,
+              intervalMs: 50,
+            })
+          );
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(250);
+        });
+        expect(await mapOutcome).toEqual({ ok: true, value: mapChanged });
+      });
+
+      it("clears inherited hook baselines when switching accountId and preserves for normalized equal accountId", async () => {
+        vi.useFakeTimers();
+        const settle = (p: Promise<unknown>) =>
+          p.then(
+            (value) => ({ ok: true as const, value }),
+            (error) => ({ ok: false as const, error })
+          );
+        const acc2v1 = createAccountWithCommitment("0xacc2_v1");
+        const acc2v2 = createAccountWithCommitment("0xacc2_v2");
+        const acc1Changed = createAccountWithCommitment("0xacc1_new");
+        const mockClient = createMockWebClient({
+          syncState: vi.fn().mockResolvedValue({}),
+          getAccount: vi
+            .fn()
+            .mockResolvedValueOnce(acc2v1)
+            .mockResolvedValueOnce(acc2v2)
+            .mockResolvedValueOnce(acc1Changed)
+            .mockResolvedValueOnce(acc2v2),
+        });
+        mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+        useMidenStore.getState().setClient(mockClient as never);
+
+        const { result } = renderHook(() =>
+          useWaitForAccountUpdate("0xacc1", {
+            baselineCommitment: "0xacc1_old",
+            timeoutMs: 200,
+            intervalMs: 50,
+          })
+        );
+
+        let diffOutcome!: Promise<
+          { ok: true; value: unknown } | { ok: false; error: unknown }
+        >;
+        act(() => {
+          diffOutcome = settle(
+            result.current.waitForAccountUpdate("0xacc2", {
+              timeoutMs: 200,
+              intervalMs: 50,
+            })
+          );
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(250);
+        });
+        expect(await diffOutcome).toEqual({ ok: true, value: acc2v2 });
+
+        // Whitespace-padded equal accountId still inherits hook baselineCommitment
+        let sameOutcome!: Promise<
+          { ok: true; value: unknown } | { ok: false; error: unknown }
+        >;
+        act(() => {
+          sameOutcome = settle(result.current.waitForAccountUpdate(" 0xacc1 "));
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(250);
+        });
+        expect(await sameOutcome).toEqual({ ok: true, value: acc1Changed });
+
+        // Corrupt hook default AccountRef does not block overriding with valid accountId
+        const corruptRef = {
+          id: vi.fn(() => {
+            throw new Error("corrupt hook default");
+          }),
+        };
+        const { result: corruptHook } = renderHook(() =>
+          useWaitForAccountUpdate(corruptRef as never, {
+            baselineCommitment: "0xold",
+            timeoutMs: 200,
+            intervalMs: 50,
+          })
+        );
+        let overrideOutcome!: Promise<
+          { ok: true; value: unknown } | { ok: false; error: unknown }
+        >;
+        act(() => {
+          overrideOutcome = settle(
+            corruptHook.current.waitForAccountUpdate("0xvalid", {
+              baselineCommitment: "0xbase",
+            })
+          );
+        });
+        await act(async () => {
+          await Promise.resolve();
+        });
+        expect(await overrideOutcome).toEqual({ ok: true, value: acc2v2 });
+      });
+
+      it("preserves arg2 options when arg1 is undefined", async () => {
+        vi.useFakeTimers();
+        const settle = (p: Promise<unknown>) =>
+          p.then(
+            (value) => ({ ok: true as const, value }),
+            (error) => ({ ok: false as const, error })
+          );
+        const changed = createAccountWithCommitment("0xnew");
+        const mockClient = createMockWebClient({
+          syncState: vi.fn().mockResolvedValue({}),
+          getAccount: vi.fn().mockResolvedValueOnce(changed),
+        });
+        mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+        useMidenStore.getState().setClient(mockClient as never);
+
+        const { result } = renderHook(() =>
+          useWaitForAccountUpdate("0xacc", {
+            timeoutMs: 200,
+            intervalMs: 50,
+          })
+        );
+
+        let outcome!: Promise<
+          { ok: true; value: unknown } | { ok: false; error: unknown }
+        >;
+        act(() => {
+          outcome = settle(
+            result.current.waitForAccountUpdate(undefined as never, {
+              baselineCommitment: "0xold",
+              timeoutMs: 200,
+              intervalMs: 50,
+            })
+          );
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(250);
+        });
+        expect(await outcome).toEqual({ ok: true, value: changed });
+      });
+
+      it("rejects explicit null accountId instead of falling back to hookAccountId", async () => {
+        const mockClient = createMockWebClient();
+        mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+        useMidenStore.getState().setClient(mockClient as never);
+
+        const { result } = renderHook(() =>
+          useWaitForAccountUpdate("0xacc", {
+            timeoutMs: 50,
+            intervalMs: 10,
+          })
+        );
+
+        await act(async () => {
+          await expect(
+            result.current.waitForAccountUpdate(null as never)
+          ).rejects.toThrow("Account ID is required");
+        });
+        await act(async () => {
+          await expect(
+            result.current.waitForAccountUpdate({ accountId: null as never })
+          ).rejects.toThrow("Account ID is required");
+        });
+        expect(mockClient.syncState).not.toHaveBeenCalled();
+      });
+
+      it("clears hookMapKey and hookBaselineValue when mapKey is explicitly undefined", async () => {
+        vi.useFakeTimers();
+        const settle = (p: Promise<unknown>) =>
+          p.then(
+            (value) => ({ ok: true as const, value }),
+            (error) => ({ ok: false as const, error })
+          );
+        const unchangedMap = createWord("0xmap_old");
+        const getMapItem = vi.fn(() => unchangedMap);
+        const slotV1 = createAccountWithCommitment("0xcommit", {
+          getCommitment: vi.fn(() => createWord("0xslot_v1")),
+          getMapItem,
+        });
+        const slotV2 = createAccountWithCommitment("0xcommit", {
+          getCommitment: vi.fn(() => createWord("0xslot_v2")),
+          getMapItem,
+        });
+        const mockClient = createMockWebClient({
+          syncState: vi.fn().mockResolvedValue({}),
+          getAccount: vi
+            .fn()
+            .mockResolvedValueOnce(slotV1)
+            .mockResolvedValueOnce(slotV2),
+        });
+        mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+        useMidenStore.getState().setClient(mockClient as never);
+
+        const { result } = renderHook(() =>
+          useWaitForAccountUpdate("0xacc", {
+            slot: "s1",
+            mapKey: "0x01",
+            baselineValue: "0xmap_old",
+            timeoutMs: 200,
+            intervalMs: 50,
+          })
+        );
+
+        let outcome!: Promise<
+          { ok: true; value: unknown } | { ok: false; error: unknown }
+        >;
+        act(() => {
+          outcome = settle(
+            result.current.waitForAccountUpdate({
+              mapKey: undefined,
+              timeoutMs: 200,
+              intervalMs: 50,
+            })
+          );
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(250);
+        });
+        expect(await outcome).toEqual({ ok: true, value: slotV2 });
+        expect(getMapItem).not.toHaveBeenCalled();
+      });
+    });
   });
 });
