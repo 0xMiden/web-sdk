@@ -546,9 +546,10 @@ export class TransactionsResource {
    * has synced to at least that block. For a builder's request that is the
    * largest of `request.blockNumbers()`; a `withFeeAwareAuth` copy does not
    * declare it, so sync before previewing it. The summary also binds a max
-   * fee, which these auth args leave for the auth procedure to estimate on
+   * fee. Without one in the auth args the auth procedure estimates the fee on
    * each execution, so the summary reproduces only while that estimate comes
-   * out the same.
+   * out the same; `client.withEstimatedMaxFee` turns the estimate of this
+   * preview into a max fee.
    */
   async preview(opts) {
     this.#client.assertNotTerminated();

@@ -668,7 +668,7 @@ impl WebClient {
     /// request the largest of its `blockNumbers()`, while a `withFeeAwareAuth` copy does not
     /// declare it, so sync before executing the copy. Below it execution fails with "requested
     /// block N is after transaction reference block M" until the client syncs. The summary also
-    /// binds a max fee, which these auth args leave for the auth procedure to estimate on each
+    /// binds a max fee. Without one in the auth args the auth procedure estimates the fee on each
     /// execution, so the summary reproduces only while that estimate comes out the same.
     ///
     /// # Errors
@@ -890,7 +890,7 @@ impl WebClient {
     /// are settled in the chain's native fee asset at rate 1/1 and miden-client commits that
     /// itself, under a fixed default salt, without anything being declared here.
     ///
-    /// Three optional values let a caller pin what the approvers sign over, all multisig-only
+    /// Four optional values let a caller pin what the approvers sign over, all multisig-only
     /// and all defaulted when left out.
     ///
     /// `approval_expiration_delta` expires the approvers' signatures `delta` blocks after the
@@ -905,16 +905,21 @@ impl WebClient {
     /// either can never derive the same one. A co-signer who has the proposer's serialized
     /// request does not need these - it carries the auth argument and its advice-map preimage.
     ///
+    /// `max_fee` is the fee cap that the summary binds, in the native fee asset. The signed
+    /// transaction pays any fee up to it. Left out or zero, the auth procedure estimates the fee
+    /// on each execution and the summary binds that estimate.
+    /// `TransactionRequest.withEstimatedMaxFee` sets a max fee from the estimate of a preview.
+    ///
     /// For a multisig the request executes at the current chain tip: miden-client tracks the
     /// bound block when it executes the request, and the summary stays bound to the bound block
     /// while foreign accounts, the fee faucet among them, load at the tip. It therefore still
     /// executes after the node has pruned the bound block's account state (about 50 blocks), and
-    /// `executeForSummary` reproduces the proposal's summary at the tip while the fee estimate
-    /// that the summary binds comes out the same: the auth args set no max fee, so the auth
-    /// procedure estimates it on each execution. The builder also
-    /// declares the bound block through `withBlockNumbers`, so a party can read it from
-    /// `blockNumbers()` to check its sync height. Every party runs it once its client has synced
-    /// to at least the bound block, which by default is this client's sync height when the
+    /// `executeForSummary` reproduces the proposal's summary at the tip. With a `max_fee` the
+    /// summary binds that value. Without one it binds the fee that the auth procedure estimates
+    /// on each execution, so it reproduces only while that estimate comes out the same. The
+    /// builder also declares the bound block through `withBlockNumbers`, so a party can read it
+    /// from `blockNumbers()` to check its sync height. Every party runs it once its client has
+    /// synced to at least the bound block, which by default is this client's sync height when the
     /// builder runs: a client below it fails at execution with "requested block N is after
     /// transaction reference block M" until it syncs, whether the block was pinned or defaulted.
     #[js_export(js_name = "feeAwareTransactionRequestBuilder")]
@@ -924,6 +929,7 @@ impl WebClient {
         approval_expiration_delta: Option<u32>,
         fee_conversion_salt: Option<Word>,
         bound_block_num: Option<u32>,
+        max_fee: Option<JsU64>,
     ) -> Result<TransactionRequestBuilder, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| {
@@ -934,6 +940,7 @@ impl WebClient {
             approval_expiration_delta,
             salt: fee_conversion_salt.as_ref().map(NativeWord::from),
             bound_block_num: bound_block_num.map(BlockNumber::from),
+            max_fee: max_fee.map(js_u64_to_u64).transpose()?,
         };
         let builder = fee_aware_builder_with(client, account_id.into(), overrides).await?;
         Ok(TransactionRequestBuilder::from_native(builder))
@@ -952,7 +959,7 @@ impl WebClient {
     /// For every other account this returns the request unchanged, auth argument and all, because
     /// miden-client commits the fee conversion info for those accounts itself.
     ///
-    /// The three options are the same as those of `feeAwareTransactionRequestBuilder`, with the
+    /// The four options are the same as those of `feeAwareTransactionRequestBuilder`, with the
     /// same defaults, and they are ignored for an account that is not a multisig. One difference:
     /// when `fee_conversion_salt` is left out and the request declares a salt, the auth args use
     /// the declared salt instead of a fresh one.
@@ -967,7 +974,7 @@ impl WebClient {
     ///   argument that commits anything. The author of the request owns that argument, so this does
     ///   not replace it. `withAuthArgs` replaces it without this check.
     /// - Every error of `feeAwareTransactionRequestBuilder`, such as an approval expiration delta
-    ///   of zero.
+    ///   of zero or a max fee that is not a valid amount.
     #[js_export(js_name = "withFeeAwareAuth")]
     pub async fn with_fee_aware_auth(
         &self,
@@ -976,6 +983,7 @@ impl WebClient {
         approval_expiration_delta: Option<u32>,
         fee_conversion_salt: Option<Word>,
         bound_block_num: Option<u32>,
+        max_fee: Option<JsU64>,
     ) -> Result<TransactionRequest, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| {
@@ -1005,6 +1013,7 @@ impl WebClient {
                 .map(NativeWord::from)
                 .or(native_request.fee_conversion_salt()),
             bound_block_num: bound_block_num.map(BlockNumber::from),
+            max_fee: max_fee.map(js_u64_to_u64).transpose()?,
         };
         let auth_args = multisig_auth_args(client, overrides).await?;
         Ok(native_request.with_auth_args(&auth_args).into())
@@ -1214,6 +1223,9 @@ struct MultisigAuthOverrides {
     approval_expiration_delta: Option<u32>,
     salt: Option<NativeWord>,
     bound_block_num: Option<BlockNumber>,
+    /// The max fee in the native fee asset. Zero is the same as none: the auth procedure
+    /// estimates the fee.
+    max_fee: Option<u64>,
 }
 
 /// `fee_aware_builder` with the caller's multisig overrides applied.
@@ -1266,9 +1278,9 @@ async fn multisig_auth_args_for(
 /// which is what lets a co-signer read it from the request; a `withFeeAwareAuth` copy does not
 /// declare it. A client whose sync height is still below the bound block cannot execute it yet.
 ///
-/// The approval does not expire unless `approval_expiration_delta` asks for one. The auth args set
-/// no max fee, so the auth procedure estimates the fee on each execution and the summary binds
-/// the estimate.
+/// The approval does not expire unless `approval_expiration_delta` asks for one. Without a
+/// `max_fee` the auth args set none, so the auth procedure estimates the fee on each execution
+/// and the summary binds the estimate.
 async fn multisig_auth_args(
     client: &mut Client<crate::ClientAuth>,
     overrides: MultisigAuthOverrides,
@@ -1318,6 +1330,14 @@ async fn multisig_auth_args(
         None => None,
     };
 
+    // The max fee is validated before the draw for the same reason.
+    let max_fee = overrides
+        .max_fee
+        .map(AssetAmount::new)
+        .transpose()
+        .map_err(|err| js_error_with_context(err, "maxFee is not a valid amount of the fee asset"))?
+        .unwrap_or(AssetAmount::ZERO);
+
     // Everything that can fail has run. Draw only now, and only when the caller pinned nothing:
     // drawing and discarding would advance the client RNG, and `seed` documents that stream as
     // reproducible, so a build that errored would shift every later draw relative to one that
@@ -1327,9 +1347,11 @@ async fn multisig_auth_args(
         None => client.rng().draw_word(),
     };
 
-    let auth_args = MultisigAuthArgs::new(bound_block_num, salt).with_conversion_info(
-        FeeConversionInfo::one_to_one(protocol_config.fee_asset_id().faucet_id()),
-    );
+    let auth_args = MultisigAuthArgs::new(bound_block_num, salt)
+        .with_conversion_info(FeeConversionInfo::one_to_one(
+            protocol_config.fee_asset_id().faucet_id(),
+        ))
+        .with_max_fee(max_fee);
 
     match expiration {
         Some(delta) => auth_args.with_approval_expiration_delta(delta).map_err(|err| {
