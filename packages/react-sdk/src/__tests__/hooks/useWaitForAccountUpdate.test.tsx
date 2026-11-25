@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { Word } from "@miden-sdk/miden-sdk";
+import { AccountId, Word } from "@miden-sdk/miden-sdk";
 import { useWaitForAccountUpdate } from "../../hooks/useWaitForAccountUpdate";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
@@ -1911,6 +1911,97 @@ describe("useWaitForAccountUpdate", () => {
         expect(await outcome).toEqual({ ok: true, value: slotV2 });
         expect(getMapItem).not.toHaveBeenCalled();
       });
+    });
+
+    it("rejects malformed string accountId before calling syncState", async () => {
+      vi.useFakeTimers();
+      const valid1 = createAccountWithCommitment("0xcommit_v1");
+      const valid2 = createAccountWithCommitment("0xcommit_v2");
+      const syncState = vi.fn().mockResolvedValue({});
+      const mockClient = createMockWebClient({
+        syncState,
+        getAccount: vi
+          .fn()
+          .mockResolvedValueOnce(valid1)
+          .mockResolvedValueOnce(valid2),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: false });
+      useMidenStore.getState().setClient(mockClient as never);
+
+      const prePollAccountId = createMockAccountId("0xvalid");
+      const poll1AccountId = createMockAccountId("0xvalid");
+      const poll2AccountId = createMockAccountId("0xvalid");
+      const fromHexSpy = vi
+        .spyOn(AccountId, "fromHex")
+        .mockImplementation((hex: string) => {
+          if (hex.toLowerCase().includes("not-an-account")) {
+            throw new Error("Invalid account ID");
+          }
+          if (fromHexSpy.mock.calls.length === 1)
+            return prePollAccountId as never;
+          if (fromHexSpy.mock.calls.length === 2)
+            return poll1AccountId as never;
+          return poll2AccountId as never;
+        });
+
+      try {
+        // Under lazy WASM init (isReady=false), render/useMemo must not invoke parseAccountId
+        const { result: lazyHook } = renderHook(() =>
+          useWaitForAccountUpdate("0xnot-ready-yet", { enabled: true })
+        );
+        expect(fromHexSpy).not.toHaveBeenCalled();
+        await act(async () => {
+          await expect(lazyHook.current.waitForAccountUpdate()).rejects.toThrow(
+            "Miden client is not ready"
+          );
+        });
+        expect(fromHexSpy).not.toHaveBeenCalled();
+
+        // When ready, invalid string accountId rejects before client.syncState() runs
+        mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+        const { result } = renderHook(() => useWaitForAccountUpdate());
+        await act(async () => {
+          await expect(
+            result.current.waitForAccountUpdate("not-an-account", {
+              timeoutMs: 500,
+            })
+          ).rejects.toThrow("Invalid account ID");
+        });
+        expect(syncState).not.toHaveBeenCalled();
+        expect(result.current.error?.message).toBe("Invalid account ID");
+        expect(result.current.isWaiting).toBe(false);
+
+        // Valid wait frees pre-poll handle; concurrent invalid string call preserves active wait
+        fromHexSpy.mockClear();
+        let activePending!: Promise<unknown>;
+        act(() => {
+          activePending = result.current.waitForAccountUpdate("0xvalid", {
+            timeoutMs: 1000,
+            intervalMs: 50,
+          });
+        });
+        await act(async () => {
+          await Promise.resolve();
+        });
+        expect(prePollAccountId.free).toHaveBeenCalledTimes(1);
+        expect(syncState).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+          await expect(
+            result.current.waitForAccountUpdate("not-an-account")
+          ).rejects.toThrow("Invalid account ID");
+        });
+        expect(syncState).toHaveBeenCalledTimes(1);
+        expect(result.current.error).toBeNull();
+        expect(result.current.isWaiting).toBe(true);
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(60);
+        });
+        await expect(activePending).resolves.toBe(valid2);
+      } finally {
+        fromHexSpy.mockRestore();
+      }
     });
   });
 });

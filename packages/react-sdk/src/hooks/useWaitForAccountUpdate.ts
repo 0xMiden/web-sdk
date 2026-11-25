@@ -218,6 +218,14 @@ export function useWaitForAccountUpdate(
         if (!accountIdStr) {
           throw new Error("Account ID is required");
         }
+        if (typeof resolved.accountId === "string") {
+          let parsedAccountId: ReturnType<typeof parseAccountId> | undefined;
+          try {
+            parsedAccountId = parseAccountId(accountIdStr);
+          } finally {
+            safeFree(parsedAccountId);
+          }
+        }
         if (resolved.mapKey !== undefined && !resolved.slot) {
           throw new Error(
             "Storage slot name is required when mapKey is specified"
