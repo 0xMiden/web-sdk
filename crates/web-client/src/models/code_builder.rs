@@ -24,7 +24,7 @@ use crate::models::library::Library;
 use crate::models::note_script::NoteScript;
 use crate::models::transaction_script::TransactionScript;
 use crate::platform::{JsErr, from_str_err_with_code};
-use crate::{MASM_COMPILE_FAILED, js_compile_error, js_error_with_context};
+use crate::{MASM_COMPILE_FAILED, js_compile_error};
 
 /// Utility for linking libraries and compiling transaction/note scripts.
 #[derive(Clone)]
@@ -57,7 +57,7 @@ impl CodeBuilder {
     #[js_export(js_name = "linkModule")]
     pub fn link_module(&mut self, module_path: String, module_code: String) -> Result<(), JsErr> {
         self.builder.link_module(&module_path, &module_code).map_err(|e| {
-            js_error_with_context(
+            js_compile_error(
                 e,
                 &format!("script builder: failed to link module with path {module_path}"),
             )
@@ -74,9 +74,9 @@ impl CodeBuilder {
     #[js_export(js_name = "linkStaticLibrary")]
     pub fn link_static_library(&mut self, library: &Library) -> Result<(), JsErr> {
         let library: NativeLibrary = library.into();
-        self.builder.link_static_package(&library).map_err(|e| {
-            js_error_with_context(e, "script builder: failed to link static library")
-        })?;
+        self.builder
+            .link_static_package(&library)
+            .map_err(|e| js_compile_error(e, "script builder: failed to link static library"))?;
         Ok(())
     }
 
@@ -91,7 +91,7 @@ impl CodeBuilder {
     ) -> Result<(), JsErr> {
         let native_code: NativeAccountComponentCode = account_component_code.into();
         self.builder.link_static_package(native_code.as_package()).map_err(|e| {
-            js_error_with_context(e, "script builder: failed to link static account component code")
+            js_compile_error(e, "script builder: failed to link static account component code")
         })?;
         Ok(())
     }
@@ -105,9 +105,9 @@ impl CodeBuilder {
     #[js_export(js_name = "linkDynamicLibrary")]
     pub fn link_dynamic_library(&mut self, library: &Library) -> Result<(), JsErr> {
         let library: NativeLibrary = library.into();
-        self.builder.link_dynamic_package(&library).map_err(|e| {
-            js_error_with_context(e, "script builder: failed to link dynamic library")
-        })?;
+        self.builder
+            .link_dynamic_package(&library)
+            .map_err(|e| js_compile_error(e, "script builder: failed to link dynamic library"))?;
         Ok(())
     }
 
@@ -122,10 +122,7 @@ impl CodeBuilder {
     ) -> Result<(), JsErr> {
         let native_code: NativeAccountComponentCode = account_component_code.into();
         self.builder.link_dynamic_package(native_code.as_package()).map_err(|e| {
-            js_error_with_context(
-                e,
-                "script builder: failed to link dynamic account component code",
-            )
+            js_compile_error(e, "script builder: failed to link dynamic account component code")
         })?;
         Ok(())
     }
@@ -168,7 +165,7 @@ impl CodeBuilder {
         source_code: String,
     ) -> Result<Library, JsErr> {
         let library_path = Path::validate(&library_path).map_err(|e| {
-            js_error_with_context(
+            js_compile_error(
                 e,
                 &format!("script builder: failed to build library -- invalid path {library_path}"),
             )
@@ -218,7 +215,7 @@ impl CodeBuilder {
         account_code: String,
     ) -> Result<AccountComponentCode, JsErr> {
         let component_path = Path::validate(&component_path)
-            .map_err(|err| js_error_with_context(err, "invalid account component module path"))?;
+            .map_err(|err| js_compile_error(err, "invalid account component module path"))?;
         let native_code: NativeAccountComponentCode = self
             .builder
             .clone()
