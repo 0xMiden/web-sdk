@@ -377,12 +377,13 @@ const methodHandlers = {
       submission.free?.();
       return blockNumber;
     } catch (error) {
-      // Only an again-indeterminate outcome keeps the handle for another retry;
-      // a definite answer (rejected, or accepted with a late apply failure)
-      // leaves nothing to retry.
-      if (error?.code !== "BATCH_SUBMISSION_OUTCOME_UNKNOWN") {
+      // Only an accepted batch (late local apply failure) leaves nothing to
+      // retry. Any other failure may have happened before the node saw the
+      // retry (stale key, transport), so the handle stays for another attempt.
+      if (error?.code === "ApplyTransactionAfterSubmitFailed") {
         provenBatchSubmissions.delete(String(submissionId));
         submission.free?.();
+        throw error;
       }
       const authError = wasmWebClient.lastAuthError();
       if (typeof error === "string") {
