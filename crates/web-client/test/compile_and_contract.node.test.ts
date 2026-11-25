@@ -684,7 +684,9 @@ test.describe("contracts.deploy()", () => {
 
     expect(auth).toBe("none");
     expect(account.isPublic()).toBe(false);
-    const again = await client.accounts.create({
+    // A second client: the same account cannot be tracked twice by one.
+    const other = await MidenClient.createMock();
+    const again = await other.accounts.create({
       seed,
       auth: "none",
       storage: "private",
