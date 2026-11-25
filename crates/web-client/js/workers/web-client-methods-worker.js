@@ -369,18 +369,19 @@ const methodHandlers = {
       submission.free?.();
       return blockNumber;
     } catch (error) {
+      // Only an again-indeterminate outcome keeps the handle for another retry;
+      // a definite answer (rejected, or accepted with a late apply failure)
+      // leaves nothing to retry.
+      if (error?.code !== "BATCH_SUBMISSION_OUTCOME_UNKNOWN") {
+        provenBatchSubmissions.delete(String(submissionId));
+        submission.free?.();
+      }
       const authError = wasmWebClient.lastAuthError();
       if (typeof error === "string") {
         throw appendAuthError(error, authError);
       }
       if (error instanceof Error) {
         error.message = appendAuthError(error.message, authError);
-      }
-      if (error?.code === "ApplyTransactionAfterSubmitFailed") {
-        // The node took the batch; nothing is left to retry.
-        provenBatchSubmissions.delete(String(submissionId));
-        submission.free?.();
-        throw error;
       }
       throw stashProvenBatchSubmission(error, String(submissionId));
     }
