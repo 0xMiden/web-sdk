@@ -986,5 +986,216 @@ describe("useWaitForAccountUpdate", () => {
       expect(result.current.error).toBeInstanceOf(Error);
       expect(result.current.error?.message).toBe("string failure");
     });
+
+    it("clears isWaiting and stops polling when reactive enabled switches to false while mounted", async () => {
+      vi.useFakeTimers();
+      const unchanged = createAccountWithCommitment("0xbase");
+      const syncState = vi.fn().mockResolvedValue({});
+      const mockClient = createMockWebClient({
+        syncState,
+        getAccount: vi.fn().mockResolvedValue(unchanged),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      useMidenStore.getState().setClient(mockClient as never);
+
+      const { result, rerender } = renderHook(
+        ({ enabled }) =>
+          useWaitForAccountUpdate("0xacc", {
+            enabled,
+            timeoutMs: 10_000,
+            intervalMs: 100,
+          }),
+        { initialProps: { enabled: true } }
+      );
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(result.current.isWaiting).toBe(true);
+      expect(syncState).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(1);
+
+      rerender({ enabled: false });
+      expect(result.current.isWaiting).toBe(false);
+      expect(result.current.error).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(syncState).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not restart reactive wait when recreated AccountRef or Word props represent the same values", async () => {
+      vi.useFakeTimers();
+      const unchanged = createAccountWithCommitment("0xbase", {
+        getMapItem: vi.fn(() => createWord("0xval1")),
+      });
+      const updated = createAccountWithCommitment("0xupdated", {
+        getMapItem: vi.fn(() => createWord("0xval2")),
+      });
+      const syncState = vi.fn().mockResolvedValue({});
+      const getAccount = vi
+        .fn()
+        .mockResolvedValueOnce(unchanged)
+        .mockResolvedValueOnce(updated);
+      const mockClient = createMockWebClient({ syncState, getAccount });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      useMidenStore.getState().setClient(mockClient as never);
+
+      const { result, rerender } = renderHook(
+        ({ accRef, baselineWord, mapKeyWord, baselineVal }) =>
+          useWaitForAccountUpdate(accRef as never, {
+            enabled: true,
+            baselineCommitment: baselineWord as unknown as Word,
+            mapKey: mapKeyWord as unknown as Word,
+            slot: "my::map",
+            baselineValue: baselineVal as unknown as Word,
+            timeoutMs: 5000,
+            intervalMs: 100,
+          }),
+        {
+          initialProps: {
+            accRef: createMockAccountId("0xacc"),
+            baselineWord: createWord("0xbase"),
+            mapKeyWord: createWord("0xkey"),
+            baselineVal: createWord("0xval1"),
+          },
+        }
+      );
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(syncState).toHaveBeenCalledTimes(1);
+      expect(result.current.isWaiting).toBe(true);
+
+      // New object references with equal serialized keys must not cancel/restart the loop.
+      rerender({
+        accRef: createMockAccountId("0xacc"),
+        baselineWord: createWord("0xbase"),
+        mapKeyWord: createWord("0xkey"),
+        baselineVal: createWord("0xval1"),
+      });
+      expect(syncState).toHaveBeenCalledTimes(1);
+      expect(result.current.isWaiting).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      expect(syncState).toHaveBeenCalledTimes(2);
+      expect(result.current.account).toBe(updated);
+      expect(result.current.isWaiting).toBe(false);
+    });
+
+    it("rejects on timeout when slow getAccount completes after timeoutMs instead of resolving late", async () => {
+      const updated = createAccountWithCommitment("0xnew");
+      const getAccount = vi.fn(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(() => resolve(updated), 60);
+          })
+      );
+      const mockClient = createMockWebClient({
+        syncState: vi.fn().mockResolvedValue({}),
+        getAccount,
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      useMidenStore.getState().setClient(mockClient as never);
+
+      const { result } = renderHook(() => useWaitForAccountUpdate());
+
+      await act(async () => {
+        await expect(
+          result.current.waitForAccountUpdate("0xacc", {
+            baselineCommitment: "0xold",
+            timeoutMs: 30,
+          })
+        ).rejects.toThrow("Timeout waiting for account update");
+      });
+      expect(result.current.account).toBeNull();
+      expect(result.current.error?.message).toBe(
+        "Timeout waiting for account update"
+      );
+      expect(result.current.isWaiting).toBe(false);
+    }, 10000);
+
+    it("handles null passed as accountId without throwing TypeError", async () => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      useMidenStore.getState().setClient(mockClient as never);
+
+      const { result } = renderHook(() => useWaitForAccountUpdate());
+
+      await act(async () => {
+        await expect(
+          result.current.waitForAccountUpdate(null as never)
+        ).rejects.toThrow("Account ID is required");
+      });
+      expect(result.current.error?.message).toBe("Account ID is required");
+    });
+
+    it("sets error state when reactive options fail pre-poll validation", async () => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      useMidenStore.getState().setClient(mockClient as never);
+
+      const { result } = renderHook(() =>
+        useWaitForAccountUpdate("0xacc", {
+          enabled: true,
+          mapKey: "0xkey",
+        })
+      );
+
+      await waitFor(() => {
+        expect(result.current.error?.message).toBe(
+          "Storage slot name is required when mapKey is specified"
+        );
+      });
+      expect(result.current.isWaiting).toBe(false);
+      expect(mockClient.syncState).not.toHaveBeenCalled();
+    });
+
+    it("frees internally constructed Word for hex mapKey while leaving caller Word untouched", async () => {
+      const updated = createAccountWithCommitment("0xnew", {
+        getMapItem: vi.fn(() => createWord("0xval_new")),
+      });
+      const mockClient = createMockWebClient({
+        syncState: vi.fn().mockResolvedValue({}),
+        getAccount: vi.fn().mockResolvedValue(updated),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      useMidenStore.getState().setClient(mockClient as never);
+
+      const fromHexSpy = vi.spyOn(Word, "fromHex");
+      const { result } = renderHook(() => useWaitForAccountUpdate());
+
+      await act(async () => {
+        await result.current.waitForAccountUpdate("0xacc", {
+          slot: "my::map",
+          mapKey: "0xdeadbeef",
+          baselineValue: "0xval_old",
+          timeoutMs: 500,
+        });
+      });
+
+      expect(fromHexSpy).toHaveBeenCalledWith("0xdeadbeef");
+      const internalWord = fromHexSpy.mock.results[0]?.value as {
+        free: ReturnType<typeof vi.fn>;
+      };
+      expect(internalWord.free).toHaveBeenCalledTimes(1);
+
+      // Caller-provided Word instance must not be freed by the hook.
+      const callerWord = createWord("0xcaller");
+      await act(async () => {
+        await result.current.waitForAccountUpdate("0xacc", {
+          slot: "my::map",
+          mapKey: callerWord as unknown as Word,
+          baselineValue: "0xval_old",
+          timeoutMs: 500,
+        });
+      });
+      expect(callerWord.free).not.toHaveBeenCalled();
+    });
   });
 });

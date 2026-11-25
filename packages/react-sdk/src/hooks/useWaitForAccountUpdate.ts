@@ -14,7 +14,13 @@ import { parseAccountId } from "../utils/accountParsing";
 import { MidenError } from "../utils/errors";
 import { runExclusiveDirect } from "../utils/runExclusive";
 
-type CancelMode = "unsubscribe" | "unmount" | "reset" | "superseded" | "stale";
+type CancelMode =
+  | "unsubscribe"
+  | "unmount"
+  | "reset"
+  | "superseded"
+  | "stale"
+  | "effect-cleanup";
 
 interface ActiveWait {
   token: number;
@@ -67,12 +73,16 @@ export interface UseWaitForAccountUpdateResult {
  *     useWaitForAccountUpdate();
  *
  *   const handleWait = async () => {
- *     const updated = await waitForAccountUpdate(accountId, {
- *       slot: "counter::value",
- *       timeoutMs: 30_000,
- *       intervalMs: 1_000,
- *     });
- *     console.log("Updated commitment:", updated.to_commitment().toHex());
+ *     try {
+ *       const updated = await waitForAccountUpdate(accountId, {
+ *         slot: "counter::value",
+ *         timeoutMs: 30_000,
+ *         intervalMs: 1_000,
+ *       });
+ *       console.log("Updated commitment:", updated.to_commitment().toHex());
+ *     } catch {
+ *       // Failure details are captured in `error`.
+ *     }
  *   };
  *
  *   return (
@@ -114,6 +124,25 @@ export function useWaitForAccountUpdate(
   const hookBaselineCommitment = hookOptions?.baselineCommitment;
   const hookMapKey = hookOptions?.mapKey;
   const hookBaselineValue = hookOptions?.baselineValue;
+
+  const hookDefaultsRef = useRef({
+    accountId: hookAccountId,
+    slot: hookSlot,
+    timeoutMs: hookTimeoutMs,
+    intervalMs: hookIntervalMs,
+    baselineCommitment: hookBaselineCommitment,
+    mapKey: hookMapKey,
+    baselineValue: hookBaselineValue,
+  });
+  hookDefaultsRef.current = {
+    accountId: hookAccountId,
+    slot: hookSlot,
+    timeoutMs: hookTimeoutMs,
+    intervalMs: hookIntervalMs,
+    baselineCommitment: hookBaselineCommitment,
+    mapKey: hookMapKey,
+    baselineValue: hookBaselineValue,
+  };
 
   const hookAccountKey = useMemo(
     () => normalizeAccountRefKey(hookAccountId),
@@ -160,51 +189,82 @@ export function useWaitForAccountUpdate(
         throw new Error("Miden client is not ready");
       }
 
-      const resolved = mergeOptions(
-        hookAccountId,
-        hookSlot,
-        hookTimeoutMs,
-        hookIntervalMs,
-        hookBaselineCommitment,
-        hookMapKey,
-        hookBaselineValue,
-        accountIdOrOptions,
-        maybeOptions
-      );
+      let resolved: WaitForAccountUpdateOptions;
+      let accountIdStr: string | undefined;
+      let numericBaseline: boolean;
+      let initialBaseline: string | null | undefined;
+      let timeoutMs: number;
+      let intervalMs: number;
+      let mapKeyWord: WordType | undefined;
+      let allocatedMapKeyWord: WordType | undefined;
 
-      const accountIdStr = normalizeAccountRefKey(resolved.accountId);
-      if (!accountIdStr) {
-        throw new Error("Account ID is required");
-      }
-      if (resolved.mapKey !== undefined && !resolved.slot) {
-        throw new Error(
-          "Storage slot name is required when mapKey is specified"
+      try {
+        const defaults = hookDefaultsRef.current;
+        resolved = mergeOptions(
+          defaults.accountId,
+          defaults.slot,
+          defaults.timeoutMs,
+          defaults.intervalMs,
+          defaults.baselineCommitment,
+          defaults.mapKey,
+          defaults.baselineValue,
+          accountIdOrOptions,
+          maybeOptions
         );
+
+        accountIdStr = normalizeAccountRefKey(resolved.accountId);
+        if (!accountIdStr) {
+          throw new Error("Account ID is required");
+        }
+        if (resolved.mapKey !== undefined && !resolved.slot) {
+          throw new Error(
+            "Storage slot name is required when mapKey is specified"
+          );
+        }
+
+        numericBaseline =
+          Boolean(resolved.slot) && typeof resolved.baselineValue === "bigint";
+        initialBaseline = resolveInitialBaseline(
+          resolved.slot,
+          resolved.baselineCommitment,
+          resolved.baselineValue
+        );
+
+        const rawTimeout = resolved.timeoutMs ?? 10_000;
+        timeoutMs = Number.isNaN(rawTimeout) ? 10_000 : Math.max(0, rawTimeout);
+        const flooredInterval = Math.max(1, resolved.intervalMs ?? 1_000);
+        intervalMs = Number.isNaN(flooredInterval) ? 1_000 : flooredInterval;
+
+        if (resolved.mapKey !== undefined) {
+          if (typeof resolved.mapKey === "string") {
+            mapKeyWord = Word.fromHex(resolved.mapKey);
+            allocatedMapKeyWord = mapKeyWord;
+          } else {
+            mapKeyWord = resolved.mapKey;
+          }
+        }
+      } catch (err) {
+        if (allocatedMapKeyWord) {
+          const toFree = allocatedMapKeyWord;
+          allocatedMapKeyWord = undefined;
+          try {
+            (toFree as { free?: () => void }).free?.();
+          } catch {
+            // Ignore cleanup errors during pre-poll validation failure.
+          }
+        }
+        const resolvedError =
+          err instanceof Error ? err : new Error(String(err));
+        if (mountedRef.current) {
+          setError(resolvedError);
+          if (!activeWaitRef.current) {
+            setIsWaiting(false);
+          }
+        }
+        throw resolvedError;
       }
 
-      const mapKeyWord =
-        resolved.mapKey === undefined
-          ? undefined
-          : typeof resolved.mapKey === "string"
-            ? Word.fromHex(resolved.mapKey)
-            : resolved.mapKey;
-
-      const numericBaseline =
-        Boolean(resolved.slot) && typeof resolved.baselineValue === "bigint";
-      const initialBaseline = resolveInitialBaseline(
-        resolved.slot,
-        resolved.baselineCommitment,
-        resolved.baselineValue
-      );
-
-      const rawTimeout = resolved.timeoutMs ?? 10_000;
-      const timeoutMs = Number.isNaN(rawTimeout)
-        ? 10_000
-        : Math.max(0, rawTimeout);
-      const flooredInterval = Math.max(1, resolved.intervalMs ?? 1_000);
-      const intervalMs = Number.isNaN(flooredInterval)
-        ? 1_000
-        : flooredInterval;
+      const requiredAccountIdStr = accountIdStr;
 
       activeWaitRef.current?.cancel("superseded");
 
@@ -228,6 +288,15 @@ export function useWaitForAccountUpdate(
           if (timerId !== null) {
             clearTimeout(timerId);
             timerId = null;
+          }
+          if (allocatedMapKeyWord) {
+            const toFree = allocatedMapKeyWord;
+            allocatedMapKeyWord = undefined;
+            try {
+              (toFree as { free?: () => void }).free?.();
+            } catch {
+              // Ignore free errors when tearing down internal Word.
+            }
           }
           if (activeWaitRef.current?.token === token) {
             activeWaitRef.current = null;
@@ -253,12 +322,20 @@ export function useWaitForAccountUpdate(
           wakeSleep?.();
           wakeSleep = null;
 
-          if (mode === "unmount" || mode === "reset") {
+          if (
+            mode === "unmount" ||
+            mode === "reset" ||
+            mode === "effect-cleanup"
+          ) {
             // Stop timers and polling without rejecting an unawaited promise
-            // during component teardown or explicit state reset.
+            // during component teardown, explicit reset, or reactive cleanup.
             settled = true;
             cleanupActive();
-            if (mode === "reset" && mountedRef.current) {
+            if (
+              mode !== "unmount" &&
+              mountedRef.current &&
+              waitTokenRef.current === token
+            ) {
               setIsWaiting(false);
             }
             return;
@@ -318,10 +395,11 @@ export function useWaitForAccountUpdate(
               if (shouldStop()) return;
 
               const fetched = await runExclusiveSafe(() => {
-                const accountIdObj = parseAccountId(accountIdStr);
+                const accountIdObj = parseAccountId(requiredAccountIdStr);
                 return client.getAccount(accountIdObj);
               });
               if (shouldStop()) return;
+              if (Date.now() >= deadline) break;
 
               if (fetched) {
                 const snapshot = readAccountSnapshot(
@@ -334,7 +412,7 @@ export function useWaitForAccountUpdate(
                   baseline = snapshot;
                 } else if (snapshot !== baseline) {
                   ensureAccountBech32(fetched);
-                  setAccountDetails(accountIdStr, fetched);
+                  setAccountDetails(requiredAccountIdStr, fetched);
                   if (isActive()) {
                     setAccount(fetched);
                     setIsWaiting(false);
@@ -376,19 +454,7 @@ export function useWaitForAccountUpdate(
         void poll();
       });
     },
-    [
-      client,
-      isReady,
-      runExclusiveSafe,
-      setAccountDetails,
-      hookAccountId,
-      hookSlot,
-      hookTimeoutMs,
-      hookIntervalMs,
-      hookBaselineCommitment,
-      hookMapKey,
-      hookBaselineValue,
-    ]
+    [client, isReady, runExclusiveSafe, setAccountDetails]
   );
 
   const unsubscribe = useCallback(() => {
@@ -411,7 +477,7 @@ export function useWaitForAccountUpdate(
     void startWait().catch(() => {});
 
     return () => {
-      cancelActiveWait("unmount");
+      cancelActiveWait("effect-cleanup");
     };
   }, [
     hookEnabled,
@@ -441,6 +507,7 @@ export function useWaitForAccountUpdate(
 
 function isAccountRef(value: unknown): value is AccountRef {
   if (typeof value === "string") return true;
+  if (value === null || typeof value !== "object") return false;
   const candidate = value as {
     id?: unknown;
     toHex?: unknown;

@@ -1127,12 +1127,16 @@ function WaitForAccountUpdate({ accountId }: { accountId: string }) {
     useWaitForAccountUpdate();
 
   const handleWait = async () => {
-    const updated = await waitForAccountUpdate(accountId, {
-      slot: 'counter::value',
-      timeoutMs: 30_000,
-      intervalMs: 1_000,
-    });
-    console.log('Account updated:', updated.to_commitment().toHex());
+    try {
+      const updated = await waitForAccountUpdate(accountId, {
+        slot: 'counter::value',
+        timeoutMs: 30_000,
+        intervalMs: 1_000,
+      });
+      console.log('Account updated:', updated.to_commitment().toHex());
+    } catch {
+      // Wait errors are exposed on `error` state.
+    }
   };
 
   return (
