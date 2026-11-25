@@ -287,6 +287,22 @@ vi.mock("@miden-sdk/miden-sdk", () => {
           attachments,
         })
       ),
+      createClaimNote: vi.fn(
+        (
+          proof: unknown,
+          leaf: unknown,
+          scale: number,
+          bridge: unknown,
+          sender: unknown
+        ) => ({
+          id: () => ({ toString: () => "0xclaimnote" }),
+          proof,
+          leaf,
+          scale,
+          bridge,
+          sender,
+        })
+      ),
     },
     // Mock Felt — real WASM `Felt` wraps a field element built from a bigint;
     // `asInt()` returns it back so tests can assert on the value round-trip.

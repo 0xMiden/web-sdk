@@ -28,6 +28,9 @@ export interface UseImportStoreResult {
  * The import fails, leaving the store unchanged and setting `error`, for a dump with no client
  * version stamp or one exported by a client older than 0.17.0 or newer than the running one.
  *
+ * @deprecated Keep a separate store per signer (an external signer sets its `storeName`), or restore
+ * only the state you need through the typed APIs (`useImportNote`, `useImportAccount`).
+ *
  * @example
  * ```tsx
  * function RestoreButton({ snapshot }: { snapshot: string }) {

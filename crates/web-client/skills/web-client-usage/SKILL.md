@@ -22,7 +22,7 @@ The SDK exposes a top-level `MidenClient` whose state is split across typed
 | Resource             | What it covers                                                                                                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `client.accounts`    | Wallets, faucets, custom contracts, listing, import/export, addresses                                                                                                          |
-| `client.transactions` | `send` / `mint` / `bridge` / `withdrawUsdcx` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
+| `client.transactions` | `send` / `mint` / `bridge` / `withdrawUsdcx` / `claimAggLayerDeposit` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
 | `client.notes`       | Listing, fetching, importing/exporting, private-note transport                                                                                                                 |
 | `client.tags`        | Note-tag subscriptions                                                                                                                                                         |
 | `client.settings`    | Persistent client settings                                                                                                                                                     |
@@ -43,18 +43,19 @@ const summary = await client._withInnerWebClient(async (inner) => {
 });
 ```
 
-**You must hold your own mutex around this.** The call chain serializes the
-callback against external callers, but it does not make the callback atomic.
-While `fn` runs, the client's re-entrancy depth is raised so that calls made
-*by* `fn` run inline instead of queueing - that is what stops `fn` deadlocking
-against itself. The consequence is the trap: if an unrelated task runs during
-one of `fn`'s `await`s and calls into the SDK, it also sees a raised depth,
-also runs inline, and races wasm-bindgen's borrow check. The chain will not
-save you there; only your own mutex around the whole `_withInnerWebClient`
-call will.
+The call chain serializes the callback against every other caller: an SDK
+call that an unrelated task makes during one of `fn`'s `await`s queues behind
+`fn`. `inner` is a trusted handle, and only calls made through it run inline in
+the slot `fn` holds - that is what stops `fn` deadlocking against itself. So
+inside `fn`, call the SDK only through `inner`: a call through `client` or any
+other reference queues behind `fn` and never settles while `fn` awaits it.
+Calls through `inner` run inline, so await them one at a time. The raw-bound
+accessors (`lastAuthError()`, the `keystore` getter, and on mock clients
+`proveBlock()` and `serializeMock*()`) never queue, so do not call them from
+another task while `fn` runs.
 
-Do not let the `inner` reference escape the callback either - it is only valid
-for the duration of `fn`.
+Do not let the `inner` reference escape the callback either - once `fn` settles,
+calls through it queue like any other call.
 
 It is marked `@internal`: pin the SDK version if you depend on it, and re-test
 the low-level surface on every upgrade.
@@ -980,7 +981,17 @@ const leaf = new ClaimLeafData(
 const note = Note.createClaimNote(proof, leaf, 10, bridgeAccountId, senderId);
 ```
 
-A scale above 18, or a scaled amount above the maximum fungible amount, throws. Submit the note as an own output note of a transaction, for example through `feeAwareTransactionRequestBuilder(sender)` and `withOwnOutputNotes`. It is a network note targeting the bridge account, so the transaction must also declare that account with `withForeignAccounts`, as for any network note.
+A scale above 18, or a scaled amount above the maximum fungible amount, throws. Submit it with `client.transactions.claimAggLayerDeposit(...)`, which builds the same note, sends it as an own output note of the sender and declares the bridge account as a foreign account. It returns `{ txId, note, result }`; a `scale` that is not an integer from 0 to 18 throws before any WASM call.
+
+```typescript
+const { txId, note } = await client.transactions.claimAggLayerDeposit({
+  account: wallet, // sender, the executing account
+  bridgeAccount: bridgeAccountId, // public bridge; consumes the note and mints the deposit
+  proof,
+  leaf,
+  scale: 10, // the faucet's decimal scale
+});
+```
 
 ### Withdraw USDCx (Circle xReserve)
 
@@ -1243,6 +1254,13 @@ await client.submitNewTransaction(sender, register);
 ```
 
 `buildAccountCodeUpgrade(code)` finalizes a request that upgrades the executing account to `code`. The account needs the `UpgradeManager` component with `AuthControlled` authority, and `code` must keep the storage layout. It replaces any custom script and script argument, and fails when own output notes or an expiration delta are set. `withAccountCodeUpgrade(code)` only places the code in the advice map, and `request.accountCodeUpgrade()` returns it.
+
+`extendMerkleStore(nodes)` adds Merkle tree nodes to the store the transaction executes with, so its scripts can read Merkle paths through them. Each `InnerNodeInfo(value, left, right)` is stored as given: `value` must be the Poseidon2 merge of `left` and `right`, and it is not checked. `request.merkleStoreInnerNodes()` returns the added nodes, without the empty-subtree nodes every store starts with.
+
+```typescript
+const nodes = new InnerNodeInfoArray([new InnerNodeInfo(value, left, right)]);
+const request = new TransactionRequestBuilder().extendMerkleStore(nodes).build();
+```
 
 ### Staged transaction lifecycle
 

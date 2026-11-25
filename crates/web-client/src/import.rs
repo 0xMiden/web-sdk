@@ -129,6 +129,9 @@ impl WebClient {
 /// Imports store contents from a JSON string, replacing all existing data.
 ///
 /// Use together with [`export_store`].
+///
+/// **Deprecated.** Create the client with the right `storeName` and manage store instances, or
+/// restore only the state you need through the typed APIs (`accounts.import`, `notes.import`).
 #[cfg(feature = "browser")]
 #[wasm_bindgen(js_name = "importStore")]
 pub async fn import_store(store_name: &str, store_dump: &str) -> Result<(), JsValue> {
