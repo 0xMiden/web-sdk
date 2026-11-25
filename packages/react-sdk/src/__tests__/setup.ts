@@ -388,9 +388,10 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     NoteAttachmentScheme: {
       none: vi.fn(() => ({ type: "none" })),
     },
-    Word: Object.assign(
+    Word: (() => {
       class Word {
         values: bigint[];
+        free = vi.fn();
         constructor(values: ArrayLike<bigint>) {
           const scanned = Array.from(values, (item) => BigInt(item));
           for (const value of scanned) {
@@ -405,16 +406,33 @@ vi.mock("@miden-sdk/miden-sdk", () => {
         toU64s() {
           return Array.from(this.values);
         }
-      },
-      {
-        deserialize: vi.fn(
-          () =>
-            new (class Word {
-              values = new BigUint64Array(4);
-            })()
-        ),
+        toHex() {
+          return (
+            "0x" +
+            this.values.map((v) => v.toString(16).padStart(16, "0")).join("")
+          );
+        }
+        toFelts() {
+          return [];
+        }
+        serialize() {
+          return new Uint8Array();
+        }
       }
-    ),
+      return Object.assign(Word, {
+        deserialize: vi.fn(() => new Word([0n, 0n, 0n, 0n])),
+        fromHex: vi.fn((hex: string) => {
+          if (!/^0x[0-9a-fA-F]{1,64}$/.test(hex)) {
+            throw new Error("Invalid hex string for Word");
+          }
+          const padded = hex.slice(2).padStart(64, "0");
+          const limbs = Array.from({ length: 4 }, (_, i) =>
+            BigInt("0x" + padded.slice(i * 16, (i + 1) * 16))
+          );
+          return new Word(limbs);
+        }),
+      });
+    })(),
     NoteAttachment: (() => {
       // Faithful enough to round-trip what `createNoteAttachment` packs in:
       // it stores the Word(s) it was built from and yields them back via

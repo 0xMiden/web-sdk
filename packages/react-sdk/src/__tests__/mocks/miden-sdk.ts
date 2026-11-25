@@ -27,6 +27,8 @@ const createMockAccountBase = () => ({
   id: vi.fn(() => createMockAccountId()),
   nonce: vi.fn(() => ({ toString: () => "1" })),
   commitment: vi.fn(() => ({ toString: () => "0xcommitment" })),
+  // eslint-disable-next-line camelcase
+  to_commitment: vi.fn(() => createMockWord("0xcommitment")),
   vault: vi.fn(() => createMockVault()),
   storage: vi.fn(() => ({})),
   code: vi.fn(() => ({})),

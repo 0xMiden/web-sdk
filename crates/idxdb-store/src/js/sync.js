@@ -1,7 +1,7 @@
 import { getDatabase, } from "./schema.js";
 import { upsertTransactionRecord, insertTransactionScript, } from "./transactions.js";
 import { upsertInputNote, upsertOutputNote } from "./notes.js";
-import { applyFullAccountState } from "./accounts.js";
+import { applyAccountPatch, applyFullAccountState, lockAccount, undoAccountStates, } from "./accounts.js";
 import { updateAccountWitness } from "./witnesses.js";
 import { logWebStoreError, putPartialBlockchainNodesNoOverwrite, uint8ArrayToBase64, } from "./utils.js";
 export async function getNoteTags(dbId) {
@@ -100,10 +100,24 @@ export async function removeNoteTag(dbId, tag, sourceNoteId, sourceAccountId, so
         logWebStoreError(error, "Failed to remove note tag");
     }
 }
+/**
+ * Writes a sync result in one Dexie transaction: height, block headers and MMR nodes, notes,
+ * transactions, account replacements and witnesses, patches, undo and locks. These commit or
+ * roll back together, so the height never moves past rows that were not written. The protocol
+ * configuration is the one write outside it: the caller persists it first (a stored row without
+ * its state write is unused, and the retried sync writes it again).
+ *
+ * The body may only await Dexie requests. Awaiting anything else (a WASM call, a fetch, a timer)
+ * lets IndexedDB auto-commit the transaction, so every value is computed by the caller first and
+ * passed in ready to write.
+ */
 export async function applyStateSync(dbId, stateUpdate) {
     const db = getDatabase(dbId);
     const { blockNum, flattenedNewBlockHeaders, newPeaks, newBlockNums, blockHasRelevantNotes, serializedNodeIds, serializedNodes, committedNoteTagSources, serializedInputNotes, serializedOutputNotes, accountUpdates, transactionUpdates, } = stateUpdate;
     const accountWitnesses = stateUpdate.accountWitnesses ?? [];
+    const accountPatches = stateUpdate.accountPatches ?? [];
+    const undoAccountCommitments = stateUpdate.undoAccountCommitments ?? [];
+    const lockedAccountIds = stateUpdate.lockedAccountIds ?? [];
     const newBlockHeaders = reconstructFlattenedVec(flattenedNewBlockHeaders);
     const tablesToAccess = [
         db.blockchainCheckpoint,
@@ -127,6 +141,18 @@ export async function applyStateSync(dbId, stateUpdate) {
         db.accountWitnesses,
     ];
     return await db.dexie.transaction("rw", tablesToAccess, async (tx) => {
+        // Account locks, the undo of discarded transactions and incremental patches commit with the
+        // rest of the sync, so a failure anywhere leaves the accounts as they were. They run in
+        // sequence, in the order the sync computed them, before the independent writes below.
+        for (const accountId of lockedAccountIds) {
+            await lockAccount(dbId, accountId);
+        }
+        if (undoAccountCommitments.length > 0) {
+            await undoAccountStates(dbId, undoAccountCommitments);
+        }
+        for (const patch of accountPatches) {
+            await applyAccountPatch(dbId, patch.accountId, patch.nonce, patch.updatedSlots, patch.changedMapEntries, patch.changedAssets, patch.codeRoot, patch.storageRoot, patch.vaultRoot, patch.committed, patch.commitment, patch.code, patch.initialAccountCommitment);
+        }
         await Promise.all([
             Promise.all(serializedInputNotes.map((note) => {
                 return upsertInputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.serialNumber, note.inputs, note.noteScriptRoot, note.noteScript, note.nullifier, note.createdAt, note.stateDiscriminant, note.state, note.consumedBlockHeight, note.consumedTxOrder, note.consumerAccountId);
