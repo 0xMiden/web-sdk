@@ -1061,7 +1061,6 @@ jobs:
           MIDEN_GEN_GENESIS_BIN: ${{ github.workspace }}/genesis-target/release/gen-genesis
           MIDEN_TEST_NODE_PREBUILT: "1"
         run: |
-          ./scripts/patch-linked-test-node.sh ./scripts/start-test-node.sh
           ./scripts/start-test-node.sh --background
       # Since 0.17 the fee asset lives in the protocol configuration rather than
       # the block header, so a client is told which faucet issues it instead of
@@ -1186,7 +1185,6 @@ jobs:
           MIDEN_TEST_NODE_PREBUILT: "1"
           MIDEN_ACCOUNT_ALLOWLIST: ${{ matrix.project == 'ci-shard-account-allowlist' && '1' || '0' }}
         run: |
-          ./scripts/patch-linked-test-node.sh ./scripts/start-test-node.sh
           ./scripts/start-test-node.sh --background
       # Since 0.17 the fee asset lives in the protocol configuration rather than
       # the block header, so a client is told which faucet issues it instead of
@@ -1297,7 +1295,6 @@ jobs:
           MIDEN_GEN_GENESIS_BIN: ${{ github.workspace }}/genesis-target/release/gen-genesis
           MIDEN_TEST_NODE_PREBUILT: "1"
         run: |
-          ./scripts/patch-linked-test-node.sh ./scripts/start-test-node.sh
           ./scripts/start-test-node.sh --background
       # Since 0.17 the fee asset lives in the protocol configuration rather than
       # the block header, so a client is told which faucet issues it instead of
