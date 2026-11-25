@@ -428,3 +428,42 @@ it("strictly type-checks api-types.d.ts and docs-entry.d.ts declarations without
     )
   ).toEqual([]);
 }, 15_000);
+
+it("types compile options as source or package, never both and never neither", () => {
+  expect(
+    diagnostics(
+      `export class Package { free(): void; }`,
+      `
+      import type { CompileComponentOptions, CompileTxScriptOptions,
+        CompileNoteScriptOptions, Package } from "./index";
+      declare const pkg: Package;
+      const ok: unknown[] = [
+        { code: "c", namespace: "n", libraries: [{ namespace: "a", code: "b" }] },
+        { package: pkg, slots: [], supportAllTypes: false },
+        { package: new Uint8Array(1) },
+      ] satisfies CompileComponentOptions[];
+      [{ code: "c" }, { package: pkg }] satisfies CompileTxScriptOptions[];
+      [{ code: "c" }, { package: pkg }] satisfies CompileNoteScriptOptions[];
+      // @ts-expect-error neither code nor package
+      const none: CompileComponentOptions = {};
+      // @ts-expect-error both code and package
+      const both: CompileComponentOptions = { code: "c", package: pkg };
+      // @ts-expect-error namespace is source-only
+      const ns: CompileComponentOptions = { package: pkg, namespace: "n" };
+      // @ts-expect-error libraries are source-only
+      const libs: CompileComponentOptions = { package: pkg, libraries: [] };
+      // @ts-expect-error neither code nor package
+      const noneTx: CompileTxScriptOptions = {};
+      // @ts-expect-error both code and package
+      const bothTx: CompileTxScriptOptions = { code: "c", package: pkg };
+      // @ts-expect-error libraries are source-only
+      const libsTx: CompileTxScriptOptions = { package: pkg, libraries: [] };
+      // @ts-expect-error neither code nor package
+      const noneNote: CompileNoteScriptOptions = {};
+      // @ts-expect-error both code and package
+      const bothNote: CompileNoteScriptOptions = { code: "c", package: pkg };
+      void [ok, none, both, ns, libs, noneTx, bothTx, libsTx, noneNote, bothNote];
+    `
+    )
+  ).toEqual([]);
+});
