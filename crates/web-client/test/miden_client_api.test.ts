@@ -715,6 +715,105 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     expect(result.foundInImport).toBe(true);
   });
 
+  mockTest(
+    "browser error helpers reject with Error instances",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const captureError = async (fn) => {
+          try {
+            await fn();
+            return null;
+          } catch (error) {
+            return {
+              isError: error instanceof Error,
+              message: error?.message,
+            };
+          }
+        };
+
+        const resolveError = await captureError(() =>
+          window.resolveStoreName("://bad")
+        );
+        const createError = await captureError(() =>
+          window.WasmWebClient.createClient(
+            "://bad",
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            false
+          )
+        );
+        const invalidJsonError = await captureError(() =>
+          window.importStore("mock_invalid_json_store", "not valid json")
+        );
+
+        const openFailStore = "mock_open_failure_store";
+        const originalOpen = IDBFactory.prototype.open;
+        IDBFactory.prototype.open = function () {
+          throw new Error("simulated open failure");
+        };
+        let exportOpenError = null;
+        let importOpenError = null;
+        try {
+          exportOpenError = await captureError(() =>
+            window.exportStore(openFailStore)
+          );
+          importOpenError = await captureError(() =>
+            window.importStore(openFailStore, "{}")
+          );
+        } finally {
+          IDBFactory.prototype.open = originalOpen;
+        }
+
+        const exportReadFailStore = "mock_export_read_failure_store";
+        await window.exportStore(exportReadFailStore);
+        const originalGetAll = IDBObjectStore.prototype.getAll;
+        IDBObjectStore.prototype.getAll = function () {
+          throw new Error("simulated export read failure");
+        };
+        let exportReadError = null;
+        try {
+          exportReadError = await captureError(() =>
+            window.exportStore(exportReadFailStore)
+          );
+        } finally {
+          IDBObjectStore.prototype.getAll = originalGetAll;
+        }
+
+        return {
+          resolveError,
+          createError,
+          invalidJsonError,
+          exportOpenError,
+          importOpenError,
+          exportReadError,
+        };
+      });
+
+      expect(result.resolveError).toEqual({
+        isError: true,
+        message: "Invalid node URL",
+      });
+      expect(result.createError).toEqual({
+        isError: true,
+        message: "Invalid node URL",
+      });
+      expect(result.invalidJsonError?.isError).toBe(true);
+      expect(result.invalidJsonError?.message).toContain(
+        "failed to import store"
+      );
+      expect(result.exportOpenError?.isError).toBe(true);
+      expect(result.exportOpenError?.message).toContain("failed to open store");
+      expect(result.importOpenError?.isError).toBe(true);
+      expect(result.importOpenError?.message).toContain("failed to open store");
+      expect(result.exportReadError?.isError).toBe(true);
+      expect(result.exportReadError?.message).toContain(
+        "failed to export store"
+      );
+    }
+  );
+
   mockTest("usesMockChain and proveBlock", async ({ page }) => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.createMock();

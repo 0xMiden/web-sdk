@@ -42,4 +42,52 @@ test.describe("settings tests", () => {
     expect(result.isUndefined).toBe(true);
     expect(result.includesTest).toBe(false);
   });
+
+  test("uninitialized WebClient browser errors are Error instances", async ({
+    run,
+  }, testInfo) => {
+    test.skip(testInfo.project.name === "nodejs", "browser WASM error objects");
+
+    const results = await run(async ({ sdk }) => {
+      const wasm = await sdk.getWasmOrThrow();
+      const uninit = new wasm.WebClient();
+      const captureError = async (fn) => {
+        try {
+          await fn();
+          return null;
+        } catch (error) {
+          return {
+            isError: error instanceof Error,
+            message: error?.message,
+          };
+        }
+      };
+
+      try {
+        const getSetting = await captureError(() => uninit.getSetting("k"));
+        const setSetting = await captureError(() =>
+          uninit.setSetting("k", [1, 2, 3])
+        );
+        const keystore = await captureError(() => {
+          void uninit.keystore;
+        });
+        return { getSetting, setSetting, keystore };
+      } finally {
+        uninit.free();
+      }
+    });
+
+    expect(results.getSetting).toEqual({
+      isError: true,
+      message: "Client not initialized",
+    });
+    expect(results.setSetting).toEqual({
+      isError: true,
+      message: "Client not initialized",
+    });
+    expect(results.keystore).toEqual({
+      isError: true,
+      message: "Client not initialized",
+    });
+  });
 });
