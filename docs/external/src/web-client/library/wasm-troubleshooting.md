@@ -37,7 +37,8 @@ error. Prefer the high-level `MidenClient` methods, which queue calls that
 need exclusive access. In React, use `runExclusive` from `useMiden()` to
 coordinate callers that share the provider lock. Await each operation before
 starting the next. Wait until the client is idle before using synchronous raw
-accessors such as `lastAuthError()` or the `keystore` getter. If you need
-`lastAuthError()`, read it while the client is idle after the failed call
+accessors such as `lastAuthError()` or the `keystore` getter. To inspect a
+signing error with `lastAuthError()`, configure the client with
+`useWorker: false`. Read it while the client is idle after the failed call
 settles and before starting another transaction. If the error came from a
 transaction flow, check its submission status before trying again.
