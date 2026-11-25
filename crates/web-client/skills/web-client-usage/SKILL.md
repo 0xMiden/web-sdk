@@ -1732,6 +1732,16 @@ helper library whose procedures are not installed on any account has to be
 `"dynamic"` such a script still compiles, then fails at execution with
 `procedure with root digest 0x...`.
 
+### MASM failure codes
+
+MASM that does not assemble or link rejects with `code: "MASM_COMPILE_FAILED"`
+(from `compile.*` and `CodeBuilder`), and a transaction program that fails in the
+VM, such as a failing `assert`, rejects with
+`code: "TRANSACTION_EXECUTION_FAILED"`. The message carries the compiler or VM
+diagnostic, so branch on `error.code` and show `error.message`. Browser builds
+set `code` on the error; Node.js errors only prefix the message with
+`"<CODE>: "`. Procedure and span fields are not structured yet.
+
 ### MASM shape
 
 The annotations are not optional and changed in 0.16:

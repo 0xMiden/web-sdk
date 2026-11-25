@@ -171,6 +171,11 @@ and never re-run `batch` / `submitBatch`. A rejected retry records nothing and a
 sync does not insert the records, so look the ids up on the node. Browser builds
 only: Node.js errors only prefix the message with the code.
 
+MASM that does not assemble or link rejects with `code: "MASM_COMPILE_FAILED"`;
+a transaction program that fails in the VM (a failing `assert`) rejects with
+`code: "TRANSACTION_EXECUTION_FAILED"`, the VM diagnostic in the message. Same
+Node.js prefix rule as above.
+
 **Submitting never registers network scripts.** Scripts a request declares
 through `withExpectedNtxScripts` are not registered by any submit path; submit
 `newRegisterNoteScriptsTransactionRequest` first. Nodes added with

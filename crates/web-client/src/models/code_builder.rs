@@ -19,12 +19,12 @@ use napi_derive::napi;
 #[cfg(feature = "browser")]
 use wasm_bindgen::prelude::*;
 
-use crate::js_error_with_context;
 use crate::models::account_component_code::AccountComponentCode;
 use crate::models::library::Library;
 use crate::models::note_script::NoteScript;
 use crate::models::transaction_script::TransactionScript;
-use crate::platform::{JsErr, from_str_err};
+use crate::platform::{JsErr, from_str_err_with_code};
+use crate::{MASM_COMPILE_FAILED, js_compile_error, js_error_with_context};
 
 /// Utility for linking libraries and compiling transaction/note scripts.
 #[derive(Clone)]
@@ -57,7 +57,7 @@ impl CodeBuilder {
     #[js_export(js_name = "linkModule")]
     pub fn link_module(&mut self, module_path: String, module_code: String) -> Result<(), JsErr> {
         self.builder.link_module(&module_path, &module_code).map_err(|e| {
-            js_error_with_context(
+            js_compile_error(
                 e,
                 &format!("script builder: failed to link module with path {module_path}"),
             )
@@ -74,9 +74,9 @@ impl CodeBuilder {
     #[js_export(js_name = "linkStaticLibrary")]
     pub fn link_static_library(&mut self, library: &Library) -> Result<(), JsErr> {
         let library: NativeLibrary = library.into();
-        self.builder.link_static_package(&library).map_err(|e| {
-            js_error_with_context(e, "script builder: failed to link static library")
-        })?;
+        self.builder
+            .link_static_package(&library)
+            .map_err(|e| js_compile_error(e, "script builder: failed to link static library"))?;
         Ok(())
     }
 
@@ -91,7 +91,7 @@ impl CodeBuilder {
     ) -> Result<(), JsErr> {
         let native_code: NativeAccountComponentCode = account_component_code.into();
         self.builder.link_static_package(native_code.as_package()).map_err(|e| {
-            js_error_with_context(e, "script builder: failed to link static account component code")
+            js_compile_error(e, "script builder: failed to link static account component code")
         })?;
         Ok(())
     }
@@ -105,9 +105,9 @@ impl CodeBuilder {
     #[js_export(js_name = "linkDynamicLibrary")]
     pub fn link_dynamic_library(&mut self, library: &Library) -> Result<(), JsErr> {
         let library: NativeLibrary = library.into();
-        self.builder.link_dynamic_package(&library).map_err(|e| {
-            js_error_with_context(e, "script builder: failed to link dynamic library")
-        })?;
+        self.builder
+            .link_dynamic_package(&library)
+            .map_err(|e| js_compile_error(e, "script builder: failed to link dynamic library"))?;
         Ok(())
     }
 
@@ -122,10 +122,7 @@ impl CodeBuilder {
     ) -> Result<(), JsErr> {
         let native_code: NativeAccountComponentCode = account_component_code.into();
         self.builder.link_dynamic_package(native_code.as_package()).map_err(|e| {
-            js_error_with_context(
-                e,
-                "script builder: failed to link dynamic account component code",
-            )
+            js_compile_error(e, "script builder: failed to link dynamic account component code")
         })?;
         Ok(())
     }
@@ -141,7 +138,7 @@ impl CodeBuilder {
         let cloned = self.builder.clone();
         let compiled_tx_script = cloned
             .compile_tx_script(&tx_script)
-            .map_err(|err| js_error_with_context(err, "failed to compile transaction script"))?;
+            .map_err(|err| js_compile_error(err, "failed to compile transaction script"))?;
         Ok(compiled_tx_script.into())
     }
 
@@ -153,7 +150,7 @@ impl CodeBuilder {
         let builder = self.builder.clone();
         let tx_script = builder
             .compile_note_script(&program)
-            .map_err(|err| js_error_with_context(err, "failed to compile note script"))?;
+            .map_err(|err| js_compile_error(err, "failed to compile note script"))?;
         Ok(tx_script.into())
     }
 
@@ -178,7 +175,7 @@ impl CodeBuilder {
             .parse_str(Some(library_path), &source_code, self.builder.source_manager())
             .map_err(|e| {
                 let err_msg = format_assembler_error(&e, "error while parsing module");
-                from_str_err(&err_msg)
+                from_str_err_with_code(&err_msg, MASM_COMPILE_FAILED)
             })?;
 
         let assembler: Assembler = self.builder.clone().into();
@@ -189,7 +186,7 @@ impl CodeBuilder {
             Err(error_report) => {
                 let err_msg =
                     format_assembler_error(&error_report, "error while assembling library");
-                Err(from_str_err(&err_msg))
+                Err(from_str_err_with_code(&err_msg, MASM_COMPILE_FAILED))
             },
         }
     }
@@ -223,9 +220,7 @@ impl CodeBuilder {
             .builder
             .clone()
             .compile_component_code(component_path.as_str(), account_code)
-            .map_err(|err| {
-                js_error_with_context(err, "failed to compile account component code")
-            })?;
+            .map_err(|err| js_compile_error(err, "failed to compile account component code"))?;
         Ok(native_code.into())
     }
 }

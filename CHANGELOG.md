@@ -11,6 +11,8 @@
 
 * [FEATURE][web] `client.contracts.deploy({ components, seed?, auth?, storage? })` creates a contract through `accounts.create`, generating a random 32-byte `seed` and a Falcon `AuthSecretKey` when omitted and keeping the contract default of public storage, and resolves to `{ account, seed, auth }`; it throws a `TypeError` without `components`. Deploying from a `.masp` package follows with package input ([#90](https://github.com/0xMiden/web-sdk/issues/90), [#646](https://github.com/0xMiden/web-sdk/pull/646)).
 
+* [FEATURE][web] Stable error codes for MASM failures: `compile.component`, `txScript`, `noteScript` and `CodeBuilder` reject unassemblable source with `code: "MASM_COMPILE_FAILED"`, and a transaction program that fails in the VM (a failing `assert`) rejects with `code: "TRANSACTION_EXECUTION_FAILED"`, the diagnostic in the message. Node.js errors prefix the message with the code. A library that fails to build in `buildLibrary` now carries the code as well, which on the browser makes its error an `Error` instead of a bare string. Structured procedure and span detail stays in [#192](https://github.com/0xMiden/web-sdk/issues/192) ([#90](https://github.com/0xMiden/web-sdk/issues/90), [#649](https://github.com/0xMiden/web-sdk/pull/649)).
+
 ### Fixes
 
 * [FIX][web] Development faucet funding preserves the full integer value of proof-of-work targets sent as JSON numbers ([#626](https://github.com/0xMiden/web-sdk/pull/626)).
