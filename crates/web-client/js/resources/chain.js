@@ -10,6 +10,16 @@ function freeLive(handle) {
 }
 
 const MAX_PREFIX = 0xffff;
+const MAX_BLOCK = 0xffffffff;
+
+// The binding takes u32 block numbers and wraps anything else silently.
+function checkBlock(name, value) {
+  if (!Number.isInteger(value) || value < 0 || value > MAX_BLOCK) {
+    throw new RangeError(
+      `${name}: ${String(value)} is not an integer in 0..${MAX_BLOCK}`
+    );
+  }
+}
 
 export class ChainResource {
   #getWasm;
@@ -25,11 +35,13 @@ export class ChainResource {
   /**
    * Fetches a block header.
    *
-   * @param {number} [blockNum] - The block to fetch; the latest when omitted.
+   * @param {number} [blockNum] - The block to fetch, an integer from 0 to 2^32 - 1
+   *   (else a `RangeError`); the latest when omitted.
    * @returns {Promise<BlockHeader>} The header, without an MMR proof.
    */
   async getBlockHeader(blockNum) {
     this.#client.assertNotTerminated();
+    if (blockNum !== undefined) checkBlock("getBlockHeader", blockNum);
     return await this.#withRpc((rpc) =>
       rpc.getBlockHeaderByNumber(blockNum, false)
     );
@@ -44,6 +56,7 @@ export class ChainResource {
    */
   async getBlockHeaderWithProof(blockNum) {
     this.#client.assertNotTerminated();
+    checkBlock("getBlockHeaderWithProof", blockNum);
     const result = await this.#withRpc((rpc) =>
       rpc.getBlockHeaderWithProof(blockNum)
     );
@@ -67,6 +80,7 @@ export class ChainResource {
    */
   async getNullifierCommitHeights(nullifiers, { blockFrom = 0 } = {}) {
     this.#client.assertNotTerminated();
+    checkBlock("getNullifierCommitHeights", blockFrom);
     const wasm = await this.#getWasm();
     const keys = nullifiers.map((n) => (typeof n === "string" ? n : n.toHex()));
     // The binding consumes its Word arguments in the browser build, so hand it
@@ -112,6 +126,8 @@ export class ChainResource {
    */
   async syncNullifiers(prefixes, blockFrom, blockTo) {
     this.#client.assertNotTerminated();
+    checkBlock("syncNullifiers blockFrom", blockFrom);
+    checkBlock("syncNullifiers blockTo", blockTo);
     const checked = new Uint16Array(prefixes.length);
     for (let i = 0; i < prefixes.length; i++) {
       const value = prefixes[i];

@@ -2310,7 +2310,8 @@ export interface TagsResource {
  * flight. They reject on a mock client, which has no node, and after
  * `terminate()`. Use the standalone `RpcClient` for node calls this resource
  * does not cover. Returned `BlockHeader`, `MmrProof` and `NullifierUpdate`
- * objects are WASM wrappers: call `free()` on them when done.
+ * objects are WASM wrappers: call `free()` on them when done. A block number
+ * that is not an integer from 0 to 2^32 - 1 rejects with a `RangeError`.
  */
 export interface ChainResource {
   /**
