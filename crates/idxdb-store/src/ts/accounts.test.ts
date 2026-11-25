@@ -25,6 +25,7 @@ import {
   lockAccount,
   pruneAccountHistory,
   undoAccountStates,
+  getAccountSnapshotsAfterUndo,
 } from "./accounts.js";
 import { recordReads, uniqueDbName } from "./test-utils.js";
 
@@ -1757,5 +1758,48 @@ describe("multi-write account operations are atomic", () => {
 
     const header = await db.latestAccountHeaders.get(ACC);
     expect(header?.locked).toBe(false);
+  });
+});
+
+// ============================================================
+// getAccountSnapshotsAfterUndo
+// ============================================================
+describe("getAccountSnapshotsAfterUndo", () => {
+  it("returns the state after the undo without persisting it", async () => {
+    const dbId = await openTestDb("0.0.1");
+    const db = getDatabase(dbId);
+    await seedAccount(dbId);
+    await applyAccountPatch(
+      dbId,
+      ACC,
+      "2",
+      [
+        {
+          slotName: "slot1",
+          slotValue: "0xnew",
+          slotType: 0,
+          patchOperation: 1,
+        },
+      ],
+      [],
+      [],
+      CODE_ROOT,
+      STORAGE_ROOT,
+      VAULT_ROOT,
+      false,
+      "0xcommit2"
+    );
+
+    const [snapshot] = (await getAccountSnapshotsAfterUndo(
+      dbId,
+      ["0xcommit2"],
+      [ACC]
+    )) as { header: { nonce: string } }[];
+
+    expect(snapshot.header.nonce).toBe(NONCE);
+    const latest = await db.latestAccountHeaders.get(ACC);
+    expect(latest?.nonce).toBe("2");
+    expect(latest?.accountCommitment).toBe("0xcommit2");
+    expect(await db.historicalAccountHeaders.count()).toBe(1);
   });
 });
