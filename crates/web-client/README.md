@@ -1130,6 +1130,22 @@ A match, however, does not prove the two parties agree on account state. The sum
 
 See [the transactions guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/transactions.md#chain-anchored-execution) for the full flow.
 
+### MASM Failure Codes
+
+MASM that does not assemble or link rejects with `code: "MASM_COMPILE_FAILED"`, and a
+transaction program that fails in the VM (for example a failing `assert`) rejects with
+`code: "TRANSACTION_EXECUTION_FAILED"`. The message carries the compiler or VM diagnostic.
+Node.js errors prefix the message with `"<CODE>: "` instead of setting `code`.
+
+```ts
+try {
+  await client.transactions.execute({ account, script });
+} catch (e) {
+  if (e.code === "TRANSACTION_EXECUTION_FAILED") showScriptFailure(e.message);
+  else throw e;
+}
+```
+
 ### Foreign Accounts
 
 A transaction that invokes a procedure on another account declares it as a `ForeignAccount`. Two kinds:

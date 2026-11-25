@@ -1662,6 +1662,9 @@ export interface TransactionsResource {
   /**
    * Execute a custom transaction script with optional foreign account references.
    *
+   * A script that fails in the VM rejects with `code: "TRANSACTION_EXECUTION_FAILED"`
+   * (see {@link MasmErrorCode}).
+   *
    * @param options - Execute options including the account, compiled script, and foreign accounts.
    */
   execute(options: ExecuteOptions): Promise<TransactionSubmitResult>;
@@ -2237,6 +2240,16 @@ export interface CompileNoteScriptOptions {
   /** Component libraries to link. */
   libraries?: CompileScriptLibrary[];
 }
+
+/**
+ * Stable `code` of the errors MASM failures raise (a message prefix on Node.js, where the
+ * binding cannot attach a property): `MASM_COMPILE_FAILED` when source does not assemble or
+ * link, `TRANSACTION_EXECUTION_FAILED` when a transaction program fails in the VM, for example
+ * a failing `assert`. The message carries the compiler or VM diagnostic.
+ */
+export type MasmErrorCode =
+  | "MASM_COMPILE_FAILED"
+  | "TRANSACTION_EXECUTION_FAILED";
 
 export declare class CompilerResource {
   /**
