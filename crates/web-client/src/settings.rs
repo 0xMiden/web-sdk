@@ -13,7 +13,7 @@ impl WebClient {
     #[wasm_bindgen(js_name = "getSetting")]
     pub async fn get_setting(&self, key: String) -> Result<Option<JsValue>, JsValue> {
         let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| JsValue::from_str("Client not initialized"))?;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
         let result: Option<Vec<u8>> = client.get_setting(key).await.map_err(|err| {
             js_error_with_context(err, "failed to get setting value from the store")
         })?;
@@ -34,7 +34,7 @@ impl WebClient {
             js_error_with_context(err, "failed to serialize given value into bytes")
         })?;
         let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| JsValue::from_str("Client not initialized"))?;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
         client.set_setting(key, value_bytes).await.map_err(|err| {
             js_error_with_context(err, "failed to set setting value in the store")
         })?;

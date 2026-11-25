@@ -16,6 +16,8 @@ use serde_wasm_bindgen::from_value;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 
+use crate::platform::from_str_err;
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AccountAuthIdxdbObject {
@@ -41,10 +43,8 @@ pub(crate) async fn get_account_auth_by_pub_key_commitment(
         idxdb_get_account_auth_by_pub_key_commitment(db_id, pub_key_commitment_hex.clone());
     let js_secret_key = JsFuture::from(promise).await?;
 
-    let account_auth_idxdb: Option<AccountAuthIdxdbObject> =
-        from_value(js_secret_key).map_err(|err| {
-            JsValue::from_str(&format!("Error: failed to deserialize secret key: {err}"))
-        })?;
+    let account_auth_idxdb: Option<AccountAuthIdxdbObject> = from_value(js_secret_key)
+        .map_err(|err| from_str_err(&format!("Error: failed to deserialize secret key: {err}")))?;
 
     Ok(account_auth_idxdb.map(|auth| auth.secret_key))
 }
@@ -76,7 +76,7 @@ pub(crate) async fn get_key_commitments_by_account_id(
     let js_commitments = JsFuture::from(promise).await?;
 
     let commitments: Vec<String> = from_value(js_commitments).map_err(|err| {
-        JsValue::from_str(&format!("Error: failed to deserialize key commitments: {err}"))
+        from_str_err(&format!("Error: failed to deserialize key commitments: {err}"))
     })?;
 
     Ok(commitments)

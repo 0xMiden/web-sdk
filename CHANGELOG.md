@@ -40,8 +40,11 @@
 
 ### Fixes
 
+* [FIX][web] Browser `from_str_err` paths now throw a real JavaScript `Error` (same shape as `from_str_err_with_code`) instead of a bare string, so `instanceof Error`, `.message`, and `.stack` work for validation failures such as `new Felt` / `NoteAssets` and for calls made with `useWorker: false` ([#106](https://github.com/0xMiden/web-sdk/issues/106)).
 * [FIX][docs] Added `crates/js-export-macro/README.md` and configured `readme = "README.md"` in `crates/js-export-macro/Cargo.toml` so the published `js-export-macro` crate includes documentation on crates.io ([#191](https://github.com/0xMiden/web-sdk/issues/191)).
 * [FIX][web] Development faucet funding preserves the full integer value of proof-of-work targets sent as JSON numbers ([#626](https://github.com/0xMiden/web-sdk/pull/626)).
+
+* [FIX][web] Transaction failures from a supplied prover include help for checking the prover configuration and remote endpoint, alongside the original error ([#89](https://github.com/0xMiden/web-sdk/issues/89)).
 
 * [FIX][web] Safari and other AppleWebKit hosts no longer fail to load the WASM asset after a Vite or webpack production build. The classic worker receives the hashed WASM URL from the main thread (as a string because WebKit cannot structured-clone a `URL` object over `postMessage`) instead of resolving an unhashed path relative to the worker script ([#286](https://github.com/0xMiden/web-sdk/issues/286)).
 * [FIX][web] An SDK call made while a `MidenClient._withInnerWebClient(fn)` callback awaits now queues behind the callback instead of running inline and racing the wasm client. Only calls made through the `inner` handle `fn` receives run inline, so inside `fn` call the SDK through `inner`, not through another reference to the client, and await those calls one at a time. The raw-bound accessors (`lastAuthError()`, the `keystore` getter, and on mock clients `proveBlock()` and `serializeMock*()`) still never queue; a call through `inner` after `fn` settles queues like any other. ([#164](https://github.com/0xMiden/web-sdk/issues/164))

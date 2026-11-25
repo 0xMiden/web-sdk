@@ -13,7 +13,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::models::word::Word;
 
-#[cfg_attr(feature = "browser", wasm_bindgen(getter_with_clone, inspectable))]
+#[cfg_attr(feature = "browser", wasm_bindgen(getter_with_clone))]
 #[cfg_attr(feature = "nodejs", napi(object))]
 #[derive(Clone)]
 pub struct StorageMapEntry {

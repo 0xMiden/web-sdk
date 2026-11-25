@@ -76,13 +76,16 @@ test.describe("mint transaction tests", () => {
         .executedTransaction()
         .inputNotes();
 
-      // The browser build throws a bare string, the Node.js build an Error.
+      // Both browser and Node.js builds throw an Error instance.
       const errorOf = (call) => {
         try {
           call();
-          return "";
+          return { isError: false, message: "" };
         } catch (err) {
-          return String(err?.message ?? err);
+          return {
+            isError: err instanceof Error,
+            message: String(err?.message ?? err),
+          };
         }
       };
 
@@ -101,14 +104,26 @@ test.describe("mint transaction tests", () => {
 
     expect(result.outputNoteId).toBe(result.createdNoteId);
     expect(result.inputNoteId).toBe(result.createdNoteId);
-    expect(result.outputError).toContain("OutputNotes index out of bounds");
-    expect(result.outputError).toContain(`index ${result.outputCount}`);
-    expect(result.inputError).toContain("InputNotes index out of bounds");
-    expect(result.inputError).toContain(`index ${result.inputCount}`);
-    expect(result.outputError256).toContain("OutputNotes index out of bounds");
-    expect(result.outputError256).toContain("index 256");
-    expect(result.inputError256).toContain("InputNotes index out of bounds");
-    expect(result.inputError256).toContain("index 256");
+    expect(result.outputError.isError).toBe(true);
+    expect(result.outputError.message).toContain(
+      "OutputNotes index out of bounds"
+    );
+    expect(result.outputError.message).toContain(`index ${result.outputCount}`);
+    expect(result.inputError.isError).toBe(true);
+    expect(result.inputError.message).toContain(
+      "InputNotes index out of bounds"
+    );
+    expect(result.inputError.message).toContain(`index ${result.inputCount}`);
+    expect(result.outputError256.isError).toBe(true);
+    expect(result.outputError256.message).toContain(
+      "OutputNotes index out of bounds"
+    );
+    expect(result.outputError256.message).toContain("index 256");
+    expect(result.inputError256.isError).toBe(true);
+    expect(result.inputError256.message).toContain(
+      "InputNotes index out of bounds"
+    );
+    expect(result.inputError256.message).toContain("index 256");
   });
 });
 
@@ -584,10 +599,10 @@ test.describe("storage map test", () => {
 // ================================================================================================
 
 test.describe("submitNewTransactionWithProver tests", () => {
-  test("submitNewTransactionWithProver with failing prover throws", async ({
+  test("submitNewTransactionWithProver reports how to check a failing prover", async ({
     run,
-  }) => {
-    const result = await run(async ({ client, sdk, helpers }) => {
+  }, testInfo) => {
+    const error = await run(async ({ client, sdk, helpers }) => {
       const { wallet, faucet } = await helpers.setupWalletAndFaucet();
 
       const mintTransactionRequest = await client.newMintTransactionRequest(
@@ -603,21 +618,29 @@ test.describe("submitNewTransactionWithProver tests", () => {
         null
       );
 
-      let threw = false;
       try {
         await client.submitNewTransactionWithProver(
           faucet.id(),
           mintTransactionRequest,
           failingProver
         );
-      } catch {
-        threw = true;
+      } catch (error) {
+        return {
+          message: error instanceof Error ? error.message : String(error),
+          help: error?.help,
+        };
       }
 
-      return { threw };
+      return null;
     });
 
-    expect(result.threw).toBe(true);
+    expect(error?.message).toContain("failed to prove transaction");
+    const hint = "Check the transaction prover configuration";
+    if (testInfo.project.name === "nodejs") {
+      expect(error?.message).toContain(`[help: ${hint}`);
+    } else {
+      expect(error?.help).toContain(hint);
+    }
   });
 
   test.describe("executeForSummary tests", () => {

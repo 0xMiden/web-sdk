@@ -17,7 +17,10 @@ pub(crate) type JsErr = napi::Error;
 /// Create an error from a string message.
 #[cfg(feature = "browser")]
 pub(crate) fn from_str_err(msg: &str) -> JsErr {
-    wasm_bindgen::JsValue::from_str(msg)
+    // Match `from_str_err_with_code`: throw a real `Error` so `instanceof Error`,
+    // `.message`, and `.stack` work for validation failures and for calls made
+    // with `useWorker: false` (the worker shim already rewraps bare strings).
+    wasm_bindgen::JsError::new(msg).into()
 }
 
 /// Create an error from a string message.

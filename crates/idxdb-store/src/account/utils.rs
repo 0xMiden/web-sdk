@@ -16,7 +16,7 @@ use miden_client::store::{AccountStatus, ClientAccountType, StoreError};
 use miden_client::utils::{Deserializable, Serializable};
 use miden_client::{Felt, Word};
 use miden_client_proto::encode;
-use wasm_bindgen::JsValue;
+use wasm_bindgen::{JsError, JsValue};
 use wasm_bindgen_futures::JsFuture;
 
 use super::js_bindings::{
@@ -95,7 +95,7 @@ pub async fn remove_account_address(db_id: &str, address: Address) -> Result<boo
 
     removed
         .as_bool()
-        .ok_or_else(|| JsValue::from_str("removeAccountAddress did not resolve to a boolean"))
+        .ok_or_else(|| JsError::new("removeAccountAddress did not resolve to a boolean").into())
 }
 
 pub fn parse_account_record_idxdb_object(

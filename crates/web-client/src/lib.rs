@@ -32,9 +32,9 @@ use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, VerifyingRpcClient}
 use miden_client::store::Store;
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::MockNoteTransportApi;
-use miden_client::transaction::BatchBuilderError;
 #[cfg(feature = "browser")]
 use miden_client::transaction::TransactionExecutorError;
+use miden_client::transaction::{BatchBuilderError, TransactionProverError};
 #[cfg(feature = "browser")]
 use miden_client::vm::{ExecutionError, OperationError};
 use miden_client::{Client, ClientError, ErrorHint};
@@ -196,7 +196,7 @@ const BASE_STORE_NAME: &str = "MidenClientDB";
 #[cfg(feature = "browser")]
 fn node_endpoint(node_url: Option<String>) -> Result<Endpoint, JsValue> {
     node_url.map_or(Ok(Endpoint::testnet()), |url| {
-        Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
+        Endpoint::try_from(url.as_str()).map_err(|_| from_str_err("Invalid node URL"))
     })
 }
 
@@ -421,7 +421,7 @@ impl WebClient {
             .as_ref()
             .and_then(|c| c.authenticator())
             .cloned()
-            .ok_or_else(|| JsValue::from_str("Client not initialized"))?;
+            .ok_or_else(|| from_str_err("Client not initialized"))?;
         Ok(keystore_api::WebKeystoreApi::new(ks))
     }
 
@@ -972,6 +972,12 @@ fn build_error_chain(context: &str, err: &(dyn Error + 'static)) -> String {
 }
 
 fn hint_from_error(err: &(dyn Error + 'static)) -> Option<String> {
+    if err.is::<TransactionProverError>() {
+        return Some(
+            "Check the transaction prover configuration. For a remote prover, verify the endpoint is reachable."
+                .to_string(),
+        );
+    }
     if let Some(client_error) = err.downcast_ref::<ClientError>() {
         return Option::<ErrorHint>::from(client_error).map(ErrorHint::into_help_message);
     }

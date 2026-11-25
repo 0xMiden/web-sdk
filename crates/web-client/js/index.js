@@ -1548,10 +1548,10 @@ class WebClient {
   ) {
     return this._createAccount("newFaucet", (wasm) => {
       const authScheme = resolveAuthScheme(authSchemeId, wasm);
-      // The wasm newFaucet refuses this before its own pre-sync, with a bare
-      // string rather than an Error; this rejects with the same value.
+      // The wasm newFaucet refuses this before its own pre-sync with an Error;
+      // this rejects with the same message before taking the store lock.
       if (nonFungible === true) {
-        throw "Non-fungible faucets are not supported yet";
+        throw new Error("Non-fungible faucets are not supported yet");
       }
       return [
         storageMode,

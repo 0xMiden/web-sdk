@@ -87,12 +87,12 @@ impl WebClient {
 pub async fn export_store(store_name: &str) -> Result<JsValue, JsValue> {
     let store = idxdb_store::IdxdbStore::new(store_name.into())
         .await
-        .map_err(|err| JsValue::from_str(&format!("failed to open store: {err:?}")))?;
+        .map_err(|err| from_str_err(&format!("failed to open store: {err:?}")))?;
 
     let json_string = store
         .export_store()
         .await
-        .map_err(|err| JsValue::from_str(&format!("failed to export store: {err:?}")))?;
+        .map_err(|err| from_str_err(&format!("failed to export store: {err:?}")))?;
 
     Ok(JsValue::from_str(&json_string))
 }
