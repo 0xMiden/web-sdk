@@ -98,6 +98,10 @@ function makeStatefulWasmClient() {
       this.setSetting = vi.fn(async () => {});
       this.importNoteFile = vi.fn(async () => "note-imported");
       this.fetchPrivateNotes = vi.fn(async () => {});
+      this.exportAccountFile = vi.fn(async () => ({ accountFile: true }));
+      this.getAccountAuthByPubKeyCommitment = vi.fn(async () => ({
+        auth: true,
+      }));
     }
     storeIdentifier() {
       return Promise.resolve("test-store-db");
@@ -175,12 +179,6 @@ function makeStatefulWasmClient() {
     }
     exportNoteFile() {
       return Promise.resolve({ noteFile: true });
-    }
-    exportAccountFile() {
-      return Promise.resolve({ accountFile: true });
-    }
-    getAccountAuthByPubKeyCommitment() {
-      return Promise.resolve({ auth: true });
     }
     getPublicKeyCommitmentsOfAccount() {
       return Promise.resolve(["0xpk"]);
@@ -305,8 +303,6 @@ describe("concurrent local reads during in-flight sync and proving", () => {
       storeIdDuringSync,
       builderDuringSync,
       noteExportDuringSync,
-      accountExportDuringSync,
-      authKeyDuringSync,
       pkCommitmentsDuringSync,
       acctByKeyDuringSync,
       witnessesDuringSync,
@@ -334,8 +330,6 @@ describe("concurrent local reads during in-flight sync and proving", () => {
       client.storeIdentifier(),
       client.createCodeBuilder(),
       client.exportNoteFile("out-1", "Full"),
-      client.exportAccountFile("acct-1"),
-      client.getAccountAuthByPubKeyCommitment("0xpk"),
       client.getPublicKeyCommitmentsOfAccount("acct-1"),
       client.getAccountByKeyCommitment("0xpk"),
       client.trackedAccountWitnesses(),
@@ -368,8 +362,6 @@ describe("concurrent local reads during in-flight sync and proving", () => {
     expect(storeIdDuringSync).toBe("test-store-db");
     expect(builderDuringSync).toEqual({ codeBuilder: true });
     expect(noteExportDuringSync).toEqual({ noteFile: true });
-    expect(accountExportDuringSync).toEqual({ accountFile: true });
-    expect(authKeyDuringSync).toEqual({ auth: true });
     expect(pkCommitmentsDuringSync).toEqual(["0xpk"]);
     expect(acctByKeyDuringSync).toBe("acct-v1");
     expect(witnessesDuringSync).toEqual(["0xwitness"]);
@@ -424,6 +416,31 @@ describe("concurrent local reads during in-flight sync and proving", () => {
     expect(await client.getOutputNotes({})).toEqual(["out-note-v2"]);
     expect(await client.getTransactions({})).toEqual(["tx-v1", "tx-v2"]);
     expect(await client.protocolConfig()).toEqual({ epoch: 2 });
+  });
+
+  it("keeps callback-backed key reads serialized behind an in-flight call so they cannot clear its callback error state", async () => {
+    const { client, wasmClient } = makeInstance({ useWorker: false });
+    const syncGate = deferred();
+    wasmClient.syncStateImpl = vi.fn(async () => syncGate.promise);
+
+    const syncPromise = client.syncState();
+    await vi.waitFor(() =>
+      expect(wasmClient.syncStateImpl).toHaveBeenCalledTimes(1)
+    );
+
+    // Both reach WebKeyStore::get_key, which clears and overwrites the shared
+    // lastAuthError slot, so they must not overlap an in-flight call.
+    const keyRead = client.getAccountAuthByPubKeyCommitment("0xpk");
+    const accountExport = client.exportAccountFile("acct-1");
+    expect(await settleState(keyRead)).toEqual({ status: "pending" });
+    expect(await settleState(accountExport)).toEqual({ status: "pending" });
+    expect(wasmClient.getAccountAuthByPubKeyCommitment).not.toHaveBeenCalled();
+    expect(wasmClient.exportAccountFile).not.toHaveBeenCalled();
+
+    syncGate.resolve("synced");
+    await syncPromise;
+    await expect(keyRead).resolves.toEqual({ auth: true });
+    await expect(accountExport).resolves.toEqual({ accountFile: true });
   });
 
   it("completes local reads while an in-realm (useWorker: false) syncState is pending", async () => {

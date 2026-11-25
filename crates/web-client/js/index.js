@@ -179,16 +179,15 @@ const WRITE_METHODS = new Set([
 
 // Safe local read methods backed by `read_client` (or cached read-only
 // metadata) on `WebClient`. They read committed store state without touching
-// `inner`, network RPC, or VM execution, so `createClientProxy` runs them
+// `inner`, network RPC, VM execution, or the user `getKey` callback (which
+// clears the auth-error state a concurrent transaction reads), so `createClientProxy` runs them
 // directly via `_runLocalRead` instead of queuing behind `_wasmCallChain`.
 const LOCAL_READ_METHODS = new Set([
   "accountReader",
   "createCodeBuilder",
-  "exportAccountFile",
   "exportNoteFile",
   "feeFaucetId",
   "getAccount",
-  "getAccountAuthByPubKeyCommitment",
   "getAccountByKeyCommitment",
   "getAccountCode",
   "getAccountStorage",
@@ -214,7 +213,9 @@ const LOCAL_READ_METHODS = new Set([
 
 const READ_METHODS = new Set([
   "executeProgram",
+  "exportAccountFile",
   "exportStore",
+  "getAccountAuthByPubKeyCommitment",
   "getConsumableNotes",
   "getNoteConsumability",
   "getNoteConsumabilityForAccount",
