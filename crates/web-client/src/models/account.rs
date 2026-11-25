@@ -19,6 +19,7 @@ use miden_client::auth::{
 use miden_client::testing::standards::account_interface::get_public_keys_from_account;
 use miden_protocol::account::component::AUTH_SCRIPT_ATTRIBUTE;
 
+use crate::js_error_with_context;
 use crate::models::account_code::AccountCode;
 use crate::models::account_id::AccountId;
 use crate::models::account_patch::AccountPatch;
@@ -26,7 +27,6 @@ use crate::models::account_storage::AccountStorage;
 use crate::models::asset_vault::AssetVault;
 use crate::models::felt::Felt;
 use crate::models::word::Word;
-use crate::js_error_with_context;
 use crate::platform::{JsBytes, JsErr, from_str_err};
 use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
 

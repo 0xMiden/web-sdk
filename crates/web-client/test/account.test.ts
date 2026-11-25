@@ -1304,33 +1304,25 @@ test.describe("getAccountByKeyCommitment tests", () => {
 // APPLY_PATCH TESTS
 // =======================================================================================================
 
+// Each run() callback is serialized into the page, so it cannot reference anything
+// declared outside it: the mint setup is repeated inside every callback.
 test.describe("Account.applyPatch tests", () => {
-  const mintPatch = async ({ client, sdk, helpers }) => {
-    const { wallet, faucet } = await helpers.setupWalletAndFaucet();
-    const before = await client.getAccount(faucet.id());
-    const request = await client.newMintTransactionRequest(
-      wallet.id(),
-      faucet.id(),
-      sdk.NoteType.Public,
-      BigInt(7)
-    );
-    const executed = (
-      await client.executeTransaction(faucet.id(), request)
-    ).executedTransaction();
-    return {
-      wallet,
-      faucet,
-      before,
-      executed,
-      patch: executed.accountPatch(),
-    };
-  };
-
   test("applying a transaction's patch reproduces the post-transaction account", async ({
     run,
   }) => {
-    const result = await run(async (ctx) => {
-      const { before, executed, patch } = await mintPatch(ctx);
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+      const before = await client.getAccount(faucet.id());
+      const request = await client.newMintTransactionRequest(
+        wallet.id(),
+        faucet.id(),
+        sdk.NoteType.Public,
+        BigInt(7)
+      );
+      const executed = (
+        await client.executeTransaction(faucet.id(), request)
+      ).executedTransaction();
+      const patch = executed.accountPatch();
       const updated = before.applyPatch(patch);
       return {
         updated: updated.to_commitment().toHex(),
@@ -1351,8 +1343,19 @@ test.describe("Account.applyPatch tests", () => {
   });
 
   test("rejects a patch for another account", async ({ run }) => {
-    const result = await run(async (ctx) => {
-      const { wallet, patch } = await mintPatch(ctx);
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+      const before = await client.getAccount(faucet.id());
+      const request = await client.newMintTransactionRequest(
+        wallet.id(),
+        faucet.id(),
+        sdk.NoteType.Public,
+        BigInt(7)
+      );
+      const executed = (
+        await client.executeTransaction(faucet.id(), request)
+      ).executedTransaction();
+      const patch = executed.accountPatch();
       try {
         wallet.applyPatch(patch);
         return { message: null };
@@ -1363,21 +1366,56 @@ test.describe("Account.applyPatch tests", () => {
     expect(result.message).toMatch(/patch is for account ID/);
   });
 
+  test("rejects a patch whose nonce equals the account's", async ({ run }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+      const before = await client.getAccount(faucet.id());
+      const request = await client.newMintTransactionRequest(
+        wallet.id(),
+        faucet.id(),
+        sdk.NoteType.Public,
+        BigInt(7)
+      );
+      const executed = (
+        await client.executeTransaction(faucet.id(), request)
+      ).executedTransaction();
+      const patch = executed.accountPatch();
+      const updated = before.applyPatch(patch);
+      try {
+        updated.applyPatch(patch);
+        return { message: null };
+      } catch (e) {
+        return { message: String(e?.message ?? e) };
+      }
+    });
+    expect(result.message).toMatch(/not greater than/);
+  });
+
   test("rejects a patch whose nonce is below the account's", async ({
     run,
   }) => {
-    const result = await run(async (ctx) => {
-      const { client, sdk } = ctx;
-      const { wallet, faucet, patch } = await mintPatch(ctx);
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+      const before = await client.getAccount(faucet.id());
+      const request = await client.newMintTransactionRequest(
+        wallet.id(),
+        faucet.id(),
+        sdk.NoteType.Public,
+        BigInt(7)
+      );
+      const executed = (
+        await client.executeTransaction(faucet.id(), request)
+      ).executedTransaction();
+      const patch = executed.accountPatch();
       // Two real transactions move the faucet past the patch's nonce.
       for (const amount of [3, 4]) {
-        const request = await client.newMintTransactionRequest(
+        const next = await client.newMintTransactionRequest(
           wallet.id(),
           faucet.id(),
           sdk.NoteType.Public,
           BigInt(amount)
         );
-        await client.submitNewTransaction(faucet.id(), request);
+        await client.submitNewTransaction(faucet.id(), next);
         await client.proveBlock();
         await client.syncState();
       }
@@ -1389,6 +1427,6 @@ test.describe("Account.applyPatch tests", () => {
         return { message: String(e?.message ?? e) };
       }
     });
-    expect(result.message).toMatch(/nonce/);
+    expect(result.message).toMatch(/not greater than/);
   });
 });
