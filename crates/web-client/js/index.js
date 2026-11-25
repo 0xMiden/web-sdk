@@ -1,12 +1,3 @@
-import { createNoteAcquisitionOwner } from "./noteAcquisition.js";
-export { NoteAcquisitionRetentionError } from "./noteAcquisition.js";
-import {
-  validateIndexedDbOptions,
-  indexedDbArgs,
-  workerIndexedDbOptions,
-  deliverIndexedDbFailure,
-  createIndexedDbFailureSubscription,
-} from "./indexeddb.js";
 import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
 import {
@@ -161,7 +152,6 @@ const WRITE_METHODS = new Set([
   "importNoteFile",
   "importWatchedAccountById",
   "insertAccountAddress",
-  "installNoteAcquisitionGate",
   "newAccount",
   "newB2AggTransactionRequest",
   "newConsumeTransactionRequest",
@@ -205,7 +195,6 @@ const READ_METHODS = new Set([
   "getNoteConsumabilityForAccount",
   "getInputNote",
   "getInputNotes",
-  "getInputNotesPage",
   "getOutputNote",
   "getOutputNotes",
   "getPswapLineage",
@@ -252,9 +241,7 @@ const deserializeError = (errorLike) => {
     return new Error("Unknown error received from worker");
   }
   const { name, message, stack, cause, ...rest } = errorLike;
-  const text = message ?? "Unknown worker error";
-  const reconstructedError =
-    name === "TypeError" ? new TypeError(text) : new Error(text);
+  const reconstructedError = new Error(message ?? "Unknown worker error");
   reconstructedError.name = name ?? reconstructedError.name;
   if (stack) {
     reconstructedError.stack = stack;
@@ -585,9 +572,6 @@ class WebClient {
    * @param {number | undefined} [callbackTimeoutMs] - The `callbackTimeoutMs`
    *   field of `ClientOptions`: how long the Web Worker waits for each external
    *   keystore callback. See `callbackTimeoutFor` in `callbackBridge.js`.
-   * @param {import("./types/api-types").IndexedDbOptions} [indexedDb] - Browser
-   *   transaction durability hint and synchronous failure callback. Shared/pending
-   *   connections inherit omitted durability and reject explicit conflicts.
    * @throws {TypeError} If either retry option is out of range or their total
    *   backoff exceeds 120000 ms. Checked here, before any worker or WASM call,
    *   so every way of building a client rejects the same values.
@@ -606,32 +590,12 @@ class WebClient {
     feeFaucetId,
     noteTransportMaxRetries,
     noteTransportRetryIntervalMs,
-    callbackTimeoutMs,
-    indexedDb
+    callbackTimeoutMs
   ) {
     validateNoteTransportRetryOptions(
       noteTransportMaxRetries,
       noteTransportRetryIntervalMs
     );
-    this._acquisition = createNoteAcquisitionOwner(
-      observability,
-      () => !this._terminated
-    );
-    const storageOptions = validateIndexedDbOptions(indexedDb);
-    const storageSubscription = createIndexedDbFailureSubscription(
-      storageOptions?.onFailure,
-      () => !this._terminated
-    );
-    this._releaseStorageCallback = storageSubscription.dispose;
-    this._indexedDb =
-      storageOptions === undefined
-        ? undefined
-        : {
-            durability: storageOptions.durability,
-            onFailure: storageOptions.onFailure
-              ? storageSubscription.notify
-              : undefined,
-          };
     this.rpcUrl = rpcUrl;
     this.noteTransportUrl = noteTransportUrl;
     this.seed = seed;
@@ -711,37 +675,6 @@ class WebClient {
       // Listen for messages from the worker.
       this.worker.addEventListener("message", async (event) => {
         const data = event.data;
-        if (data.action === "noteAcquisition") {
-          const { acquisitionId, operationId, candidate } = data;
-          const owns = () =>
-            !this._terminated && this.pendingRequests.has(operationId);
-          const operation = this.pendingRequests.get(operationId);
-          const seen = operation && (operation.acquisitionIds ??= new Set());
-          const valid =
-            owns() &&
-            Number.isSafeInteger(acquisitionId) &&
-            acquisitionId > 0 &&
-            !seen.has(acquisitionId) &&
-            seen.size < (this._acquisition?.limits.maxNotes ?? 0);
-          if (valid) seen.add(acquisitionId);
-          const decision =
-            valid && this._acquisition
-              ? await this._acquisition.decide(candidate, operationId)
-              : "rejected";
-          if (!this._terminated)
-            this.worker.postMessage({
-              action: "noteAcquisitionAck",
-              acquisitionId,
-              operationId,
-              decision: owns() ? decision : "rejected",
-            });
-          return;
-        }
-        if (data.action === WorkerAction.STORAGE_FAILURE) {
-          if (!this._terminated)
-            deliverIndexedDbFailure(this._indexedDb?.onFailure, data.failure);
-          return;
-        }
 
         // Worker script loaded.
         if (data.loaded) {
@@ -1207,9 +1140,6 @@ class WebClient {
         this._noteTransportMaxRetries,
         this._noteTransportRetryIntervalMs,
         this._callbackTimeoutMs,
-        ...(this._acquisition
-          ? [workerIndexedDbOptions(this._indexedDb), this._acquisition.limits]
-          : indexedDbArgs(workerIndexedDbOptions(this._indexedDb))),
       ],
     });
   }
@@ -1260,9 +1190,6 @@ class WebClient {
    * @param {boolean} [exclusive=false] - Refuse a store another live client has open, and make
    *   every other open of this store refuse until this client terminates. Without it, opening
    *   an open store warns naming the client that has it.
-   * @param {import("./types/api-types").IndexedDbOptions} [indexedDb] - Browser
-   *   durability hint and synchronous failure callback; appended after `exclusive`.
-   *   Omission inherits a shared connection policy; explicit conflicts reject.
    */
   static async createClient(
     rpcUrl,
@@ -1276,8 +1203,7 @@ class WebClient {
     noteTransportMaxRetries,
     noteTransportRetryIntervalMs,
     callbackTimeoutMs,
-    exclusive = false,
-    indexedDb
+    exclusive = false
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -1294,8 +1220,7 @@ class WebClient {
       feeFaucetId,
       noteTransportMaxRetries,
       noteTransportRetryIntervalMs,
-      callbackTimeoutMs,
-      indexedDb
+      callbackTimeoutMs
     );
 
     try {
@@ -1320,12 +1245,10 @@ class WebClient {
         network,
         feeFaucetId,
         noteTransportMaxRetries,
-        noteTransportRetryIntervalMs,
-        ...indexedDbArgs(instance._indexedDb)
+        noteTransportRetryIntervalMs
       );
 
       // Wait for the worker to be ready
-      await instance._installAcquisition(wasmWebClient);
       await instance.ready;
     } catch (error) {
       // Never handed to the caller, so nothing else would terminate it.
@@ -1361,9 +1284,6 @@ class WebClient {
    *   retry; see the constructor.
    * @param {number | undefined} [callbackTimeoutMs] - See the constructor.
    * @param {boolean} [exclusive=false] - See `createClient`.
-   * @param {import("./types/api-types").IndexedDbOptions} [indexedDb] - Browser
-   *   durability hint and synchronous failure callback; appended after `exclusive`.
-   *   Omission inherits a shared connection policy; explicit conflicts reject.
    */
   static async createClientWithExternalKeystore(
     rpcUrl,
@@ -1380,8 +1300,7 @@ class WebClient {
     noteTransportMaxRetries,
     noteTransportRetryIntervalMs,
     callbackTimeoutMs,
-    exclusive = false,
-    indexedDb
+    exclusive = false
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -1398,8 +1317,7 @@ class WebClient {
       feeFaucetId,
       noteTransportMaxRetries,
       noteTransportRetryIntervalMs,
-      callbackTimeoutMs,
-      indexedDb
+      callbackTimeoutMs
     );
 
     try {
@@ -1427,11 +1345,9 @@ class WebClient {
         insertKeyCb,
         signCb,
         noteTransportMaxRetries,
-        noteTransportRetryIntervalMs,
-        ...indexedDbArgs(instance._indexedDb)
+        noteTransportRetryIntervalMs
       );
 
-      await instance._installAcquisition(wasmWebClient);
       await instance.ready;
     } catch (error) {
       // Never handed to the caller, so nothing else would terminate it.
@@ -1439,14 +1355,6 @@ class WebClient {
       throw error;
     }
     return createClientProxy(instance);
-  }
-
-  async _installAcquisition(client) {
-    if (this._acquisition)
-      await client.installNoteAcquisitionGate(
-        (candidate) => this._acquisition.decide(candidate),
-        this._acquisition.limits
-      );
   }
 
   /**
@@ -2120,7 +2028,6 @@ class WebClient {
     const error = new Error(`WebClient worker failed: ${reason}`);
     console.error(error.message);
     this._workerFailure = error;
-    this._acquisition?.retire();
     this.worker.terminate();
     this.readyRejecter(error);
     for (const { reject } of this.pendingRequests.values()) {
@@ -2160,7 +2067,6 @@ class WebClient {
    */
   terminate() {
     this._terminated = true;
-    this._acquisition?.retire();
     this._releaseStore?.();
     if (this.worker) {
       this.worker.terminate();
@@ -2173,7 +2079,6 @@ class WebClient {
       this.pendingRequests.clear();
     }
     this._afterQueuedWasmCalls(async () => {
-      this._releaseStorageCallback?.();
       const client = this.wasmWebClient;
       this.wasmWebClient = null;
       this.wasmWebClientPromise = null;
@@ -2235,14 +2140,7 @@ class WebClient {
 }
 
 class MockWebClient extends WebClient {
-  constructor(
-    seed,
-    logLevel,
-    storeName,
-    indexedDb,
-    useWorker = true,
-    acquisitionOptions
-  ) {
+  constructor(seed, logLevel, storeName) {
     super(
       null,
       null,
@@ -2251,14 +2149,7 @@ class MockWebClient extends WebClient {
       undefined,
       undefined,
       undefined,
-      logLevel,
-      useWorker,
-      acquisitionOptions,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      indexedDb
+      logLevel
     );
     // The worker's mock client has to start from the main thread's mock
     // chain: both clients open the same IndexedDB store, and a worker that
@@ -2297,12 +2188,6 @@ class MockWebClient extends WebClient {
             serializedMockChain,
             serializedMockNoteTransportNode,
             this.storeName,
-            ...(this._acquisition
-              ? [
-                  workerIndexedDbOptions(this._indexedDb),
-                  this._acquisition.limits,
-                ]
-              : indexedDbArgs(workerIndexedDbOptions(this._indexedDb))),
           ],
         });
       }
@@ -2317,9 +2202,6 @@ class MockWebClient extends WebClient {
    * @param seed - The seed for the account (optional).
    * @param logLevel - Optional log level.
    * @param storeName - Optional IndexedDB name. Defaults to `mock_client_db`. Use a distinct name for a second independent mock in the same origin.
-   * @param {import("./types/api-types").IndexedDbOptions} [indexedDb] - Browser
-   *   store durability hint and synchronous failure callback.
-   * @param {boolean} [useWorker=true] - Set false for current-thread execution.
    * @returns A promise that resolves to a MockWebClient.
    */
   static async createClient(
@@ -2327,20 +2209,10 @@ class MockWebClient extends WebClient {
     serializedMockNoteTransportNode,
     seed,
     logLevel,
-    storeName,
-    indexedDb,
-    useWorker,
-    acquisitionOptions
+    storeName
   ) {
     // Construct the instance (synchronously).
-    const instance = new MockWebClient(
-      seed,
-      logLevel,
-      storeName,
-      indexedDb,
-      useWorker,
-      acquisitionOptions
-    );
+    const instance = new MockWebClient(seed, logLevel, storeName);
 
     try {
       // Set up logging on the main thread before creating the client.
@@ -2355,8 +2227,7 @@ class MockWebClient extends WebClient {
         seed ?? null,
         serializedMockChain ?? null,
         serializedMockNoteTransportNode ?? null,
-        instance.storeName,
-        ...indexedDbArgs(instance._indexedDb)
+        instance.storeName
       );
 
       // Hand the main-thread chain to the worker's INIT_MOCK.
@@ -2366,7 +2237,6 @@ class MockWebClient extends WebClient {
       ]);
 
       // Wait for the worker to be ready
-      await instance._installAcquisition(wasmWebClient);
       await instance.ready;
     } catch (error) {
       // Never handed to the caller, so nothing else would terminate it.
@@ -2561,10 +2431,8 @@ class MockWebClient extends WebClient {
             this.seed,
             newMockChain,
             newMockNoteTransportNode,
-            this.storeName,
-            ...indexedDbArgs(this._indexedDb)
+            this.storeName
           );
-          await this._installAcquisition(replacement);
         } catch (error) {
           try {
             replacement.free();
@@ -2659,10 +2527,8 @@ class MockWebClient extends WebClient {
             this.seed,
             newMockChain,
             newMockNoteTransportNode,
-            this.storeName,
-            ...indexedDbArgs(this._indexedDb)
+            this.storeName
           );
-          await this._installAcquisition(replacement);
         } catch (error) {
           try {
             replacement.free();

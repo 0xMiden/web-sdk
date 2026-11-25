@@ -57,8 +57,6 @@ import type {
   GetKeyCallback,
   InsertKeyCallback,
   MidenObservation,
-  IndexedDbOptions,
-  NoteAcquisitionOptions,
   SignCallback,
 } from "./api-types";
 
@@ -188,7 +186,7 @@ export declare function wordToBigInt(word: Word): bigint;
  * @internal Observability fields `MidenClient.create` forwards to the low-level
  * factories. Mirrors the pair on {@link ClientOptions}; both are construction-only.
  */
-export interface ClientObservabilityOptions extends NoteAcquisitionOptions {
+export interface ClientObservabilityOptions {
   observer?: (observation: MidenObservation) => void;
   observeSensitive?: boolean;
 }
@@ -207,8 +205,7 @@ export declare class WasmWebClient extends WasmWebClientBase {
     noteTransportMaxRetries?: number,
     noteTransportRetryIntervalMs?: number,
     callbackTimeoutMs?: number,
-    exclusive?: boolean,
-    indexedDb?: IndexedDbOptions
+    exclusive?: boolean
   ): Promise<WasmWebClient>;
 
   static createClientWithExternalKeystore(
@@ -226,8 +223,7 @@ export declare class WasmWebClient extends WasmWebClientBase {
     noteTransportMaxRetries?: number,
     noteTransportRetryIntervalMs?: number,
     callbackTimeoutMs?: number,
-    exclusive?: boolean,
-    indexedDb?: IndexedDbOptions
+    exclusive?: boolean
   ): Promise<WasmWebClient>;
 
   // The wrapper resolves a friendly scheme to the wasm enum and passes a
@@ -298,10 +294,7 @@ export declare class MockWasmWebClient extends WasmWebClient {
     serializedMockNoteTransportNode?: Uint8Array,
     seed?: Uint8Array,
     logLevel?: LogLevel,
-    storeName?: string,
-    indexedDb?: IndexedDbOptions,
-    useWorker?: boolean,
-    acquisitionOptions?: NoteAcquisitionOptions
+    storeName?: string
   ): Promise<MockWasmWebClient>;
 
   proveBlock(): Promise<void>;
