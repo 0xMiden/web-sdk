@@ -139,4 +139,20 @@ describe("worker retryProvenBatch (#571)", () => {
     ]);
     expect(again.error.message).toMatch(/Unknown proven batch submission id/);
   });
+
+  it("frees the handle when the node definitively rejects the retry", async () => {
+    const submission = makeSubmission(["0x1"]);
+    outcomes = [unknownOutcome(submission)];
+    const failed = await submitBatch();
+    outcomes = [Object.assign(new Error("conflict"), { code: "Rejected" })];
+    const retried = await call(MethodName.RETRY_PROVEN_BATCH, [
+      failed.error.submissionId,
+    ]);
+    expect(retried.error.message).toContain("conflict");
+    expect(submission.free).toHaveBeenCalledTimes(1);
+    const again = await call(MethodName.RETRY_PROVEN_BATCH, [
+      failed.error.submissionId,
+    ]);
+    expect(again.error.message).toMatch(/Unknown proven batch submission id/);
+  });
 });
