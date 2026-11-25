@@ -138,7 +138,7 @@ The release-publish gate compares the local `package.json` version against the *
 - The four `node-sdk-*` natives are tied to the web-client publish, so their `optionalDependencies` versions always match a real published binary. A release run skips a native package whose version is already on npm, so a re-run after a partial publish finishes the rest.
 - The eleven adopted packages are planned from `scripts/publish-manifest.json` by `scripts/publish-plan.sh`, which also builds the plan's first-party dependency closure in level order before publishing anything.
 
-Release WASM size is gated at 25 MiB for ST and 35 MiB for MT. These limits reject both a `wasm-opt` failure and a skipped MASP debug strip before publishing.
+Release WASM size is gated at 25 MiB for ST and 38 MiB for MT. These limits reject both a `wasm-opt` failure and a skipped MASP debug strip before publishing.
 
 Crate publishing (`miden-idxdb-store`, `miden-client-web`) goes through `.github/workflows/publish-crates-release.yml` and uses the `CARGO_REGISTRY_TOKEN` org secret.
 

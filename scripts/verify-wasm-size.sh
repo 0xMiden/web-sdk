@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Enforces release WASM limits with enough headroom for normal dependency growth while rejecting
-# the known unstripped ST (~27.4MiB) and MT (~37.3MiB) artifacts.
+# the unstripped ST (~27.4MiB) and MT (~39.9MiB) artifacts. The MT figure is the stripped artifact
+# (~37.4MiB, of which the SQLite store is ~2.6MiB) plus the ~2.4MiB the MASP debug strip removes.
 set -euo pipefail
 
 readonly DIST_DIR="${1:-crates/web-client/dist}"
 readonly ST_MAX_BYTES=$((25 * 1024 * 1024))
-readonly MT_MAX_BYTES=$((35 * 1024 * 1024))
+readonly MT_MAX_BYTES=$((38 * 1024 * 1024))
 
 if [[ ! -d "$DIST_DIR" ]]; then
   echo "::error::WASM dist directory does not exist: $DIST_DIR"
