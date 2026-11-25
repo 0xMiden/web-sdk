@@ -23,6 +23,7 @@
 * [FIX][web] Development faucet funding preserves the full integer value of proof-of-work targets sent as JSON numbers ([#626](https://github.com/0xMiden/web-sdk/pull/626)).
 * [FIX][docs] Added `crates/js-export-macro/README.md` and configured `readme = "README.md"` in `crates/js-export-macro/Cargo.toml` so the published `js-export-macro` crate includes documentation on crates.io ([#191](https://github.com/0xMiden/web-sdk/issues/191)).
 * [FIX][idxdb] A sync now commits account locks, the undo of discarded transactions and incremental public-account patches in the same IndexedDB transaction as the sync height and notes, so a failure late in the sync no longer leaves account rows ahead of the sync height ([#64](https://github.com/0xMiden/web-sdk/issues/64)).
+* [FIX][web] Transaction failures from a supplied prover include help for checking the prover configuration and remote endpoint, alongside the original error ([#89](https://github.com/0xMiden/web-sdk/issues/89)).
 
 ## 0.18.1 (2026-11-25)
 
