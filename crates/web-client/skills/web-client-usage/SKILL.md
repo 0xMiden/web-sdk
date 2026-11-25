@@ -1,6 +1,6 @@
 ---
 name: web-client-usage
-description: Conventions for writing JavaScript/TypeScript code that uses the Miden web SDK (`@miden-sdk/miden-sdk`). Use when building apps on Miden, writing integration tests, or calling MidenClient or RpcClient methods - covers initialization, the resource-based API (accounts, transactions, notes, tags, settings, compile, keystore, pswap), stateless RPC queries and submission, sync ordering, type conversions, transaction flows, fees, batching, named storage slots, custom contracts, foreign accounts, private note transport, mock-chain testing, observability, and pitfalls.
+description: Conventions for writing JavaScript/TypeScript code that uses the Miden web SDK (`@miden-sdk/miden-sdk`). Use when building apps on Miden, writing integration tests, or calling MidenClient or RpcClient methods - covers initialization, the resource-based API (accounts, transactions, notes, tags, chain, settings, compile, keystore, pswap), stateless RPC queries and submission, sync ordering, type conversions, transaction flows, fees, batching, named storage slots, custom contracts, foreign accounts, private note transport, mock-chain testing, observability, and pitfalls.
 ---
 
 # Web SDK Usage Patterns
@@ -25,6 +25,7 @@ The SDK exposes a top-level `MidenClient` whose state is split across typed
 | `client.transactions` | `send` / `mint` / `bridge` / `withdrawUsdcx` / `claimAggLayerDeposit` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `retryProvenBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
 | `client.notes`       | Listing, fetching, importing/exporting, private-note transport                                                                                                                 |
 | `client.tags`        | Note-tag subscriptions                                                                                                                                                         |
+| `client.chain`       | Block headers with MMR proofs and nullifier commit heights, read from the node                                                                                                 |
 | `client.settings`    | Persistent client settings                                                                                                                                                     |
 | `client.compile`     | Compiling MASM into account components, tx scripts, note scripts                                                                                                               |
 | `client.keystore`    | Inserting / fetching / removing secret keys                                                                                                                                    |

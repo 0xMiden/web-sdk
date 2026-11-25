@@ -50,6 +50,10 @@ import type {
   PswapLineageRecord,
   ClaimProofData,
   ClaimLeafData,
+  BlockHeader,
+  BlockHeaderWithProof,
+  MmrProof,
+  NullifierUpdate,
 } from "./crates/miden_client_web";
 
 // `Account.prototype.storage()` is patched at WASM load time to return the
@@ -2299,6 +2303,66 @@ export interface TagsResource {
   list(): Promise<number[]>;
 }
 
+/**
+ * Chain data read straight from the node, with no local store involved. Every
+ * call goes through one cached `RpcClient` that talks to the client's own
+ * endpoint, so the reads are available while a sync or transaction is in
+ * flight. They reject on a mock client, which has no node, and after
+ * `terminate()`. Use the standalone `RpcClient` for node calls this resource
+ * does not cover. Returned `BlockHeader`, `MmrProof` and `NullifierUpdate`
+ * objects are WASM wrappers: call `free()` on them when done. A block number
+ * that is not an integer from 0 to 2^32 - 1 rejects with a `RangeError`.
+ */
+export interface ChainResource {
+  /**
+   * Fetches a block header.
+   *
+   * @param blockNum - The block to fetch; the latest block when omitted.
+   */
+  getBlockHeader(blockNum?: number): Promise<BlockHeader>;
+  /**
+   * Fetches a block header together with the MMR proof that its commitment is
+   * part of the chain. The proof is made against the chain length the node
+   * reports, `mmrProof.forest()`, which can be later than the block.
+   *
+   * @param blockNum - The block to fetch.
+   */
+  getBlockHeaderWithProof(blockNum: number): Promise<{
+    header: BlockHeader;
+    mmrProof: MmrProof;
+  }>;
+  /**
+   * Looks up the block in which each nullifier was consumed, scanning from
+   * `blockFrom` up to the chain tip and comparing full nullifiers.
+   *
+   * @param nullifiers - Nullifiers as `Word`s or 0x-prefixed hex strings. A
+   *   `Word` is only read, never consumed.
+   * @param options.blockFrom - First block to scan, inclusive. Defaults to 0.
+   * @returns A map keyed by each nullifier as you passed it (a `Word` by its
+   *   `toHex()`), to its commit height or `null` when none was found in the
+   *   range. Hex of any case matches.
+   */
+  getNullifierCommitHeights(
+    nullifiers: Array<Word | string>,
+    options?: { blockFrom?: number }
+  ): Promise<Map<string, number | null>>;
+  /**
+   * Fetches consumed nullifiers matching 16-bit prefixes within an inclusive
+   * block range. Prefixes can match unrelated nullifiers, so compare the full
+   * returned nullifier with the one you track.
+   *
+   * @param prefixes - Nullifier prefixes, the high 16 bits of the fourth field
+   *   element: integers from 0 to 65535, else a `RangeError` before any request.
+   * @param blockFrom - First block to scan, inclusive.
+   * @param blockTo - Last block to scan, inclusive; at or below the chain tip.
+   */
+  syncNullifiers(
+    prefixes: ArrayLike<number>,
+    blockFrom: number,
+    blockTo: number
+  ): Promise<NullifierUpdate[]>;
+}
+
 export interface SettingsResource {
   /**
    * Get a setting value by key. Returns `null` if not found.
@@ -2411,6 +2475,7 @@ export declare class MidenClient {
   readonly transactions: TransactionsResource;
   readonly notes: NotesResource;
   readonly tags: TagsResource;
+  readonly chain: ChainResource;
   readonly settings: SettingsResource;
   readonly compile: CompilerResource;
   readonly keystore: KeystoreResource;

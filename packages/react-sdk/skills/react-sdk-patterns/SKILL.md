@@ -708,7 +708,7 @@ const client = useMidenClient(); // throws if not ready
 const { runExclusive } = useMiden();
 
 // For operations not covered by hooks (use methods on the WebClient itself -
-// e.g. getSyncHeight, getAccount, getTransactions; getBlockHeaderByNumber lives on RpcClient, not here):
+// e.g. getSyncHeight, getAccount, getTransactions; getBlockHeaderByNumber lives on RpcClient, not here; a MidenClient has client.chain.getBlockHeader):
 await runExclusive(async () => {
   const height = await client.getSyncHeight();
 });
