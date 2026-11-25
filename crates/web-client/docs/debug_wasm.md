@@ -19,11 +19,21 @@ git clone git@github.com:0xMiden/web-sdk.git
 ```bash
 make build-web-client-debug
 ```
+That sets `MIDEN_WEB_DEV=true`, asks Rust for `debug='full'`, and skips the
+post-link `wasm-opt` pass so DWARF is not stripped. Release builds still run
+`wasm-opt --strip-dwarf`.
+
 Once it finishes, the Rust build log should print this:
 ```
     Finished `release` profile [optimized + debuginfo] target(s) in 38.33s
 ```
-    
+
+You can confirm the emitted WASM still carries DWARF:
+
+```bash
+wasm-objdump -h crates/web-client/dist/st/assets/miden_client_web_bg.wasm | grep debug_info
+```
+
 ## Using the debug symbols
 
 Once you have both the debug WASM and the Chrome extension, we need to link
