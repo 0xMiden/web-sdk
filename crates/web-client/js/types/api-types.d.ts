@@ -17,6 +17,7 @@ import type {
   TransactionResult,
   TransactionStoreUpdate,
   ProtocolConfig,
+  ProvenBatchSubmission,
   ProvenTransaction,
   TransactionSummary,
   ChainAnchor,
@@ -1890,6 +1891,40 @@ export interface TransactionsResource {
     items: { account: AccountRef; request: TransactionRequest }[],
     options?: Omit<BatchOptions, "operations">
   ): Promise<BatchSubmitResult>;
+
+  /**
+   * Resubmit an already-proven batch after an indeterminate admission response.
+   *
+   * When {@link batch} / {@link submitBatch} fails with
+   * `code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`, the node may or may not have
+   * accepted the batch and nothing was recorded locally. Pass
+   * `error.submission` (in-thread / no worker) or
+   * `{ submissionId: error.submissionId }` (worker) to resend the same proven
+   * bytes without re-proving. Do not call `batch` / `submitBatch` again for
+   * that attempt: a new prove changes identities.
+   *
+   * After a successful retry, confirm with {@link waitFor} / {@link list} for
+   * the transaction ids on the error (`error.transactionIds` or
+   * `submission.transactionIds()`). A retry the node rejects as a conflict
+   * usually means the original attempt landed, but it records nothing locally and
+   * a sync does not insert the missing records: look the ids up on the node.
+   *
+   * Browser builds only: the Node.js build prefixes the message with the code but
+   * cannot attach the submission or `transactionIds`, so it cannot retry yet.
+   *
+   * Accepting an externally proved transaction as a batch member
+   * (`push_proven_transaction`) needs a rust-sdk release that exposes it on
+   * the pinned client and is tracked as a follow-up on #571.
+   *
+   * @param submission - ProvenBatchSubmission handle, worker `submissionId`,
+   *   or `{ submissionId }` from the unknown-outcome error.
+   */
+  retryProvenBatch(
+    submission:
+      | ProvenBatchSubmission
+      | { submissionId: string; submission?: ProvenBatchSubmission }
+      | string
+  ): Promise<{ blockNumber: number }>;
 
   /** Execute a program (view call) and return the resulting stack output. */
   executeProgram(options: ExecuteProgramOptions): Promise<FeltArray>;

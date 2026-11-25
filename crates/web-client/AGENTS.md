@@ -164,6 +164,12 @@ local apply fails, so `apply` and the single-transaction `transactions.*` helper
 `transactionId`, `submissionHeight` and the original error as `cause`. A batch whose
 local update fails after the node accepted it rejects with the same `code` and the
 accepted block in its message, without those fields. Do not submit it again.
+A batch whose admission is indeterminate rejects with
+`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` and nothing recorded locally; resend it
+with `transactions.retryProvenBatch(error.submission ?? { submissionId: error.submissionId })`
+and never re-run `batch` / `submitBatch`. A rejected retry records nothing and a
+sync does not insert the records, so look the ids up on the node. Browser builds
+only: Node.js errors only prefix the message with the code.
 
 **Submitting never registers network scripts.** Scripts a request declares
 through `withExpectedNtxScripts` are not registered by any submit path; submit

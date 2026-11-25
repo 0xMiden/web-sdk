@@ -29,6 +29,47 @@ const serializeUnknown = (value) => {
   }
 };
 
+// Opaque ProvenBatchSubmission handles cannot cross postMessage. Stash them
+// here and round-trip a submissionId so retryProvenBatch can reuse the same
+// worker WASM instance without re-proving (#571).
+const provenBatchSubmissions = new Map();
+// A caller can abandon an unknown outcome without retrying; bound what those
+// leave behind by releasing the oldest handle first.
+const MAX_PROVEN_BATCH_SUBMISSIONS = 8;
+let nextProvenBatchSubmissionId = 1;
+
+const stashProvenBatchSubmission = (error, reuseId) => {
+  if (
+    !error ||
+    error.code !== "BATCH_SUBMISSION_OUTCOME_UNKNOWN" ||
+    !error.submission
+  ) {
+    return error;
+  }
+  // A repeated indeterminate retry replaces its own entry, so one batch holds
+  // one handle, and the superseded handle is released.
+  const submissionId = reuseId ?? String(nextProvenBatchSubmissionId++);
+  provenBatchSubmissions.get(submissionId)?.free?.();
+  provenBatchSubmissions.set(submissionId, error.submission);
+  if (provenBatchSubmissions.size > MAX_PROVEN_BATCH_SUBMISSIONS) {
+    const [oldestId, oldest] = provenBatchSubmissions.entries().next().value;
+    provenBatchSubmissions.delete(oldestId);
+    oldest.free?.();
+  }
+  error.submissionId = submissionId;
+  if (
+    !error.transactionIds &&
+    typeof error.submission.transactionIds === "function"
+  ) {
+    error.transactionIds = Array.from(error.submission.transactionIds(), (id) =>
+      id.toHex()
+    );
+  }
+  // Drop the WASM handle before structured clone.
+  delete error.submission;
+  return error;
+};
+
 const serializeError = (error) => {
   if (error instanceof Error) {
     return {
@@ -41,6 +82,8 @@ const serializeError = (error) => {
       // here, a worker-backed failure is less diagnosable than the identical
       // failure on the main thread.
       help: error.help,
+      submissionId: error.submissionId,
+      transactionIds: error.transactionIds,
     };
   }
 
@@ -317,7 +360,39 @@ const methodHandlers = {
       if (error instanceof Error) {
         error.message = appendAuthError(error.message, authError);
       }
-      throw error;
+      throw stashProvenBatchSubmission(error);
+    }
+  },
+  [MethodName.RETRY_PROVEN_BATCH]: async (args) => {
+    const [submissionId] = args;
+    const submission = provenBatchSubmissions.get(String(submissionId));
+    if (!submission) {
+      throw new Error(
+        `Unknown proven batch submission id: ${submissionId}. Retries must use the submissionId from the same worker that produced BATCH_SUBMISSION_OUTCOME_UNKNOWN, and the worker keeps only the ${MAX_PROVEN_BATCH_SUBMISSIONS} most recent unresolved ones.`
+      );
+    }
+    try {
+      const blockNumber = await wasmWebClient.retryProvenBatch(submission);
+      provenBatchSubmissions.delete(String(submissionId));
+      submission.free?.();
+      return blockNumber;
+    } catch (error) {
+      // Only an accepted batch (late local apply failure) leaves nothing to
+      // retry. Any other failure may have happened before the node saw the
+      // retry (stale key, transport), so the handle stays for another attempt.
+      if (error?.code === "ApplyTransactionAfterSubmitFailed") {
+        provenBatchSubmissions.delete(String(submissionId));
+        submission.free?.();
+        throw error;
+      }
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") {
+        throw appendAuthError(error, authError);
+      }
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw stashProvenBatchSubmission(error, String(submissionId));
     }
   },
   [MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER]: async (args) => {

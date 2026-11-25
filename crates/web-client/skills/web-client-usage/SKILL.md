@@ -22,7 +22,7 @@ The SDK exposes a top-level `MidenClient` whose state is split across typed
 | Resource             | What it covers                                                                                                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `client.accounts`    | Wallets, faucets, custom contracts, listing, import/export, addresses                                                                                                          |
-| `client.transactions` | `send` / `mint` / `bridge` / `withdrawUsdcx` / `claimAggLayerDeposit` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
+| `client.transactions` | `send` / `mint` / `bridge` / `withdrawUsdcx` / `claimAggLayerDeposit` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `retryProvenBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
 | `client.notes`       | Listing, fetching, importing/exporting, private-note transport                                                                                                                 |
 | `client.tags`        | Note-tag subscriptions                                                                                                                                                         |
 | `client.settings`    | Persistent client settings                                                                                                                                                     |
@@ -1342,7 +1342,17 @@ The result is `{ blockNumber }` only - the Rust V1 batch API returns no
 per-transaction ids, and the number is the node's chain tip as of submission,
 not the block the batch commits in. `waitForConfirmation: true` resolves the
 call once every transaction of the batch is committed, and rejects if the node
-discards one or `timeout` (default 60 s) runs out. A
+discards one or `timeout` (default 60 s) runs out.
+
+If submit fails with `code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`, do not call
+`batch` / `submitBatch` again. Pass `error.submission` (in-thread) or
+`{ submissionId: error.submissionId }` (worker) to
+`transactions.retryProvenBatch(...)` so the same proven bytes go out without a
+new prove. Confirm with `waitFor` / `list` for `error.transactionIds`. A conflict on retry usually means the original attempt landed, but a rejected retry records nothing locally and a sync does not insert the missing records, so look the ids up on the node, not in the local store. Browser builds only: Node.js errors prefix the message with the code and carry no submission handle or `transactionIds`.
+`ApplyTransactionAfterSubmitFailed` means the node already accepted the batch:
+sync, do not resubmit or retry.
+
+A
 `custom` operation carries a request you built, so the fee rules above apply to
 it: use `client.feeAwareTransactionRequestBuilder(account)`, or
 `client.withFeeAwareAuth(request, account)` for a finished request you did not

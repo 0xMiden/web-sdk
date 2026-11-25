@@ -1617,6 +1617,45 @@ class WebClient {
   }
 
   /**
+   * Resubmits an already-proven batch after an indeterminate admission response.
+   *
+   * Pass the `submission` from a batch failure with
+   * `code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` (in-thread), or
+   * `{ submissionId }` / the `submissionId` string from a worker-backed
+   * failure. Does not re-execute or re-prove. Returns the node's chain tip on
+   * acceptance.
+   *
+   * @param {object|string} submission - ProvenBatchSubmission handle, or a
+   *   worker `submissionId` / `{ submissionId }` from the unknown-outcome error.
+   * @returns {Promise<number>}
+   */
+  async retryProvenBatch(submission) {
+    return this._serializeWasmCall(async () => {
+      if (this.worker) {
+        const submissionId =
+          typeof submission === "string"
+            ? submission
+            : submission?.submissionId;
+        if (!submissionId) {
+          throw new Error(
+            "retryProvenBatch under a worker needs submission.submissionId from the BATCH_SUBMISSION_OUTCOME_UNKNOWN error"
+          );
+        }
+        return await this.callMethodWithWorker(
+          MethodName.RETRY_PROVEN_BATCH,
+          String(submissionId)
+        );
+      }
+      const wasmWebClient = await this.getWasmWebClient();
+      const handle =
+        submission?.submission !== undefined
+          ? submission.submission
+          : submission;
+      return await wasmWebClient.retryProvenBatch(handle);
+    }, MethodName.RETRY_PROVEN_BATCH);
+  }
+
+  /**
    * Submits a batch and returns the transactions stored before and after it,
    * from the one chain slot observed as `submitNewTransactionBatch`.
    *
