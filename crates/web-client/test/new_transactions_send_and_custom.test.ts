@@ -115,36 +115,68 @@ test.describe("custom transaction tests", () => {
   }, testInfo) => {
     test.skip(testInfo.project.name === "nodejs", "browser error properties");
 
-    const failure = await run(async ({ client, sdk }) => {
-      const wallet = await client.newWallet(
-        sdk.AccountStorageMode.private(),
-        sdk.AuthScheme.AuthRpoFalcon512
-      );
-      const builder = await client.createCodeBuilder();
-      const script = builder.compileTxScript(`
+    const { source, withSource, withoutSource } = await run(
+      async ({ client, sdk, helpers }) => {
+        const builder = await client.createCodeBuilder();
+        const source = `
         @transaction_script
         pub proc main
           push.0
           assert.err="custom transaction assertion"
         end
-      `);
-      const request = new sdk.TransactionRequestBuilder()
-        .withCustomScript(script)
-        .build();
+      `;
+        const script = builder.compileTxScript(source);
+        const request = new sdk.TransactionRequestBuilder()
+          .withCustomScript(script)
+          .build();
 
-      try {
-        await client.executeTransaction(wallet.id(), request);
-      } catch (error) {
-        return { message: error.message, masm: error.masm };
+        const execute = async (target: typeof client) => {
+          const wallet = await target.newWallet(
+            sdk.AccountStorageMode.private(),
+            sdk.AuthScheme.AuthRpoFalcon512
+          );
+          try {
+            await target.executeTransaction(wallet.id(), request);
+          } catch (error) {
+            return { message: error.message, masm: error.masm };
+          }
+          return null;
+        };
+
+        const withSource = await execute(client);
+        // The script retains its debug map, but the other client's source
+        // manager hasn't loaded the source text.
+        const separateClient = await helpers.createFreshMockClient();
+        try {
+          return {
+            source,
+            withSource,
+            withoutSource: await execute(separateClient),
+          };
+        } finally {
+          await separateClient.terminate();
+        }
       }
-      return null;
-    });
+    );
 
-    expect(failure?.message).toContain("custom transaction assertion");
-    expect(failure?.masm).toMatchObject({
-      errorCode: expect.stringMatching(/^\d+$/),
+    // The VM derives this Felt from the first eight BLAKE3 bytes, little-endian.
+    const diagnostic = {
+      errorCode: "722436235612435567",
       assertionMessage: "custom transaction assertion",
-    });
+    };
+    expect(withSource?.message).toContain(diagnostic.assertionMessage);
+    expect(withSource?.masm).toMatchObject(diagnostic);
+    expect(withSource?.masm.file).toBe("::tx_script");
+    const { start, end } = withSource!.masm.span;
+    expect(Number.isInteger(start) && Number.isInteger(end)).toBe(true);
+    const bytes = Buffer.from(source);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(end).toBeLessThanOrEqual(bytes.length);
+    expect(bytes.subarray(start, end).toString()).toContain("assert");
+
+    expect(withoutSource?.message).toContain(diagnostic.assertionMessage);
+    expect(withoutSource?.masm).toStrictEqual(diagnostic);
   });
 
   test("custom transaction completes successfully", async ({ run }) => {
