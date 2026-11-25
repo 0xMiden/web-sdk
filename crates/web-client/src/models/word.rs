@@ -3,7 +3,7 @@ use miden_client::{Felt as NativeFelt, Word as NativeWord};
 
 use super::felt::Felt;
 use crate::platform::{JsBytes, JsErr, from_str_err, js_u64_to_u64, u64_to_js_u64};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::serialization::{deserialize_from_bytes, serialize_to_bytes};
 
 #[derive(Clone)]
 #[js_export]

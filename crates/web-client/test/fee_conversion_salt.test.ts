@@ -592,8 +592,9 @@ test.describe("fee conversion salt", () => {
         sdk.NoteType.Private,
         BigInt(5)
       );
-      const anchor = await client.chainAnchorForRequest(request);
-      const header = anchor.blockHeader();
+      // The reference block of an execution is the latest block of the store.
+      const executed = await client.executeTransaction(faucet.id(), request);
+      const header = executed.executedTransaction().blockHeader();
 
       // Since 0.17 the fee asset lives in the protocol configuration, not in the
       // header, so the client reports it rather than the block.
@@ -848,10 +849,13 @@ test.describe("fee conversion salt", () => {
         sdk.NoteType.Private,
         BigInt(5)
       );
-      const anchor = await client.chainAnchorForRequest(request);
+      const executed = await client.executeTransaction(faucet.id(), request);
 
       return {
-        baseFee: anchor.blockHeader().verificationBaseFee(),
+        baseFee: executed
+          .executedTransaction()
+          .blockHeader()
+          .verificationBaseFee(),
         hasAuthArg: request.authArg() != null,
         hasSalt: request.feeConversionSalt() != null,
       };
@@ -881,7 +885,7 @@ test.describe("TransactionRequest.equals", () => {
       // Two encodings of one request: add the same Merkle store nodes to the
       // encoded request in two orders. An untouched request is a single `v1`
       // field (1) holding a `TransactionRequestV1`. Protobuf merges a message
-      // field that appears twice, so a second `merkle_store` field (9) appended
+      // field that appears twice, so a second `merkle_store` field (7) appended
       // to `v1` adds its nodes to the request's empty store.
       const base = new Uint8Array(
         new sdk.TransactionRequestBuilder().build().serialize()
@@ -926,7 +930,7 @@ test.describe("TransactionRequest.equals", () => {
       ];
       const request = (ids) => {
         const store = ids.flatMap((n) => field(1, node(n)));
-        const bytes = new Uint8Array(field(1, [...v1, ...field(9, store)]));
+        const bytes = new Uint8Array(field(1, [...v1, ...field(7, store)]));
         return { bytes, request: sdk.TransactionRequest.deserialize(bytes) };
       };
 

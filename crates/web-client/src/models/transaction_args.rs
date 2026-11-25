@@ -2,7 +2,9 @@ use js_export_macro::js_export;
 use miden_client::transaction::TransactionArgs as NativeTransactionArgs;
 
 use super::advice_inputs::AdviceInputs;
+use super::bound_signature::BoundSignature;
 use super::note_id::NoteId;
+use super::note_recipient::NoteRecipient;
 use super::transaction_script::TransactionScript;
 use super::word::Word;
 
@@ -13,7 +15,9 @@ use super::word::Word;
 /// - Note arguments: data put onto the stack right before a note script is executed. These are
 ///   different from note inputs, as the user executing the transaction can specify arbitrary note
 ///   args.
-/// - Advice inputs: Provides data needed by the runtime, like the details of public output notes.
+/// - Advice inputs: Provides data needed by the runtime. The recipients of the expected output
+///   notes and the signatures are not part of them. Read those with `outputNoteRecipients` and
+///   `signatures`.
 /// - Account inputs: Provides account data that will be accessed in the transaction.
 #[derive(Clone)]
 #[js_export]
@@ -37,6 +41,17 @@ impl TransactionArgs {
     #[js_export(js_name = "adviceInputs")]
     pub fn advice_inputs(&self) -> AdviceInputs {
         self.0.advice_inputs().into()
+    }
+
+    /// Returns the recipients of the output notes that the transaction is expected to create.
+    #[js_export(js_name = "outputNoteRecipients")]
+    pub fn output_note_recipients(&self) -> Vec<NoteRecipient> {
+        self.0.output_note_recipients().iter().map(Into::into).collect()
+    }
+
+    /// Returns the bound signatures that the transaction carries for its authentication.
+    pub fn signatures(&self) -> Vec<BoundSignature> {
+        self.0.signatures().iter().map(Into::into).collect()
     }
 }
 

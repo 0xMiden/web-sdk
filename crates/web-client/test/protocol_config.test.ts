@@ -19,9 +19,9 @@ test.describe("protocolConfig", () => {
         sdk.NoteType.Private,
         BigInt(5)
       );
-      const header = (
-        await client.chainAnchorForRequest(request)
-      ).blockHeader();
+      const header = (await client.executeTransaction(faucet.id(), request))
+        .executedTransaction()
+        .blockHeader();
 
       const config = await client.protocolConfig();
       return {

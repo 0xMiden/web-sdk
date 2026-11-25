@@ -11,24 +11,33 @@
 //! via rayon (enabled by the `concurrent` feature on miden-client).
 //!
 //! Wire format matches the existing gRPC `RemoteTransactionProver` and the
-//! web-sdk's `JsCallbackTransactionProver`: input is
-//! `TransactionInputs::to_bytes()`, output is `ProvenTransaction::to_bytes()`.
+//! web-sdk's `JsCallbackTransactionProver`: input and output are the
+//! `miden-objects` protobuf messages of `TransactionWitness` and `ProvenTransaction`.
 //! Hosts can swap between dispatchers without changing serialization.
 //!
-//! The wire format is NOT stable across protocol versions: the 0.15 protocol
-//! changed both `TransactionInputs` and `ProvenTransaction` serialization, so
+//! The wire format is NOT stable across protocol versions: the 1.0 protocol
+//! replaced the byte encodings of both values with these messages, so
 //! a native library built from this crate only interoperates with an SDK
 //! pinned to the same miden-client line. Hosts must rebuild and ship the
 //! native binary together with every SDK protocol bump.
 
-use miden_client::transaction::{LocalTransactionProver, ProvenTransaction, TransactionInputs};
-use miden_protocol::utils::serde::{Deserializable, Serializable};
+use miden_client::transaction::{LocalTransactionProver, ProvenTransaction, TransactionWitness};
+use miden_objects::prost::Message;
+use miden_objects::{DecodeMessageExt, proto};
+
+/// The witness comes from the SDK in the same process, so its parts are not verified again.
+fn decode_witness(input: &[u8]) -> Option<TransactionWitness> {
+    proto::transaction::TransactionWitness::decode(input)
+        .ok()?
+        .decode_and_build_unchecked()
+        .ok()
+}
 
 /// Status codes returned by [`miden_prove_transaction`].
 #[repr(i32)]
 enum Status {
     Ok = 0,
-    /// `input_ptr`/`input_len` did not decode as a `TransactionInputs`.
+    /// `input_ptr`/`input_len` did not decode as a `TransactionWitness` message.
     BadInput = -1,
     /// `LocalTransactionProver::prove` returned an error. The host should
     /// treat this as a "tried to prove a malformed/invalid tx" — not a
@@ -44,8 +53,8 @@ enum Status {
 ///
 /// # Safety
 ///
-/// - `input_ptr` must point to `input_len` initialized bytes that decode as a
-///   `miden_client::transaction::TransactionInputs` (the same byte format the gRPC
+/// - `input_ptr` must point to `input_len` initialized bytes that decode as the protobuf message of
+///   a `miden_client::transaction::TransactionWitness` (the same message the gRPC
 ///   `RemoteTransactionProver` and the JS `TransactionProver.newCallbackProver` callback consume).
 /// - `output_buf_ptr` must point to a writable region of at least `output_buf_cap` bytes.
 /// - `output_written` must point to a writable `usize`. On every return path (success or
@@ -65,13 +74,10 @@ pub unsafe extern "C" fn miden_prove_transaction(
     // SAFETY: caller-asserted contract (see doc comment).
     let input = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
 
-    let inputs = match TransactionInputs::read_from_bytes(input) {
-        Ok(i) => i,
-        Err(_) => {
-            // SAFETY: caller-asserted output_written validity.
-            unsafe { *output_written = 0 };
-            return Status::BadInput as i32;
-        },
+    let Some(witness) = decode_witness(input) else {
+        // SAFETY: caller-asserted output_written validity.
+        unsafe { *output_written = 0 };
+        return Status::BadInput as i32;
     };
 
     // `LocalTransactionProver::default()`, not `new(ProvingOptions::default())`:
@@ -79,7 +85,7 @@ pub unsafe extern "C" fn miden_prove_transaction(
     // client, and only the former tracks the client's own default hash function.
     // See the note on `newLocalProver` in crates/web-client/src/models/provers.rs.
     let prover = LocalTransactionProver::default();
-    let proven: ProvenTransaction = match prover.prove(inputs) {
+    let proven: ProvenTransaction = match prover.prove(witness) {
         Ok(p) => p,
         Err(_) => {
             unsafe { *output_written = 0 };
@@ -87,7 +93,7 @@ pub unsafe extern "C" fn miden_prove_transaction(
         },
     };
 
-    let serialized = proven.to_bytes();
+    let serialized = proto::transaction::ProvenTransaction::from(&proven).encode_to_vec();
     unsafe { *output_written = serialized.len() };
 
     if serialized.len() > output_buf_cap {

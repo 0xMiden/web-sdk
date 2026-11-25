@@ -5,9 +5,11 @@ use super::account_delta::AccountDelta;
 use super::felt::Felt;
 use super::input_notes::InputNotes;
 use super::output_notes::OutputNotes;
+use super::transaction_logs::TransactionLogs;
 use super::word::Word;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{deserialize_untrusted_bytes, serialize_to_bytes};
+use crate::serialization::encode_message;
+use crate::serialization::summary::{TransactionSummaryMessage, decode_transaction_summary};
 
 /// Represents a transaction summary.
 #[derive(Clone)]
@@ -16,19 +18,17 @@ pub struct TransactionSummary(NativeTransactionSummary);
 
 #[js_export]
 impl TransactionSummary {
-    /// Serializes the summary into bytes.
+    /// Serializes the summary as a protobuf message.
     pub fn serialize(&self) -> JsBytes {
-        serialize_to_bytes(&self.0)
+        encode_message(&TransactionSummaryMessage::from(&self.0))
     }
 
     /// Deserializes a summary from bytes.
     ///
-    /// Uses the untrusted path, like [`ChainAnchor::deserialize`]: a summary crosses the same
-    /// wire, from the same counterparty, in the same envelope.
-    ///
-    /// [`ChainAnchor::deserialize`]: crate::models::chain_anchor::ChainAnchor::deserialize
+    /// A summary usually comes from a counterparty, such as the proposer of a multisig
+    /// transaction, so a message with unused bytes is rejected.
     pub fn deserialize(bytes: JsBytes) -> Result<TransactionSummary, JsErr> {
-        deserialize_untrusted_bytes::<NativeTransactionSummary>(&bytes).map(TransactionSummary)
+        decode_transaction_summary(&bytes).map(TransactionSummary)
     }
 
     /// Returns the account delta described by the summary.
@@ -55,7 +55,7 @@ impl TransactionSummary {
         Ok(self.0.output_notes().into())
     }
 
-    /// Returns the seven user-defined elements bound by the summary commitment.
+    /// Returns the six user-defined elements bound by the summary commitment.
     ///
     /// The protocol assigns no meaning to these elements. A caller that uses some of them as a
     /// salt for replay protection reads back what it wrote.
@@ -64,15 +64,22 @@ impl TransactionSummary {
         self.0.user_params().as_elements().iter().map(Into::into).collect()
     }
 
-    /// Returns the commitment of the reference block this summary was built against.
+    /// Returns the number of the block bound by this summary. See `blockCommitment`.
+    #[js_export(js_name = "blockNum")]
+    pub fn block_num(&self) -> u32 {
+        self.0.block_number().as_u32()
+    }
+
+    /// Returns the transaction logs bound by the summary commitment.
+    pub fn logs(&self) -> TransactionLogs {
+        self.0.logs().clone().into()
+    }
+
+    /// Returns the commitment of the block bound by this summary.
     ///
-    /// Signed into the summary, so a co-signer can check a received [`ChainAnchor`] against it
-    /// directly: `anchor.commitment()` must equal this. Cheaper than re-deriving the summary.
-    ///
-    /// It proves the anchor and the summary agree, not that either is what you meant to sign —
-    /// a proposer supplies both. Inspect the summary's effects before signing.
-    ///
-    /// [`ChainAnchor`]: crate::models::chain_anchor::ChainAnchor
+    /// Signed into the summary, so every signer commits to this block. It is the reference block
+    /// of the execution, unless the auth procedure binds another block, as the multisig
+    /// components do with the bound block of their auth args.
     #[js_export(js_name = "blockCommitment")]
     pub fn block_commitment(&self) -> Word {
         self.0.block_commitment().into()

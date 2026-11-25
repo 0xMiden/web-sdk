@@ -4,7 +4,7 @@ use miden_client::account::AccountDelta as NativeAccountDelta;
 use crate::models::account_id::AccountId;
 use crate::models::felt::Felt;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::serialization::{deserialize_from_bytes, serialize_to_bytes};
 
 /// `AccountDelta` stores the differences between two account states.
 ///

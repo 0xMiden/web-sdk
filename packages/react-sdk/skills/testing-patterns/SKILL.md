@@ -1,6 +1,6 @@
 ---
 name: testing-patterns
-description: Testing conventions, mock shapes, fixtures, and TDD workflow for Miden frontend development. Covers Vitest 3 + testing-library 16 setup, React 18/19 differences, @miden-sdk/react module mocking and the useMiden mocking trap, mocks that reproduce WASM failure modes, signer and wallet-detection fixtures, chain-anchored flows, and test patterns for query and mutation hooks. Use when writing, running, or debugging tests for Miden React components.
+description: Testing conventions, mock shapes, fixtures, and TDD workflow for Miden frontend development. Covers Vitest 3 + testing-library 16 setup, React 18/19 differences, @miden-sdk/react module mocking and the useMiden mocking trap, mocks that reproduce WASM failure modes, signer and wallet-detection fixtures, multi-party signing flows, and test patterns for query and mutation hooks. Use when writing, running, or debugging tests for Miden React components.
 ---
 
 # Miden Frontend Testing Patterns
@@ -17,7 +17,7 @@ For real, shipped reference tests, read this package's own suite at `node_module
 | a query-hook test | `src/__tests__/hooks/useAccounts.test.tsx` |
 | provider ready / loading / error | `src/__tests__/context/MidenProvider.test.tsx` |
 | mocking the WASM SDK wholesale | `src/__tests__/setup.ts` |
-| WASM model + client mock factories | `src/__tests__/mocks/miden-sdk.ts` (`createMockWebClient`, `createMockAccount`, `createMockAccountId`, `createMockAccountHeader`, `createMockInputNoteRecord`, `createMockTransactionResult`, `createMockChainAnchor`, `createMockTransactionSummary`, …) |
+| WASM model + client mock factories | `src/__tests__/mocks/miden-sdk.ts` (`createMockWebClient`, `createMockAccount`, `createMockAccountId`, `createMockAccountHeader`, `createMockInputNoteRecord`, `createMockTransactionResult`, `createMockTransactionSummary`, …) |
 | the package-entry stub | `src/__tests__/mocks/miden-sdk-entry.ts` |
 | a `SignerContextValue` fixture | `src/__tests__/mocks/signer-context.ts` (`createMockSignerContext`, `createMockSignerAccountConfig`) |
 
@@ -123,8 +123,7 @@ the SDK's own `setup.ts` mocks.
 - `useCreateWallet()` - `{ createWallet: vi.fn(), wallet: null, isCreating: false, error: null, reset: vi.fn() }`. `useCreateFaucet` mirrors it with `faucet`; `useImportAccount` with `account` and `isImporting`.
 
 **Hooks that do not follow either shape.** These name their own busy flag, and mocking them by analogy with `useSend` gets the field names wrong:
-- `useChainAnchor()` - `{ captureAnchor: vi.fn(), anchor: null, anchoredRequest: null, isCapturing: false, error: null, reset: vi.fn() }`. Its `error` is a `CodedError` carrying `code: "OPERATION_BUSY" | "INVALID_CHAIN_ANCHOR" | "STALE_CLIENT"`, so a test asserting on a failure mode should set `code`, not just `message`.
-- `usePreview()` - `{ preview: vi.fn(), summary: null, isPreviewing: false, error: null, reset: vi.fn() }`, same `CodedError`.
+- `usePreview()` - `{ preview: vi.fn(), summary: null, isPreviewing: false, error: null, reset: vi.fn() }`. Its `error` is a `CodedError` carrying `code: "OPERATION_BUSY" | "TRANSACTION_ALREADY_AUTHORIZED" | "STALE_CLIENT"`, so a test asserting on a failure mode should set `code`, not just `message`.
 - `useExportStore()` / `useExportNote()` - `isExporting`. `useImportStore()` / `useImportNote()` - `isImporting`.
 - `useSyncControl()` - `{ pauseSync: vi.fn(), resumeSync: vi.fn(), isPaused: false }`, no loading or error field at all.
 - `useCompile()` - `{ component, txScript, noteScript, isReady }`.
@@ -332,7 +331,7 @@ each one before carrying a pre-0.16 fixture forward.
   is gone. **The mirror image still holds**: `TransactionSummary.accountDelta()` is
   unchanged and still returns a *relative* `AccountDelta` - do not "fix" that one for
   consistency, it is deliberate.
-- **`TransactionSummary` carries `userParams()`, not `salt()`**, and the value is **seven**
+- **`TransactionSummary` carries `userParams()`, not `salt()`**, and the value is **six**
   field elements the summary commitment binds. A fixture stubbing a single `salt()` word
   is wrong on both the name and the width.
 - **`outputNotes()` includes the fee note** on a fee-charging chain, on `TransactionSummary`
@@ -423,13 +422,12 @@ sendPrivateNote: vi.fn(async (note) => {
 }),
 ```
 
-## Testing Chain-Anchored Flows
+## Testing Multi-Party Signing Flows
 
-`useChainAnchor()` and `usePreview()` are where a wrong mock hides a real bug, because the defect is a *second* call rather than a failed one.
+`usePreview()` is where a wrong mock hides a real bug, because the defect is a *second* call rather than a failed one.
 
-- Assert that the request factory is invoked **exactly once**. Re-resolving a factory redraws the fee-conversion salt and any output note's serial number, so the anchor pins a transaction nobody executes. `expect(requestFactory).toHaveBeenCalledTimes(1)` is the assertion that catches it.
-- Assert that `preview` and `execute` received the **same request object** the anchor was captured for (`toBe`, not `toEqual`).
-- `anchoredRequest` is state, so inside the handler that just captured it still holds the previous render's value (`null` on a first capture). A test that reads it synchronously after `captureAnchor` resolves and gets `null` is observing correct behavior, not a bug.
+- Assert that the request factory is invoked **exactly once**. Re-resolving a factory redraws the salt of a multisig request and any output note's serial number, so the signers approve a transaction nobody executes. `expect(requestFactory).toHaveBeenCalledTimes(1)` is the assertion that catches it.
+- Assert that `preview` and `execute` received the **same request object** (`toBe`, not `toEqual`).
 - Mock the error path with a `code`, not just a message: `Object.assign(new Error("busy"), { code: "OPERATION_BUSY" })`.
 
 ## Testing Time-Dependent Code (Network Sync Delay)

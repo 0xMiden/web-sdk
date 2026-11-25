@@ -291,7 +291,7 @@ helper, e.g.
 `[Table.LatestAccountStorage]: indexes("[accountId+slotName]", "accountId")`.
 Every later change is its own `.version(N).stores({...})` block.
 
-**The current schema version is 8.**
+**The current schema version is 14.**
 
 | Version | Change |
 | --- | --- |
@@ -303,6 +303,12 @@ Every later change is its own `.version(N).stores({...})` block.
 | 6 | Adds `accountWitnesses`, primary key `&accountId`. `witness` is null until the first sync refresh |
 | 7 | Data-only. Deletes the client-scope `note_transport_outbox` row a 0.17.1 client left behind, mirroring the sqlite-store `0002_drop_note_transport_outbox.sql` |
 | 8 | The cutover: `.upgrade(clearStoreStampedBelow(MIGRATION_BASELINE))` clears a store stamped below `"0.17.0"` or not stamped (see below) |
+| 9 | Data-only. Deletes the cached `rpc_limits` client row, which 0.18 cannot read; the client fetches the limits again |
+| 10 | Adds `clientConfig`, `userSettings` and `pswapLineages`. `splitLegacySettings` moves the user rows of `settings` to `userSettings`, and the client version and protocol configurations to `clientConfig` |
+| 11 | Drops `settings` |
+| 12 | Adds `chainAnchors`, keyed by `blockNum`. `anchorsFromCheckpoint` moves the `blockchainCheckpoint` row into it next to the genesis anchor |
+| 13 | Drops `blockchainCheckpoint` |
+| 14 | The protocol 1.0 cutover: `.upgrade(clearStoreForProtocolV1)` clears every store that reaches it, whatever its stamp, and seeds it like `populate` (see below) |
 
 ### Migrations, not resets
 
@@ -333,15 +339,21 @@ no upgrade callbacks, only `populate`. A store already at v8 never runs the
 cutover again, whatever its stamp says later.
 
 **A release that genuinely cannot migrate older data adds a NEW Dexie version
-with the same `clearStoreStampedBelow(...)` upgrade and its own threshold.**
-Raising `MIGRATION_BASELINE` clears nothing that already ran v8. State the new
-cutover up front in any upgrade plan: it destroys every locally-stored
-account, key and note in the user's browser.
+whose upgrade clears every table and seeds a fresh store, as v14's
+`clearStoreForProtocolV1` does.** v14 clears whatever the stamp, because the
+last release before protocol 1.0 and the first build after it stamp the same
+client version. Do not reuse `clearStoreStampedBelow` after v13: it reads the
+stamp from `settings` and seeds `blockchainCheckpoint`, which v11 and v13
+drop, so the upgrade fails and no store opens. Raising `MIGRATION_BASELINE`
+clears nothing that already ran v8. State the new cutover up front in any
+upgrade plan: it destroys every locally-stored account, key and note in the
+user's browser.
 
 **An import skips every upgrade() callback.** `forceImportStore` writes a
 dump's rows in a plain transaction, so it takes only a dump this store could
-have kept: stamped by a client at or after `MIGRATION_BASELINE` and not newer
-than the running one. Anything else is refused before the target is cleared.
+have kept: carrying the `protocolV1` row of `clientConfig` that `populate`
+and v14 write, stamped by a client at or after `MIGRATION_BASELINE`, and not
+newer than the running one. Anything else is refused before the target is cleared.
 A Dexie version that converts stored data must also convert, or refuse, a dump
 stamped by a client from before it, in `forceImportStore`.
 
@@ -394,14 +406,17 @@ today means:
    observes each table as the cutover clears it)
 
 The `populate` hook fires only on first database creation, never during an
-upgrade. Through `seedFreshStore`, which the v8 cutover shares, it seeds
-exactly one row, the `blockchainCheckpoint` singleton:
+upgrade. Through `seedProtocolV1Store`, which the v14 cutover shares, it seeds
+two rows, the genesis anchor and the protocol 1.0 stamp:
 
 ```typescript
-{ id: 1, blockNum: 0, partialBlockchainPeaks: new Uint8Array() }
+{ blockNum: 0, peaks: new Uint8Array() }               // chainAnchors
+{ key: "protocolV1", value: textEncoder.encode("1") }  // clientConfig
 ```
 
-Nothing else is seeded, so every other table starts empty.
+Nothing else is seeded, so every other table starts empty. The v8 cutover
+seeds through `seedFreshStore` instead, writing the `blockchainCheckpoint`
+singleton that v12 moves into `chainAnchors`.
 
 Because v1 is frozen history, `V1_STORES[Table.Settings]` still reads
 `indexes("key")`. That is **not** the live schema. Read the last version

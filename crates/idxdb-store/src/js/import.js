@@ -3,7 +3,7 @@
 // should be enough + the TS compiler.
 /* eslint-disable */
 import * as semver from "semver";
-import { anchorsFromCheckpoint, CLIENT_VERSION_SETTING_KEY, getDatabase, MIGRATION_BASELINE, SETTING_SCOPE_CLIENT, splitLegacySettings, } from "./schema.js";
+import { CLIENT_VERSION_SETTING_KEY, getDatabase, MIGRATION_BASELINE, PROTOCOL_V1_STAMP_KEY, } from "./schema.js";
 import { logWebStoreError } from "./utils.js";
 async function recursivelyTransformForImport(obj) {
     switch (obj.type) {
@@ -45,26 +45,24 @@ export async function transformForImport(obj) {
     });
 }
 const CLIENT_CONFIG_TABLE = "clientConfig";
-const USER_SETTINGS_TABLE = "userSettings";
-const CHAIN_ANCHORS_TABLE = "chainAnchors";
-// The table that schema version 14 removed.
-const LEGACY_SETTINGS_TABLE = "settings";
-// The table that schema version 16 removed.
-const LEGACY_CHECKPOINT_TABLE = "blockchainCheckpoint";
 // An import writes rows without the upgrade() callbacks an open runs, so it takes only a dump this
-// store could have kept: one stamped by a client at or after MIGRATION_BASELINE and not newer than
-// the client running in this realm (the version the store was opened with; with none recorded the
-// newer check is skipped). Anything else is refused before the target is cleared.
+// store could have kept: one carrying the protocol 1.0 stamp, stamped by a client at or after
+// MIGRATION_BASELINE and not newer than the client running in this realm (the version the store
+// was opened with; with none recorded the newer check is skipped). Anything else is refused before
+// the target is cleared.
 async function refuseUnkeptDump(dbJson, runningVersion) {
-    // The stamp is a `clientConfig` row. A dump taken before schema version 13 has it as a client
-    // row of `settings`.
-    const rowsOf = (table) => Array.isArray(dbJson[table]) ? dbJson[table] : [];
-    const stampRow = rowsOf(CLIENT_CONFIG_TABLE).find((row) => row?.key === CLIENT_VERSION_SETTING_KEY) ??
-        rowsOf(LEGACY_SETTINGS_TABLE).find((row) => row?.scope === SETTING_SCOPE_CLIENT &&
-            row?.key === CLIENT_VERSION_SETTING_KEY);
     const refuse = (reason) => {
         throw new Error(`Refusing to import this store dump: ${reason}. The store was not changed.`);
     };
+    const rows = Array.isArray(dbJson[CLIENT_CONFIG_TABLE])
+        ? dbJson[CLIENT_CONFIG_TABLE]
+        : [];
+    // The version 17 upgrade clears every store from before protocol 1.0, so a dump without its
+    // stamp has nothing to keep.
+    if (!rows.some((row) => row?.key === PROTOCOL_V1_STAMP_KEY)) {
+        refuse("it was exported before protocol 1.0, and its data cannot be migrated");
+    }
+    const stampRow = rows.find((row) => row?.key === CLIENT_VERSION_SETTING_KEY);
     if (!stampRow) {
         refuse(`it has no client version stamp, so it predates ${MIGRATION_BASELINE}`);
     }
@@ -97,27 +95,6 @@ export async function forceImportStore(dbId, jsonStr) {
         await db.dexie.transaction("rw", dbTableNames, async () => {
             await Promise.all(db.dexie.tables.map((t) => t.clear()));
             for (const tableName of jsonTableNames) {
-                // A dump taken before schema version 13 keeps its settings in one table. Its rows are
-                // split as the version 13 upgrade splits them, which also drops the rows that the
-                // earlier upgrades delete.
-                if (tableName === LEGACY_SETTINGS_TABLE &&
-                    !dbTableNames.includes(tableName)) {
-                    const rows = await Promise.all(dbJson[tableName].map(transformForImport));
-                    const { userSettings, clientConfig } = splitLegacySettings(rows);
-                    await db.dexie.table(USER_SETTINGS_TABLE).bulkPut(userSettings);
-                    await db.dexie.table(CLIENT_CONFIG_TABLE).bulkPut(clientConfig);
-                    continue;
-                }
-                // A dump taken before schema version 15 keeps the peaks of its sync height in one
-                // checkpoint row. It becomes the anchors that the version 15 upgrade derives from it.
-                if (tableName === LEGACY_CHECKPOINT_TABLE &&
-                    !dbTableNames.includes(tableName)) {
-                    const rows = await Promise.all(dbJson[tableName].map(transformForImport));
-                    await db.dexie
-                        .table(CHAIN_ANCHORS_TABLE)
-                        .bulkPut(anchorsFromCheckpoint(rows[0]));
-                    continue;
-                }
                 const table = db.dexie.table(tableName);
                 if (!dbTableNames.includes(tableName)) {
                     console.warn(`Table "${tableName}" does not exist in the database schema. Skipping.`);

@@ -231,8 +231,6 @@ test.describe("remote keystore", () => {
           window.NoteType.Public,
           BigInt(1000)
         );
-        const anchor = await client.chainAnchorForRequest(request);
-
         const captureError = async (attempt: () => Promise<unknown>) => {
           try {
             await attempt();
@@ -243,9 +241,6 @@ test.describe("remote keystore", () => {
         };
         const summaryMessage = await captureError(() =>
           client.executeForSummary(faucet.id(), request)
-        );
-        const anchoredMessage = await captureError(() =>
-          client.executeForSummaryAt(faucet.id(), request, anchor)
         );
         const authError = client.lastAuthError();
         const authErrorMessage =
@@ -265,13 +260,9 @@ test.describe("remote keystore", () => {
           client.executeForSummary(staleAccountId, emptyRequest)
         );
         const summaryAuthError = client.lastAuthError();
-        await captureError(() =>
-          client.executeForSummaryAt(staleAccountId, emptyRequest, anchor)
-        );
 
         return {
           summaryMessage,
-          anchoredMessage,
           getKeyCalls,
           callsBeforeStaleChecks,
           authErrorMessage,
@@ -280,13 +271,11 @@ test.describe("remote keystore", () => {
         };
       }, useWorker);
 
-      for (const message of [result.summaryMessage, result.anchoredMessage]) {
-        expect(message).toContain("Callback getKey-summary denied");
-        expect(message.match(/Callback getKey-summary denied/g)).toHaveLength(
-          1
-        );
-        expect(message).not.toContain("JsValue(");
-      }
+      expect(result.summaryMessage).toContain("Callback getKey-summary denied");
+      expect(
+        result.summaryMessage.match(/Callback getKey-summary denied/g)
+      ).toHaveLength(1);
+      expect(result.summaryMessage).not.toContain("JsValue(");
       expect(result.getKeyCalls).toBeGreaterThan(0);
       expect(result.authErrorMessage).toContain(
         "Failed to get secret key via callback: Callback getKey-summary denied"

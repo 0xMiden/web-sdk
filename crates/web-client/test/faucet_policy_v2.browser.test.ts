@@ -2,7 +2,10 @@
 import { mockTest } from "./playwright.global.setup";
 import { expect } from "@playwright/test";
 
-mockTest(
+// Protocol 1.0.0-rc.1 has no TokenPolicyManagerV2: protocol#3997 is only on
+// protocol main (0.17.1, 0.18). Re-enable when the pinned protocol has the V2
+// callbacks.
+mockTest.fixme(
   "compiled standards resolve the canonical V2 faucet transfer callbacks",
   async ({ page }) => {
     const result = await page.evaluate(async () => {

@@ -5,7 +5,6 @@ import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
 import {
   createMockWebClient,
-  createMockChainAnchor,
   createMockTransactionRequest,
   createMockTransactionSummary,
 } from "../mocks/miden-sdk";
@@ -67,7 +66,7 @@ describe("usePreview", () => {
       expect(mockClient.executeForSummary).not.toHaveBeenCalled();
     });
 
-    it("derives the summary at the sync height when no anchor is given", async () => {
+    it("derives the summary at the sync height", async () => {
       const summary = createMockTransactionSummary();
       const mockClient = createMockWebClient({
         executeForSummary: vi.fn().mockResolvedValue(summary),
@@ -85,37 +84,11 @@ describe("usePreview", () => {
         });
       });
 
-      expect(mockClient.executeForSummary).toHaveBeenCalled();
-      expect(mockClient.executeForSummaryAt).not.toHaveBeenCalled();
-      expect(derived).toBe(summary);
-      expect(result.current.summary).toBe(summary);
-    });
-
-    it("derives the summary at the anchor when one is given", async () => {
-      const summary = createMockTransactionSummary("0xanchored");
-      const mockClient = createMockWebClient({
-        executeForSummaryAt: vi.fn().mockResolvedValue(summary),
-      });
-      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
-
-      const { result } = renderHook(() => usePreview());
-
-      const request = createMockTransactionRequest();
-      const anchor = createMockChainAnchor(42);
-      await act(async () => {
-        await result.current.preview({
-          accountId: "0xaccount",
-          request,
-          anchor,
-        });
-      });
-
-      expect(mockClient.executeForSummaryAt).toHaveBeenCalledWith(
+      expect(mockClient.executeForSummary).toHaveBeenCalledWith(
         expect.anything(),
-        request,
-        anchor
+        request
       );
-      expect(mockClient.executeForSummary).not.toHaveBeenCalled();
+      expect(derived).toBe(summary);
       expect(result.current.summary).toBe(summary);
     });
 
@@ -291,44 +264,6 @@ describe("usePreview", () => {
   });
 
   describe("input validation", () => {
-    it("rejects a null anchor rather than deriving at the tip", async () => {
-      const mockClient = createMockWebClient();
-      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
-
-      const { result } = renderHook(() => usePreview());
-
-      await act(async () => {
-        await expect(
-          result.current.preview({
-            accountId: "0xaccount",
-            request: createMockTransactionRequest(),
-            anchor: null as never,
-          })
-        ).rejects.toThrow(/await captureAnchor/);
-      });
-
-      expect(mockClient.executeForSummary).not.toHaveBeenCalled();
-      expect(mockClient.executeForSummaryAt).not.toHaveBeenCalled();
-    });
-
-    it("treats an explicitly undefined anchor as omitted", async () => {
-      const mockClient = createMockWebClient();
-      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
-
-      const { result } = renderHook(() => usePreview());
-
-      await act(async () => {
-        await result.current.preview({
-          accountId: "0xaccount",
-          request: createMockTransactionRequest(),
-          anchor: undefined,
-        });
-      });
-
-      expect(mockClient.executeForSummary).toHaveBeenCalled();
-      expect(mockClient.executeForSummaryAt).not.toHaveBeenCalled();
-    });
-
     it("rejects a request factory that resolves to null", async () => {
       const mockClient = createMockWebClient();
       mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });

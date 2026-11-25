@@ -263,23 +263,24 @@ const { pauseSync, resumeSync, isPaused } = useSyncControl();
 
 ## FP7: IndexedDB State Loss, Including From Your Own SDK Upgrade (HIGH)
 
-The client persists accounts, keys, notes and transaction history in IndexedDB. There are **two** distinct ways to lose all of it, and the second one is under your control:
+The client persists accounts, keys, notes and transaction history in IndexedDB. There are **three** distinct ways to lose all of it, and the last two are under your control:
 
 1. **The user or the browser deletes it** - "Clear site data", private browsing, storage pressure.
 2. **The one-time clear when upgrading from an SDK older than 0.17.0.** From 0.17.4 the store is kept across SDK upgrades, and a schema change migrates the existing data in place. The first open by 0.17.4 or later clears, once, a store last written by a client older than 0.17.0 (a 0.17.0 release candidate included) or carrying no client version; a store any 0.17.0 or later client wrote is kept. Earlier SDKs reset the store on every minor or major version bump.
+3. **The one-time clear when upgrading to protocol 1.0 (SDK 0.19).** The first open by 0.19 clears every store an earlier SDK wrote, whatever its client version, because protocol 1.0 runs on new networks and changed the encoding of the block headers. The secret keys in the store are cleared with everything else.
 
-**Upgrading a userbase from a pre-0.17.0 SDK destroys every locally-stored account, key and note on every user's device.** Nothing prompts, nothing warns, and the user's wallet is simply gone on next load.
+**Upgrading a userbase from a pre-0.17.0 SDK, or from any SDK before 0.19 to 0.19, destroys every locally-stored account, key and note on every user's device.** Nothing prompts, nothing warns, and the user's wallet is simply gone on next load.
 
 From 0.17.4 the SDK does not open a store a newer SDK wrote (one with a newer store schema): client creation fails with `Failed to initialize IdxdbStore: IndexedDB store "..." was written by a newer Miden client ...`, and nothing in the store is deleted. Rolling an app back to a 0.17.4 or later SDK with an older store schema therefore fails for every user who already ran the newer one, until you roll forward again or they clear the site's data.
 
 Mitigations:
 
-- **A pre-0.17.0 store cannot be carried across.** Its data belongs to networks that no longer exist, and `importStore` refuses a dump exported by a client older than 0.17.0 (or with no client version stamp), as it refuses one from a newer SDK. Export/import is for backups and moving a store between devices on 0.17.0 or later, but it is deprecated: create the client with the right `storeName` and manage store instances, or export only the state you need through the typed APIs. The surface is `useExportStore()` / `useImportStore()` in `@miden-sdk/react`, backed by the standalone `exportStore(storeName)` / `importStore(storeName, dump)` from `@miden-sdk/miden-sdk`. Per-object export/import also exists on the high-level client (`accounts.export` / `accounts.import`, `notes.export` / `notes.import`).
+- **A store written before 0.19 cannot be carried across.** Its data belongs to networks that no longer exist, and `importStore` refuses a dump exported before 0.19, as it refuses one from a newer SDK. Export/import is for backups and moving a store between devices on 0.19 or later, but it is deprecated: create the client with the right `storeName` and manage store instances, or export only the state you need through the typed APIs. The surface is `useExportStore()` / `useImportStore()` in `@miden-sdk/react`, backed by the standalone `exportStore(storeName)` / `importStore(storeName, dump)` from `@miden-sdk/miden-sdk`. Per-object export/import also exists on the high-level client (`accounts.export` / `accounts.import`, `notes.export` / `notes.import`).
 - Warn users that clearing browser data deletes their wallet.
 - Consider external signers (Para, Turnkey, wallet adapters) for production - the key material lives outside the browser store, so only cached chain state is lost.
 - Each signer identity gets its own database (`MidenClientDB_<storeName>`), so `SignerContextValue.storeName` must be unique per user.
 
-Verify before relying on this: `crates/idxdb-store/src/ts/schema.ts`, the `version(8)` cutover and `MIGRATION_BASELINE`.
+Verify before relying on this: `crates/idxdb-store/src/ts/schema.ts`, the `version(8)` and `version(17)` cutovers and `MIGRATION_BASELINE`, and `refuseUnkeptDump` in `import.ts`.
 
 ## FP8: Vite Configuration Requirements (MEDIUM)
 
@@ -403,7 +404,7 @@ Related: `notes.fetchPrivate({ mode: "all" })` is gone. `fetchPrivate()` takes n
 
 A foreign account's state and witness are fetched against the transaction's own reference block, and the vault entries and storage-map keys the foreign code reads are resolved during execution as per-asset and per-key witnesses. Nothing is prefetched: `foreignAccountInputs` and `ForeignAccount.prefetched` were removed in 0.17 along with the upstream types behind them.
 
-**The reference block must be one the node still serves account state for.** Nodes keep a bounded window of account history (50 blocks at the time of writing), so a transaction pinned to an older block - an anchor captured minutes earlier, say - fails naming the account and the block, and there is no longer a way to carry the state along with the request. Capture the `ChainAnchor` close to execution. For a multisig proposal, do not anchor at all: execute at the tip, where miden-client tracks the bound block of the auth args (chain-anchored-execution R0).
+**The reference block must be one the node still serves account state for.** Nodes keep a bounded window of account history (50 blocks at the time of writing), and the reference block is the sync height of the client. A client that is far behind the tip therefore fails naming the account and the block, and there is no way to carry the state along with the request. Sync before executing. A multisig proposal executes at the tip too, where miden-client tracks the bound block of the auth args (multi-party-signing R0).
 
 ```tsx
 const foreign = ForeignAccount.public(id, storageRequirements);
@@ -460,7 +461,7 @@ Four companions to the same boundary:
 
 - **`lastAuthError()` returns `null` under the worker.** The sign callback still fires under the worker, because it is proxied back to the main thread, but signing runs in the worker's WASM keystore while the accessor reads the main-thread instance, which never signed. Only the accessor misses the error, so if you need the signal, set `useWorker: false`. On the Node binding it always returns `null`, because signing goes through the filesystem keystore rather than a JS callback. Read it under your own lock: it is one of the raw-bound `SYNC_METHODS`, so unlike a forwarded async method it does not join `_serializeWasmCall`, and it takes a shared WASM borrow that can still lose the race against an in-flight call. The `keystore` getter has the same shape.
 - **Keystore callbacks wait on the main thread.** Under the worker, each `getKey`, `insertKey` and `sign` call is proxied to the main thread, and the worker gives `getKey` and `insertKey` 30 seconds by default while `sign` waits without a limit. Set `ClientOptions.callbackTimeoutMs` to put one limit on all three, rounded up to a whole millisecond (`0` removes them all). A negative, non-finite or non-number value, or one greater than 2147483647, throws `TypeError` at creation. A batch signs while it is built, so one failed or timed out `sign` fails the whole batch, and a stalled `sign` with no limit holds the batch and leaves later worker calls in the queue. If a signer can stall, set a finite value such as `callbackTimeoutMs: 120000`. See the [complete contract](https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#keystore-callback-timeouts).
-- **`usePreview()` runs the VM on the main thread regardless.** It is not offloaded to the worker (matching the client's unanchored `executeForSummary`), so it blocks the UI for its whole duration and queues other client calls behind it. Budget for that in a confirmation flow; do not assume the worker is absorbing it.
+- **`usePreview()` runs the VM on the main thread regardless.** It is not offloaded to the worker (matching the client's `executeForSummary`), so it blocks the UI for its whole duration and queues other client calls behind it. Budget for that in a confirmation flow; do not assume the worker is absorbing it.
 - **A batch in the worker still holds the client.** `submitNewTransactionBatch` is forwarded to the worker, so `transactions.batch`, `submitBatch` and `useBatch` leave the page's main thread free while every transaction is proven, but the whole batch occupies the client: other client calls queue behind it until it settles. A batch forwarded to the worker also does not surface its auth error through `lastAuthError()`, for the reason given above. With `useWorker: false`, without `Worker` support, or on a mock client, the batch proves on the main thread and blocks the UI, so keep batches small there.
 
 **Config cannot carry a prover instance.** Neither `ClientOptions.proverUrl` nor the React
@@ -479,7 +480,7 @@ Verify: `crates/web-client/js/index.js`, `crates/web-client/js/client.js`, `pack
 Errors carry machine-readable codes; message strings are not a stable API.
 
 - Assigned by the React SDK (`MidenError`, the closed `MidenErrorCode` union): `WASM_CLASS_MISMATCH`, `WASM_POINTER_CONSUMED`, `WASM_NOT_INITIALIZED`, `WASM_SYNC_REQUIRED`, `SEND_BUSY`, `OPERATION_BUSY`, `BATCH_BUSY`, `STALE_CLIENT`, `UNKNOWN`.
-- Assigned by the Rust client and thrown out of WASM (`WasmErrorCode`): `INVALID_CHAIN_ANCHOR`, `TRANSACTION_ALREADY_AUTHORIZED`. This list is deliberately **not** exhaustive of what the client can emit - `CodedError.code` carries a `(string & {})` arm so codes from a newer client stay assignable. Handle the ones you care about and fall through on the rest.
+- Assigned by the Rust client and thrown out of WASM (`WasmErrorCode`): `TRANSACTION_ALREADY_AUTHORIZED`. This list is deliberately **not** exhaustive of what the client can emit - `CodedError.code` carries a `(string & {})` arm so codes from a newer client stay assignable. Handle the ones you care about and fall through on the rest.
 
 ```tsx
 import type { CodedError } from "@miden-sdk/react";
@@ -494,7 +495,7 @@ try {
 }
 ```
 
-**Gotcha - on Node the code prefixes the message** (`"INVALID_CHAIN_ANCHOR: …"`) instead of being a property, because the napi bindings cannot attach one. Code written as `err.code === …` works in the browser and silently never matches under Node.
+**Gotcha - on Node the code prefixes the message** (`"TRANSACTION_ALREADY_AUTHORIZED: …"`) instead of being a property, because the napi bindings cannot attach one. Code written as `err.code === …` works in the browser and silently never matches under Node.
 
 **`WASM_CLASS_MISMATCH` almost always means multiple copies of `@miden-sdk/miden-sdk` are bundled**, not that you passed the wrong type. The code is raised from a raw message matching `_assertClass` or `expected instance of`, which is what an object built by one copy looks like when handed to another. Its own message says so and names the fix: `resolve.dedupe` + `optimizeDeps.exclude` for the package - which `midenVitePlugin()` already does (FP8). Pin `@miden-sdk/miden-sdk` and `@miden-sdk/react` to the same exact version too, rather than to ranges that can drift apart.
 
@@ -509,11 +510,23 @@ Import `@miden-sdk/miden-sdk/lazy` (or `@miden-sdk/react/lazy`) there. Identical
 
 Verify: `crates/web-client/js/eager.js`.
 
+## Removed or Changed in 0.19 (check these first when upgrading from 0.18)
+
+- The SDK runs protocol 1.0 and works only with a node of the matching version.
+- The first open clears the IndexedDB store an earlier SDK wrote, secret keys included, and `importStore` refuses a dump an earlier SDK exported. See FP7.
+- Bytes an earlier SDK serialized do not deserialize. `serialize()` / `deserialize()` use protobuf messages for `Account`, `Note`, `NoteScript`, `AccountPatch`, `AccountStoragePatch`, `AccountVaultPatch`, `TransactionRequest`, `SyncSummary`, `ProvenTransaction`, `TransactionSummary`, `SigningInputs`, `TransactionResult` and `TransactionStoreUpdate`, and so do the mock chain and mock note transport bytes. A wallet or external signer (Para, Turnkey) must decode with the same SDK version as the dApp: `SigningInputs` from a 0.18 dApp do not decode in 0.19.
+- `TransactionProver.newCallbackProver(jsFn)` and the native `miden-mobile-prover` receive the protobuf message of a `TransactionWitness` and return the protobuf message of a `ProvenTransaction`. Rebuild a native prover from 0.19.
+- `Signature.toPreparedSignature(message)` throws when the public key of an ECDSA signature cannot be recovered from the signature and `message`.
+- `BasicFungibleFaucetComponent.externalLink()` is now `externalUri()`.
+- `TransactionArgs.adviceInputs()` no longer holds the recipients of the expected output notes or the signatures. Read them with `outputNoteRecipients()` and `signatures()` (`BoundSignature[]`).
+- Chain-anchored execution is removed: `ChainAnchor`, `transactions.captureAnchor`, `WebClient.chainAnchorForRequest` / `executeTransactionAt` / `executeForSummaryAt`, the `anchor` option of `preview` / `executeRequest` / `submit` / `usePreview` / `useTransaction`, `useChainAnchor` and the `INVALID_CHAIN_ANCHOR` code. A transaction always executes at the sync height of the client. A multisig proposal already executes at the tip; a summary that binds the reference block reproduces only at the sync height it was derived at. See the `multi-party-signing` skill, which replaces `chain-anchored-execution`.
+- `client.accounts.import(id)`, `WebClient.importAccountById()` and `useImportAccount({ type: "id" })` read the account at the client's sync height. Call `syncState()` after the account is created and before importing it.
+
 ## Removed or Changed in 0.16 (check these first when upgrading from 0.15)
 
 - `ClientOptions.debugMode` removed; `WasmWebClient.createClient*` no longer take a trailing `debugMode` argument.
 - `FungibleAsset.withCallbacks(flag)` removed. The flag is an immutable property of the issuing faucet's account id; `FungibleAsset.callbacks()` still reports it.
-- `TransactionSummary.salt()` replaced by `userParams()` (the seven user-defined field elements the summary commitment binds).
+- `TransactionSummary.salt()` replaced by `userParams()` (the user-defined field elements the summary commitment binds).
 - `ExecutedTransaction.accountDelta()` and `TransactionStoreUpdate.accountDelta()` replaced by `accountPatch()`, exposing the absolute-valued `AccountPatch` / `AccountStoragePatch` / `AccountVaultPatch`. `TransactionSummary.accountDelta()` remains relative. `AccountStorageDelta` was removed.
 - `AccountComponent.createNetworkAuth` renamed to `createNetworkAuthComponents(NoteScriptFee[], feeFaucetId)`, which returns an **array**. Add every returned component to the builder with `AccountBuilder.withComponent`. Since 0.17 `feeFaucetId` must be the chain's own (`client.feeFaucetId()`, the faucet `client.protocolConfig()` names): the node never runs network transactions for an account whose fee asset differs from the chain's protocol configuration, and the notes sent to it silently go unconsumed.
 - MASM: note scripts calling `basic_wallet::add_assets_to_account` must switch to `basic_wallet::move_note_assets_to_account` (a stale script fails to compile with `undefined item 'add_assets_to_account'`). Account-component procedures now require `@account_procedure`, and transaction scripts use `@transaction_script pub proc main`.

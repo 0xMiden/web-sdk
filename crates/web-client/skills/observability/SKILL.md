@@ -66,8 +66,7 @@ newSendTransactionRequest -> executeTransaction -> proveTransaction
                           -> submitProvenTransaction -> applyTransaction
 ```
 
-With an anchor, `executeTransactionAt` replaces `executeTransaction`. With
-`returnNote: true`, `feeAwareTransactionRequestBuilder` replaces
+With `returnNote: true`, `feeAwareTransactionRequestBuilder` replaces
 `newSendTransactionRequest`. Budget for the same multiplicity on every other
 resource method: read the resource implementation in
 `js/resources/<area>.js` and count the `#inner.*` calls.

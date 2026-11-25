@@ -5,7 +5,7 @@ use miden_objects::proto;
 use crate::models::account_id::AccountId;
 use crate::models::felt::Felt;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{decode_message, encode_message};
+use crate::serialization::{decode_message, encode_message};
 
 pub mod storage;
 pub mod vault;

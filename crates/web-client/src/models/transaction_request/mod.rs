@@ -16,7 +16,7 @@ use crate::models::note::Note;
 use crate::models::note_script::NoteScript;
 use crate::models::word::Word;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{decode_proto, encode_proto};
+use crate::serialization::{decode_proto, encode_proto};
 
 pub mod note_and_args;
 pub mod note_details_and_tag;
@@ -177,8 +177,8 @@ impl TransactionRequest {
     /// The new auth args replace the previous auth arg and the declared fee conversion salt. An
     /// existing advice-map entry under the same key is overwritten. Every other field of the
     /// request stays the same. miden-client tracks the bound block of multisig auth args when it
-    /// executes the request. The request does not declare that block as a block number, so an
-    /// anchor from `chainAnchorForRequest` does not track it.
+    /// executes the request. The request does not declare that block as a block number, so
+    /// `blockNumbers()` does not return it.
     ///
     /// The `Felt`s are consumed by the call in the browser build: they are moved across the WASM
     /// boundary, so read what you need from them before the call and pass fresh ones to another

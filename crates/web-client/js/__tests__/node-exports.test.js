@@ -38,7 +38,7 @@ const fakeNative = vi.hoisted(() => {
     logoUri() {
       return null;
     }
-    externalLink() {
+    externalUri() {
       return null;
     }
   }
@@ -340,7 +340,7 @@ describe("Node napi boundary", () => {
 
     expect(faucet.description()).toBeUndefined();
     expect(faucet.logoUri()).toBeUndefined();
-    expect(faucet.externalLink()).toBeUndefined();
+    expect(faucet.externalUri()).toBeUndefined();
   });
 
   it("reads FeeSponsorshipNote.reclaimHeight() as undefined when unset and preserves positive numbers", () => {

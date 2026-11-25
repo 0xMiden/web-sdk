@@ -7,7 +7,7 @@ use super::word::Word;
 use crate::js_error_with_context;
 use crate::models::package::Package;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{decode_message, encode_message};
+use crate::serialization::{decode_message, encode_message};
 
 /// An executable program of a note.
 ///

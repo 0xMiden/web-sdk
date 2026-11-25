@@ -5,10 +5,7 @@ import { parseAccountId } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
 import { MidenError } from "../utils/errors";
 import type { CodedError } from "../utils/errors";
-import {
-  assertAnchorValueUsable,
-  resolveTransactionRequest,
-} from "../utils/transactions";
+import { resolveTransactionRequest } from "../utils/transactions";
 
 export interface UsePreviewResult {
   /** Derive the transaction summary awaiting authorization */
@@ -55,41 +52,38 @@ export interface UsePreviewResult {
  *
  * Runs the transaction in the VM on the main thread — unlike
  * `useTransaction().execute`, this is not offloaded to the worker (matching the
- * client's unanchored `executeForSummary`), so it blocks the UI for the
- * duration and queues other client calls behind it.
+ * client's `executeForSummary`), so it blocks the UI for the duration and
+ * queues other client calls behind it.
  *
- * A returned summary proves the request, anchor and summary agree; it does not
- * prove intent. Its commitment covers the account delta, the note commitments,
+ * A returned summary proves the request and summary agree; it does not prove
+ * intent. Its commitment covers the account delta, the note commitments,
  * the reference block (the bound block, for a multisig), the expiration delta
  * and the user params - not the transaction script or advice inputs. Note that
  * `expirationDelta()` returns 0 to mean no expiration was set, not that it has
  * already expired.
  *
- * Pass `anchor` to derive the summary at a pinned reference block. A co-signer
- * verifying a summary that binds the reference block commitment must do this
- * with the proposer's anchor: deriving it at the local sync height yields a
- * different summary and the comparison fails.
+ * The summary is derived at the local sync height. A summary that binds the
+ * reference block commitment therefore reproduces on another client only while
+ * both clients are at the same sync height.
  *
- * A multisig request built by `feeAwareTransactionRequestBuilder` takes no
- * anchor. Its summary binds the block its auth args name, which miden-client
+ * A multisig request built by `feeAwareTransactionRequestBuilder` is the
+ * exception. Its summary binds the block its auth args name, which miden-client
  * tracks when it executes the request, so it reproduces at the local tip once
  * this client has synced to at least that block (the largest of
  * `request.blockNumbers()`); below it the preview fails with "requested block N
  * is after transaction reference block M". A request from `withFeeAwareAuth`
- * takes no anchor either, but does not declare that block, so sync before
- * previewing or executing it. An anchor captured for that copy does not track
- * the bound block.
+ * does not declare that block, so sync before previewing or executing it.
  * This hook does not sync first. Call `sync()` from `useMiden()` before
  * previewing a received proposal, then confirm `client.getSyncHeight()` is at
  * least that block: the provider's sync returns early while another sync runs.
  *
  * @example
  * ```tsx
- * function VerifyProposal({ accountId, request, anchor, expected }: Props) {
+ * function VerifyProposal({ accountId, request, expected }: Props) {
  *   const { preview, isPreviewing } = usePreview();
  *
  *   const verify = async () => {
- *     const summary = await preview({ accountId, request, anchor });
+ *     const summary = await preview({ accountId, request });
  *     const matches =
  *       summary.toCommitment().toHex() === expected.toCommitment().toHex();
  *     if (matches) await sign(summary);
@@ -122,8 +116,6 @@ export function usePreview(): UsePreviewResult {
         );
       }
 
-      assertAnchorValueUsable(options);
-
       isBusyRef.current = true;
       setIsPreviewing(true);
       setError(null);
@@ -135,13 +127,7 @@ export function usePreview(): UsePreviewResult {
         );
         const derived = await runExclusiveSafe(() => {
           const accountIdObj = parseAccountId(options.accountId);
-          return options.anchor
-            ? client.executeForSummaryAt(
-                accountIdObj,
-                txRequest,
-                options.anchor
-              )
-            : client.executeForSummary(accountIdObj, txRequest);
+          return client.executeForSummary(accountIdObj, txRequest);
         });
         if (clientRef.current !== client) {
           throw new MidenError(
@@ -176,8 +162,8 @@ export function usePreview(): UsePreviewResult {
     setError(null);
   }, []);
 
-  // A summary binds the reference block commitment, so it is no more portable
-  // across chains than the anchor it was derived at. Mirrors `useChainAnchor`.
+  // A summary binds the reference block commitment, so it does not carry over
+  // to another chain.
   useEffect(() => {
     clientRef.current = client;
     setSummary(null);

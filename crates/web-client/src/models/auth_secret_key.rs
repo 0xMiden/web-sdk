@@ -11,7 +11,7 @@ use super::signature::Signature;
 use super::signing_inputs::SigningInputs;
 use super::word::Word;
 use crate::platform::{JsBytes, JsErr, from_str_err};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::serialization::{deserialize_from_bytes, serialize_to_bytes};
 
 #[derive(Clone, Debug)]
 #[js_export]
