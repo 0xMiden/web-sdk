@@ -1358,6 +1358,21 @@ const rpc = new RpcClient(new Endpoint(client.endpoint()!));
 const header = await rpc.getBlockHeaderByNumber(100, false);
 ```
 
+### Check the Node's Health
+
+`client.checkHealth()` asks the node for its status and never rejects for a node problem: it resolves to `{ reachable: true, version, chainTip, genesisCommitment?, blockProducer? }`, where `blockProducer` carries the block producer's `version`, `status`, `chainTip` and `mempoolStats` (`unbatchedTransactions`, `proposedBatches`, `provenBatches`), or to `{ reachable: false, error }`. A mock client reports unreachable. The request runs outside the client's call queue, so it answers during a sync. `client.monitorHealth({ intervalMs, onChange })` checks every `intervalMs` (at most 2147483647) after the previous check settles, calls `onChange` with the first result and then only when reachability or the block producer's `status` changes, and returns a function that stops it; `terminate()` stops it too. `RpcClient.getStatus()` returns the same status as a `RpcStatusInfo` and rejects when the node cannot be reached.
+
+```typescript
+const health = await client.checkHealth();
+if (!health.reachable) console.warn(health.error);
+
+const stop = client.monitorHealth({
+  intervalMs: 15_000,
+  onChange: (health) => setOnline(health.reachable),
+});
+stop();
+```
+
 ### Verify a signBytes signature
 
 `domainSeparatedSignCommitment` computes the commitment a wallet signs for a

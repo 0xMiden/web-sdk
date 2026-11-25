@@ -502,6 +502,13 @@ export default [
   // `self.location.href` (the only form a classic worker can see at runtime),
   // strips `export` clauses, and wraps the rollup ESM output in an async IIFE.
   //
+  // That rewrite means the classic worker cannot resolve the consumer bundler's
+  // hashed WASM asset on its own (issue #286). The main thread resolves
+  // `__wasm_url` before INIT and passes it in the init message; the worker
+  // feeds that URL to `__wbg_init`. The copy of `*.wasm` into
+  // `workers/assets/` below is only a fallback for unbundled / same-origin
+  // SDK dist serving — production Vite/webpack consumers need the init URL.
+  //
   // Output: dist/{st,mt}/workers/web-client-methods-worker.js
   {
     input: "./js/workers/web-client-methods-worker.js",

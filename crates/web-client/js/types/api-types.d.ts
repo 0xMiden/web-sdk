@@ -215,6 +215,57 @@ export interface MidenObservation {
 // Client options
 // ════════════════════════════════════════════════════════════════
 
+/** Mempool statistics of the node's block producer. */
+export interface HealthMempoolStats {
+  /** Transactions not yet in a batch. */
+  unbatchedTransactions: number;
+  /** Proposed batches not yet proven. */
+  proposedBatches: number;
+  /** Proven batches not yet in a block. */
+  provenBatches: number;
+}
+
+/** Status of the node's block producer. */
+export interface HealthBlockProducer {
+  version: string;
+  /** The block producer's status as the node reports it. */
+  status: string;
+  /** Block number of the block producer's chain tip. */
+  chainTip: number;
+  /** Present when the node reports it. */
+  mempoolStats?: HealthMempoolStats;
+}
+
+/** Result of {@link MidenClient.checkHealth}. */
+export type HealthStatus =
+  | {
+      reachable: true;
+      /** The node's RPC version. */
+      version: string;
+      /** Block number of the node's chain tip. */
+      chainTip: number;
+      /** Hex genesis commitment, when the node reports one. */
+      genesisCommitment?: string;
+      /** Present when the node reports it. */
+      blockProducer?: HealthBlockProducer;
+    }
+  | {
+      reachable: false;
+      /** Why the node could not be reached or did not answer. */
+      error: string;
+    };
+
+/** Options of {@link MidenClient.monitorHealth}. */
+export interface MonitorHealthOptions {
+  /**
+   * Delay in milliseconds between one check settling and the next starting,
+   * at most 2147483647 (the longest delay a timer can hold).
+   */
+  intervalMs: number;
+  /** Called with the first result and whenever the health state changes. */
+  onChange: (status: HealthStatus) => void;
+}
+
 export interface ClientOptions {
   /**
    * RPC endpoint. Accepts shorthands or a raw URL:
@@ -2418,6 +2469,33 @@ export declare class MidenClient {
    * `new RpcClient(new Endpoint(client.endpoint()!))`.
    */
   endpoint(): string | undefined;
+
+  /**
+   * Asks the node for its status through its `Status` endpoint.
+   *
+   * Never rejects for a node problem: an unreachable node, a failed request
+   * or a mock client (which has no node) resolve to
+   * `{ reachable: false, error }`. It rejects only on a terminated client. The
+   * request runs outside the client's call queue, so it answers while a sync
+   * or a transaction is in flight, and it skips version negotiation, so a node
+   * running an incompatible version still reports its `version`.
+   */
+  checkHealth(): Promise<HealthStatus>;
+
+  /**
+   * Checks the node's health now and then every `intervalMs` after the
+   * previous check settles, so checks never overlap.
+   *
+   * `onChange` receives the first result, then a result only when
+   * reachability or the block producer's `status` changes; a new chain tip
+   * alone is not a change. Returns a function that stops the monitor;
+   * `terminate()` stops every monitor of the client. An error thrown by
+   * `onChange` is logged and the monitor keeps running.
+   *
+   * @throws TypeError when `intervalMs` is not a positive number of at most
+   *   2147483647 or `onChange` is not a function.
+   */
+  monitorHealth(options: MonitorHealthOptions): () => void;
 
   /**
    * Returns a `TransactionRequestBuilder` that already declares a fee

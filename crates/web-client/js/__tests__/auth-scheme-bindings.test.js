@@ -72,7 +72,10 @@ const fakes = vi.hoisted(() => {
 });
 
 vi.mock("../../Cargo.toml", () => fakes.browserWasm);
-vi.mock("../wasm.js", () => ({ default: async () => fakes.browserWasm }));
+vi.mock("../wasm.js", () => ({
+  default: async () => fakes.browserWasm,
+  resolveWasmUrl: async () => undefined,
+}));
 vi.mock("../node/loader.js", () => ({
   loadNativeModule: () => fakes.nodeNative,
 }));

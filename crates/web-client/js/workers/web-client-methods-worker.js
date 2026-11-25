@@ -3,10 +3,12 @@ import { CallbackType, MethodName, WorkerAction } from "../constants.js";
 import { appendAuthError, createCallbackForwarder } from "../callbackBridge.js";
 
 let wasmModule = null;
+/** Optional WASM URL from the main thread (classic worker path, #286). */
+let initWasmUrl = undefined;
 
-const getWasmOrThrow = async () => {
+const getWasmOrThrow = async (moduleOrPath) => {
   if (!wasmModule) {
-    wasmModule = await loadWasm();
+    wasmModule = await loadWasm(moduleOrPath ?? initWasmUrl);
   }
   if (!wasmModule) {
     throw new Error(
@@ -511,9 +513,12 @@ async function processMessage(event) {
         noteTransportMaxRetries,
         noteTransportRetryIntervalMs,
         initCallbackTimeoutMs,
+        wasmUrl,
       ] = args;
       callbackTimeoutMs = initCallbackTimeoutMs;
-      const wasm = await getWasmOrThrow();
+      // Prefer the main-thread-resolved URL when present (classic worker).
+      initWasmUrl = wasmUrl;
+      const wasm = await getWasmOrThrow(wasmUrl);
 
       if (logLevel) {
         wasm.setupLogging(logLevel);
@@ -576,8 +581,10 @@ async function processMessage(event) {
         serializedMockChain,
         serializedMockNoteTransportNode,
         storeName,
+        wasmUrl,
       ] = args;
-      const wasm = await getWasmOrThrow();
+      initWasmUrl = wasmUrl;
+      const wasm = await getWasmOrThrow(wasmUrl);
 
       if (logLevel) {
         wasm.setupLogging(logLevel);
