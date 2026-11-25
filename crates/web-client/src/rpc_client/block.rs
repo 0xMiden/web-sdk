@@ -71,7 +71,7 @@ impl RpcClient {
     /// The proof is made against the chain length the node reports in `forest()`, which can be
     /// later than the block. `getBlockHeaderByNumber` returns the header alone.
     ///
-    /// @param block_num - The block to fetch.
+    /// @param `block_num` - The block to fetch.
     #[js_export(js_name = "getBlockHeaderWithProof")]
     pub async fn get_block_header_with_proof(
         &self,

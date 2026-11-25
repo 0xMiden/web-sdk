@@ -45,7 +45,7 @@ impl RpcClient {
     /// `SharedArrayBuffer` backing is rejected during argument conversion.
     ///
     /// @param prefixes - A `Uint16Array` of nullifier prefixes.
-    /// @param block_from - First block to scan, inclusive.
+    /// @param `block_from` - First block to scan, inclusive.
     /// @param block_to - Last block to scan, inclusive; must be at least `block_from`.
     /// @returns All matching nullifier updates across every chunk and page.
     #[allow(clippy::doc_markdown)]
@@ -87,7 +87,7 @@ impl RpcClient {
     /// browser entries the `nullifiers` handles are consumed; pass copies you still need.
     ///
     /// @param nullifiers - The nullifiers to look up.
-    /// @param block_from - First block to scan, inclusive.
+    /// @param `block_from` - First block to scan, inclusive.
     #[js_export(js_name = "getNullifierCommitHeights")]
     pub async fn get_nullifier_commit_heights(
         &self,
