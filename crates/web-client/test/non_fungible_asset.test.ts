@@ -292,20 +292,24 @@ test.describe("unified note assets", () => {
             value: token.intoWord(),
           }),
       };
-      // The browser throws the Rust message as a string, Node as an Error. A WASM trap
-      // throws a WebAssembly.RuntimeError, which must not count as a rejection.
+      // Browser and Node both throw a real Error from from_str_err paths. A WASM
+      // trap throws a WebAssembly.RuntimeError, which must not count as a rejection.
       const rejected = Object.fromEntries(
         Object.entries(operations).map(([label, operation]) => {
           try {
             operation();
-            return [label, "accepted"];
+            return [label, { status: "accepted" }];
           } catch (error) {
             if (error instanceof WebAssembly.RuntimeError) {
-              return [label, `trap: ${error.message}`];
+              return [label, { status: "trap", message: error.message }];
             }
             return [
               label,
-              error instanceof Error ? error.message : String(error),
+              {
+                status: "rejected",
+                isError: error instanceof Error,
+                message: error instanceof Error ? error.message : String(error),
+              },
             ];
           }
         })
@@ -329,7 +333,10 @@ test.describe("unified note assets", () => {
       "fungible entry as non-fungible": "Failed to create non-fungible asset",
     };
     for (const [label, prefix] of Object.entries(prefixes)) {
-      expect(result.rejected[label], label).toMatch(new RegExp(`^${prefix}`));
+      const entry = result.rejected[label];
+      expect(entry.status, label).toBe("rejected");
+      expect(entry.isError, label).toBe(true);
+      expect(entry.message, label).toMatch(new RegExp(`^${prefix}`));
     }
     expect(result.oneCount).toBe(1);
     expect(result.fullCount).toBe(16);

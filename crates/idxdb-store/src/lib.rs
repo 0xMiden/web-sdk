@@ -109,8 +109,9 @@ impl IdxdbStore {
     pub async fn new(database_name: String) -> Result<IdxdbStore, JsValue> {
         // Built before the open: once the open counts this store as a holder, only `Drop`
         // releases it, so nothing after the open may fail.
-        let smt_forest = AccountForest::new()
-            .map_err(|e| JsValue::from_str(&format!("Failed to create SMT forest: {e:?}")))?;
+        let smt_forest = AccountForest::new().map_err(|e| {
+            JsValue::from(JsError::new(&format!("Failed to create SMT forest: {e:?}")))
+        })?;
 
         let promise = open_database(database_name.as_str(), CLIENT_VERSION);
         let _db_id = JsFuture::from(promise).await?;

@@ -137,12 +137,12 @@ impl WebClient {
 pub async fn import_store(store_name: &str, store_dump: &str) -> Result<(), JsValue> {
     let store = idxdb_store::IdxdbStore::new(store_name.into())
         .await
-        .map_err(|err| JsValue::from_str(&format!("failed to open store: {err:?}")))?;
+        .map_err(|err| from_str_err(&format!("failed to open store: {err:?}")))?;
 
     store
         .import_store(store_dump.to_string())
         .await
-        .map_err(|err| JsValue::from_str(&format!("failed to import store: {err:?}")))?;
+        .map_err(|err| from_str_err(&format!("failed to import store: {err:?}")))?;
 
     Ok(())
 }

@@ -100,13 +100,18 @@ test.describe("fungible asset vault entries", () => {
 
       try {
         sdk.FungibleAsset.fromVaultEntry(invalidKey, value);
-        return { threw: false, message: "" };
+        return { threw: false, isError: false, message: "" };
       } catch (error) {
-        return { threw: true, message: String(error) };
+        return {
+          threw: true,
+          isError: error instanceof Error,
+          message: error instanceof Error ? error.message : String(error),
+        };
       }
     });
 
     expect(result.threw).toBe(true);
+    expect(result.isError).toBe(true);
     expect(result.message).toContain("Failed to create FungibleAsset");
   });
 });

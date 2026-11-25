@@ -75,6 +75,79 @@ test.describe("export and import the db", () => {
 
     expect(accountCommitment).toEqual(initialAccountCommitment);
   });
+
+  test("exportStore and importStore reject with Error instances on failures", async ({
+    page,
+  }) => {
+    const result = await page.evaluate(async () => {
+      const captureError = async (fn: () => Promise<unknown>) => {
+        try {
+          await fn();
+          return null;
+        } catch (error) {
+          return {
+            isError: error instanceof Error,
+            message: (error as Error)?.message,
+          };
+        }
+      };
+
+      const invalidJsonError = await captureError(() =>
+        window.importStore(window.storeName, "not valid json")
+      );
+
+      const failingStoreName = `${window.storeName}_open_failure`;
+      const originalOpen = IDBFactory.prototype.open;
+      IDBFactory.prototype.open = function () {
+        throw new Error("simulated open failure");
+      };
+      let exportOpenError = null;
+      let importOpenError = null;
+      try {
+        exportOpenError = await captureError(() =>
+          window.exportStore(failingStoreName)
+        );
+        importOpenError = await captureError(() =>
+          window.importStore(failingStoreName, "{}")
+        );
+      } finally {
+        IDBFactory.prototype.open = originalOpen;
+      }
+
+      const exportFailStoreName = `${window.storeName}_export_failure`;
+      await window.exportStore(exportFailStoreName);
+      const originalGetAll = IDBObjectStore.prototype.getAll;
+      IDBObjectStore.prototype.getAll = function () {
+        throw new Error("simulated export read failure");
+      };
+      let exportReadError = null;
+      try {
+        exportReadError = await captureError(() =>
+          window.exportStore(exportFailStoreName)
+        );
+      } finally {
+        IDBObjectStore.prototype.getAll = originalGetAll;
+      }
+
+      return {
+        invalidJsonError,
+        exportOpenError,
+        importOpenError,
+        exportReadError,
+      };
+    });
+
+    expect(result.invalidJsonError?.isError).toBe(true);
+    expect(result.invalidJsonError?.message).toContain(
+      "failed to import store"
+    );
+    expect(result.exportOpenError?.isError).toBe(true);
+    expect(result.exportOpenError?.message).toContain("failed to open store");
+    expect(result.importOpenError?.isError).toBe(true);
+    expect(result.importOpenError?.message).toContain("failed to open store");
+    expect(result.exportReadError?.isError).toBe(true);
+    expect(result.exportReadError?.message).toContain("failed to export store");
+  });
 });
 
 test.describe("export and import account", () => {

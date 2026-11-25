@@ -141,6 +141,48 @@ test.describe("Sync Lock Tests", () => {
       expect(result.secondRan).toBe(1);
       expect(result.secondResult).toBe("second-success");
     });
+
+    test("invalid node URL fails with an Error instance", async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        let resolveError: { isError: boolean; message?: string } | null = null;
+        try {
+          window.resolveStoreName("://bad");
+        } catch (error) {
+          resolveError = {
+            isError: error instanceof Error,
+            message: (error as Error)?.message,
+          };
+        }
+
+        let createError: { isError: boolean; message?: string } | null = null;
+        try {
+          await window.WasmWebClient.createClient(
+            "://bad",
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            false
+          );
+        } catch (error) {
+          createError = {
+            isError: error instanceof Error,
+            message: (error as Error)?.message,
+          };
+        }
+
+        return { resolveError, createError };
+      });
+
+      expect(result.resolveError).toEqual({
+        isError: true,
+        message: "Invalid node URL",
+      });
+      expect(result.createError).toEqual({
+        isError: true,
+        message: "Invalid node URL",
+      });
+    });
   });
 
   test.describe("Multiple Clients Same Store", () => {
