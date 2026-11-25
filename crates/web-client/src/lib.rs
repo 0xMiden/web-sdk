@@ -1043,10 +1043,7 @@ mod post_submit_code_tests {
         // Constructing a real ProvenBatchSubmission needs a proven batch; the
         // code mapper only matches the variant discriminant, so Empty proves
         // BatchBuilder errors that are not post-submit stay unmapped there.
-        assert_eq!(
-            post_submit_code(&ClientError::BatchBuilder(BatchBuilderError::Empty)),
-            None
-        );
+        assert_eq!(post_submit_code(&ClientError::BatchBuilder(BatchBuilderError::Empty)), None);
         // batch_outcome_unknown_code is covered when a submission is available;
         // Empty must not claim the unknown-outcome code.
         assert_eq!(

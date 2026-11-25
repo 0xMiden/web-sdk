@@ -16,6 +16,8 @@ use miden_client::note::{
     NoteScript as NativeNoteScript,
     PswapNote,
 };
+#[cfg(feature = "browser")]
+use miden_client::transaction::BatchBuilderError;
 #[cfg(feature = "testing")]
 use miden_client::transaction::LocalTransactionProver;
 use miden_client::transaction::{
@@ -65,8 +67,6 @@ use crate::platform::{
     maybe_wrap_send,
 };
 use crate::{WebClient, js_error_with_context, js_post_submit_error};
-#[cfg(feature = "browser")]
-use miden_client::transaction::BatchBuilderError;
 
 #[js_export]
 impl WebClient {
@@ -1170,25 +1170,15 @@ fn js_batch_submit_error(err: ClientError, context: &str) -> JsErr {
         let js_error = js_error_with_context(err, context);
         if let Some(native) = submission {
             let wrapped = ProvenBatchSubmission::from_native(native);
-            let ids: Vec<String> = wrapped
-                .transaction_ids()
-                .into_iter()
-                .map(|id| id.to_hex())
-                .collect();
+            let ids: Vec<String> =
+                wrapped.transaction_ids().into_iter().map(|id| id.to_hex()).collect();
             let ids_js = js_sys::Array::new();
             for id in ids {
                 ids_js.push(&JsValue::from_str(&id));
             }
-            let _ = Reflect::set(
-                &js_error,
-                &JsValue::from_str("submission"),
-                &JsValue::from(wrapped),
-            );
-            let _ = Reflect::set(
-                &js_error,
-                &JsValue::from_str("transactionIds"),
-                &ids_js.into(),
-            );
+            let _ =
+                Reflect::set(&js_error, &JsValue::from_str("submission"), &JsValue::from(wrapped));
+            let _ = Reflect::set(&js_error, &JsValue::from_str("transactionIds"), &ids_js.into());
         }
         return js_error;
     }
