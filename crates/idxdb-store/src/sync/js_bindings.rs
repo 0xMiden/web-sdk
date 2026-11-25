@@ -122,6 +122,51 @@ pub struct JsStateSyncUpdate {
     /// registered with `track_account_witness`; the rest are ignored.
     #[wasm_bindgen(js_name = "accountWitnesses")]
     pub account_witnesses: Vec<JsAccountWitnessUpdate>,
+
+    /// Incremental public-account patches, written inside the sync transaction.
+    #[wasm_bindgen(js_name = "accountPatches")]
+    pub account_patches: Vec<JsAccountPatchUpdate>,
+
+    /// Commitments of discarded account states to undo inside the sync transaction.
+    #[wasm_bindgen(js_name = "undoAccountCommitments")]
+    pub undo_account_commitments: Vec<String>,
+
+    /// Accounts to lock inside the sync transaction.
+    #[wasm_bindgen(js_name = "lockedAccountIds")]
+    pub locked_account_ids: Vec<String>,
+}
+
+/// An incremental account patch with the roots the SMT forest computed for it, in the shape
+/// `applyAccountPatch` takes.
+#[wasm_bindgen(getter_with_clone)]
+#[derive(Clone)]
+pub struct JsAccountPatchUpdate {
+    #[wasm_bindgen(js_name = "accountId")]
+    pub account_id: String,
+    #[wasm_bindgen(js_name = "nonce")]
+    pub nonce: String,
+    #[wasm_bindgen(js_name = "updatedSlots")]
+    pub updated_slots: Vec<JsStorageSlot>,
+    #[wasm_bindgen(js_name = "changedMapEntries")]
+    pub changed_map_entries: Vec<JsStorageMapEntry>,
+    #[wasm_bindgen(js_name = "changedAssets")]
+    pub changed_assets: Vec<JsVaultAsset>,
+    #[wasm_bindgen(js_name = "codeRoot")]
+    pub code_root: String,
+    #[wasm_bindgen(js_name = "storageRoot")]
+    pub storage_root: String,
+    #[wasm_bindgen(js_name = "vaultRoot")]
+    pub vault_root: String,
+    #[wasm_bindgen(js_name = "committed")]
+    pub committed: bool,
+    #[wasm_bindgen(js_name = "commitment")]
+    pub commitment: String,
+    /// Serialized account code. Empty when the patch carries none.
+    #[wasm_bindgen(js_name = "code")]
+    pub code: Vec<u8>,
+    /// Commitment the persisted account must still have when the patch lands.
+    #[wasm_bindgen(js_name = "initialAccountCommitment")]
+    pub initial_account_commitment: String,
 }
 
 /// One cached account witness to write during a sync.

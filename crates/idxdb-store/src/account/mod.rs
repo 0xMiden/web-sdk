@@ -52,6 +52,7 @@ use crate::account::utils::{
     remove_account_address,
 };
 use crate::promise::{await_js, await_js_value};
+use crate::sync::JsAccountPatchUpdate;
 
 mod js_bindings;
 mod witnesses;
@@ -62,11 +63,10 @@ use js_bindings::{
     idxdb_get_account_headers,
     idxdb_get_account_ids,
     idxdb_get_account_snapshot,
+    idxdb_get_account_snapshots_after_undo,
     idxdb_get_account_storage,
     idxdb_get_foreign_account_code,
-    idxdb_lock_account,
     idxdb_prune_account_history,
-    idxdb_undo_account_states,
     idxdb_upsert_foreign_account_code,
 };
 
@@ -82,8 +82,8 @@ use models::{
 
 pub(crate) mod utils;
 use utils::{
-    apply_account_patch,
     apply_full_account_state,
+    build_account_patch_payload,
     insert_account,
     parse_account_record_idxdb_object,
     patch_code_bytes,
@@ -221,6 +221,14 @@ impl IdxdbStore {
         else {
             return Ok(None);
         };
+        self.account_record_from_snapshot(account_id, snapshot).map(Some)
+    }
+
+    fn account_record_from_snapshot(
+        &self,
+        account_id: AccountId,
+        snapshot: AccountSnapshotIdxdbObject,
+    ) -> Result<AccountRecord, StoreError> {
         let code_root = snapshot.header.code_root.clone();
         let (header, status, client_type) = parse_account_record_idxdb_object(snapshot.header)?;
         let code = snapshot.code.ok_or_else(|| missing_code_error(&code_root))?;
@@ -239,7 +247,7 @@ impl IdxdbStore {
         }
         // Other clients share the tables, but each store owns its forest.
         self.smt_forest.write().refresh_account(&account)?;
-        Ok(Some(AccountRecord::new(AccountRecordData::Full(account), status, client_type)))
+        Ok(AccountRecord::new(AccountRecordData::Full(account), status, client_type))
     }
 
     async fn get_account_snapshot(
@@ -415,38 +423,44 @@ impl IdxdbStore {
         Ok(assets)
     }
 
-    /// Applies an incremental (non-full-state) account patch: updates the SMT forest, then persists
-    /// the resulting storage-map roots and vault changes atomically.
+    /// Prepares an incremental (non-full-state) account patch for the sync transaction: updates
+    /// the SMT forest and builds the storage-map roots and vault changes the write needs.
     ///
     /// The patch's values are already absolute, so no account reconstruction is needed. Applying
     /// the forest update also verifies it: `final_header`'s vault root is recorded on the update
-    /// and checked, so a patch that does not reproduce it fails before anything is written.
-    pub(crate) async fn apply_incremental_account_patch(
+    /// and checked, so a patch that does not reproduce it fails before anything is written. The
+    /// write itself happens inside `applyStateSync`, so it commits or rolls back with the sync.
+    pub(crate) fn prepare_incremental_account_patch(
         &self,
         final_header: &AccountHeader,
         patch: &AccountPatch,
-    ) -> Result<(), StoreError> {
+        initial: &AccountHeader,
+    ) -> Result<JsAccountPatchUpdate, StoreError> {
         let account_id = final_header.id();
-        let initial = self.current_account_header(account_id).await?;
         if final_header.nonce() <= initial.nonce() {
             return Err(StoreError::DatabaseError(format!(
                 "account patch nonce does not advance persisted state for {account_id}",
             )));
         }
         let new_map_roots = self.apply_patch_to_forest(final_header, patch)?;
-        let code_bytes = patch_code_bytes(patch, final_header)?;
+        let code = patch_code_bytes(patch, final_header)?;
+        let (updated_slots, changed_map_entries, changed_assets) =
+            build_account_patch_payload(&new_map_roots, patch);
 
-        apply_account_patch(
-            self.db_id(),
-            account_id,
-            final_header,
-            &new_map_roots,
-            patch,
-            code_bytes,
-            initial.to_commitment(),
-        )
-        .await
-        .map_err(|err| StoreError::DatabaseError(format!("failed to apply account patch: {err:?}")))
+        Ok(JsAccountPatchUpdate {
+            account_id: account_id.to_string(),
+            nonce: final_header.nonce().to_string(),
+            updated_slots,
+            changed_map_entries,
+            changed_assets,
+            code_root: final_header.code_commitment().to_string(),
+            storage_root: final_header.storage_commitment().to_string(),
+            vault_root: final_header.vault_root().to_string(),
+            committed: account_id.is_public(),
+            commitment: final_header.to_commitment().to_string(),
+            code,
+            initial_account_commitment: initial.to_commitment().to_string(),
+        })
     }
 
     /// Applies an account patch to the SMT forest, returning the new root of each map slot it
@@ -757,39 +771,49 @@ impl IdxdbStore {
         Ok(foreign_account_code)
     }
 
-    pub(crate) async fn undo_account_states(
+    /// Returns the headers `accounts` would have if `account_commitments` were undone, and
+    /// refreshes this store's forest to those states, without persisting the undo.
+    ///
+    /// A sync prepares a patch for an account with a discarded transaction against this state;
+    /// the undo itself is written with the rest of the sync.
+    pub(crate) async fn headers_after_undo(
         &self,
-        account_states: &[Word],
-    ) -> Result<(), StoreError> {
-        let account_commitments =
-            account_states.iter().map(ToString::to_string).collect::<Vec<_>>();
-        let promise = idxdb_undo_account_states(self.db_id(), account_commitments);
-        await_js_value(promise, "failed to undo account states").await?;
+        account_commitments: Vec<String>,
+        accounts: &[AccountId],
+    ) -> Result<BTreeMap<AccountId, AccountHeader>, StoreError> {
+        let promise = idxdb_get_account_snapshots_after_undo(
+            self.db_id(),
+            account_commitments,
+            accounts.iter().map(ToString::to_string).collect(),
+        );
+        let snapshots: Vec<Option<AccountSnapshotIdxdbObject>> =
+            await_js(promise, "failed to preview account state after undo").await?;
 
-        Ok(())
+        let mut headers = BTreeMap::new();
+        for (account_id, snapshot) in accounts.iter().zip(snapshots) {
+            let snapshot = snapshot.ok_or(StoreError::AccountDataNotFound(*account_id))?;
+            let record = self.account_record_from_snapshot(*account_id, snapshot)?;
+            let account = Account::try_from(record)
+                .map_err(|error| StoreError::DatabaseError(error.to_string()))?;
+            headers.insert(*account_id, AccountHeader::from(&account));
+        }
+        Ok(headers)
     }
 
-    /// Locks the account if the mismatched digest doesn't belong to a previous account state (stale
-    /// data).
-    pub(crate) async fn lock_account_on_unexpected_commitment(
+    /// Whether a mismatched digest should lock the account. Mismatched digests may be due to stale
+    /// network data: if the digest is tracked in the db and belongs to the mismatched account, it
+    /// is a past update and the account stays unlocked.
+    pub(crate) async fn should_lock_on_unexpected_commitment(
         &self,
         account_id: &AccountId,
         mismatched_digest: &Word,
-    ) -> Result<(), StoreError> {
-        // Mismatched digests may be due to stale network data. If the mismatched digest is
-        // tracked in the db and corresponds to the mismatched account, it means we
-        // got a past update and shouldn't lock the account.
-        if let Some(account) = self.get_account_header_by_commitment(*mismatched_digest).await?
-            && account.id() == *account_id
-        {
-            return Ok(());
-        }
+    ) -> Result<bool, StoreError> {
+        let is_past_state = self
+            .get_account_header_by_commitment(*mismatched_digest)
+            .await?
+            .is_some_and(|account| account.id() == *account_id);
 
-        let account_id_str = account_id.to_string();
-        let promise = idxdb_lock_account(self.db_id(), account_id_str);
-        await_js_value(promise, "failed to lock account").await?;
-
-        Ok(())
+        Ok(!is_past_state)
     }
 
     pub(crate) async fn insert_address(

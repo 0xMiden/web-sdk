@@ -91,6 +91,43 @@ export async function getAccountSnapshot(dbId, accountId, includeCode, includeSt
         };
     });
 }
+class PreviewComplete extends Error {
+}
+/**
+ * Reads the snapshots `accountIds` would have if `accountCommitments` were undone, without
+ * persisting the undo: the undo and the reads run in one transaction that is then aborted. Lets
+ * a sync prepare a patch against the post-undo state while the undo itself commits with the sync.
+ */
+export async function getAccountSnapshotsAfterUndo(dbId, accountCommitments, accountIds) {
+    const db = getDatabase(dbId);
+    const snapshots = [];
+    try {
+        await db.dexie.transaction("rw", [
+            db.latestAccountStorages,
+            db.historicalAccountStorages,
+            db.latestStorageMapEntries,
+            db.historicalStorageMapEntries,
+            db.latestAccountAssets,
+            db.historicalAccountAssets,
+            db.latestAccountHeaders,
+            db.historicalAccountHeaders,
+            db.accountCodes,
+        ], async () => {
+            await undoAccountStates(dbId, accountCommitments);
+            for (const accountId of accountIds) {
+                snapshots.push(await getAccountSnapshot(dbId, accountId, true, true, true, true));
+            }
+            // Throwing rolls the whole transaction back, undo included.
+            throw new PreviewComplete();
+        });
+    }
+    catch (error) {
+        if (!(error instanceof PreviewComplete)) {
+            logWebStoreError(error, "Error previewing account state after undo");
+        }
+    }
+    return snapshots;
+}
 export async function getAccountHeaderByCommitment(dbId, accountCommitment) {
     try {
         const db = getDatabase(dbId);
