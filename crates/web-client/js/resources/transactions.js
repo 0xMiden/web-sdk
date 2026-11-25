@@ -341,8 +341,8 @@ export class TransactionsResource {
 
   /**
    * Withdraws USDCx through Circle xReserve by emitting one public burn note
-   * that the USDCx faucet consumes. The amount and the recipient are validated
-   * before any WASM call.
+   * that the USDCx faucet consumes. The amount, destination domain, and
+   * recipient are validated before building the withdrawal request.
    */
   async withdrawUsdcx(opts) {
     rejectUnexpectedAnchor(opts, "withdrawUsdcx", "submit()");
@@ -1334,6 +1334,12 @@ export class TransactionsResource {
 
   async #buildXReserveBurnRequest(opts, wasm) {
     const amount = toAmount(opts.amount, "withdrawUsdcx");
+    const domain = opts.destinationDomain;
+    if (!Number.isInteger(domain) || domain < 0 || domain > 0xffffffff) {
+      throw new Error(
+        "withdrawUsdcx: destinationDomain must be an integer from 0 to 4294967295"
+      );
+    }
     const recipientHex = opts.destinationRecipient;
     if (
       typeof recipientHex !== "string" ||
@@ -1354,7 +1360,7 @@ export class TransactionsResource {
       accountId,
       faucetId,
       amount,
-      opts.destinationDomain,
+      domain,
       recipient
     );
     return { accountId, request };
