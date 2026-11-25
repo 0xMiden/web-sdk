@@ -41,6 +41,7 @@ export {
   MempoolStatsInfo,
   MintNote,
   NetworkAccountTarget,
+  NoteExecutionCycles,
   NonFungibleAsset,
   Note,
   NoteAssets,
