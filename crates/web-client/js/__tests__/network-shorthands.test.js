@@ -9,6 +9,7 @@ vi.mock("../wasm.js", () => ({
   default: async () => ({
     resolveStoreName: (_nodeUrl, storeName) => storeName,
   }),
+  resolveWasmUrl: async () => undefined,
 }));
 
 import { MidenClient } from "../index.js";

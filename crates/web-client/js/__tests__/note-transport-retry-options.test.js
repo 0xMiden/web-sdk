@@ -9,6 +9,8 @@ vi.mock("../wasm.js", () => ({
   default: async () => ({
     resolveStoreName: (_nodeUrl, storeName) => storeName,
   }),
+  resolveWasmUrl: async () =>
+    "https://example.test/miden_client_web-hashed.wasm",
 }));
 
 import { MidenClient, WasmWebClient } from "../index.js";
@@ -217,6 +219,7 @@ describe("the worker receives the retry options", () => {
   it("puts them at INIT args 10 and 11", async () => {
     const posted = [];
     let onMessage;
+    WasmWebClient.workerMode = "classic";
     vi.stubGlobal(
       "Worker",
       class {
@@ -246,13 +249,21 @@ describe("the worker receives the retry options", () => {
       500
     );
     await onMessage({ data: { loaded: true } });
-    await Promise.resolve();
+    await vi.waitFor(() => {
+      expect(posted.some((m) => m.action === WorkerAction.INIT)).toBe(true);
+    });
 
     const init = posted.find((m) => m.action === WorkerAction.INIT);
-    expect(init.args).toHaveLength(13);
+    // args[0..12] prior fields; args[13] is the classic-worker WASM URL (#286)
+    expect(init.args).toHaveLength(14);
     expect(init.args[9]).toBe("0xfee");
     expect(init.args[10]).toBe(7);
     expect(init.args[11]).toBe(500);
+    expect(init.args[12]).toBeUndefined(); // callbackTimeoutMs default
+    expect(init.args[13]).toBe(
+      "https://example.test/miden_client_web-hashed.wasm"
+    );
+    WasmWebClient.workerMode = "auto";
   });
 });
 

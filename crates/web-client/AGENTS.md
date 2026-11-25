@@ -78,6 +78,14 @@ and `pswap`. Client-level methods cover the lifecycle around them - `sync`,
 `syncChain`, `syncNoteTransport`, `getSyncHeight`, `waitForIdle` and
 `terminate`.
 
+`client.checkHealth()` resolves to `{ reachable: true, version, chainTip,
+genesisCommitment?, blockProducer? }` or `{ reachable: false, error }` and never
+rejects for a node problem, so do not wrap it in `try`.
+`client.monitorHealth({ intervalMs, onChange })` (`intervalMs` at most
+2147483647) calls `onChange` with the first
+result and then only when reachability or the block producer's `status` changes,
+and returns `stop()`; `terminate()` stops it as well.
+
 For an application that manages its own state, construct `RpcClient` directly:
 
 ```ts
