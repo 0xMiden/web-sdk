@@ -1042,19 +1042,27 @@ describe("store lock across WebClient instances (Web Locks)", () => {
     }
   );
 
-  it("refuses a non-fungible faucet with the wasm client's bare string before its genesis sync or a store-lock request", async () => {
+  it("refuses a non-fungible faucet with the wasm client's Error before its genesis sync or a store-lock request", async () => {
     const message = "Non-fungible faucets are not supported yet";
     const store = uniqueStore();
     const a = makeWebClient(store, "A");
-    // As the wasm newFaucet does: a bare string, not an Error.
+    // As the wasm newFaucet does: an Error instance.
     a.wasmClient.newFaucet = vi.fn(async (_mode, nonFungible) => {
-      if (nonFungible) throw message;
+      if (nonFungible) throw new Error(message);
       return "faucet";
     });
 
-    await expect(
-      a.client.newFaucet("private", true, "T", "TOK", 8, 1n, "falcon")
-    ).rejects.toBe(message);
+    const rejection = a.client.newFaucet(
+      "private",
+      true,
+      "T",
+      "TOK",
+      8,
+      1n,
+      "falcon"
+    );
+    await expect(rejection).rejects.toBeInstanceOf(Error);
+    await expect(rejection).rejects.toHaveProperty("message", message);
     expect(lockRequest).not.toHaveBeenCalled();
     expect(a.wasmClient.syncBeforeAccountCreation).not.toHaveBeenCalled();
     expect(a.wasmClient.newFaucet).not.toHaveBeenCalled();

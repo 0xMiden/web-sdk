@@ -781,6 +781,24 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
           IDBObjectStore.prototype.getAll = originalGetAll;
         }
 
+        const mockClient = await window.MockWasmWebClient.createClient();
+        let nonFungibleFaucetError = null;
+        try {
+          nonFungibleFaucetError = await captureError(() =>
+            mockClient.newFaucet(
+              window.AccountStorageMode.private(),
+              true,
+              "T",
+              "TOK",
+              8,
+              1n,
+              window.AuthScheme.AuthRpoFalcon512
+            )
+          );
+        } finally {
+          mockClient.terminate();
+        }
+
         return {
           resolveError,
           createError,
@@ -788,6 +806,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
           exportOpenError,
           importOpenError,
           exportReadError,
+          nonFungibleFaucetError,
         };
       });
 
@@ -811,6 +830,10 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       expect(result.exportReadError?.message).toContain(
         "failed to export store"
       );
+      expect(result.nonFungibleFaucetError).toEqual({
+        isError: true,
+        message: "Non-fungible faucets are not supported yet",
+      });
     }
   );
 
