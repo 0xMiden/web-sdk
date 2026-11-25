@@ -40,6 +40,7 @@ React hooks library for the Miden Web Client. Provides a simple, ergonomic inter
 - **Auto Pre-Sync** - Transaction hooks sync before executing by default (opt out with `skipSync`)
 - **WASM Error Wrapping** - Cryptic WASM errors are intercepted and replaced with actionable messages
 - **Private Note Delivery Reports** - `useSend`, `useMultiSend` and `useTransaction` reject with a `PrivateNoteDeliveryError` that keeps the transaction id when a private note is not delivered, and `useResendPrivateNotes()` sends it again
+- **Account Update Subscription** - `useWaitForAccountUpdate()` watches commitment or storage changes driven by external consumers with clean unmount cancellation
 
 ## Installation
 
@@ -1108,6 +1109,45 @@ function WaitForNotes({ accountId }: { accountId: string }) {
   };
 
   return <button onClick={handleWait}>Wait for Notes</button>;
+}
+```
+
+#### `useWaitForAccountUpdate()`
+
+Wait for an externally driven account-state update (for example, a note
+consumed by a network operator or another client). Watches either the full
+account commitment (`account.to_commitment()`) or a specific storage `slot` /
+`mapKey`, and exposes `unsubscribe()` plus automatic cleanup on unmount.
+
+```tsx
+import { useWaitForAccountUpdate } from '@miden-sdk/react';
+
+function WaitForAccountUpdate({ accountId }: { accountId: string }) {
+  const { waitForAccountUpdate, unsubscribe, isWaiting, error } =
+    useWaitForAccountUpdate();
+
+  const handleWait = async () => {
+    try {
+      const updated = await waitForAccountUpdate(accountId, {
+        slot: 'counter::value',
+        timeoutMs: 30_000,
+        intervalMs: 1_000,
+      });
+      console.log('Account updated:', updated.to_commitment().toHex());
+    } catch {
+      // Wait errors are exposed on `error` state.
+    }
+  };
+
+  return (
+    <div>
+      <button onClick={handleWait} disabled={isWaiting}>
+        {isWaiting ? 'Waiting...' : 'Wait for Update'}
+      </button>
+      {isWaiting && <button onClick={unsubscribe}>Cancel</button>}
+      {error && <p>{error.message}</p>}
+    </div>
+  );
 }
 ```
 
@@ -2277,6 +2317,9 @@ import type {
   BatchResult,
   WaitForCommitOptions,
   WaitForNotesOptions,
+  WaitForAccountUpdateOptions,
+  UseWaitForAccountUpdateOptions,
+  UseWaitForAccountUpdateResult,
   MintOptions,
   ConsumeOptions,
   SwapOptions,

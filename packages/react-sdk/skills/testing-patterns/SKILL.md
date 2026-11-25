@@ -129,6 +129,7 @@ the SDK's own `setup.ts` mocks.
 - `useSyncControl()` - `{ pauseSync: vi.fn(), resumeSync: vi.fn(), isPaused: false }`, no loading or error field at all.
 - `useCompile()` - `{ component, txScript, noteScript, isReady }`.
 - `useExecuteProgram()` - resolves `{ stack: bigint[] }`.
+- `useWaitForAccountUpdate()` - `{ waitForAccountUpdate: vi.fn(), unsubscribe: vi.fn(), account: null, isWaiting: false, error: null, reset: vi.fn() }` (busy flag is `isWaiting`, not `isLoading`).
 
 **Query hooks are self-healing, so do not assert "empty forever".** Their fetch bodies
 begin `if (!client || !isReady) return;`, but their effects are **keyed on `isReady`** -
