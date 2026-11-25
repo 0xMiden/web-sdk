@@ -89,6 +89,12 @@ use utils::{
     patch_code_bytes,
 };
 
+/// A header whose code root has no stored code row (a dangling root) is reported with that root
+/// rather than surfacing as a decoding error.
+fn missing_code_error(code_root: &str) -> StoreError {
+    StoreError::DatabaseError(format!("account code with root {code_root} not found"))
+}
+
 /// The account components one snapshot read loads alongside the header.
 #[derive(Clone, Copy)]
 enum SnapshotParts {
@@ -215,10 +221,9 @@ impl IdxdbStore {
         else {
             return Ok(None);
         };
+        let code_root = snapshot.header.code_root.clone();
         let (header, status, client_type) = parse_account_record_idxdb_object(snapshot.header)?;
-        let code = snapshot
-            .code
-            .ok_or_else(|| StoreError::DatabaseError("account snapshot code not found".into()))?;
+        let code = snapshot.code.ok_or_else(|| missing_code_error(&code_root))?;
         let account = Account::new(
             header.id(),
             AssetVault::new(&Self::parse_assets(snapshot.assets)?)?,
@@ -300,10 +305,9 @@ impl IdxdbStore {
         else {
             return Ok(None);
         };
+        let code_root = snapshot.header.code_root.clone();
         let (header, status, client_type) = parse_account_record_idxdb_object(snapshot.header)?;
-        let code = snapshot
-            .code
-            .ok_or_else(|| StoreError::DatabaseError("account snapshot code not found".into()))?;
+        let code = snapshot.code.ok_or_else(|| missing_code_error(&code_root))?;
         let code: AccountCode = decode_unchecked(&code.code)?;
         let mut slots = snapshot
             .storage
@@ -542,9 +546,7 @@ impl IdxdbStore {
         else {
             return Ok(None);
         };
-        let code = snapshot
-            .code
-            .ok_or_else(|| StoreError::DatabaseError("account snapshot code not found".into()))?;
+        let code = snapshot.code.ok_or_else(|| missing_code_error(&snapshot.header.code_root))?;
         Ok(Some(decode_unchecked(&code.code)?))
     }
 
