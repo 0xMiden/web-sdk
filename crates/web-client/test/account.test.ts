@@ -1300,3 +1300,74 @@ test.describe("getAccountByKeyCommitment tests", () => {
 // GET_ACCOUNT_PROOF VAULT COMMITMENT TESTS
 // =======================================================================================================
 // Skipped: requires a running node and browser-specific helpers (createNewWallet, fundAccountFromFaucet)
+
+// APPLY_PATCH TESTS
+// =======================================================================================================
+
+test.describe("Account.applyPatch tests", () => {
+  const mintPatch = async ({ client, sdk, helpers }) => {
+    const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+    const before = await client.getAccount(faucet.id());
+    const request = await client.newMintTransactionRequest(
+      wallet.id(),
+      faucet.id(),
+      sdk.NoteType.Public,
+      BigInt(7)
+    );
+    const executed = (
+      await client.executeTransaction(faucet.id(), request)
+    ).executedTransaction();
+    return { wallet, before, executed, patch: executed.accountPatch() };
+  };
+
+  test("applying a transaction's patch reproduces the post-transaction account", async ({
+    run,
+  }) => {
+    const result = await run(async (ctx) => {
+      const { before, executed, patch } = await mintPatch(ctx);
+      const updated = before.applyPatch(patch);
+      return {
+        updated: updated.to_commitment().toHex(),
+        expected: executed.finalAccountHeader().to_commitment().toHex(),
+        before: before.to_commitment().toHex(),
+        beforeNonce: before.nonce().toString(),
+        updatedNonce: updated.nonce().toString(),
+        patchNonce: patch.finalNonce().toString(),
+        // The receiver is not consumed by applyPatch and stays usable.
+        beforeAfter: before.to_commitment().toHex(),
+      };
+    });
+    expect(result.updated).toEqual(result.expected);
+    expect(result.updated).not.toEqual(result.before);
+    expect(result.beforeAfter).toEqual(result.before);
+    expect(result.updatedNonce).toEqual(result.patchNonce);
+    expect(result.updatedNonce).not.toEqual(result.beforeNonce);
+  });
+
+  test("rejects a patch for another account", async ({ run }) => {
+    const result = await run(async (ctx) => {
+      const { wallet, patch } = await mintPatch(ctx);
+      try {
+        wallet.applyPatch(patch);
+        return { threw: false };
+      } catch {
+        return { threw: true };
+      }
+    });
+    expect(result.threw).toBe(true);
+  });
+
+  test("rejects a patch whose nonce does not increase", async ({ run }) => {
+    const result = await run(async (ctx) => {
+      const { before, patch } = await mintPatch(ctx);
+      const updated = before.applyPatch(patch);
+      try {
+        updated.applyPatch(patch);
+        return { threw: false };
+      } catch {
+        return { threw: true };
+      }
+    });
+    expect(result.threw).toBe(true);
+  });
+});
