@@ -218,6 +218,40 @@ describe("AccountsResource.requestFundingNote / fundAccount", () => {
     });
   });
 
+  it("fundAccount keeps the transaction id of a consume that fails after submission", async () => {
+    const { resource, client, fetchFn } = setup(happyFetch);
+    client.notes.get.mockResolvedValue(noteRecord("Committed"));
+    client.transactions.consume.mockRejectedValue(
+      Object.assign(new Error("apply failed"), { transactionId: CONSUME_TX })
+    );
+
+    await expect(
+      resource.fundAccount(ACC, {
+        fetch: fetchFn,
+        timeout: 5_000,
+        pollInterval: 1,
+      })
+    ).rejects.toMatchObject({
+      code: "FundingAfterRequest",
+      noteId: NOTE,
+      transactionId: CONSUME_TX,
+    });
+  });
+
+  it("fundAccount frees the account wrapper it only used for the tracked check", async () => {
+    const { resource, inner, client, fetchFn } = setup(happyFetch);
+    const free = vi.fn();
+    inner.getAccount.mockResolvedValue({ free });
+    client.notes.get.mockResolvedValue(noteRecord("Committed"));
+
+    await resource.fundAccount(ACC, {
+      fetch: fetchFn,
+      timeout: 5_000,
+      pollInterval: 1,
+    });
+    expect(free).toHaveBeenCalledTimes(1);
+  });
+
   it("fundAccount clears the poll timer when the note wait times out first", async () => {
     const { resource, client, fetchFn } = setup(happyFetch);
     client.notes.get.mockResolvedValue(null);

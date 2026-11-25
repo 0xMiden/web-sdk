@@ -350,12 +350,14 @@ export function classifyInputNoteState(state, wasm) {
  * @returns {Error}
  */
 export function wrapAfterRequest(source, receipt) {
+  // consume can throw after the node accepted the transaction, with its id on the error.
+  const transactionId = receipt.transactionId ?? source.transactionId ?? null;
   const err = new Error(
-    `funding note ${receipt.noteId}, consumption transaction ${receipt.transactionId ?? "none"}: ${source.message}`
+    `funding note ${receipt.noteId}, consumption transaction ${transactionId ?? "none"}: ${source.message}`
   );
   err.code = "FundingAfterRequest";
   err.noteId = receipt.noteId;
-  err.transactionId = receipt.transactionId ?? null;
+  err.transactionId = transactionId;
   err.cause = source;
   if (source.code) err.sourceCode = source.code;
   return err;

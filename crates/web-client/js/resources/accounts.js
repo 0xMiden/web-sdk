@@ -488,6 +488,7 @@ export class AccountsResource {
         `account ${accountIdHex} is not tracked locally; create or import it before funding`
       );
     }
+    tracked.free?.();
 
     const receipt = await this.requestFundingNote(accountIdHex, {
       ...options,
