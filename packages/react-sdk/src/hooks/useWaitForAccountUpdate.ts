@@ -200,6 +200,9 @@ export function useWaitForAccountUpdate(
       accountIdOrOptions?: AccountRef | WaitForAccountUpdateOptions,
       maybeOptions?: Omit<WaitForAccountUpdateOptions, "accountId">
     ): Promise<Account> => {
+      if (!mountedRef.current) {
+        return new Promise<Account>(() => {});
+      }
       if (!client || !isReady) {
         throw new Error("Miden client is not ready");
       }

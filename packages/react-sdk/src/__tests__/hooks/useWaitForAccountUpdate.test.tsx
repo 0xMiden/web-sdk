@@ -768,6 +768,39 @@ describe("useWaitForAccountUpdate", () => {
       expect(syncState).toHaveBeenCalledTimes(1);
     });
 
+    it("ignores post-unmount calls to waitForAccountUpdate without polling or mutating store", async () => {
+      vi.useFakeTimers();
+      const updated = createAccountWithCommitment("0xafter_unmount");
+      const syncState = vi.fn().mockResolvedValue({});
+      const getAccount = vi.fn().mockResolvedValue(updated);
+      const mockClient = createMockWebClient({ syncState, getAccount });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      useMidenStore.getState().setClient(mockClient as never);
+
+      const { result, unmount } = renderHook(() => useWaitForAccountUpdate());
+      const waitFn = result.current.waitForAccountUpdate;
+      unmount();
+
+      let settled = false;
+      void waitFn("0xacc", {
+        baselineCommitment: "0xold",
+        timeoutMs: 200,
+        intervalMs: 50,
+      }).finally(() => {
+        settled = true;
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(250);
+      });
+
+      expect(syncState).not.toHaveBeenCalled();
+      expect(getAccount).not.toHaveBeenCalled();
+      expect(useMidenStore.getState().accountDetails.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(settled).toBe(false);
+    });
+
     it("rejects the active promise, stops polling, and clears timers when unsubscribe() is called", async () => {
       vi.useFakeTimers();
       const unchanged = createAccountWithCommitment("0xbase");
