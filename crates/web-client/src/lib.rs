@@ -32,9 +32,9 @@ use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, VerifyingRpcClient}
 use miden_client::store::Store;
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::MockNoteTransportApi;
-use miden_client::transaction::{BatchBuilderError, TransactionProverError};
 #[cfg(feature = "browser")]
 use miden_client::transaction::TransactionExecutorError;
+use miden_client::transaction::{BatchBuilderError, TransactionProverError};
 #[cfg(feature = "browser")]
 use miden_client::vm::{ExecutionError, OperationError};
 use miden_client::{Client, ClientError, ErrorHint};
