@@ -412,18 +412,20 @@ export class MidenClient {
   /**
    * Resolves once every serialized WASM call that was already on the
    * internal `_serializeWasmCall` chain when `waitForIdle()` was called
-   * (execute, submit, prove, apply, sync, or account creation) has
-   * settled. Use this from callers that need to perform a non-WASM-side
-   * action — e.g. clearing an in-memory auth key on wallet lock — after
-   * the kernel finishes, so its auth callback doesn't race with the key
-   * being cleared.
+   * (execute, submit, apply, account creation, and in-thread prove/sync),
+   * and every worker-bound sync or prove already in flight, has settled.
+   * Use this from callers that need to perform a non-WASM-side action
+   * (e.g. clearing an in-memory auth key on wallet lock) after the kernel
+   * finishes, so its auth callback doesn't race with the key being cleared.
    *
    * Does NOT wait for calls enqueued after `waitForIdle()` returns —
    * intentional, so a caller can drain and proceed without being blocked
    * indefinitely by concurrent workload.
    *
-   * A call that takes the store lock is on the chain from the moment it is
-   * made, like every other call; see `WebClient._withStoreLock`.
+   * With a live Web Worker, sync and prove do not hold the main-realm call
+   * chain for their round trip, so a local read can complete while they are
+   * pending; `waitForIdle` still waits for those worker-bound ops. See
+   * `WebClient._withStoreLock` and `_runWorkerBound`.
    *
    * Safe to call at any time; returns immediately if nothing was in
    * flight.

@@ -808,10 +808,14 @@ class WebClient {
     // would panic with "recursive use of an object detected" due to
     // wasm-bindgen's internal RefCell.
     this._wasmCallChain = Promise.resolve();
+    // Worker-bound sync/prove ops that do not hold `_wasmCallChain` for their
+    // round trip; see `_runWorkerBound`. `waitForIdle` and terminate drain these
+    // as well as the chain.
+    this._pendingWorkerOps = new Set();
     // This client's in-flight coalesced syncs; see `_withStoreLock`.
     this._syncRuns = new Map();
-    // Top-level calls queued on `_wasmCallChain` so far. A coalesced sync run
-    // is joinable only until it moves; see `_withStoreLock`.
+    // Top-level calls queued so far (chain and worker-bound). A coalesced sync
+    // run is joinable only until it moves; see `_withStoreLock`.
     this._queuedCalls = 0;
 
     // The high-fidelity channel is decided here and nowhere else. Writing it
@@ -832,13 +836,16 @@ class WebClient {
    * Serialize a WASM call that requires exclusive (&mut self) access.
    * Concurrent calls are queued and executed one at a time.
    *
-   * Wraps both the direct (in-thread) path and the worker-dispatched path.
+   * Wraps both the direct (in-thread) path and most worker-dispatched paths.
    * On the worker path this is redundant with the worker's own message queue
    * for ordering, but it is not free: the callback resolves only when the
    * worker posts its response, so the chain slot is held for the entire
-   * round trip and later calls queue behind it. On the direct path it is
-   * load-bearing — without it, concurrent main-thread callers would panic
-   * with "recursive use of an object detected" (wasm-bindgen's RefCell).
+   * round trip and later calls queue behind it. Sync and prove on a live
+   * worker use `_runWorkerBound` instead, so a local main-realm read can
+   * complete while those round trips are still pending. On the direct path
+   * this method is load-bearing: without it, concurrent main-thread callers
+   * would panic with "recursive use of an object detected"
+   * (wasm-bindgen's RefCell).
    *
    * Re-entrancy: a call made through the trusted handle an in-flight
    * `_withInnerWebClient(fn)` passes `fn` (see `createTrustedHandle`) runs
@@ -924,6 +931,76 @@ class WebClient {
   }
 
   /**
+   * Run work that lives on the Web Worker without occupying `_wasmCallChain`
+   * for the worker round trip. Local main-realm reads stay on the chain and
+   * can settle while this promise is still pending (#567).
+   *
+   * Still counts in `_queuedCalls` so a coalesced sync run's join window ends
+   * when another top-level call is made, and is tracked in
+   * `_pendingWorkerOps` so `waitForIdle` and terminate drain it.
+   *
+   * Trusted `_withInnerWebClient` calls run inline, as with
+   * `_serializeWasmCall`. A call that needs exclusive main-realm WASM must
+   * not use this path.
+   *
+   * @param {() => Promise<any>} fn
+   * @param {string} [opName]
+   * @param {{ emitted: boolean }} [gate]
+   * @returns {Promise<any>}
+   * @private
+   */
+  _runWorkerBound(fn, opName, gate) {
+    const trusted = this[TRUSTED_CALLS] === true;
+    if (this._terminated && !trusted) {
+      return Promise.reject(new Error("WebClient terminated"));
+    }
+    const observed = opName !== undefined && hasObserver();
+    const wrapped = observed
+      ? async () => {
+          if (gate?.emitted) {
+            return fn();
+          }
+          const startedAt = performance.now();
+          try {
+            const value = await fn();
+            emitObservation({
+              op: opName,
+              outcome: "ok",
+              durationMs: performance.now() - startedAt,
+            });
+            return value;
+          } catch (error) {
+            const sensitive = observationSensitive(
+              this._observeSensitive,
+              error
+            );
+            emitObservation({
+              op: opName,
+              outcome: "error",
+              durationMs: performance.now() - startedAt,
+              ...(sensitive !== undefined ? { sensitive } : {}),
+            });
+            throw error;
+          }
+        }
+      : fn;
+
+    if (trusted) {
+      return Promise.resolve().then(wrapped);
+    }
+
+    this._queuedCalls += 1;
+    let tracked;
+    tracked = Promise.resolve()
+      .then(wrapped)
+      .finally(() => {
+        this._pendingWorkerOps.delete(tracked);
+      });
+    this._pendingWorkerOps.add(tracked);
+    return tracked;
+  }
+
+  /**
    * The id the store lock is keyed by: the name of the store this client
    * opens, which its factory resolves with `resolveStoreName`, the derivation
    * `createClient` names the store with, so clients that reach one store by
@@ -997,16 +1074,22 @@ class WebClient {
    * @param {() => Promise<any>} fn - The WASM work.
    * @param {string} [opName] - Operation name, as for `_serializeWasmCall`.
    * @param {string} [syncMethod] - The sync method to coalesce under.
+   * @param {{ offWasmChain?: boolean }} [options] - When `offWasmChain` is
+   *   true and this client has a live worker, schedule `fn` with
+   *   `_runWorkerBound` so the main-realm call chain stays free for local
+   *   reads during the worker round trip. Without a worker, or when the
+   *   option is omitted, scheduling stays on `_serializeWasmCall`.
    * @returns {Promise<any>} The result of fn.
    * @private
    */
-  _withStoreLock(fn, opName, syncMethod) {
+  _withStoreLock(fn, opName, syncMethod, options) {
     // `_serializeWasmCall` rejects too, but a joiner never reaches it.
     // The terminated check arms nothing.
     if (this._terminated && this[TRUSTED_CALLS] !== true) {
       return Promise.reject(new Error("WebClient terminated"));
     }
     const dbId = this._storeLockId();
+    const offWasmChain = options?.offWasmChain === true && !!this.worker;
     // Both branches call `run`: a store-locked call without `syncMethod`
     // (importNoteFile, fetchPrivateNotes) or nested in `_withInnerWebClient`,
     // and `coalesceRun`'s start for a sync. A joiner shares that promise and
@@ -1048,12 +1131,15 @@ class WebClient {
           });
         }
       }, LOCK_WAIT_TIMEOUT_MS);
-      const chain = this._serializeWasmCall(
+      const schedule = offWasmChain
+        ? (work, name, g) => this._runWorkerBound(work, name, g)
+        : (work, name, g) => this._serializeWasmCall(work, name, g);
+      const chain = schedule(
         () => {
           const remaining = LOCK_WAIT_TIMEOUT_MS - (Date.now() - startedAt);
           if (timedOut || remaining <= 0) {
             clearTimeout(timer);
-            // The chain catch already attached swallows this late throw.
+            // The schedule catch already attached swallows this late throw.
             throw fail();
           }
           clearTimeout(timer);
@@ -1088,7 +1174,8 @@ class WebClient {
 
   /**
    * Returns a promise that resolves once every serialized WASM call that
-   * was already on `_wasmCallChain` when `waitForIdle()` was called has
+   * was already on `_wasmCallChain` when `waitForIdle()` was called, and
+   * every worker-bound sync/prove already in `_pendingWorkerOps`, has
    * settled. Use this from callers that need to perform a non-WASM-side
    * action (e.g. clear an in-memory auth key) AFTER any in-flight
    * execute / submit / sync has completed, so the WASM kernel's auth
@@ -1098,15 +1185,17 @@ class WebClient {
    * this is intentional, so a caller can drain and then proceed without
    * being blocked indefinitely by a concurrent workload.
    *
-   * A call that takes the store lock is on the chain from the moment it is
-   * made, like every other serialized call; see `_withStoreLock`.
+   * A store-locked sync on a live worker is tracked in `_pendingWorkerOps`
+   * rather than on the chain; see `_withStoreLock` and `_runWorkerBound`.
    *
    * @returns {Promise<void>}
    */
   async waitForIdle() {
-    // Chain on `_wasmCallChain`; by the time this resolves, any in-flight
-    // serialized call has settled. Catch so the chain state doesn't leak.
-    await this._wasmCallChain.catch(() => {});
+    const pendingWorkerOps = [...(this._pendingWorkerOps ?? [])];
+    await Promise.all([
+      this._wasmCallChain.catch(() => {}),
+      ...pendingWorkerOps.map((op) => op.catch(() => {})),
+    ]);
   }
 
   // TODO: This will soon conflict with some changes in main.
@@ -1909,7 +1998,7 @@ class WebClient {
   }
 
   async proveTransaction(transactionResult, prover) {
-    return this._serializeWasmCall(async () => {
+    const run = async () => {
       try {
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
@@ -1936,7 +2025,13 @@ class WebClient {
         console.error("INDEX.JS: Error in proveTransaction:", error);
         throw error;
       }
-    }, MethodName.PROVE_TRANSACTION);
+    };
+    // Worker proving uses a separate WASM instance; keep the main-realm
+    // chain free so local reads can complete during the round trip (#567).
+    if (this.worker) {
+      return this._runWorkerBound(run, MethodName.PROVE_TRANSACTION);
+    }
+    return this._serializeWasmCall(run, MethodName.PROVE_TRANSACTION);
   }
 
   async applyTransaction(transactionResult, submissionHeight) {
@@ -1986,6 +2081,8 @@ class WebClient {
     try {
       // A call joins this client's pending run of this sync only while no
       // other call has been queued on the client since; see `_withStoreLock`.
+      // With a live worker, the sync holds the store lock off the main-realm
+      // WASM chain so local reads can complete during the round trip (#567).
       return await this._withStoreLock(
         async () => {
           if (!this.worker) {
@@ -2000,7 +2097,8 @@ class WebClient {
           );
         },
         methodId,
-        methodId
+        methodId,
+        { offWasmChain: true }
       );
     } catch (error) {
       console.error("INDEX.JS: Error in syncState:", error);
@@ -2027,7 +2125,8 @@ class WebClient {
           }
         },
         methodId,
-        methodId
+        methodId,
+        { offWasmChain: true }
       );
     } catch (error) {
       console.error("INDEX.JS: Error in syncNoteTransport:", error);
@@ -2058,7 +2157,8 @@ class WebClient {
           );
         },
         methodId,
-        methodId
+        methodId,
+        { offWasmChain: true }
       );
     } catch (error) {
       console.error("INDEX.JS: Error in syncChain:", error);
@@ -2162,14 +2262,23 @@ class WebClient {
   }
 
   /**
-   * Runs `step` once every serialized call already on `_wasmCallChain` has
-   * settled, so a wasm client is never freed under a call still using it.
-   * `step` is not counted in `_queuedCalls`, so it ends no sync run's joining
-   * window: a sync called after terminate() is refused by `_withStoreLock`.
+   * Runs `step` once every serialized call already on `_wasmCallChain` and
+   * every worker-bound op already in `_pendingWorkerOps` has settled, so a
+   * wasm client is never freed under a call still using it. `step` is not
+   * counted in `_queuedCalls`, so it ends no sync run's joining window: a
+   * sync called after terminate() is refused by `_withStoreLock`.
    * @private
    */
   _afterQueuedWasmCalls(step) {
-    this._wasmCallChain = this._wasmCallChain.then(step).catch(() => {});
+    const pendingWorkerOps = [...(this._pendingWorkerOps ?? [])];
+    const afterPending = Promise.all(
+      pendingWorkerOps.map((op) => op.catch(() => {}))
+    );
+    this._wasmCallChain = this._wasmCallChain
+      .catch(() => {})
+      .then(() => afterPending)
+      .then(step)
+      .catch(() => {});
   }
 
   /**
