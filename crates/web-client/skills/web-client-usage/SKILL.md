@@ -1609,6 +1609,10 @@ the wrapper, not the raw `AccountStorage`:
 
 - `getItem(slotName)` - a `StorageResult`, for a value slot or a map slot alike
 - `getMapItem(slotName, key)` / `getMapEntries(slotName)` - map reads
+- `getMapEntriesPage(slotName, offset, limit)` - at most `limit` map entries from
+  `offset`, in `getMapEntries` order; `getMapEntries` copies the whole map on
+  every call, so page large maps (`limit` of at least 1) and stop at the first page
+  shorter than `limit`
 - `getCommitment(slotName)` - the slot's raw protocol value, which for a map
   slot is its Merkle root (useful for proving state did not change)
 - `getSlotNames()` - every slot name on the account
