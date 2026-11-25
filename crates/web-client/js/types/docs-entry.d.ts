@@ -34,7 +34,6 @@ export {
   ForeignAccount,
   FungibleAsset,
   InputNote,
-  InputNotePageResult,
   InputNoteRecord,
   MintNote,
   NetworkAccountTarget,

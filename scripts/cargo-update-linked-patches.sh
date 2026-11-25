@@ -89,10 +89,7 @@ for kind, block in re.findall(r'^\[\[(package|patch\.unused)\]\]\n(.*?)(?=^\[\[|
     if not name or not version:
         continue
     if kind == 'package':
-        source = re.search(r'^source\s*=\s*"([^"]+)"', block, re.M)
-        locked.setdefault(name.group(1), []).append(
-            (version.group(1), source.group(1) if source else None)
-        )
+        locked.setdefault(name.group(1), []).append(version.group(1))
     else:
         unused.append((name.group(1), version.group(1)))
 
@@ -110,22 +107,12 @@ def compatible(locked_version, patch_version):
 for name, version in unused:
     if name not in locked:
         continue
-    # An unused crates.io patch cannot update a package whose dependency is
-    # pinned to a Git source in Cargo.toml. Asking Cargo to select the patch's
-    # registry version for that package produces a misleading revision error.
-    registry_versions = [
-        locked_version
-        for locked_version, source in locked[name]
-        if source and source.startswith('registry+')
-    ]
-    if not registry_versions:
-        continue
     spec = name
     if len(locked[name]) > 1:
         # Cargo's caret rule picks the copy the patch can replace; none
         # fits: the highest, so cargo's own rejection reaches the check below.
-        fits = [v for v in registry_versions if compatible(v, version)]
-        spec = name + '@' + max(fits or registry_versions, key=nums)
+        fits = [v for v in locked[name] if compatible(v, version)]
+        spec = name + '@' + max(fits or locked[name], key=nums)
     print(name, version, spec)
 PY
 )"
