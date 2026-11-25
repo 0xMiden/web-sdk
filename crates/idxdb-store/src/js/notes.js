@@ -1,4 +1,4 @@
-import { getDatabase } from "./schema.js";
+import { getDatabase, } from "./schema.js";
 import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
 export async function getOutputNotes(dbId, states) {
     try {
