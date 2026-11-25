@@ -1,0 +1,44 @@
+---
+title: WASM troubleshooting
+sidebar_position: 80
+---
+
+# Troubleshoot browser WASM errors
+
+Start with the original error message for both the Web Client and the React SDK.
+An optional call to `wrapWasmError(error)` from `@miden-sdk/react` maps a
+recognized message to a `MidenError` and preserves the original exception in
+`cause`.
+
+## `expected instance of AccountId` or `_assertClass`
+
+`WASM_CLASS_MISMATCH` usually means an object came from a different copy or
+entry point of the SDK. Use a single copy of `@miden-sdk/miden-sdk` and import
+WASM types from the same entry point as the client. In Vite, the Miden plugin
+configures dependency deduplication and excludes the SDK from prebundling.
+
+## `null pointer passed to Rust` or `object has already been freed`
+
+`WASM_POINTER_CONSUMED` can occur when code reuses a freed object or passes the
+same object to a method that takes ownership. Save the source data and construct
+a fresh object for each call that consumes it.
+
+## `Client not initialized` or `Cannot read properties of undefined`
+
+When a WASM constructor or static method fails before the lazy entry point
+has loaded, await `MidenClient.ready()` before using it. In React, render code
+that constructs WASM values under `MidenProvider` after `useMiden().isReady`
+is true. Check the provider's `error` if initialization fails.
+
+## `recursive use of an object detected`
+
+Overlapping calls on the same low-level WASM `WebClient` can trigger this
+error. Prefer the high-level `MidenClient` methods, which queue calls that
+need exclusive access. In React, use `runExclusive` from `useMiden()` to
+coordinate callers that share the provider lock. Await each operation before
+starting the next. Wait until the client is idle before using synchronous raw
+accessors such as `lastAuthError()` or the `keystore` getter. To inspect a
+signing error with `lastAuthError()`, configure the client with
+`useWorker: false`. Read it while the client is idle after the failed call
+settles and before starting another transaction. If the error came from a
+transaction flow, check its submission status before trying again.
