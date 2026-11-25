@@ -109,23 +109,6 @@ extern "C" {
     // TRANSACTIONAL WRITES
     // --------------------------------------------------------------------------------------------
 
-    #[wasm_bindgen(js_name = applyAccountPatch)]
-    pub fn idxdb_apply_account_patch(
-        db_id: &str,
-        account_id: String,
-        nonce: String,
-        updated_slots: Vec<JsStorageSlot>,
-        changed_map_entries: Vec<JsStorageMapEntry>,
-        changed_assets: Vec<JsVaultAsset>,
-        code_root: String,
-        storage_root: String,
-        vault_root: String,
-        committed: bool,
-        commitment: String,
-        code: Vec<u8>,
-        initial_account_commitment: String,
-    ) -> js_sys::Promise;
-
     #[wasm_bindgen(js_name = applyFullAccountState)]
     pub fn idxdb_apply_full_account_state(
         db_id: &str,
@@ -135,14 +118,8 @@ extern "C" {
     // UPDATES
     // --------------------------------------------------------------------------------------------
 
-    #[wasm_bindgen(js_name = lockAccount)]
-    pub fn idxdb_lock_account(db_id: &str, account_id: String) -> js_sys::Promise;
-
     // DELETES
     // --------------------------------------------------------------------------------------------
-
-    #[wasm_bindgen(js_name = undoAccountStates)]
-    pub fn idxdb_undo_account_states(db_id: &str, account_hashes: Vec<String>) -> js_sys::Promise;
 
     /// Prunes historical account states for the specified account up to the given nonce.
     #[wasm_bindgen(js_name = pruneAccountHistory)]

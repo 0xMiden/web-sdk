@@ -23,7 +23,6 @@ use super::js_bindings::{
     JsStorageMapEntry,
     JsStorageSlot,
     JsVaultAsset,
-    idxdb_apply_account_patch,
     idxdb_apply_full_account_state,
     idxdb_insert_account,
 };
@@ -209,51 +208,6 @@ pub fn build_account_patch_payload(
         .collect();
 
     (js_slots, changed_map_entries, changed_assets)
-}
-
-/// Applies an account patch atomically in a single Dexie transaction.
-///
-/// Takes the patch plus the map roots the SMT forest computed for it, instead of the full Account
-/// object. This avoids loading account code and full storage map entries.
-pub async fn apply_account_patch(
-    db_id: &str,
-    account_id: AccountId,
-    final_header: &AccountHeader,
-    new_map_roots: &BTreeMap<StorageSlotName, Word>,
-    patch: &AccountPatch,
-    code_bytes: Vec<u8>,
-    initial_account_commitment: Word,
-) -> Result<(), JsValue> {
-    let account_id_str = account_id.to_string();
-    let nonce_str = final_header.nonce().to_string();
-
-    let (js_slots, changed_map_entries, changed_assets) =
-        build_account_patch_payload(new_map_roots, patch);
-
-    // Account record fields from final header
-    let code_root = final_header.code_commitment().to_string();
-    let storage_root = final_header.storage_commitment().to_string();
-    let vault_root = final_header.vault_root().to_string();
-    let committed = account_id.is_public();
-    let commitment = final_header.to_commitment().to_string();
-    JsFuture::from(idxdb_apply_account_patch(
-        db_id,
-        account_id_str,
-        nonce_str,
-        js_slots,
-        changed_map_entries,
-        changed_assets,
-        code_root,
-        storage_root,
-        vault_root,
-        committed,
-        commitment,
-        code_bytes,
-        initial_account_commitment.to_string(),
-    ))
-    .await?;
-
-    Ok(())
 }
 
 /// Bytes of the code a patch carries, or empty when it carries none.

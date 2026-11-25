@@ -28,7 +28,7 @@ use super::transaction::utils::serialize_transaction_record;
 use crate::promise::{await_js, await_js_value};
 
 mod js_bindings;
-pub use js_bindings::JsAccountUpdate;
+pub use js_bindings::{JsAccountPatchUpdate, JsAccountUpdate};
 use js_bindings::{
     JsAccountWitnessUpdate,
     JsStateSyncUpdate,
@@ -197,22 +197,23 @@ impl IdxdbStore {
             .map(|update| update.inner().details_commitment().to_hex())
             .collect();
 
+        let mut locked_account_ids = Vec::new();
         for (account_id, digest) in account_updates.mismatched_private_accounts() {
-            self.lock_account_on_unexpected_commitment(account_id, digest).await.map_err(
-                |err| {
-                    StoreError::DatabaseError(format!("failed to check account mismatch: {err:?}"))
-                },
-            )?;
+            let lock_check = self.should_lock_on_unexpected_commitment(account_id, digest).await;
+            let should_lock = lock_check.map_err(|err| {
+                StoreError::DatabaseError(format!("failed to check account mismatch: {err:?}"))
+            })?;
+            if should_lock {
+                locked_account_ids.push(account_id.to_string());
+            }
         }
-
-        let account_states_to_rollback = transaction_updates
-            .discarded_transactions()
-            .map(|tx_record| tx_record.details.final_account_state)
-            .collect::<Vec<_>>();
 
         // Restore the previous account states. The forest keeps the undone roots until a reader
         // sees them differ from the tables and refreshes the account.
-        self.undo_account_states(&account_states_to_rollback).await?;
+        let undo_account_commitments = transaction_updates
+            .discarded_transactions()
+            .map(|tx_record| tx_record.details.final_account_state.to_string())
+            .collect::<Vec<_>>();
 
         let transaction_updates: Vec<_> = transaction_updates
             .committed_transactions()
@@ -239,8 +240,9 @@ impl IdxdbStore {
             }
         }
 
-        // Apply partial patches incrementally. Their values are already absolute, so no account
-        // reconstruction is required.
+        // Prepare partial patches incrementally. Their values are already absolute, so no account
+        // reconstruction is required. They are written inside the sync transaction below.
+        let mut account_patches = Vec::with_capacity(patch_updates.len());
         for (new_header, patch) in patch_updates {
             let account_id = new_header.id();
 
@@ -258,7 +260,7 @@ impl IdxdbStore {
                 )));
             }
 
-            self.apply_incremental_account_patch(new_header, patch).await?;
+            account_patches.push(self.prepare_incremental_account_patch(new_header, patch).await?);
         }
 
         // Persist the protocol configuration the node sent before the chain state that commits to
@@ -298,6 +300,9 @@ impl IdxdbStore {
                     witness: encode(witness),
                 })
                 .collect(),
+            account_patches,
+            undo_account_commitments,
+            locked_account_ids,
         };
         let promise = idxdb_apply_state_sync(self.db_id(), state_update);
         await_js_value(promise, "failed to apply state sync").await?;
