@@ -66,10 +66,9 @@ use miden_client_core::store::{
     InputNoteCursor,
     PartialBlockchainFilter,
 };
-use miden_protocol::MastForest;
+use miden_processor::LoadedMastForest;
 use miden_protocol::code::ProcedureRoot;
-use miden_protocol::vm::PackageDebugInfo;
-use miden_tx::LoadedMastForest;
+use miden_protocol::vm::Package;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use wasm_bindgen::prelude::*;
@@ -563,9 +562,9 @@ impl Store for IdxdbStore {
 
     async fn insert_procedures_with_debug_info(
         &self,
-        procedures: Vec<(Arc<MastForest>, PackageDebugInfo)>,
+        packages: Vec<Arc<Package>>,
     ) -> Result<(), StoreError> {
-        self.insert_procedures_with_debug_info(procedures).await
+        self.insert_procedures_with_debug_info(packages).await
     }
 
     async fn get_procedure(

@@ -2387,7 +2387,7 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.18.2"
-source = "git+https://github.com/0xMiden/rust-sdk?rev=7b1d52d0752c1fc0f1ebf9b54ef0242df2c89222#7b1d52d0752c1fc0f1ebf9b54ef0242df2c89222"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=ed75961b37d40a0efe8f33489d4adfdf297854d6#ed75961b37d40a0efe8f33489d4adfdf297854d6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2430,7 +2430,7 @@ dependencies = [
 [[package]]
 name = "miden-client-core"
 version = "0.18.2"
-source = "git+https://github.com/0xMiden/rust-sdk?rev=7b1d52d0752c1fc0f1ebf9b54ef0242df2c89222#7b1d52d0752c1fc0f1ebf9b54ef0242df2c89222"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=ed75961b37d40a0efe8f33489d4adfdf297854d6#ed75961b37d40a0efe8f33489d4adfdf297854d6"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2445,7 +2445,7 @@ dependencies = [
 [[package]]
 name = "miden-client-grpc"
 version = "0.18.2"
-source = "git+https://github.com/0xMiden/rust-sdk?rev=7b1d52d0752c1fc0f1ebf9b54ef0242df2c89222#7b1d52d0752c1fc0f1ebf9b54ef0242df2c89222"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=ed75961b37d40a0efe8f33489d4adfdf297854d6#ed75961b37d40a0efe8f33489d4adfdf297854d6"
 dependencies = [
  "async-trait",
  "gloo-timers",
@@ -2466,7 +2466,7 @@ dependencies = [
 [[package]]
 name = "miden-client-proto"
 version = "0.18.2"
-source = "git+https://github.com/0xMiden/rust-sdk?rev=7b1d52d0752c1fc0f1ebf9b54ef0242df2c89222#7b1d52d0752c1fc0f1ebf9b54ef0242df2c89222"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=ed75961b37d40a0efe8f33489d4adfdf297854d6#ed75961b37d40a0efe8f33489d4adfdf297854d6"
 dependencies = [
  "miden-client-core",
  "miden-objects",
@@ -2480,7 +2480,7 @@ dependencies = [
 [[package]]
 name = "miden-client-sqlite-store"
 version = "0.18.2"
-source = "git+https://github.com/0xMiden/rust-sdk?rev=7b1d52d0752c1fc0f1ebf9b54ef0242df2c89222#7b1d52d0752c1fc0f1ebf9b54ef0242df2c89222"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=ed75961b37d40a0efe8f33489d4adfdf297854d6#ed75961b37d40a0efe8f33489d4adfdf297854d6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2489,8 +2489,8 @@ dependencies = [
  "deadpool-sync",
  "miden-client-core",
  "miden-client-proto",
+ "miden-processor",
  "miden-protocol",
- "miden-tx",
  "rusqlite",
  "rusqlite_migration",
  "thiserror",
@@ -2710,8 +2710,8 @@ dependencies = [
  "miden-client",
  "miden-client-core",
  "miden-client-proto",
+ "miden-processor",
  "miden-protocol",
- "miden-tx",
  "miette",
  "serde",
  "serde-wasm-bindgen",

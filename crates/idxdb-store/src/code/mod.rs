@@ -1,16 +1,16 @@
 //! The code registry: the MAST forests that the store knows, with their debug info, and the
 //! procedure roots of each forest.
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use miden_client::store::StoreError;
+use miden_processor::LoadedMastForest;
 use miden_protocol::MastForest;
 use miden_protocol::code::ProcedureRoot;
 use miden_protocol::utils::serde::{Deserializable, Serializable};
-use miden_protocol::vm::PackageDebugInfo;
-use miden_tx::LoadedMastForest;
+use miden_protocol::vm::{Package, PackageDebugInfo};
 
 mod js_bindings;
 mod models;
@@ -26,46 +26,59 @@ use crate::IdxdbStore;
 use crate::promise::{await_js, await_ok};
 
 impl IdxdbStore {
-    /// Adds the MAST forests and their debug info to the code registry. A forest that already has
-    /// debug info in the registry is skipped, and so is a forest without procedures.
+    /// Adds the MAST forests of the packages and their debug info to the code registry.
     ///
-    /// Only the forests that the registry is missing are serialized, so that adding the same
-    /// forests on every client build stays cheap.
+    /// A package whose forest already has debug info in the registry is skipped, and so is a
+    /// package without debug info or without procedures. The packages to skip are found with a
+    /// read, so the debug info is decoded and the forests are serialized only for the packages that
+    /// the registry is missing.
     pub(crate) async fn insert_procedures_with_debug_info(
         &self,
-        procedures: Vec<(Arc<MastForest>, PackageDebugInfo)>,
+        packages: Vec<Arc<Package>>,
     ) -> Result<(), StoreError> {
-        let procedures: Vec<_> = procedures
+        let packages: Vec<_> = packages
             .into_iter()
-            .filter(|(mast, _)| mast.local_procedure_digests().next().is_some())
+            .filter(|package| package.mast_forest().local_procedure_digests().next().is_some())
             .collect();
-        if procedures.is_empty() {
+        if packages.is_empty() {
             return Ok(());
         }
 
-        let commitments: Vec<String> =
-            procedures.iter().map(|(mast, _)| mast.commitment().to_hex()).collect();
-        let promise = idxdb_get_forests_with_debug_info(self.db_id(), commitments);
-        let with_debug_info: Vec<String> =
-            await_js(promise, "failed to get code registry forests").await?;
-
-        let forests: Vec<CodeForestIdxdbInput> = procedures
+        let commitments: Vec<String> = packages
             .iter()
-            .filter(|(mast, _)| !with_debug_info.contains(&mast.commitment().to_hex()))
-            .map(|(mast, debug_info)| CodeForestIdxdbInput {
-                commitment: mast.commitment().to_hex(),
-                mast: mast.to_bytes(),
-                debug_info: debug_info.to_bytes(),
-                procedure_roots: mast.local_procedure_digests().map(|root| root.to_hex()).collect(),
-            })
+            .map(|package| package.mast_forest().commitment().to_hex())
             .collect();
-        if forests.is_empty() {
+        let promise = idxdb_get_forests_with_debug_info(self.db_id(), commitments);
+        let stored: Vec<String> = await_js(promise, "failed to get code registry forests").await?;
+
+        let mut missing = Vec::new();
+        for package in &packages {
+            let mast = package.mast_forest();
+            let commitment = mast.commitment().to_hex();
+            if stored.contains(&commitment) {
+                continue;
+            }
+            let debug_info =
+                package.debug_info().map_err(|err| StoreError::ParsingError(err.to_string()))?;
+            if let Some(debug_info) = debug_info {
+                missing.push(CodeForestIdxdbInput {
+                    commitment,
+                    mast: mast.to_bytes(),
+                    debug_info: debug_info.to_bytes(),
+                    procedure_roots: mast
+                        .local_procedure_digests()
+                        .map(|root| root.to_hex())
+                        .collect(),
+                });
+            }
+        }
+        if missing.is_empty() {
             return Ok(());
         }
 
-        let forests = serde_wasm_bindgen::to_value(&forests)
+        let missing = serde_wasm_bindgen::to_value(&missing)
             .map_err(|err| StoreError::DatabaseError(format!("serialization error: {err}")))?;
-        let promise = idxdb_insert_procedures_with_debug_info(self.db_id(), forests);
+        let promise = idxdb_insert_procedures_with_debug_info(self.db_id(), missing);
         await_ok(promise, "failed to insert code registry procedures").await
     }
 
