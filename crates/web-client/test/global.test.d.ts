@@ -220,7 +220,7 @@ declare global {
       fundAccounts: (
         accountIds: Array<AccountId | string>,
         targetClient?: any,
-        prover?: TransactionProver,
+        prover?: TransactionProver | (() => TransactionProver | undefined),
         amount?: bigint
       ) => Promise<{
         txId: string;
@@ -230,7 +230,7 @@ declare global {
       ensureFunded: (
         accountIds: Array<AccountId | string>,
         targetClient?: any,
-        prover?: TransactionProver,
+        prover?: TransactionProver | (() => TransactionProver | undefined),
         amount?: bigint
       ) => Promise<{
         txId: string;

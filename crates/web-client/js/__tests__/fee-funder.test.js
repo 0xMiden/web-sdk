@@ -438,4 +438,133 @@ describe("fee-funder runtime recovery and sharing", () => {
       BigInt(120_000)
     );
   });
+
+  it("supports prover factories and clones serializable provers across browser and Node multi-target funding", async () => {
+    setupSingleFunder();
+    const healthyClient = createHealthyFunderClient();
+    const createFunderClient = vi.fn(async () => healthyClient);
+    const makeConsumingProver = (
+      payload = "remote|http://localhost:50051"
+    ) => ({
+      payload,
+      consumed: false,
+      serialize() {
+        if (this.consumed) throw new Error("null pointer passed to rust");
+        return this.payload;
+      },
+    });
+    const sdk = {
+      ...createRuntimeSdkMock(),
+      TransactionProver: {
+        newLocalProver: () => makeConsumingProver("local"),
+        newRemoteProver: (url) => makeConsumingProver(`remote|${url}`),
+        deserialize: vi.fn((payload) => makeConsumingProver(payload)),
+      },
+    };
+
+    const makeTargetClient = () => {
+      let seq = 0;
+      const committed = new Set();
+      return {
+        feeFaucetId: vi.fn(async () => ({ toString: () => "0xfee" })),
+        syncState: vi.fn(async () => {}),
+        getInputNote: vi.fn(async (id) => ({ toNote: () => ({ id }) })),
+        newConsumeTransactionRequest: vi.fn(async () => ({ kind: "consume" })),
+        executeTransaction: vi.fn(async () => ({ kind: "exec" })),
+        proveTransaction: vi.fn(async (_exec, prover) => {
+          if (!prover || typeof prover === "function") {
+            throw new Error("expected TransactionProver instance, not factory");
+          }
+          if (prover.consumed) {
+            throw new Error("null pointer passed to rust");
+          }
+          prover.consumed = true;
+          return { proven: true };
+        }),
+        submitProvenTransaction: vi.fn(async () => 1),
+        applyTransaction: vi.fn(async () => {
+          const txId = `0xtarget_${++seq}`;
+          committed.add(txId);
+          return {
+            executedTransaction: () => ({ id: () => ({ toHex: () => txId }) }),
+          };
+        }),
+        getTransactions: vi.fn(async (filter) =>
+          (filter.ids ?? [])
+            .filter((id) => committed.has(id))
+            .map((id) => ({
+              id: () => ({ toHex: () => id }),
+              transactionStatus: () => ({
+                isCommitted: () => true,
+                isDiscarded: () => false,
+              }),
+            }))
+        ),
+      };
+    };
+
+    const nodeRuntime = feeFunder.createNodeFunderRuntime({
+      sdk,
+      rpcUrl: "http://localhost:57291/prover-node",
+      feeFaucetId: "0xfee",
+      createFunderClient,
+    });
+
+    const nodeTarget = makeTargetClient();
+    const sharedNodeProver = makeConsumingProver("remote|http://prover");
+    const nodeInstanceRes = await nodeRuntime.fundAccounts(
+      ["0x1", "0x2"],
+      nodeTarget,
+      sharedNodeProver
+    );
+    expect(nodeInstanceRes?.noteIds).toHaveLength(2);
+    expect(sharedNodeProver.consumed).toBe(false);
+
+    const nodeFactory = vi.fn(() => makeConsumingProver("local"));
+    const nodeFactoryRes = await nodeRuntime.fundAccounts(
+      ["0x3", "0x4"],
+      nodeTarget,
+      nodeFactory
+    );
+    expect(nodeFactoryRes?.noteIds).toHaveLength(2);
+    expect(nodeFactory).toHaveBeenCalledTimes(2);
+
+    const fakeWindow = {
+      ...sdk,
+      WasmWebClient: { createClient: createFunderClient },
+    };
+    globalThis.window = fakeWindow;
+    const fakePage = {
+      exposeFunction: async (name, fn) => {
+        fakeWindow[name] = fn;
+      },
+      evaluate: async (fn, arg) => await fn(arg),
+    };
+    await feeFunder.installBrowserFunderHelpers(fakePage, {
+      rpcUrl: "http://localhost:57291/prover-browser",
+      localTxProverUrl: "http://localhost:50051",
+      feeFaucetId: "0xfee",
+    });
+
+    const browserTarget = makeTargetClient();
+    const sharedBrowserProver = makeConsumingProver("remote|http://prover");
+    const browserInstanceRes = await fakeWindow.helpers.fundAccounts(
+      ["0x5", "0x6"],
+      browserTarget,
+      sharedBrowserProver
+    );
+    expect(browserInstanceRes?.noteIds).toHaveLength(2);
+    expect(sharedBrowserProver.consumed).toBe(false);
+
+    const browserFactory = vi.fn(() =>
+      makeConsumingProver("remote|http://prover")
+    );
+    const browserFactoryRes = await fakeWindow.helpers.fundAccounts(
+      ["0x7", "0x8"],
+      browserTarget,
+      browserFactory
+    );
+    expect(browserFactoryRes?.noteIds).toHaveLength(2);
+    expect(browserFactory).toHaveBeenCalledTimes(2);
+  });
 });

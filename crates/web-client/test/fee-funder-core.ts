@@ -97,6 +97,20 @@ export function createFundingRuntime(deps) {
     }
   };
 
+  const resolveProver = (proverOverride) => {
+    const candidate =
+      typeof proverOverride === "function" ? proverOverride() : proverOverride;
+    if (
+      typeof proverOverride !== "function" &&
+      candidate &&
+      typeof candidate.serialize === "function" &&
+      typeof sdk?.TransactionProver?.deserialize === "function"
+    ) {
+      return sdk.TransactionProver.deserialize(candidate.serialize());
+    }
+    return candidate;
+  };
+
   const executeProveSubmitApply = async (
     client,
     accountHex,
@@ -107,10 +121,11 @@ export function createFundingRuntime(deps) {
       sdk.AccountId.fromHex(accountHex),
       request
     );
+    const resolvedProver = resolveProver(proverOverride);
     const proven = await proveTransactionWithFallback(
       client,
       execResult,
-      proverOverride
+      resolvedProver
     );
     const submissionHeight = await client.submitProvenTransaction(
       proven,

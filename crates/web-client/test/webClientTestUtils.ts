@@ -41,14 +41,17 @@ export const mintTransaction = async (
       _publicNote: boolean;
     }) => {
       const client = window.client;
-      const prover =
+      const makeProver = () =>
         _withRemoteProver && window.remoteProverUrl != null
-          ? window.remoteProverInstance
+          ? window.TransactionProver.newRemoteProver(
+              window.remoteProverUrl,
+              BigInt(120_000)
+            )
           : undefined;
       await window.helpers.ensureFunded(
         [_faucetAccountId, _targetAccountId],
         client,
-        prover
+        makeProver
       );
       await client.syncState();
 
@@ -66,7 +69,7 @@ export const mintTransaction = async (
         await window.helpers.executeAndApplyTransaction(
           faucetAccountId,
           mintTransactionRequest,
-          prover
+          makeProver()
         );
 
       if (_sync) {
@@ -116,14 +119,17 @@ export const mintPublicTransaction = async (
       _sync: boolean;
     }) => {
       const client = window.client;
-      const prover =
+      const makeProver = () =>
         _withRemoteProver && window.remoteProverUrl != null
-          ? window.remoteProverInstance
+          ? window.TransactionProver.newRemoteProver(
+              window.remoteProverUrl,
+              BigInt(120_000)
+            )
           : undefined;
       await window.helpers.ensureFunded(
         [_faucetAccountId, _targetAccountId],
         client,
-        prover
+        makeProver
       );
       await client.syncState();
 
@@ -140,7 +146,7 @@ export const mintPublicTransaction = async (
         await window.helpers.executeAndApplyTransaction(
           faucetAccountId,
           mintTransactionRequest,
-          prover
+          makeProver()
         );
 
       if (_sync) {
@@ -222,16 +228,19 @@ export const sendTransaction = async (
         BigInt(1000)
       );
 
-      const prover =
+      const makeProver = () =>
         _withRemoteProver && window.remoteProverUrl != null
-          ? window.remoteProverInstance
+          ? window.TransactionProver.newRemoteProver(
+              window.remoteProverUrl,
+              BigInt(120_000)
+            )
           : undefined;
 
       let mintTransactionUpdate =
         await window.helpers.executeAndApplyTransaction(
           faucetAccountId,
           mintTransactionRequest,
-          prover
+          makeProver()
         );
 
       let createdNote = mintTransactionUpdate
@@ -255,7 +264,7 @@ export const sendTransaction = async (
         await window.helpers.executeAndApplyTransaction(
           senderAccountId,
           txRequest,
-          prover
+          makeProver()
         );
 
       let sendTransactionRequest = await client.newSendTransactionRequest(
@@ -271,7 +280,7 @@ export const sendTransaction = async (
         await window.helpers.executeAndApplyTransaction(
           senderAccountId,
           sendTransactionRequest,
-          prover
+          makeProver()
         );
       let sendCreatedNotes = sendTransactionUpdate
         .executedTransaction()
@@ -354,9 +363,12 @@ export const swapTransaction = async (
           ? window.NoteType.Public
           : window.NoteType.Private;
 
-      const prover =
+      const makeProver = () =>
         _withRemoteProver && window.remoteProverUrl != null
-          ? window.remoteProverInstance
+          ? window.TransactionProver.newRemoteProver(
+              window.remoteProverUrl,
+              BigInt(120_000)
+            )
           : undefined;
 
       // Swap transaction
@@ -377,7 +389,7 @@ export const swapTransaction = async (
         await window.helpers.executeAndApplyTransaction(
           accountAId,
           swapTransactionRequest,
-          prover
+          makeProver()
         );
 
       await window.helpers.waitForTransaction(
@@ -402,7 +414,7 @@ export const swapTransaction = async (
         await window.helpers.executeAndApplyTransaction(
           accountBId,
           txRequest1,
-          prover
+          makeProver()
         );
 
       await window.helpers.waitForTransaction(
@@ -433,7 +445,7 @@ export const swapTransaction = async (
         await window.helpers.executeAndApplyTransaction(
           accountAId,
           txRequest2,
-          prover
+          makeProver()
         );
 
       await window.helpers.waitForTransaction(
@@ -706,7 +718,10 @@ export const consumeTransaction = async (
         await client.newConsumeTransactionRequest([note], targetAccountId);
       const prover =
         _withRemoteProver && window.remoteProverUrl != null
-          ? window.remoteProverInstance
+          ? window.TransactionProver.newRemoteProver(
+              window.remoteProverUrl,
+              BigInt(120_000)
+            )
           : undefined;
       const consumeTransactionUpdate =
         await window.helpers.executeAndApplyTransaction(
@@ -769,14 +784,17 @@ export const mintAndConsumeTransaction = async (
       _sync,
     }) => {
       const client = window.client;
-      const prover =
+      const makeProver = () =>
         _withRemoteProver && window.remoteProverUrl != null
-          ? window.remoteProverInstance
+          ? window.TransactionProver.newRemoteProver(
+              window.remoteProverUrl,
+              BigInt(120_000)
+            )
           : undefined;
       await window.helpers.ensureFunded(
         [_faucetAccountId, _targetAccountId],
         client,
-        prover
+        makeProver
       );
 
       await client.syncState();
@@ -795,7 +813,7 @@ export const mintAndConsumeTransaction = async (
         await window.helpers.executeAndApplyTransaction(
           faucetAccountId,
           mintTransactionRequest,
-          prover
+          makeProver()
         );
 
       let createdNote = mintTransactionUpdate
@@ -819,7 +837,7 @@ export const mintAndConsumeTransaction = async (
         await window.helpers.executeAndApplyTransaction(
           targetAccountId,
           txRequest,
-          prover
+          makeProver()
         );
 
       if (_sync) {
@@ -907,12 +925,17 @@ export const setupWalletAndFaucet = async (
       window.AuthScheme.AuthRpoFalcon512
     );
 
-    const prover =
-      window.remoteProverUrl != null ? window.remoteProverInstance : undefined;
+    const makeProver = () =>
+      window.remoteProverUrl != null
+        ? window.TransactionProver.newRemoteProver(
+            window.remoteProverUrl,
+            BigInt(120_000)
+          )
+        : undefined;
     await window.helpers.fundAccounts(
       [account.id(), faucetAccount.id()],
       client,
-      prover
+      makeProver
     );
     const updatedAccount = await client.getAccount(account.id());
 

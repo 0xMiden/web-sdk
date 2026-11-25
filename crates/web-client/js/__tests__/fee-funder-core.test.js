@@ -540,4 +540,149 @@ describe("fee-funder-core", () => {
       nowSpy.mockRestore();
     }
   });
+
+  it("clones serializable prover instances and invokes prover factories per target in fundAccounts and ensureFunded", async () => {
+    const createConsumingProver = (
+      payload = "remote|http://localhost:50051"
+    ) => ({
+      payload,
+      consumed: false,
+      serialize() {
+        if (this.consumed) throw new Error("null pointer passed to rust");
+        return this.payload;
+      },
+    });
+
+    const sdk = {
+      ...createFakeSdk(),
+      TransactionProver: {
+        deserialize: vi.fn((payload) => createConsumingProver(payload)),
+      },
+    };
+
+    const createMoveSemanticsClient = (feeBalance = 0n) => {
+      let noteCounter = 0;
+      const committed = new Set();
+      return {
+        syncState: vi.fn(async () => {}),
+        feeFaucetId: vi.fn(async () => ({ toString: () => "0xfee" })),
+        getAccount: vi.fn(async () => ({
+          vault: () => ({ getBalance: () => feeBalance }),
+        })),
+        getInputNote: vi.fn(async (id) => ({
+          toNote: () => ({ id }),
+        })),
+        newConsumeTransactionRequest: vi.fn(async (notes) => ({
+          kind: "consume",
+          notes,
+        })),
+        executeTransaction: vi.fn(async () => ({ kind: "exec" })),
+        proveTransaction: vi.fn(async (_execResult, prover) => {
+          if (!prover || typeof prover === "function") {
+            throw new Error("expected TransactionProver instance, not factory");
+          }
+          if (prover.consumed) {
+            throw new Error("null pointer passed to rust");
+          }
+          prover.consumed = true;
+          return { proven: true };
+        }),
+        submitProvenTransaction: vi.fn(async () => 1),
+        applyTransaction: vi.fn(async () => {
+          const txId = `0xtx_${++noteCounter}`;
+          committed.add(txId);
+          return {
+            executedTransaction: () => ({ id: () => ({ toHex: () => txId }) }),
+          };
+        }),
+        getTransactions: vi.fn(async (filter) =>
+          (filter.ids ?? [])
+            .filter((id) => committed.has(id))
+            .map((id) => ({
+              id: () => ({ toHex: () => id }),
+              transactionStatus: () => ({
+                isCommitted: () => true,
+                isDiscarded: () => false,
+              }),
+            }))
+        ),
+      };
+    };
+
+    const funderClient = {
+      syncState: vi.fn(async () => {}),
+      feeFaucetId: vi.fn(async () => ({ toString: () => "0xfee" })),
+      executeTransaction: vi.fn(async () => ({ kind: "funder-exec" })),
+      submitProvenTransaction: vi.fn(async () => 1),
+      applyTransaction: vi.fn(async () => ({
+        executedTransaction: () => ({
+          id: () => ({ toHex: () => "0xfund_tx" }),
+        }),
+      })),
+      getTransactions: vi.fn(async (filter) =>
+        (filter.ids ?? []).map((id) => ({
+          id: () => ({ toHex: () => id }),
+          transactionStatus: () => ({
+            isCommitted: () => true,
+            isDiscarded: () => false,
+          }),
+        }))
+      ),
+    };
+
+    const runtime = createFundingRuntime({
+      sdk,
+      getDefaultClient: () => targetClient,
+      getFunderState: async () => ({
+        client: funderClient,
+        funderHex: "0xfunder",
+        feeFaucetHex: "0xfee",
+        queue: Promise.resolve(),
+      }),
+      proveTransactionWithFallback: async (
+        client,
+        execResult,
+        proverOverride
+      ) => {
+        if (client === funderClient) {
+          return { proven: true };
+        }
+        return await client.proveTransaction(execResult, proverOverride);
+      },
+      retryDelayMs: 0,
+    });
+
+    const targetClient = createMoveSemanticsClient(0n);
+    const sharedProver = createConsumingProver("remote|http://localhost:50051");
+
+    const funded = await runtime.fundAccounts(
+      ["0xnew1", "0xnew2"],
+      targetClient,
+      sharedProver
+    );
+    expect(funded?.noteIds).toHaveLength(2);
+    expect(sharedProver.consumed).toBe(false);
+    expect(sdk.TransactionProver.deserialize).toHaveBeenCalledTimes(2);
+
+    const ensured = await runtime.ensureFunded(
+      ["0xnew3", "0xnew4"],
+      targetClient,
+      sharedProver
+    );
+    expect(ensured?.noteIds).toHaveLength(2);
+    expect(sharedProver.consumed).toBe(false);
+    expect(sdk.TransactionProver.deserialize).toHaveBeenCalledTimes(4);
+
+    const makeProver = vi.fn(() => ({
+      consumed: false,
+    }));
+    const viaFactory = await runtime.fundAccounts(
+      ["0xnew5", "0xnew6"],
+      targetClient,
+      makeProver
+    );
+    expect(viaFactory?.noteIds).toHaveLength(2);
+    expect(makeProver).toHaveBeenCalledTimes(2);
+    expect(sdk.TransactionProver.deserialize).toHaveBeenCalledTimes(4);
+  });
 });
