@@ -53,7 +53,7 @@ describe("fee-funder worker locking", () => {
     return { fundersDir, lockDir, macFiles };
   }
 
-  it("does not evict a fresh empty or unparseable lockfile during contention", () => {
+  it("does not evict a fresh empty or unparsable lockfile during contention", () => {
     const { lockDir, macFiles } = setupTempFunders(2);
     const firstIdx = process.pid % macFiles.length;
     const secondIdx = (firstIdx + 1) % macFiles.length;
