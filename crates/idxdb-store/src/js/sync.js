@@ -100,6 +100,17 @@ export async function removeNoteTag(dbId, tag, sourceNoteId, sourceAccountId, so
         logWebStoreError(error, "Failed to remove note tag");
     }
 }
+/**
+ * Writes a sync result in one Dexie transaction: height, block headers and MMR nodes, notes,
+ * transactions, account replacements and witnesses, patches, undo and locks. These commit or
+ * roll back together, so the height never moves past rows that were not written. The protocol
+ * configuration is the one write outside it: the caller persists it first (a stored row without
+ * its state write is unused, and the retried sync writes it again).
+ *
+ * The body may only await Dexie requests. Awaiting anything else (a WASM call, a fetch, a timer)
+ * lets IndexedDB auto-commit the transaction, so every value is computed by the caller first and
+ * passed in ready to write.
+ */
 export async function applyStateSync(dbId, stateUpdate) {
     const db = getDatabase(dbId);
     const { blockNum, flattenedNewBlockHeaders, newPeaks, newBlockNums, blockHasRelevantNotes, serializedNodeIds, serializedNodes, committedNoteTagSources, serializedInputNotes, serializedOutputNotes, accountUpdates, transactionUpdates, } = stateUpdate;
