@@ -1298,6 +1298,24 @@ describe("sync", () => {
       expect((await db.blockchainCheckpoint.get(1))?.blockNum).toBe(9);
     });
 
+    it("applies a patch for an undone account that carries the post-undo commitment", async () => {
+      const dbId = await openTestDb();
+      await seedAccounts(dbId);
+      const writes = accountWrites();
+      writes.accountPatches[0].accountId = UNDONE;
+      writes.accountPatches[0].initialAccountCommitment = "0xu1";
+      writes.accountPatches[0].commitment = "0xu3";
+
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({ blockNum: 9, ...writes })
+      );
+
+      const header = await getDatabase(dbId).latestAccountHeaders.get(UNDONE);
+      expect(header?.nonce).toBe("2");
+      expect(header?.accountCommitment).toBe("0xu3");
+    });
+
     it("rejects a patch whose initial commitment predates an undo of the same account, leaving everything unchanged", async () => {
       // The sync prepares such a patch against the post-undo state, so its commitment is not the
       // pre-undo one; a stale commitment must fail the guard and roll the sync back.

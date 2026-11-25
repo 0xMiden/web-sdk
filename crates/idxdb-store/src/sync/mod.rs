@@ -279,7 +279,7 @@ impl IdxdbStore {
             }
 
             account_patches
-                .push(self.prepare_incremental_account_patch(new_header, patch, &initial).await?);
+                .push(self.prepare_incremental_account_patch(new_header, patch, &initial)?);
         }
 
         // Persist the protocol configuration the node sent before the chain state that commits to

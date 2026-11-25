@@ -421,7 +421,7 @@ impl IdxdbStore {
     /// the forest update also verifies it: `final_header`'s vault root is recorded on the update
     /// and checked, so a patch that does not reproduce it fails before anything is written. The
     /// write itself happens inside `applyStateSync`, so it commits or rolls back with the sync.
-    pub(crate) async fn prepare_incremental_account_patch(
+    pub(crate) fn prepare_incremental_account_patch(
         &self,
         final_header: &AccountHeader,
         patch: &AccountPatch,
