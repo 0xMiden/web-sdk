@@ -912,10 +912,10 @@ fn masm_diagnostic(mut source: &(dyn Error + 'static)) -> Option<Object> {
     let ExecutionError::OperationError { label, source_file, err } = execution else {
         return None;
     };
-    let (err_code, err_msg) = match err {
-        OperationError::FailedAssertion { err_code, err_msg }
-        | OperationError::U32AssertionFailed { err_code, err_msg, .. } => (err_code, err_msg),
-        _ => return None,
+    let (OperationError::FailedAssertion { err_code, err_msg }
+    | OperationError::U32AssertionFailed { err_code, err_msg, .. }) = err
+    else {
+        return None;
     };
 
     let diagnostic = Object::new();
