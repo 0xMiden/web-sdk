@@ -2433,7 +2433,8 @@ export declare class MidenClient {
    *
    * During sync or proof work on a live Web Worker, `getSyncHeight()` can
    * return the committed height if no later ordered call is already queued.
-   * Balance and note screening calls remain on the ordered chain.
+   * Note screening and account reader acquisition stay ordered. The
+   * balance lookup on an acquired reader runs outside the idle wait.
    */
   waitForIdle(): Promise<void>;
   /**
