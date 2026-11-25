@@ -1966,6 +1966,8 @@ try {
 }
 ```
 
+See [the WASM troubleshooting guide](https://github.com/0xMiden/web-sdk/blob/next/docs/external/src/web-client/library/wasm-troubleshooting.md).
+
 `PrivateNoteDeliveryError` is the `MidenError` with code
 `PRIVATE_NOTE_DELIVERY_FAILED` that `useSend`, `useMultiSend` and
 `useTransaction` reject with when a private note is not delivered after the
