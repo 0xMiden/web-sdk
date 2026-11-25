@@ -65,6 +65,14 @@ describe("solvePow", () => {
     expect(await solvePow("0x0102ff", (2n ** 64n - 1n) / 8n)).toBe(20n);
   });
 
+  it("stops searching once its signal aborts", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(solvePow("0102", 1n, controller.signal)).rejects.toThrow(
+      /aborted/
+    );
+  });
+
   it("rejects invalid challenges", async () => {
     for (const [challenge, target] of [
       ["00", 0],
@@ -85,6 +93,17 @@ describe("withinTimeout", () => {
       code: "FundingTimeout",
       stage: "the funding note",
     });
+  });
+
+  it("aborts the work's signal at the deadline so loops stop", async () => {
+    let signal;
+    await expect(
+      withinTimeout(20, "stage", (s) => {
+        signal = s;
+        return new Promise(() => {});
+      })
+    ).rejects.toMatchObject({ code: "FundingTimeout" });
+    expect(signal.aborted).toBe(true);
   });
 
   it("returns the work result when it finishes in time", async () => {
@@ -151,7 +170,7 @@ describe("requestNoteFromFaucet", () => {
   }
 
   it("preserves large integer amounts and endpoint paths", async () => {
-    // Above Number.MAX_SAFE_INTEGER — faucets that need this should send a string.
+    // Above Number.MAX_SAFE_INTEGER: faucets that need this should send a string.
     const baseAmount = 9_007_199_254_740_993n;
     const fetchFn = mockFetch([
       {
@@ -204,6 +223,45 @@ describe("requestNoteFromFaucet", () => {
     expect(tokensCall).toContain(`asset_amount=${baseAmount.toString()}`);
     expect(tokensCall).toContain("is_private_note=false");
     expect(tokensCall).toContain(`account_id=${accountHex}`);
+  });
+
+  it("accepts a JSON number target that rounds above u64::MAX", async () => {
+    const fetchFn = mockFetch([
+      {
+        match: (u) => u.includes("/get_metadata"),
+        response: () => ({
+          ok: true,
+          json: async () => ({ id: faucetHex, ["base_amount"]: 100 }),
+        }),
+      },
+      {
+        match: (u) => u.includes("/pow"),
+        response: () => ({
+          ok: true,
+          // The faucet sends a bare u64; JSON.parse rounds u64::MAX up to 2 ** 64.
+          json: async () =>
+            JSON.parse('{"challenge":"0102","target":18446744073709551615}'),
+        }),
+      },
+      {
+        match: (u) => u.includes("/get_tokens"),
+        response: () => ({
+          ok: true,
+          json: async () => ({ ["note_id"]: noteId, ["tx_id"]: txId }),
+        }),
+      },
+    ]);
+
+    const result = await requestNoteFromFaucet({
+      faucetUrl: "http://127.0.0.1:9/api",
+      accountIdHex: accountHex,
+      feeFaucetIdHex: faucetHex,
+      network: "testnet",
+      amount: null,
+      wasm,
+      fetch: fetchFn,
+    });
+    expect(result.noteId).toBe(noteId);
   });
 
   it("stops before get_tokens when the faucet asset mismatches", async () => {

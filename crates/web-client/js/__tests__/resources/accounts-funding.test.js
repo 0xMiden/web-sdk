@@ -159,6 +159,25 @@ describe("AccountsResource.requestFundingNote / fundAccount", () => {
     });
   });
 
+  it("fundAccount stops syncing once the note wait times out", async () => {
+    const { resource, client, fetchFn } = setup(happyFetch);
+    client.notes.get.mockResolvedValue(null);
+
+    await expect(
+      resource.fundAccount(ACC, {
+        fetch: fetchFn,
+        timeout: 50,
+        pollInterval: 5,
+      })
+    ).rejects.toMatchObject({
+      code: "FundingAfterRequest",
+      sourceCode: "FundingTimeout",
+    });
+    const syncs = client.syncChain.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(client.syncChain.mock.calls.length).toBe(syncs);
+  });
+
   it("fundAccount rejects an untracked account before calling the faucet", async () => {
     const { resource, inner, fetchFn } = setup(happyFetch);
     inner.getAccount.mockResolvedValue(null);
