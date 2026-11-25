@@ -4946,7 +4946,7 @@ dependencies = [
 
 [[package]]
 name = "strip-masp-debug"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "miden-core",
  "miden-mast-package",
