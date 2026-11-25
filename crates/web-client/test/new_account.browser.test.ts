@@ -11,28 +11,61 @@ test.describe("new_wallet tests (browser-only)", () => {
     const clientSeed1 = new Uint8Array(32);
     const clientSeed2 = new Uint8Array(32);
     const walletSeed = new Uint8Array(32);
+    const authSchemeId = 2;
     crypto.getRandomValues(clientSeed1);
     crypto.getRandomValues(clientSeed2);
     crypto.getRandomValues(walletSeed);
 
-    // Isolate the client instance both times to ensure the outcome is deterministic
-    await createNewWallet(page, {
+    const wallet = await createNewWallet(page, {
       storageMode: StorageMode.PUBLIC,
-      authSchemeId: 2,
+      authSchemeId,
       clientSeed: clientSeed1,
       isolatedClient: true,
       walletSeed: walletSeed,
     });
 
-    // This should fail, as the wallet is already tracked within the same browser context
-    await expect(async () => {
-      await createNewWallet(page, {
+    const independentWalletId = await page.evaluate(
+      async ({ authSchemeId, clientSeed, walletSeed }) => {
+        const client = await window.helpers.createClient(
+          `deterministic-wallet-${crypto.randomUUID()}`,
+          new Uint8Array(clientSeed)
+        );
+        try {
+          const account = await client.newWallet(
+            window.AccountStorageMode.public(),
+            authSchemeId,
+            new Uint8Array(walletSeed)
+          );
+          return account.id().toString();
+        } finally {
+          await client.terminate();
+        }
+      },
+      {
+        authSchemeId,
+        clientSeed: Array.from(clientSeed2),
+        walletSeed: Array.from(walletSeed),
+      }
+    );
+    expect(independentWalletId).toBe(wallet.id);
+
+    // Reopening the original store must still reject the duplicate and preserve its account.
+    await expect(
+      createNewWallet(page, {
         storageMode: StorageMode.PUBLIC,
-        authSchemeId: 2,
+        authSchemeId,
         clientSeed: clientSeed2,
         isolatedClient: true,
         walletSeed: walletSeed,
-      });
-    }).rejects.toThrowError(/failed to insert new wallet/);
+      })
+    ).rejects.toThrowError(
+      /storage error: Failed to insert item into IndexedDB|failed to insert new wallet/
+    );
+    const trackedWalletIds = await page.evaluate(async () =>
+      (await window.client.getAccounts()).map((account) =>
+        account.id().toString()
+      )
+    );
+    expect(trackedWalletIds).toEqual([wallet.id]);
   });
 });
