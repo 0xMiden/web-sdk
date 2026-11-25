@@ -22,7 +22,7 @@ The SDK exposes a top-level `MidenClient` whose state is split across typed
 | Resource             | What it covers                                                                                                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `client.accounts`    | Wallets, faucets, custom contracts, listing, import/export, addresses                                                                                                          |
-| `client.transactions` | `send` / `mint` / `bridge` / `withdrawUsdcx` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
+| `client.transactions` | `send` / `mint` / `bridge` / `withdrawUsdcx` / `claimAggLayerDeposit` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
 | `client.notes`       | Listing, fetching, importing/exporting, private-note transport                                                                                                                 |
 | `client.tags`        | Note-tag subscriptions                                                                                                                                                         |
 | `client.settings`    | Persistent client settings                                                                                                                                                     |
@@ -1048,7 +1048,17 @@ const leaf = new ClaimLeafData(
 const note = Note.createClaimNote(proof, leaf, 10, bridgeAccountId, senderId);
 ```
 
-A scale above 18, or a scaled amount above the maximum fungible amount, throws. Submit the note as an own output note of a transaction, for example through `feeAwareTransactionRequestBuilder(sender)` and `withOwnOutputNotes`. It is a network note targeting the bridge account, so the transaction must also declare that account with `withForeignAccounts`, as for any network note.
+A scale above 18, or a scaled amount above the maximum fungible amount, throws. Submit it with `client.transactions.claimAggLayerDeposit(...)`, which builds the same note, sends it as an own output note of the sender and declares the bridge account as a foreign account. It returns `{ txId, note, result }`; a `scale` that is not an integer from 0 to 18 throws before any WASM call.
+
+```typescript
+const { txId, note } = await client.transactions.claimAggLayerDeposit({
+  account: wallet, // sender, the executing account
+  bridgeAccount: bridgeAccountId, // public bridge; consumes the note and mints the deposit
+  proof,
+  leaf,
+  scale: 10, // the faucet's decimal scale
+});
+```
 
 ### Withdraw USDCx (Circle xReserve)
 
