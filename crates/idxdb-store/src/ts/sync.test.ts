@@ -1298,6 +1298,23 @@ describe("sync", () => {
       expect((await db.blockchainCheckpoint.get(1))?.blockNum).toBe(9);
     });
 
+    it("rejects a patch whose initial commitment predates an undo of the same account, leaving everything unchanged", async () => {
+      // The sync routes this overlap through a prior undo, so the patch is prepared against the
+      // post-undo state; combining them in one transaction would make the guard fire.
+      const dbId = await openTestDb();
+      await seedAccounts(dbId);
+      const before = await snapshot(dbId);
+      const writes = accountWrites();
+      writes.accountPatches[0].accountId = UNDONE;
+      writes.accountPatches[0].initialAccountCommitment = "0xu2";
+
+      await expect(
+        applyStateSync(dbId, minimalStateUpdate({ blockNum: 9, ...writes }))
+      ).rejects.toThrow(/does not match persisted state/);
+
+      expect(await snapshot(dbId)).toEqual(before);
+    });
+
     it("leaves accounts, locks and sync height unchanged when a late write fails", async () => {
       const dbId = await openTestDb();
       await seedAccounts(dbId);

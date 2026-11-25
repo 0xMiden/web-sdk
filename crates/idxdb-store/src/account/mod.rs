@@ -68,6 +68,7 @@ use js_bindings::{
     idxdb_get_account_vault_assets,
     idxdb_get_foreign_account_code,
     idxdb_prune_account_history,
+    idxdb_undo_account_states,
     idxdb_upsert_foreign_account_code,
 };
 
@@ -709,6 +710,16 @@ impl IdxdbStore {
             .collect::<Result<BTreeMap<AccountId, AccountCode>, StoreError>>()?;
 
         Ok(foreign_account_code)
+    }
+
+    pub(crate) async fn undo_account_states(
+        &self,
+        account_commitments: Vec<String>,
+    ) -> Result<(), StoreError> {
+        let promise = idxdb_undo_account_states(self.db_id(), account_commitments);
+        await_js_value(promise, "failed to undo account states").await?;
+
+        Ok(())
     }
 
     /// Whether a mismatched digest should lock the account. Mismatched digests may be due to stale

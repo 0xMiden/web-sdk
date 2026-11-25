@@ -1,3 +1,4 @@
+use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -210,10 +211,14 @@ impl IdxdbStore {
 
         // Restore the previous account states. The forest keeps the undone roots until a reader
         // sees them differ from the tables and refreshes the account.
-        let undo_account_commitments = transaction_updates
+        let mut undo_account_commitments = transaction_updates
             .discarded_transactions()
             .map(|tx_record| tx_record.details.final_account_state.to_string())
             .collect::<Vec<_>>();
+        let discarded_account_ids = transaction_updates
+            .discarded_transactions()
+            .map(|tx_record| tx_record.details.account_id)
+            .collect::<BTreeSet<_>>();
 
         let transaction_updates: Vec<_> = transaction_updates
             .committed_transactions()
@@ -238,6 +243,17 @@ impl IdxdbStore {
                     }
                 },
             }
+        }
+
+        // A patch is prepared against the account as persisted, and the forest roots and initial
+        // commitment it carries must describe the state after the undo. That state exists only
+        // once the undo has been written, so a patch for an account with a discarded transaction
+        // is the one case where the undo commits ahead of the sync transaction.
+        let patches_discarded_account = patch_updates
+            .iter()
+            .any(|(header, _)| discarded_account_ids.contains(&header.id()));
+        if patches_discarded_account {
+            self.undo_account_states(core::mem::take(&mut undo_account_commitments)).await?;
         }
 
         // Prepare partial patches incrementally. Their values are already absolute, so no account
