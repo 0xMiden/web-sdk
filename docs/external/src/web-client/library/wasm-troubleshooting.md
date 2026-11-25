@@ -6,8 +6,9 @@ sidebar_position: 80
 # Troubleshoot browser WASM errors
 
 Start with the original error message for both the Web Client and the React SDK.
-An optional `wrapWasmError(error)` call maps a recognized message to a
-`MidenError` and preserves the original exception in `cause`.
+An optional call to `wrapWasmError(error)` from `@miden-sdk/react` maps a
+recognized message to a `MidenError` and preserves the original exception in
+`cause`.
 
 ## `expected instance of AccountId` or `_assertClass`
 
@@ -36,5 +37,7 @@ error. Prefer the high-level `MidenClient` methods, which queue calls that
 need exclusive access. In React, use `runExclusive` from `useMiden()` to
 coordinate callers that share the provider lock. Await each operation before
 starting the next. Wait until the client is idle before using synchronous raw
-accessors such as `lastAuthError()` or the `keystore` getter. If the error came
-from a transaction flow, check its submission status before trying again.
+accessors such as `lastAuthError()` or the `keystore` getter. If you need
+`lastAuthError()`, read it while the client is idle after the failed call
+settles and before starting another transaction. If the error came from a
+transaction flow, check its submission status before trying again.
