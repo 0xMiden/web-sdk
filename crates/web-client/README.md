@@ -1363,6 +1363,7 @@ const header = await rpc.getBlockHeaderByNumber(100, false);
 // A MidenClient reads the same header, and an MMR proof, through client.chain:
 const sameHeader = await client.chain.getBlockHeader(100);
 const { header: proven, mmrProof } = await client.chain.getBlockHeaderWithProof(100);
+for (const wrapper of [header, sameHeader, proven, mmrProof]) wrapper.free();
 
 // Which block consumed each nullifier (null when none did), by full nullifier:
 const heights = await client.chain.getNullifierCommitHeights([nullifierHex]);

@@ -16,6 +16,8 @@ const client = await MidenClient.createTestnet();
 
 const tip = await client.chain.getBlockHeader(); // latest block
 const { header, mmrProof } = await client.chain.getBlockHeaderWithProof(100);
+// ... read what you need, then release the WASM objects:
+for (const wrapper of [tip, header, mmrProof]) wrapper.free();
 ```
 
 ## Freeing results
