@@ -380,7 +380,7 @@ const methodHandlers = {
         // The node took the batch; nothing is left to retry.
         provenBatchSubmissions.delete(String(submissionId));
         submission.free?.();
-        return Promise.reject(error);
+        throw error;
       }
       throw stashProvenBatchSubmission(error, String(submissionId));
     }
