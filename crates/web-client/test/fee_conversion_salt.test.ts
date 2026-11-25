@@ -46,7 +46,7 @@ test.describe("multisig auth args", () => {
 
       // `run` hands the callback the RAW client, not MidenClient, so this is the
       // positional export: (account, approvalExpirationDelta, feeConversionSalt,
-      // boundBlockNum). MidenClient's options object fails loudly in napi here
+      // boundBlockNum, maxFee). MidenClient's options object fails loudly in napi here
       // and is silently coerced to Some(0) in wasm.
       const authArgAt = async (block) =>
         (

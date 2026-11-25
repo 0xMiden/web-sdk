@@ -27,6 +27,7 @@ export {
   ClaimProofData,
   ConsumableNoteRecord,
   Endpoint,
+  EstimatedMaxFee,
   EthAddress,
   ExecutedTransaction,
   FeeSponsorshipNote,

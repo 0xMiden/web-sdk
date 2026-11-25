@@ -8,21 +8,25 @@ use miden_protocol::crypto::SequentialCommit;
 use miden_protocol::crypto::merkle::NodeIndex;
 use miden_protocol::crypto::merkle::store::MerkleStore as NativeMerkleStore;
 
+use crate::js_error_with_context;
 use crate::models::account_code::AccountCode;
 use crate::models::advice_map::AdviceMap;
 use crate::models::felt::Felt;
 use crate::models::inner_node_info::InnerNodeInfo;
 use crate::models::note::Note;
 use crate::models::note_script::NoteScript;
+use crate::models::transaction_summary::TransactionSummary;
 use crate::models::word::Word;
-use crate::platform::{JsBytes, JsErr};
+use crate::platform::{JsBytes, JsErr, from_str_err_with_code};
 use crate::serialization::{decode_proto, encode_proto};
 
+pub mod max_fee;
 pub mod note_and_args;
 pub mod note_details_and_tag;
 pub mod note_id_and_args;
 pub mod transaction_request_builder;
 
+use max_fee::{EstimatedMaxFee, MaxFeeError};
 use note_details_and_tag::NoteDetailsAndTag;
 
 /// Specifies a transaction request that can be executed by an account.
@@ -187,6 +191,49 @@ impl TransactionRequest {
     pub fn with_auth_args(&self, preimage: Vec<Felt>) -> TransactionRequest {
         let preimage = AuthArgsPreimage(preimage.into_iter().map(NativeFelt::from).collect());
         self.0.clone().with_auth_args(&preimage).into()
+    }
+
+    /// Returns a copy of this request whose multisig auth args carry a max fee, and the summary
+    /// that binds it.
+    ///
+    /// The summary of a multisig binds a max fee. Auth args without one make the auth procedure
+    /// estimate the fee on each execution, so `summary`, the summary of an unsigned execution of
+    /// this request, binds the estimate of that execution. This scales the max fee that `summary`
+    /// binds by `fee_margin_percent`, rounded up, and sets the result on the auth args and on the
+    /// summary: 100 keeps the value and 150 adds half of it. Executing the returned request
+    /// reproduces the returned summary, so the approvers sign that summary and no second
+    /// execution is needed. The signed execution then pays any fee up to the max fee, also when
+    /// the fee of the chain has changed.
+    ///
+    /// A max fee of zero means that the auth procedure estimates the fee. On a chain that charges
+    /// no fee the estimate is zero, and this returns an equal request and summary.
+    ///
+    /// Every other field of the request stays the same.
+    ///
+    /// # Errors
+    /// - `AUTH_ARGS_NOT_MULTISIG` if this request has no auth argument, or its auth args are not
+    ///   multisig auth args. `feeAwareTransactionRequestBuilder` and `withFeeAwareAuth` set them
+    ///   for a multisig account.
+    /// - If `summary` does not bind the bound block, the approval expiration and the salt of the
+    ///   auth args. It is then the summary of another request.
+    /// - If `fee_margin_percent` is zero, or the scaled max fee is not a valid amount.
+    #[js_export(js_name = "withEstimatedMaxFee")]
+    pub fn with_estimated_max_fee(
+        &self,
+        summary: &TransactionSummary,
+        fee_margin_percent: u32,
+    ) -> Result<EstimatedMaxFee, JsErr> {
+        const CONTEXT: &str = "failed to set the estimated max fee";
+        EstimatedMaxFee::new(&self.0, &summary.into(), fee_margin_percent).map_err(
+            |err| match err {
+                MaxFeeError::NotMultisigAuthArgs(_) => {
+                    from_str_err_with_code(&format!("{CONTEXT}: {err}"), "AUTH_ARGS_NOT_MULTISIG")
+                },
+                MaxFeeError::SummaryMismatch(_) | MaxFeeError::InvalidMaxFee(_) => {
+                    js_error_with_context(err, CONTEXT)
+                },
+            },
+        )
     }
 }
 

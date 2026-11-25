@@ -187,6 +187,7 @@ listed):
 | `ACCOUNT_IS_PRIVATE` | `code_from_error` | `ClientError::AccountIsPrivate` |
 | `TRANSACTION_ALREADY_AUTHORIZED` | `from_str_err_with_code` | `executeForSummary` produced no summary because the transaction was already fully authorized (`new_transactions.rs`) |
 | `AUTH_ALREADY_SET` | `from_str_err_with_code` | `withFeeAwareAuth` got a multisig request that already has an auth argument (`new_transactions.rs`) |
+| `AUTH_ARGS_NOT_MULTISIG` | `from_str_err_with_code` | `TransactionRequest.withEstimatedMaxFee` got a request without multisig auth args (`models/transaction_request/mod.rs`) |
 | `ApplyTransactionAfterSubmitFailed` | `post_submit_code` (via `code_from_error`) and `js_post_submit_error` | The node accepted the transaction or batch but the local store update failed: `ClientError::ApplyTransactionAfterSubmitFailed`, the two `BatchBuilderError::BatchSubmitted*` variants, and every failure inside `applyTransaction`. Never resubmit. The JS resource helpers and `TransactionSubmission.apply()` raise it with `transactionId`, `submissionHeight` and `cause` |
 
 `code_from_error` recurses through `err.source()`, so a code survives being

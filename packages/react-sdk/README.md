@@ -1529,10 +1529,12 @@ block with `withBlockNumbers`, ship the request bytes, and let every party
 preview and execute at its own tip once its client has synced to at least the
 bound block (the largest of `request.blockNumbers()`); below it the call fails
 with `requested block N is after transaction reference block M`. The summary
-also binds a max fee: these auth args set none, so the auth procedure estimates
+also binds a max fee. Without one in the auth args the auth procedure estimates
 the fee on each execution, and the parties derive the same summary only while
 that estimate, which depends on the base fee of the reference block, comes out
-the same. `usePreview`
+the same. On a chain that charges a fee, pass the request and its previewed
+summary to `client.withEstimatedMaxFee(request, summary, { feeMarginPercent })`,
+and ship the request and the summary that it returns. `usePreview`
 does not sync, and `useTransaction` syncs through the provider's `sync()`, which
 returns early while another sync runs, so sync and then check the height before
 verifying or executing. A finished request that another party built gets its

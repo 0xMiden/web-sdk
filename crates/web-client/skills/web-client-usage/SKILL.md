@@ -861,12 +861,21 @@ await client.transactions.submit(multisig, request);
 ```
 
 `withFeeAwareAuth` returns a copy with the auth args the builder would set and
-takes the builder's `options`. Any other account's request comes back
+takes the builder's `options` (`approvalExpirationDelta`, `feeConversionSalt`,
+`boundBlockNum`, `maxFee`). Any other account's request comes back
 unchanged, auth argument and all; for a multisig it refuses a request that
 already has an auth argument (`AUTH_ALREADY_SET`). The copy does not declare
 the bound block among its block numbers: it executes at the tip, but a
 co-signer cannot read that block from `request.blockNumbers()`, so it syncs
 before previewing the copy.
+
+The summary of a multisig binds a max fee. Without `maxFee` the auth procedure
+estimates the fee on each execution, so on a chain that charges a fee a
+proposal should carry a cap:
+`await client.withEstimatedMaxFee(request, summary, { feeMarginPercent: 150 })`
+takes a request and the summary from its preview, and returns
+`{ request, summary, maxFee }` with the scaled estimate as the max fee. Ship the
+returned request and summary. The `multi-party-signing` skill has the flow.
 
 To set auth args you build yourself on a finished request, for example for a
 custom auth procedure, use `request.withAuthArgs(preimage)`. It sets the auth

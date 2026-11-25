@@ -447,7 +447,7 @@ const request = await client.withFeeAwareAuth(dappRequest, multisig);
 await client.transactions.submit(multisig, request);
 ```
 
-`withFeeAwareAuth` returns a copy of the request with the same auth argument and advice-map preimage that `feeAwareTransactionRequestBuilder` declares. The auth args replace a declared fee conversion salt, and every other field stays the same. For an account that is not a multisig the request comes back unchanged, auth argument and all. It takes the same `options` as the builder (`approvalExpirationDelta`, `feeConversionSalt`, `boundBlockNum`). When `feeConversionSalt` is omitted, it uses the salt that the request declares, or draws a fresh one if the request declares none.
+`withFeeAwareAuth` returns a copy of the request with the same auth argument and advice-map preimage that `feeAwareTransactionRequestBuilder` declares. The auth args replace a declared fee conversion salt, and every other field stays the same. For an account that is not a multisig the request comes back unchanged, auth argument and all. It takes the same `options` as the builder (`approvalExpirationDelta`, `feeConversionSalt`, `boundBlockNum`, `maxFee`). When `feeConversionSalt` is omitted, it uses the salt that the request declares, or draws a fresh one if the request declares none.
 
 The copy does not declare the bound block as a block number. miden-client adds the bound block when it executes the request, so the request executes at the chain tip. A co-signer cannot read the bound block from `request.blockNumbers()`, so the height check under [Multisig Proposals](#multisig-proposals-bind-a-block-execute-at-the-tip) does not apply to the copy: sync before previewing it.
 
@@ -485,7 +485,7 @@ The multisig auth args name a **bound block**, and the transaction summary binds
 
 Foreign accounts load at the tip, and every fee-paying transaction loads the chain's fee faucet as one. A proposal therefore still executes after the node has pruned the account state of its bound block; a node serves account state for only the last 50 blocks.
 
-The summary also binds a **max fee**. The multisig auth args from `feeAwareTransactionRequestBuilder` and `withFeeAwareAuth` set none, so the auth procedure estimates the fee on each execution and the summary binds that estimate. The estimate depends on the verification base fee of the reference block and on the cycle count of the transaction. An execution at a later block therefore reproduces the summary only while the estimate comes out the same. If the base fee of the chain changes between the preview and the execution, the summary changes and the collected signatures no longer match it. Neither method takes a max fee.
+The summary also binds a **max fee**. Without one in the auth args, the auth procedure estimates the fee on each execution and the summary binds that estimate. On a chain that charges a fee, set a max fee as shown under [Signing a max fee](#signing-a-max-fee).
 
 ```typescript
 import { TransactionRequest, TransactionSummary } from "@miden-sdk/miden-sdk";
@@ -535,6 +535,62 @@ Notes:
 - **A match still does not prove agreement on account state.** Everything under [What a Summary Proves](#what-a-summary-proves) applies.
 
 Available from `0.17.0-rc.4`.
+
+### Signing a max fee
+
+The fee of a transaction is known only when the transaction executes, so the approvers of a multisig sign a cap. The summary binds that max fee, and the signed transaction pays any fee up to it.
+
+Without a max fee in the auth args, the auth procedure estimates the fee on each execution and the summary binds the estimate. The estimate depends on the verification base fee of the reference block and on the cycle count of the transaction. An execution at a later block then reproduces the summary only while the estimate comes out the same: if the base fee of the chain changes between the preview and the execution, the summary changes and the collected signatures no longer match it.
+
+`client.withEstimatedMaxFee` turns the estimate of one preview into a cap:
+
+```typescript
+// ── Proposer ──────────────────────────────────────────────
+const draft = (await client.feeAwareTransactionRequestBuilder(multisig))
+  .withCustomScript(script)
+  .build();
+const estimated = await client.transactions.preview({
+  operation: "custom",
+  account: multisig,
+  request: draft,
+});
+
+// The max fee is the estimate plus 50%.
+const { request, summary, maxFee } = await client.withEstimatedMaxFee(
+  draft,
+  estimated,
+  { feeMarginPercent: 150 }
+);
+await shipToCosigners({
+  request: request.serialize(),
+  summary: summary.serialize(),
+});
+```
+
+- **Ship what it returns.** The approvers sign the returned `summary`, and the executor submits the returned `request`. Executing that request reproduces that summary, so the proposer needs no second preview. The co-signer and executor steps above stay the same.
+- **`feeMarginPercent` is required.** 100 keeps the estimate, and 150 adds half of it. The result is rounded up.
+- **A zero estimate yields no cap.** A max fee of zero means that the auth procedure estimates the fee. On a chain that charges no fee the estimate is zero, so the returned request and summary equal the ones passed in.
+- **The request must carry multisig auth args.** `feeAwareTransactionRequestBuilder` and `withFeeAwareAuth` set them for a multisig account. Any other request is refused with the error `code` `AUTH_ARGS_NOT_MULTISIG` (on Node.js the code prefixes the message).
+- **The summary must be the preview of that request.** A summary that binds another salt, bound block or approval expiration is refused.
+- **A fee above the max fee fails the signed execution**, not the preview.
+
+To set a cap that you already know, pass `maxFee` to the builder or to `withFeeAwareAuth`. It joins the salt and the bound block as a value that a co-signer needs to reproduce a proposal:
+
+```typescript
+const request = (
+  await client.feeAwareTransactionRequestBuilder(multisig, {
+    feeConversionSalt: salt,
+    boundBlockNum: agreedBlock,
+    maxFee: 5000n,
+  })
+)
+  .withCustomScript(script)
+  .build();
+```
+
+The `client.transactions` operations that build their own request, such as `send` and `consume`, and the `new*TransactionRequest` constructors set no max fee.
+
+`maxFee` and `withEstimatedMaxFee` are available from `0.19.0`.
 
 ## Summaries That Bind the Reference Block
 

@@ -116,6 +116,7 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
       expect.objectContaining({ kind: "fromHex", hex: "0xabc" }),
       undefined,
       undefined,
+      undefined,
       undefined
     );
   });
@@ -125,6 +126,7 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
     expect(wasm.AccountId.fromBech32).toHaveBeenCalledWith("mtst1qabc");
     expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "fromBech32", bech32: "mtst1qabc" }),
+      undefined,
       undefined,
       undefined,
       undefined
@@ -140,6 +142,7 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
       id,
       undefined,
       undefined,
+      undefined,
       undefined
     );
   });
@@ -150,6 +153,7 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
     expect(wasm.AccountId.fromHex).not.toHaveBeenCalled();
     expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
       accountId,
+      undefined,
       undefined,
       undefined,
       undefined
@@ -175,6 +179,7 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
       accountId,
       100,
       undefined,
+      undefined,
       undefined
     );
   });
@@ -191,17 +196,41 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
       accountId,
       undefined,
       salt,
-      42
+      42,
+      undefined
     );
   });
 
-  it("throws once terminated", async () => {
-    client.terminate();
-    await expect(
-      client.feeAwareTransactionRequestBuilder("0xabc")
-    ).rejects.toThrow("Client terminated");
-    expect(inner.feeAwareTransactionRequestBuilder).not.toHaveBeenCalled();
+  // The max fee crosses the boundary as a 64-bit integer, so a number becomes a
+  // bigint here.
+  it.each([
+    [5000n, 5000n],
+    [5000, 5000n],
+    [0, 0n],
+    [0xffff_ffff_ffff_ffffn, 0xffff_ffff_ffff_ffffn],
+  ])("forwards a max fee of %s as a bigint", async (maxFee, forwarded) => {
+    const accountId = { kind: "accountId" };
+    await client.feeAwareTransactionRequestBuilder(accountId, { maxFee });
+    expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
+      accountId,
+      undefined,
+      undefined,
+      undefined,
+      forwarded
+    );
   });
+
+  // The Node.js binding aborts on a value that does not fit in 64 bits, so the
+  // wrapper refuses it before the call.
+  it.each([-1, -1n, 1.5, 2n ** 64n, 2 ** 53, Number.NaN, "5000", {}])(
+    "rejects a max fee of %s before it reaches the binding",
+    async (maxFee) => {
+      await expect(
+        client.feeAwareTransactionRequestBuilder("0xabc", { maxFee })
+      ).rejects.toThrow(TypeError);
+      expect(inner.feeAwareTransactionRequestBuilder).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe("MidenClient.endpoint", () => {
@@ -285,6 +314,7 @@ describe("MidenClient.withFeeAwareAuth", () => {
       expect.objectContaining({ kind: "fromHex", hex: "0xabc" }),
       undefined,
       undefined,
+      undefined,
       undefined
     );
   });
@@ -295,6 +325,7 @@ describe("MidenClient.withFeeAwareAuth", () => {
     expect(inner.withFeeAwareAuth).toHaveBeenCalledWith(
       request,
       expect.objectContaining({ kind: "fromBech32", bech32: "mtst1qabc" }),
+      undefined,
       undefined,
       undefined,
       undefined
@@ -309,6 +340,7 @@ describe("MidenClient.withFeeAwareAuth", () => {
     expect(inner.withFeeAwareAuth).toHaveBeenCalledWith(
       request,
       id,
+      undefined,
       undefined,
       undefined,
       undefined
@@ -335,7 +367,8 @@ describe("MidenClient.withFeeAwareAuth", () => {
       accountId,
       100,
       salt,
-      42
+      42,
+      undefined
     );
   });
 
@@ -351,12 +384,92 @@ describe("MidenClient.withFeeAwareAuth", () => {
     ).rejects.toMatchObject({ code: "AUTH_ALREADY_SET" });
   });
 
+  it("forwards a max fee as a bigint in the last positional slot", async () => {
+    const accountId = { kind: "accountId" };
+    await client.withFeeAwareAuth(request, accountId, { maxFee: 7000 });
+    expect(inner.withFeeAwareAuth).toHaveBeenCalledWith(
+      request,
+      accountId,
+      undefined,
+      undefined,
+      undefined,
+      7000n
+    );
+  });
+
   it("throws once terminated", async () => {
     client.terminate();
     await expect(client.withFeeAwareAuth(request, "0xabc")).rejects.toThrow(
       "Client terminated"
     );
     expect(inner.withFeeAwareAuth).not.toHaveBeenCalled();
+  });
+});
+
+describe("MidenClient.withEstimatedMaxFee", () => {
+  let client;
+  const summary = { kind: "summary" };
+  const cappedRequest = { kind: "cappedRequest" };
+  const cappedSummary = { kind: "cappedSummary" };
+
+  const makeRequest = () => ({
+    withEstimatedMaxFee: vi.fn(() => ({
+      request: () => cappedRequest,
+      summary: () => cappedSummary,
+      maxFee: () => 1500n,
+    })),
+  });
+
+  beforeEach(() => {
+    ({ client } = makeClient());
+  });
+
+  it("returns the capped request, the summary to sign and the max fee", async () => {
+    const request = makeRequest();
+
+    const result = await client.withEstimatedMaxFee(request, summary, {
+      feeMarginPercent: 150,
+    });
+
+    expect(request.withEstimatedMaxFee).toHaveBeenCalledWith(summary, 150);
+    expect(result).toEqual({
+      request: cappedRequest,
+      summary: cappedSummary,
+      maxFee: 1500n,
+    });
+  });
+
+  // The margin is required. A missing one would otherwise reach the binding as
+  // zero in the browser.
+  it.each([undefined, {}, { feeMarginPercent: 0 }, { feeMarginPercent: -50 }])(
+    "rejects options of %o before it reads the request",
+    async (options) => {
+      const request = makeRequest();
+      await expect(
+        client.withEstimatedMaxFee(request, summary, options)
+      ).rejects.toThrow(/feeMarginPercent must be a positive integer/);
+      expect(request.withEstimatedMaxFee).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([1.5, "150", 150n, 2 ** 32, Number.NaN])(
+    "rejects a margin of %s",
+    async (feeMarginPercent) => {
+      const request = makeRequest();
+      await expect(
+        client.withEstimatedMaxFee(request, summary, { feeMarginPercent })
+      ).rejects.toThrow(TypeError);
+      expect(request.withEstimatedMaxFee).not.toHaveBeenCalled();
+    }
+  );
+
+  it("throws once terminated", async () => {
+    const request = makeRequest();
+    client.terminate();
+    await expect(
+      client.withEstimatedMaxFee(request, summary, { feeMarginPercent: 150 })
+    ).rejects.toThrow("Client terminated");
+    expect(request.withEstimatedMaxFee).not.toHaveBeenCalled();
   });
 });
 

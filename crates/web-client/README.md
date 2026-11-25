@@ -1071,7 +1071,21 @@ One path the SDK cannot declare a salt on: `client.pswap.cancelByOrder` builds i
 
 Since protocol 0.17 a multisig summary binds a **bound block** named in the multisig auth args, not the reference block the transaction executes at. `feeAwareTransactionRequestBuilder` binds the current sync height, and miden-client tracks that block when it executes the request, so the proposer, every co-signer and the executor can all run the proposal at their own current tip and derive the same summary. The builder also adds the bound block to the request with `withBlockNumbers`, which only the height check below reads. Each party's client must first have synced to at least the bound block (the largest of `request.blockNumbers()`, by default the proposer's sync height when it built the request); a client below it fails with `requested block N is after transaction reference block M` until it syncs. A request from `withFeeAwareAuth` does not declare the bound block, so sync before previewing it. Foreign accounts, the fee faucet among them, load at the tip, so a proposal still executes after the node has pruned the account state of its bound block (a node keeps account state for only 50 blocks).
 
-The summary also binds a **max fee**. These auth args set none, so the auth procedure estimates the fee on each execution and the summary binds that estimate, which depends on the verification base fee of the reference block and on the cycle count of the transaction. The parties derive the same summary only while the estimate comes out the same, and a change of the chain's base fee between the preview and the execution invalidates the collected signatures. Neither method takes a max fee. A multisig pays the fee after it has checked the signatures, so the fee note is not in `summary.outputNotes()`, and a preview does not reach the fee payment.
+The summary also binds a **max fee**, the fee cap that the approvers sign. Without one in the auth args, the auth procedure estimates the fee on each execution and the summary binds that estimate, which depends on the verification base fee of the reference block and on the cycle count of the transaction. The parties then derive the same summary only while the estimate comes out the same, and a change of the chain's base fee between the preview and the execution invalidates the collected signatures. On a chain that charges a fee, turn the estimate of one preview into a cap:
+
+```typescript
+const draft = (await client.feeAwareTransactionRequestBuilder(multisig))
+  .withCustomScript(script)
+  .build();
+const estimated = await client.transactions.preview({ operation: "custom", account: multisig, request: draft });
+
+// The max fee is the estimate plus 50%. Ship the returned request and summary.
+const { request, summary } = await client.withEstimatedMaxFee(draft, estimated, { feeMarginPercent: 150 });
+```
+
+The approvers sign the returned `summary`, and the executor submits the returned `request`, which reproduces that summary without a second preview. `feeMarginPercent` is required: 100 keeps the estimate. To set a cap that you already know, pass `maxFee` in the options of `feeAwareTransactionRequestBuilder` or `withFeeAwareAuth`. A max fee of zero means that the auth procedure estimates the fee, so on a chain that charges nothing `withEstimatedMaxFee` returns an equal request and summary. A request without multisig auth args is refused with the `code` `AUTH_ARGS_NOT_MULTISIG`.
+
+A multisig pays the fee after it has checked the signatures, so the fee note is not in `summary.outputNotes()`, and a preview does not reach the fee payment.
 
 ```typescript
 // Proposer
