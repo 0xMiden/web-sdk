@@ -257,7 +257,10 @@ export type HealthStatus =
 
 /** Options of {@link MidenClient.monitorHealth}. */
 export interface MonitorHealthOptions {
-  /** Delay in milliseconds between one check settling and the next starting. */
+  /**
+   * Delay in milliseconds between one check settling and the next starting,
+   * at most 2147483647 (the longest delay a timer can hold).
+   */
   intervalMs: number;
   /** Called with the first result and whenever the health state changes. */
   onChange: (status: HealthStatus) => void;
@@ -2411,8 +2414,8 @@ export declare class MidenClient {
    * `terminate()` stops every monitor of the client. An error thrown by
    * `onChange` is logged and the monitor keeps running.
    *
-   * @throws TypeError when `intervalMs` is not a positive number or `onChange`
-   *   is not a function.
+   * @throws TypeError when `intervalMs` is not a positive number of at most
+   *   2147483647 or `onChange` is not a function.
    */
   monitorHealth(options: MonitorHealthOptions): () => void;
 

@@ -245,7 +245,7 @@ where `blockProducer` has `version`, `status`, `chainTip` and `mempoolStats`
 (`unbatchedTransactions`, `proposedBatches`, `provenBatches`, as numbers), or
 `{ reachable: false, error }` for an unreachable node or a mock client. It does
 not queue behind a sync. For a connection indicator use
-`const stop = client.monitorHealth({ intervalMs, onChange })`: checks never
+`const stop = client.monitorHealth({ intervalMs, onChange })` (`intervalMs` at most 2147483647): checks never
 overlap, `onChange` fires for the first result and then only when reachability
 or the block producer's `status` changes (not on every new chain tip), and
 `stop()` or `terminate()` ends it. `rpc.getStatus()` on a standalone

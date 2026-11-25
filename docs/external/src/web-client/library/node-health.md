@@ -55,8 +55,8 @@ stop();
 ```
 
 An error thrown by `onChange` is logged and the monitor keeps running.
-`intervalMs` must be a positive number and `onChange` a function, or the call
-throws a `TypeError`.
+`intervalMs` must be a positive number of at most 2147483647 (the longest delay
+a timer can hold) and `onChange` a function, or the call throws a `TypeError`.
 
 ## Without a client
 
