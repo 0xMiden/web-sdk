@@ -2,6 +2,7 @@ use js_export_macro::js_export;
 use miden_client::account::AccountComponentCode as NativeAccountComponentCode;
 
 use crate::models::library::Library;
+use crate::models::package::Package;
 use crate::platform::JsErr;
 
 #[derive(Debug, Clone)]
@@ -16,6 +17,12 @@ impl AccountComponentCode {
     pub fn as_library(&self) -> Result<Library, JsErr> {
         let native_library = self.0.as_package();
         Ok(native_library.into())
+    }
+
+    /// Returns the compiled code as a serializable `Package`.
+    #[js_export(js_name = "asPackage")]
+    pub fn as_package(&self) -> Package {
+        self.0.as_package().clone().into()
     }
 }
 

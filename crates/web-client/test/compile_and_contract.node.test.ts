@@ -169,6 +169,85 @@ test.describe("compile.component()", () => {
   });
 });
 
+test.describe("compile.component({ package })", () => {
+  // A package built from the same source: the compiled component code, round
+  // tripped through its serialized form like a `.masp` read from disk.
+  const packageBytes = async (sdk, client) => {
+    const source = await client.compile.component({
+      code: COUNTER_CODE,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+    return source.componentCode().asPackage().serialize();
+  };
+
+  test("a package yields the same procedure hashes as its source", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const source = await client.compile.component({
+      code: COUNTER_CODE,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+    const bytes = await packageBytes(sdk, client);
+
+    const fromBytes = await client.compile.component({
+      package: bytes,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+    const pkg = sdk.Package.deserialize(bytes);
+    const fromPackage = await client.compile.component({
+      package: pkg,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+    // The same Package object is reusable after a compile call.
+    const again = await client.compile.component({
+      package: pkg,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+
+    for (const component of [fromBytes, fromPackage, again]) {
+      expect(component.getProcedureHash("get_count")).toBe(
+        source.getProcedureHash("get_count")
+      );
+      expect(component.getProcedureHash("increment_count")).toBe(
+        source.getProcedureHash("increment_count")
+      );
+    }
+  });
+
+  test("a package component creates a contract", async ({ sdk }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const bytes = await packageBytes(sdk, client);
+    const component = await client.compile.component({
+      package: bytes,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+    const seed = new Uint8Array(32).fill(0x02);
+    const account = await client.accounts.create({
+      type: "ImmutableContract",
+      storage: "public",
+      seed,
+      auth: sdk.AuthSecretKey.rpoFalconWithRNG(seed),
+      components: [component],
+    });
+    expect(account.id().toString()).toBeDefined();
+  });
+
+  test("rejects source and package together", async ({ sdk }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const bytes = await packageBytes(sdk, client);
+    await expect(
+      client.compile.component({ code: COUNTER_CODE, package: bytes })
+    ).rejects.toThrow(/either `code` or `package`/);
+  });
+});
+
 // ════════════════════════════════════════════════════════════════
 // compile.txScript()
 // ════════════════════════════════════════════════════════════════
