@@ -2336,8 +2336,9 @@ export interface ChainResource {
    * @param nullifiers - Nullifiers as `Word`s or 0x-prefixed hex strings. A
    *   `Word` is only read, never consumed.
    * @param options.blockFrom - First block to scan, inclusive. Defaults to 0.
-   * @returns A map from each requested nullifier's hex to its commit height,
-   *   or `null` when none was found in the range.
+   * @returns A map keyed by each nullifier as you passed it (a `Word` by its
+   *   `toHex()`), to its commit height or `null` when none was found in the
+   *   range. Hex of any case matches.
    */
   getNullifierCommitHeights(
     nullifiers: Array<Word | string>,
@@ -2348,7 +2349,8 @@ export interface ChainResource {
    * block range. Prefixes can match unrelated nullifiers, so compare the full
    * returned nullifier with the one you track.
    *
-   * @param prefixes - Nullifier prefixes, the high 16 bits of the fourth field element.
+   * @param prefixes - Nullifier prefixes, the high 16 bits of the fourth field
+   *   element: integers from 0 to 65535, else a `RangeError` before any request.
    * @param blockFrom - First block to scan, inclusive.
    * @param blockTo - Last block to scan, inclusive; at or below the chain tip.
    */

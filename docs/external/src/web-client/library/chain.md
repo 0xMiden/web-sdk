@@ -33,7 +33,7 @@ MMR. The proof is made against the chain length the node reports,
 (default 0) to the chain tip and returns a `Map` from each requested
 nullifier's hex to the block that consumed it, or `null` when none did. It
 compares full nullifiers, so a shared prefix cannot produce a false match.
-Pass `Word`s or 0x-prefixed hex strings.
+Pass `Word`s (never consumed) or 0x-prefixed hex strings of any case; the map is keyed by what you passed.
 
 ```typescript
 const heights = await client.chain.getNullifierCommitHeights([nullifierHex]);
@@ -44,7 +44,7 @@ if (heights.get(nullifierHex) !== null) {
 
 `syncNullifiers(prefixes, blockFrom, blockTo)` returns every
 `NullifierUpdate` whose nullifier matches one of the 16-bit prefixes in the
-inclusive range. Prefixes can match unrelated notes, so compare the returned
+inclusive range. A prefix outside 0 to 65535 or a non-integer throws a `RangeError`. Prefixes can match unrelated notes, so compare the returned
 `nullifier()` with the one you track.
 
 The standalone `RpcClient` has the same reads: `getBlockHeaderWithProof`,
