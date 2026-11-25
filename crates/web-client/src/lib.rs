@@ -19,7 +19,7 @@ use core::fmt::Write;
 use idxdb_store::IdxdbStore;
 use js_export_macro::js_export;
 #[cfg(feature = "browser")]
-use js_sys::{Function, Reflect};
+use js_sys::{Function, Object, Reflect};
 use miden_client::account::AccountId as NativeAccountId;
 use miden_client::builder::{ClientBuilder, DEFAULT_GRPC_TIMEOUT_MS};
 #[cfg(feature = "nodejs")]
@@ -33,6 +33,10 @@ use miden_client::store::Store;
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::MockNoteTransportApi;
 use miden_client::transaction::BatchBuilderError;
+#[cfg(feature = "browser")]
+use miden_client::transaction::TransactionExecutorError;
+#[cfg(feature = "browser")]
+use miden_client::vm::{ExecutionError, OperationError};
 use miden_client::{Client, ClientError, ErrorHint};
 use models::code_builder::CodeBuilder;
 #[cfg(feature = "nodejs")]
@@ -867,6 +871,9 @@ where
         if let Some(code) = forced_code.or_else(|| code_from_error(&err)) {
             let _ = Reflect::set(&js_error, &JsValue::from_str("code"), &JsValue::from_str(code));
         }
+        if let Some(masm) = masm_diagnostic(&err) {
+            let _ = Reflect::set(&js_error, &JsValue::from_str("masm"), &masm);
+        }
         js_error
     }
 
@@ -886,6 +893,62 @@ where
             None => napi::Error::from_reason(message),
         }
     }
+}
+
+#[cfg(feature = "browser")]
+fn masm_diagnostic(mut source: &(dyn Error + 'static)) -> Option<Object> {
+    let execution = loop {
+        if let Some(execution) = source.downcast_ref::<ExecutionError>() {
+            break execution;
+        }
+        // The executor prints this payload as a diagnostic and omits it from Error::source.
+        if let Some(TransactionExecutorError::TransactionProgramExecutionFailed(execution)) =
+            source.downcast_ref::<TransactionExecutorError>()
+        {
+            break execution;
+        }
+        source = source.source()?;
+    };
+    let ExecutionError::OperationError { label, source_file, err } = execution else {
+        return None;
+    };
+    let (err_code, err_msg) = match err {
+        OperationError::FailedAssertion { err_code, err_msg }
+        | OperationError::U32AssertionFailed { err_code, err_msg, .. } => (err_code, err_msg),
+        _ => return None,
+    };
+
+    let diagnostic = Object::new();
+    let code = JsValue::from_str(&err_code.as_canonical_u64().to_string());
+    let _ = Reflect::set(&diagnostic, &JsValue::from_str("errorCode"), &code);
+    if let Some(message) = err_msg {
+        let _ = Reflect::set(
+            &diagnostic,
+            &JsValue::from_str("assertionMessage"),
+            &JsValue::from_str(message),
+        );
+    }
+
+    let start = label.start().to_u32();
+    let end = label.end().to_u32();
+    if let Some(file) = source_file
+        && !label.source_id().is_unknown()
+        && label.source_id() == file.id()
+        && !file.uri().as_str().trim().is_empty()
+        && start < end
+        && file.as_str().get(start as usize..end as usize).is_some()
+    {
+        let span = Object::new();
+        let _ = Reflect::set(&span, &JsValue::from_str("start"), &JsValue::from(start));
+        let _ = Reflect::set(&span, &JsValue::from_str("end"), &JsValue::from(end));
+        let _ = Reflect::set(&diagnostic, &JsValue::from_str("span"), &span);
+        let _ = Reflect::set(
+            &diagnostic,
+            &JsValue::from_str("file"),
+            &JsValue::from_str(file.uri().as_str()),
+        );
+    }
+    Some(diagnostic)
 }
 
 /// Walks the error chain and builds a `context: err1: err2: ...` message.

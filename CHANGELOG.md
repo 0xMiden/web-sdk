@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+* [FEATURE][web] Browser transaction assertion errors can include `error.masm` with the full-precision decimal `errorCode`, optional assertion text, and a source file and byte range when available. The diagnostic survives the Web Worker boundary ([#192](https://github.com/0xMiden/web-sdk/issues/192)).
+
 ### Enhancements
 
 * [FEATURE][web] `transactions.retryProvenBatch(submission)` resubmits an already-proven batch after an indeterminate admission response (`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` with `submission` in-thread or `submissionId` under a Web Worker, plus `transactionIds`) without re-proving; document how to reconcile unknown admission vs `ApplyTransactionAfterSubmitFailed`. Accepting an externally proved transaction as a batch member (`push_proven_transaction`) still needs a rust-sdk cut that exposes it on the pinned client ([#571](https://github.com/0xMiden/web-sdk/issues/571)).
