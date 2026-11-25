@@ -2,6 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { fileURLToPath } from "url";
 import type { Page } from "@playwright/test";
 import { createFundingRuntime } from "./fee-funder-core";
 
@@ -16,7 +17,10 @@ interface ActiveLock {
   claimed: ClaimedFunder;
 }
 
-const REPO_ROOT = path.resolve(__dirname, "../../..");
+const REPO_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../.."
+);
 const DEFAULT_FUNDER_DIR = path.join(
   REPO_ROOT,
   "target/test-node/data/funders"
