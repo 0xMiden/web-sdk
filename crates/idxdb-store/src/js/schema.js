@@ -2,6 +2,11 @@ import Dexie from "dexie";
 import * as semver from "semver";
 import { logWebStoreError } from "./utils.js";
 export const CLIENT_VERSION_SETTING_KEY = "clientVersion";
+/**
+ * `clientConfig` key of a store seeded at or after the protocol 1.0 cutover (version 17). Import
+ * refuses a dump without it.
+ */
+export const PROTOCOL_V1_STAMP_KEY = "protocolV1";
 /** Prefix of the `clientConfig` key of a protocol configuration. */
 export const PROTOCOL_CONFIG_KEY_PREFIX = "protocol_config:";
 /** Mirrors `PswapLineageState::Active`, originally defined in miden-client. */
@@ -10,8 +15,8 @@ export const PSWAP_STATE_ACTIVE = 0;
  * The threshold of the v8 cutover: a store stamped below it, a prerelease of it included, or not
  * stamped at all holds data from networks that no longer exist, so that upgrade clears it once.
  * Raising it clears nothing that already ran v8. A later release that genuinely cannot migrate
- * older data adds a new Dexie version with the same clear-and-reseed upgrade and its own
- * threshold, which is the only way a store is ever cleared.
+ * older data adds a new Dexie version with a clear-and-reseed upgrade, which is the only way a
+ * store is ever cleared. Version 17 is one, for protocol 1.0.
  */
 export const MIGRATION_BASELINE = "0.17.0";
 // How long the pre-open newer-store check waits on indexedDB.databases() before leaving the
@@ -137,8 +142,8 @@ var Table;
     Table["PswapLineages"] = "pswapLineages";
     Table["ChainAnchors"] = "chainAnchors";
 })(Table || (Table = {}));
-/** Scope of a row of the `settings` table, which version 14 removes. The versions before it read
- *  it, and so does the import of a dump that still has the table. */
+/** Scope of a row of the `settings` table, which version 14 removes. The upgrades before it read
+ *  it. */
 export const SETTING_SCOPE_CLIENT = 0;
 export const SETTING_SCOPE_USER = 1;
 function indexes(...items) {
@@ -155,7 +160,7 @@ export async function readClientVersion(clientConfig) {
  * that replace it. The user rows go to `userSettings`. Of the client rows, only the client
  * version and the protocol configurations go to `clientConfig`.
  */
-export function splitLegacySettings(rows) {
+function splitLegacySettings(rows) {
     const keyValue = ({ key, value }) => ({ key, value });
     return {
         userSettings: rows
@@ -169,8 +174,7 @@ export function splitLegacySettings(rows) {
     };
 }
 // What a store held before its first sync while `blockchainCheckpoint` existed: the chain
-// checkpoint at the genesis block. Every cutover so far runs before version 15, which moves the
-// row to `chainAnchors`.
+// checkpoint at the genesis block. Only the v8 cutover writes it; version 16 drops the table.
 function seedFreshStore(tx) {
     return tx
         .table(Table.BlockchainCheckpoint)
@@ -180,7 +184,7 @@ function seedFreshStore(tx) {
  * The rows of `chainAnchors` for a store whose `blockchainCheckpoint` table, which version 16
  * removes, held `checkpoint`: the genesis anchor and the anchor of the checkpoint.
  */
-export function anchorsFromCheckpoint(checkpoint) {
+function anchorsFromCheckpoint(checkpoint) {
     const anchors = [{ blockNum: 0, peaks: new Uint8Array() }];
     if (checkpoint) {
         const anchor = {
@@ -196,14 +200,16 @@ export function anchorsFromCheckpoint(checkpoint) {
     }
     return anchors;
 }
-// The upgrade of a cutover version. A store stamped below `threshold` (a prerelease of it
-// included) or not stamped has every table cleared and is seeded as a fresh store; a stamp that
-// is not valid semver keeps it. Clearing inside the versionchange transaction makes it atomic,
-// and IndexedDB runs one at a time across tabs and workers, so a context opening the store
-// meanwhile waits and then finds it upgraded. A fresh database runs no upgrade callbacks.
+// The upgrade of the v8 cutover. A store stamped below `threshold` (a prerelease of it included)
+// or not stamped has every table cleared and is seeded as a fresh store; a stamp that is not valid
+// semver keeps it. Clearing inside the versionchange transaction makes it atomic, and IndexedDB
+// runs one at a time across tabs and workers, so a context opening the store meanwhile waits and
+// then finds it upgraded. A fresh database runs no upgrade callbacks.
+// It reads the stamp from `settings` and seeds `blockchainCheckpoint`, which versions 14 and 16
+// drop, so a later version cannot use it: a later cutover clears like `clearStoreForProtocolV1`.
 function clearStoreStampedBelow(threshold) {
     return async (tx) => {
-        // Every cutover so far runs before version 13, while the stamp is a client row of `settings`.
+        // Until version 13 moves it to `clientConfig`, the stamp is a client row of `settings`.
         const record = await tx
             .table(Table.Settings)
             .get([SETTING_SCOPE_CLIENT, CLIENT_VERSION_SETTING_KEY]);
@@ -212,15 +218,35 @@ function clearStoreStampedBelow(threshold) {
             !(semver.valid(stamp) && semver.lt(stamp, threshold))) {
             return;
         }
-        console.warn(`Clearing IndexedDB store ${tx.db.name}: ` +
-            (stamp === null
-                ? "it has no client version stamp."
-                : `it was written by client ${stamp}, older than ${threshold}.`));
-        // A table a later version adds does not exist yet at this step.
-        const tables = Object.values(Table).filter((name) => tx.idbtrans.db.objectStoreNames.contains(name));
-        await Promise.all(tables.map((name) => tx.table(name).clear()));
+        await clearEveryTable(tx, stamp === null
+            ? "it has no client version stamp."
+            : `it was written by client ${stamp}, older than ${threshold}.`);
         await seedFreshStore(tx);
     };
+}
+async function clearEveryTable(tx, reason) {
+    console.warn(`Clearing IndexedDB store ${tx.db.name}: ${reason}`);
+    // A table a later version adds does not exist yet at this step, and one an earlier version
+    // dropped does not exist any more.
+    const tables = Object.values(Table).filter((name) => tx.idbtrans.db.objectStoreNames.contains(name));
+    await Promise.all(tables.map((name) => tx.table(name).clear()));
+}
+// Protocol 1.0 runs on new networks and changed the encoding of the block headers, so every store
+// that reaches this upgrade is cleared and seeded, whatever its stamp: the last release before the
+// cutover and the first build after it stamp the same client version.
+async function clearStoreForProtocolV1(tx) {
+    await clearEveryTable(tx, "it was written before protocol 1.0.");
+    await seedProtocolV1Store(tx);
+}
+// What a fresh store holds: the genesis anchor and the protocol 1.0 stamp.
+function seedProtocolV1Store(tx) {
+    return Promise.all([
+        tx.chainAnchors.put({ blockNum: 0, peaks: new Uint8Array() }),
+        tx.clientConfig.put({
+            key: PROTOCOL_V1_STAMP_KEY,
+            value: textEncoder.encode("1"),
+        }),
+    ]);
 }
 // Dexie keeps version N natively as N * 10, plus one for each schema patch it applies. Dexie may
 // have patched the store's schema before the ready hook runs, so the message only promises that
@@ -477,6 +503,9 @@ export class MidenDatabase {
         });
         // v16: drop `blockchainCheckpoint`, after v15 moved its row.
         this.dexie.version(16).stores({ [Table.BlockchainCheckpoint]: null });
+        // v17 (protocol 1.0): the second clear. Rows that an earlier client wrote belong to networks
+        // that no longer exist, and its block headers do not decode.
+        this.dexie.version(17).stores({}).upgrade(clearStoreForProtocolV1);
         this.accountCodes = this.dexie.table(Table.AccountCode);
         this.latestAccountStorages = this.dexie.table(Table.LatestAccountStorage);
         this.historicalAccountStorages = this.dexie.table(Table.HistoricalAccountStorage);
@@ -504,9 +533,8 @@ export class MidenDatabase {
         this.userSettings = this.dexie.table(Table.UserSettings);
         this.pswapLineages = this.dexie.table(Table.PswapLineages);
         this.dexie.on("populate", (tx) => {
-            tx.chainAnchors
-                .put({ blockNum: 0, peaks: new Uint8Array() })
-                /* v8 ignore next 2: populate chainAnchors failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
+            seedProtocolV1Store(tx)
+                /* v8 ignore next 2: populate failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
                 .catch((err) => logWebStoreError(err, "Failed to populate DB"));
         });
         // `open` refuses a newer store before Dexie touches it where `indexedDB.databases()` exists.

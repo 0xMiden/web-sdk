@@ -185,8 +185,8 @@ listed):
 | `ACCOUNT_NOT_FOUND_ON_CHAIN` | `code_from_error` (`lib.rs:672-682`) | `ClientError::AccountNotFoundOnChain` |
 | `ACCOUNT_ALREADY_TRACKED` | `code_from_error` | `ClientError::AccountAlreadyTracked` |
 | `ACCOUNT_IS_PRIVATE` | `code_from_error` | `ClientError::AccountIsPrivate` |
-| `TRANSACTION_ALREADY_AUTHORIZED` | `from_str_err_with_code` | `executeForSummary` / `executeForSummaryAt` produced no summary because the transaction was already fully authorized (`new_transactions.rs:611`, `:649`) |
-| `INVALID_CHAIN_ANCHOR` | `from_str_err_with_code` | `ClientError::ChainAnchorError`, routed through `map_anchor_err` (`new_transactions.rs:910`) |
+| `TRANSACTION_ALREADY_AUTHORIZED` | `from_str_err_with_code` | `executeForSummary` produced no summary because the transaction was already fully authorized (`new_transactions.rs`) |
+| `AUTH_ALREADY_SET` | `from_str_err_with_code` | `withFeeAwareAuth` got a multisig request that already has an auth argument (`new_transactions.rs`) |
 | `ApplyTransactionAfterSubmitFailed` | `post_submit_code` (via `code_from_error`) and `js_post_submit_error` | The node accepted the transaction or batch but the local store update failed: `ClientError::ApplyTransactionAfterSubmitFailed`, the two `BatchBuilderError::BatchSubmitted*` variants, and every failure inside `applyTransaction`. Never resubmit. The JS resource helpers and `TransactionSubmission.apply()` raise it with `transactionId`, `submissionHeight` and `cause` |
 
 `code_from_error` recurses through `err.source()`, so a code survives being
@@ -643,7 +643,7 @@ vocabulary lives in `js/constants.js`, as three frozen objects:
   callbacks the worker hands back to the main thread.
 - `MethodName`: the worker-forwarded methods, each with a `_MOCK` twin where
   one exists (`CREATE_CLIENT`, `APPLY_TRANSACTION`, `EXECUTE_TRANSACTION`,
-  `EXECUTE_TRANSACTION_AT`, `PROVE_TRANSACTION`, `SUBMIT_NEW_TRANSACTION`,
+  `PROVE_TRANSACTION`, `SUBMIT_NEW_TRANSACTION`,
   `SUBMIT_NEW_TRANSACTION_WITH_PROVER`, `SYNC_STATE`, `SYNC_CHAIN`,
   `SYNC_NOTE_TRANSPORT`).
 

@@ -1430,7 +1430,6 @@ yourself.
 Built-in features:
 - **Auto pre-sync** before executing (disable with `skipSync: true`)
 - **Concurrency guard** prevents double-executions while a transaction is in-flight
-- **Anchored execution** via `anchor` — pins the reference block so a summary signed at that block reproduces exactly (see [`useChainAnchor()`](#usechainanchor--usepreview))
 - **Private note delivery** via `privateNoteTarget`: after the transaction commits, every private output note is relayed to that account. The target is checked before anything executes; a note not delivered once the transaction is submitted rejects with a `PrivateNoteDeliveryError`, as in `useSend()`
 
 ```tsx
@@ -1516,15 +1515,15 @@ function PrivateSend({ from, to, assetId }) {
 A note whose transaction this client could not apply is not in its store, so it
 cannot be resent from this client.
 
-#### `useChainAnchor()` / `usePreview()`
+#### `usePreview()`
 
 `usePreview()` derives the summary pending authorization without submitting.
-`useChainAnchor()` pins the reference block that summary is derived at, for
-flows whose summary binds that block, such as single-signature co-signing.
+The summary is derived at the client's sync height, which is also where a
+transaction executes.
 
-**Multisig proposals need no anchor.** Since protocol 0.17 a multisig summary
-binds a bound block named in its auth args, and miden-client tracks that block
-when it executes the request. Build the request with
+**Multisig proposals run at the tip.** A multisig summary binds a bound block
+named in its auth args, and miden-client tracks that block when it executes the
+request. Build the request with
 `client.feeAwareTransactionRequestBuilder(accountId)`, which also declares that
 block with `withBlockNumbers`, ship the request bytes, and let every party
 preview and execute at its own tip once its client has synced to at least the
@@ -1535,9 +1534,7 @@ returns early while another sync runs, so sync and then check the height before
 verifying or executing. A finished request that another party built gets its
 multisig auth args from `client.withFeeAwareAuth(request, accountId)`; that
 copy does not declare the bound block, so the height check below cannot read
-it, and a co-signer syncs before previewing it. Re-executing an older multisig
-proposal at an anchor fails once the node prunes that block's account state
-(50 blocks).
+it, and a co-signer syncs before previewing it.
 
 ```tsx
 import { useMiden, usePreview } from '@miden-sdk/react';
@@ -1570,117 +1567,50 @@ function VerifyMultisig({ accountId, requestBytes, proposed }) {
 }
 ```
 
-A summary that binds the reference block only authorizes an execution at that
-exact block. In a flow that collects such signatures and executes later, the
-signer, co-signers and executor are all at different sync heights, and a
-`ChainAnchor` is what makes them agree on one summary.
+**A summary that binds the reference block reproduces only at the same sync
+height.** A single-signature (`signature.masm`) account's summary binds the
+reference block, so a signature over it authorizes only an execution at that
+exact block, and nothing pins a reference block. A sync between the preview and
+the execution moves the reference block: `execute` syncs first unless `skipSync`
+is set, and the provider syncs on its `autoSyncInterval`. For signatures that
+are collected over time or on other clients, use a multisig account.
 
-```tsx
-import { useChainAnchor, useMiden, usePreview, useTransaction } from '@miden-sdk/react';
-import { ChainAnchor } from '@miden-sdk/miden-sdk';
+`useChainAnchor()` and the `anchor` option of `usePreview()` and
+`useTransaction()` pinned the reference block in earlier versions. They were
+removed in 0.19.0.
 
-// Signer: capture the anchor, derive the summary at it, ship both.
-function Propose({ accountId, buildRequest }) {
-  const { client } = useMiden();
-  const { captureAnchor } = useChainAnchor();
-  const { preview } = usePreview();
-
-  return (
-    <button
-      onClick={async () => {
-        // Resolve the factory once and pass that object to both calls. A
-        // factory builds a new request per call, and anchoredRequest is state,
-        // so inside this handler it still holds the previous value.
-        const request = await buildRequest(client);
-        const anchor = await captureAnchor({ request });
-        const summary = await preview({ accountId, request, anchor });
-        await shipToCosigners(
-          request.serialize(),
-          anchor.serialize(),
-          summary.serialize()
-        );
-      }}
-    >
-      Propose
-    </button>
-  );
-}
-
-// Co-signer: re-derive at the signer's anchor and compare before signing.
-// Deriving such a summary at the local sync height yields a different one.
-function Verify({ accountId, request, anchorBytes, proposed }) {
-  const { preview } = usePreview();
-
-  return (
-    <button
-      onClick={async () => {
-        const anchor = ChainAnchor.deserialize(anchorBytes);
-        const derived = await preview({ accountId, request, anchor });
-        if (derived.toCommitment().toHex() === proposed.toCommitment().toHex()) {
-          await sign(derived);
-        }
-      }}
-    >
-      Verify and sign
-    </button>
-  );
-}
-
-// Executor: replay at the same anchor, whatever the local height is by now.
-function Execute({ accountId, request, anchor }) {
-  const { execute } = useTransaction();
-  return (
-    <button onClick={() => execute({ accountId, request, anchor })}>
-      Execute
-    </button>
-  );
-}
-```
-
-`useChainAnchor()` returns
-`{ captureAnchor, anchor, anchoredRequest, isCapturing, error, reset }` and
 `usePreview()` returns `{ preview, summary, isPreviewing, error, reset }`.
-`anchoredRequest` is the exact request the anchor was captured for; on a later
-interaction, preview and execute against it rather than re-resolving a factory,
-which would build a different transaction than the one the anchor pins. Inside
-the handler that captured, it still holds the previous value, so pass the object
-you resolved there, as `Propose` does.
+Pass one resolved request object to `preview` and to `execute`: a request
+factory builds a new request per call, with a new salt and new note serial
+numbers, which is a different transaction than the one the signers approved.
 `preview` rejects with `code: "TRANSACTION_ALREADY_AUTHORIZED"` when the
 transaction needs no further signatures — submit it with `useTransaction`
-instead. Both reject with `code: "OPERATION_BUSY"` if called while a previous
+instead. It rejects with `code: "OPERATION_BUSY"` if called while a previous
 call is in flight. Codes originating in the client rather than this package
-(`TRANSACTION_ALREADY_AUTHORIZED`, `INVALID_CHAIN_ANCHOR`) prefix the message on
-Node instead of appearing as a property. An anchor and a summary are both bound to one chain, so
-changing clients clears `anchor`, `summary` and `error`, and a call in flight
-across the swap rejects instead of resolving — with `code: "STALE_CLIENT"` if
-it would otherwise have succeeded. Those rejections never reach `error` state,
-so handle them at the call site.
+(`TRANSACTION_ALREADY_AUTHORIZED`) prefix the message on Node instead of
+appearing as a property. A summary is bound to one chain, so changing clients
+clears `summary` and `error`, and a call in flight across the swap rejects
+instead of resolving — with `code: "STALE_CLIENT"` if it would otherwise have
+succeeded. Those rejections never reach `error` state, so handle them at the
+call site.
 
-An anchor validates its own internal consistency on `deserialize`, so it can
-never be malformed — but it can be pinned to the wrong block, or to a block that
-never existed. When it came from an untrusted party, re-derive the summary at
-the received anchor with `usePreview` and compare `toCommitment()` against the
-summary you were asked to sign, and fetch the header for `anchor.blockNum()`
-with `RpcClient.getBlockHeaderByNumber` to confirm the block is real — the
-anchor's own invariants are computable over an invented chain.
+A match proves the request and the summary agree with each other. It does not
+prove intent, and it does not cover the transaction script: the commitment is
+built from the account delta, the note commitments, the reference block (the
+bound block, for a multisig), the expiration delta and the user params, so two
+requests with identical effects share one commitment. Inspect the effects
+before signing.
 
-A match proves the request, anchor and summary agree with each other. It does
-not prove intent, and it does not cover the transaction script: the commitment
-is built from the account delta, the note commitments, the reference block, the
-expiration delta and the user params, so two requests with identical effects
-share one commitment. Inspect the effects before signing.
-
-An anchor pins chain data, not account state — account records and
-authenticated input notes still come from each participant's local store. If the
-account moved in a way that changes the transaction's effects, the re-derived
-summary will not match even though the anchor is correct. The converse does not
-hold: because the summary binds the *delta* rather than the state it applies to,
-an unrelated nonce bump, arriving assets, or a change to a multisig's signer set
+Account records and authenticated input notes come from each participant's
+local store. If the account moved in a way that changes the transaction's
+effects, the re-derived summary will not match. The converse does not hold:
+because the summary binds the *delta* rather than the state it applies to, an
+unrelated nonce bump, arriving assets, or a change to a multisig's signer set
 or threshold leaves the commitment identical and passes verification. Check the
 state you care about directly.
 
-Note that `usePreview` and `useChainAnchor` run their VM execution on the main
-thread — only `useTransaction().execute` is worker-backed.
+Note that `usePreview` runs its VM execution on the main thread — only
+`useTransaction().execute` is worker-backed.
 
 #### `useCompile()`
 

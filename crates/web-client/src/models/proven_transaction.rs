@@ -1,12 +1,15 @@
 use js_export_macro::js_export;
 use miden_client::account::AccountId as NativeAccountId;
 use miden_client::transaction::ProvenTransaction as NativeProvenTransaction;
+use miden_objects::prost::Message;
+use miden_objects::{DecodeMessageExt, proto};
 
+use crate::js_error_with_context;
 use crate::models::account_id::AccountId;
 use crate::models::transaction_id::TransactionId;
 use crate::models::word::Word;
-use crate::platform::{JsBytes, JsErr};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::platform::{JsBytes, JsErr, js_to_bytes};
+use crate::serialization::encode_message;
 
 /// Result of executing and proving a transaction. Contains all the data required to verify that a
 /// transaction was executed correctly.
@@ -16,14 +19,21 @@ pub struct ProvenTransaction(NativeProvenTransaction);
 
 #[js_export]
 impl ProvenTransaction {
-    /// Serializes the proven transaction into bytes.
+    /// Serializes the proven transaction as its `miden-objects` protobuf message.
     pub fn serialize(&self) -> JsBytes {
-        serialize_to_bytes(&self.0)
+        encode_message(&proto::transaction::ProvenTransaction::from(&self.0))
     }
 
-    /// Deserializes a proven transaction from bytes.
+    /// Deserializes a proven transaction from its `miden-objects` protobuf message.
+    ///
+    /// The invariants of the transaction are checked. Its proof is not verified.
     pub fn deserialize(bytes: JsBytes) -> Result<ProvenTransaction, JsErr> {
-        deserialize_from_bytes::<NativeProvenTransaction>(&bytes).map(ProvenTransaction)
+        const CONTEXT: &str = "failed to deserialize ProvenTransaction";
+        proto::transaction::ProvenTransaction::decode(js_to_bytes(&bytes).as_slice())
+            .map_err(|err| js_error_with_context(err, CONTEXT))?
+            .decode_and_build_unchecked()
+            .map(ProvenTransaction)
+            .map_err(|err| js_error_with_context(err, CONTEXT))
     }
 
     /// Returns the transaction ID.

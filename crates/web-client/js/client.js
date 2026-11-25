@@ -698,15 +698,14 @@ export class MidenClient {
    * by the summary. A co-signer holding the proposer's serialized request needs
    * neither - it carries the auth argument and its advice-map preimage.
    *
-   * For a multisig the request executes at the current chain tip with no
-   * anchor: miden-client tracks the bound block when it executes the request.
+   * For a multisig the request executes at the current chain tip:
+   * miden-client tracks the bound block when it executes the request.
    * The summary stays bound to the bound block while foreign accounts, the fee
    * faucet among them, load at the tip, so the request still executes after
    * the node has pruned the bound block's account state (about 50 blocks), and
-   * `transactions.preview` without an anchor reproduces the proposal's summary
-   * at the tip. The builder also declares the bound block through
-   * `withBlockNumbers`, which only `transactions.captureAnchor` and the height
-   * check below read.
+   * `transactions.preview` reproduces the proposal's summary at the tip. The
+   * builder also declares the bound block through `withBlockNumbers`, which
+   * only the height check below reads.
    * Each party's client must first have synced to at least that bound block,
    * the largest of `request.blockNumbers()` and by default the proposer's sync
    * height when it built the request; below it execution fails with
@@ -753,9 +752,9 @@ export class MidenClient {
    *
    * The copy does not declare the bound block among its block numbers.
    * miden-client tracks the bound block when it executes the request, so it
-   * executes at the tip with no anchor, but a co-signer cannot read the bound
-   * block from `request.blockNumbers()` to check its sync height: sync before
-   * previewing the copy.
+   * executes at the tip, but a co-signer cannot read the bound block from
+   * `request.blockNumbers()` to check its sync height: sync before previewing
+   * the copy.
    *
    * @param {TransactionRequest} request - The finished request. It is not
    *   consumed and not changed.

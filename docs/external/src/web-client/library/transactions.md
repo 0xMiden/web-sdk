@@ -229,7 +229,7 @@ const request = new TransactionRequestBuilder()
 
 Each call adds one note. The optional second argument is the note's arguments, the same value `withInputNotes` takes; omit it or pass `null` for none. The input note remains usable after the call.
 
-To consume an authenticated note, the executing client must be able to serve the header of the note's creation block, from its store or from the [chain anchor](#chain-anchored-execution) the request executes against.
+To consume an authenticated note, the executing client must be able to serve the header of the note's creation block.
 
 ## Skipping Invalid Notes, Network Scripts and Code Upgrades
 
@@ -325,11 +325,14 @@ So how much of this you have to think about depends on the account:
 - **Multisig, smart multisig and guarded multisig** — miden-client refuses to guess the salt, and the transaction fails with `FeeConversionInfoRequired` naming the component. Declaring a salt is what makes those accounts work at all.
 - **A custom auth procedure that reads conversion info** — miden-client does not recognise the component, commits nothing, and the transaction hits the VM abort above. Attach the commitment yourself; see [Custom auth procedures](#custom-auth-procedures).
 
-Whether any of this applies is a property of the chain, and `BlockHeader.verificationBaseFee()` is how you ask. A block header is reachable from a chain anchor; the fee asset itself comes from the client, since 0.17 keeps it in the protocol configuration rather than in the header (`client.protocolConfig()` returns that configuration, whose `commitment()` is the header's `protocolConfigCommitment()`):
+Whether any of this applies is a property of the chain, and `BlockHeader.verificationBaseFee()` is how you ask. The node serves the block header; the fee asset itself comes from the client, since 0.17 keeps it in the protocol configuration rather than in the header (`client.protocolConfig()` returns that configuration, whose `commitment()` is the header's `protocolConfigCommitment()`):
 
 ```typescript
-const anchor = await client.transactions.captureAnchor(request);
-const header = anchor.blockHeader();
+import { Endpoint, RpcClient } from "@miden-sdk/miden-sdk";
+
+const rpc = new RpcClient(new Endpoint(client.endpoint()!));
+// Without a block number, the node returns its latest header.
+const header = await rpc.getBlockHeaderByNumber();
 
 const chargesFees = header.verificationBaseFee() > 0;
 const feeFaucet = await client.feeFaucetId();
@@ -392,7 +395,7 @@ await client.transactions.submit(multisig, request);
 
 `withFeeAwareAuth` returns a copy of the request with the same auth argument and advice-map preimage that `feeAwareTransactionRequestBuilder` declares. The auth args replace a declared fee conversion salt, and every other field stays the same. For an account that is not a multisig the request comes back unchanged, auth argument and all. It takes the same `options` as the builder (`approvalExpirationDelta`, `feeConversionSalt`, `boundBlockNum`). When `feeConversionSalt` is omitted, it uses the salt that the request declares, or draws a fresh one if the request declares none.
 
-The copy does not declare the bound block as a block number. miden-client adds the bound block when it executes the request, so the request executes at the chain tip with no anchor. An anchor from `chainAnchorForRequest` does not track the bound block, so do not execute the copy at such an anchor. A co-signer cannot read the bound block from `request.blockNumbers()` either, so the height check under [Multisig Proposals](#multisig-proposals-bind-a-block-execute-at-the-tip) does not apply to the copy: sync before previewing it.
+The copy does not declare the bound block as a block number. miden-client adds the bound block when it executes the request, so the request executes at the chain tip. A co-signer cannot read the bound block from `request.blockNumbers()`, so the height check under [Multisig Proposals](#multisig-proposals-bind-a-block-execute-at-the-tip) does not apply to the copy: sync before previewing it.
 
 For a multisig it refuses a request that already has an auth argument, with the error `code` `AUTH_ALREADY_SET` (on Node.js the code prefixes the message). The author of the request owns that argument, so it is not replaced.
 
@@ -422,12 +425,9 @@ One request-building path the SDK cannot declare a salt on: `client.pswap.cancel
 
 ## Multisig Proposals: Bind a Block, Execute at the Tip
 
-Since protocol 0.17 a multisig proposal does not need a `ChainAnchor`. The multisig auth args name a **bound block**, and the transaction summary binds that block rather than the reference block the transaction executes at. A proposal can therefore be verified and submitted at whatever block is current, provided the transaction can authenticate the bound block, and miden-client adds the bound block of multisig auth args to the transaction's partial blockchain when it executes the request. `feeAwareTransactionRequestBuilder` also declares it with `withBlockNumbers`, which only `captureAnchor` and the height check below read. Each party's client must first have synced to at least the bound block (the largest of `request.blockNumbers()`, by default the proposer's sync height when it built the request); a client below it fails with `requested block N is after transaction reference block M` until it syncs. A request from `withFeeAwareAuth` does not declare the bound block, so sync before previewing it.
+The multisig auth args name a **bound block**, and the transaction summary binds that block rather than the reference block the transaction executes at. A proposal can therefore be verified and submitted at whatever block is current, provided the transaction can authenticate the bound block, and miden-client adds the bound block of multisig auth args to the transaction's partial blockchain when it executes the request. `feeAwareTransactionRequestBuilder` also declares it with `withBlockNumbers`, which only the height check below reads. Each party's client must first have synced to at least the bound block (the largest of `request.blockNumbers()`, by default the proposer's sync height when it built the request); a client below it fails with `requested block N is after transaction reference block M` until it syncs. A request from `withFeeAwareAuth` does not declare the bound block, so sync before previewing it.
 
-Use this flow for multisig. Re-executing at an anchor breaks down twice as a proposal ages:
-
-- A node serves account state for only the last 50 blocks, and every fee-paying transaction loads the chain's fee faucet as a foreign account. Re-execution at an older anchor fails with `block N has been pruned`, on every co-signer's verification as well as at submit.
-- A transaction expires 20 blocks after its reference block, so a transaction executed at an older anchor is rejected at submission even when it executes.
+Foreign accounts load at the tip, and every fee-paying transaction loads the chain's fee faucet as one. A proposal therefore still executes after the node has pruned the account state of its bound block; a node serves account state for only the last 50 blocks.
 
 ```typescript
 import { TransactionRequest, TransactionSummary } from "@miden-sdk/miden-sdk";
@@ -469,108 +469,41 @@ await client.transactions.submit(multisig, proposedRequest);
 
 Notes:
 
-- **The request still travels.** The salt in the multisig auth args is drawn fresh on every build and bound into the summary, so a co-signer must re-derive from the proposer's request bytes, exactly as in the anchored flow below.
-- **Confirm the bound block is real.** For a multisig, `summary.blockCommitment()` is the bound block's commitment. Fetch that block's header from a node you trust (`RpcClient.getBlockHeaderByNumber`, with the number from the builder's `request.blockNumbers()`) and compare commitments.
+- **The request still travels.** The salt in the multisig auth args is drawn fresh on every build and bound into the summary, so a co-signer must re-derive from the proposer's request bytes.
+- **Confirm the bound block is real.** For a multisig, `summary.blockCommitment()` is the bound block's commitment and `summary.blockNum()` is its number. Fetch that block's header from a node you trust (`RpcClient.getBlockHeaderByNumber`) and compare commitments.
 - **Approvals can expire.** `approvalExpirationDelta` on `feeAwareTransactionRequestBuilder` counts from the bound block, and the multisig rejects execution at or after that reference block. Omitted, the approval does not expire.
-- **A match still does not prove agreement on account state.** Everything under "Notes on anchors" about what the summary covers, and what it does not, applies unchanged.
+- **A match still does not prove agreement on account state.** Everything under [What a Summary Proves](#what-a-summary-proves) applies.
 
 Available from `0.17.0-rc.4`.
 
-## Chain-Anchored Execution
+## Summaries That Bind the Reference Block
 
-For a multisig proposal, use the flow in the previous section instead. The rest of this section applies when the summary binds the **reference block**, as a single-signature (`signature.masm`) account's does: signatures collected over that summary only authorize an execution whose reference block is the one the summary was built at.
+A single-signature (`signature.masm`) account's summary binds the **reference block** commitment: a signature over that summary authorizes only an execution whose reference block is the one the summary was built at.
 
-That is a problem for any flow that collects such signatures and executes later, such as offline co-signing, because the signer and the eventual executor are at different heights. Re-deriving the summary locally produces a different summary, and the signatures no longer match.
+A transaction always executes at the sync height of the client, and nothing pins another reference block. Such a summary therefore reproduces only at the sync height it was derived at:
 
-A `ChainAnchor` pins execution to a specific reference block, so the same summary reproduces on a client at a different sync height:
+- A sync between deriving the summary and executing moves the reference block, and the signature no longer authorizes the execution.
+- A client at another sync height derives a different summary from the same request.
 
-```typescript
-import {
-  ChainAnchor,
-  TransactionRequest,
-  TransactionSummary,
-} from "@miden-sdk/miden-sdk";
+For signatures that are collected over time or on other clients, use a multisig account and the flow in the previous section. Its summary does not bind the reference block.
 
-// ── Proposer ──────────────────────────────────────────────
-const anchor = await client.transactions.captureAnchor(request);
+`ChainAnchor`, `transactions.captureAnchor` and the `anchor` option of `preview`, `executeRequest` and `submit` pinned the reference block in earlier versions. They were removed in `0.19.0`.
 
-// `preview` derives the summary the account is being asked to authorize.
-const summary = await client.transactions.preview({
-  operation: "custom",
-  account,
-  request,
-  anchor,
-});
+## What a Summary Proves
 
-// Ship the request too — a co-signer must re-derive from these exact bytes,
-// not from a request they build themselves. See "The request travels with the
-// anchor" below.
-await shipToCosigners({
-  request: request.serialize(),
-  anchor: anchor.serialize(),
-  summary: summary.serialize(),
-});
+These notes apply to every flow that compares or signs a transaction summary.
 
-// ── Co-signer ─────────────────────────────────────────────
-const received = ChainAnchor.deserialize(anchorBytes);
-const proposed = TransactionSummary.deserialize(summaryBytes);
-const proposedRequest = TransactionRequest.deserialize(requestBytes);
+- **The request travels.** A co-signer has to re-derive the summary from the proposer's request bytes, not from a request they build themselves. A multisig request carries auth args whose salt is drawn fresh on every build, and the multisig auth procedure uses that salt as the summary's replay guard — so two independently built requests produce two different summaries even when they describe the identical transfer. Rebuilding locally therefore fails the comparison and reads as tampering when nothing is wrong. `TransactionRequest.serialize()` / `.deserialize()` are the transport. To check that a received request equals one you hold, use `request.equals(other)`, not a byte comparison: bytes that list the same fields or Merkle store nodes in another order decode to an equal request, so equal requests can differ in bytes.
 
-// Re-derive at the proposer's anchor and compare before signing. Deriving at
-// the local sync height would produce a different summary every time.
-const derived = await client.transactions.preview({
-  operation: "custom",
-  account,
-  request: proposedRequest,
-  anchor: received,
-});
-if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
-  throw new Error("proposal does not match the summary presented for signing");
-}
+- **Signature collection is a separate concern.** Signatures are returned to the executor and attached to the request with `request.extendAdviceMap(...)` before submission.
 
-// ── Executor ──────────────────────────────────────────────
-// The proposer's request, carrying the collected signatures in its advice map;
-// attaching them is part of the signing protocol, not the anchor.
-await client.transactions.submit(account, proposedRequest, {
-  anchor: received,
-});
-```
-
-Notes on anchors:
-
-- **The request travels with the anchor.** A co-signer has to re-derive the summary from the proposer's request bytes, not from a request they build themselves. On a fee-charging chain a multisig request carries fee conversion info whose salt is drawn fresh on every build, and the multisig auth procedure uses that auth argument as the summary's replay-guard salt — so two independently built requests produce two different summaries even when they describe the identical transfer. Rebuilding locally therefore fails the comparison below and reads as tampering when nothing is wrong. `TransactionRequest.serialize()` / `.deserialize()` are the transport. To check that a received request equals one you hold, use `request.equals(other)`, not a byte comparison: bytes that list the same fields or Merkle store nodes in another order decode to an equal request, so equal requests can differ in bytes.
-
-- **Signature collection is a separate concern.** An anchor makes signatures *reproducible* across heights; it does not transport them. Signatures are returned to the executor and attached to the request with `request.extendAdviceMap(...)` before submission, which is unchanged by anchoring.
-
-- **What the summary actually covers.** The signed commitment is built from exactly six things: the account delta, the input-note commitment, the output-note commitment, the reference block commitment, the expiration delta, and the user params. The transaction script root, the advice map, note arguments and foreign-account inputs are **not** among them. Two different requests that produce the same delta and the same note sets therefore produce the same commitment, and one set of signatures authorizes both. Do not rely on "a different request would be rejected" — it would not be. Accounts that need the script itself bound should use the transaction-script allowlist component from `miden-standards`.
+- **What the summary actually covers.** The signed commitment is built from exactly six things: the account delta, the input-note commitment, the output-note commitment, the reference block commitment (the bound block, for a multisig), the expiration delta, and the user params. The transaction script root, the advice map, note arguments and foreign-account inputs are **not** among them. Two different requests that produce the same delta and the same note sets therefore produce the same commitment, and one set of signatures authorizes both. Do not rely on "a different request would be rejected" — it would not be. Accounts that need the script itself bound should use the transaction-script allowlist component from `miden-standards`.
 - **A co-signer must already track the account.** Verification runs a real execution, so the account has to exist in that participant's local store: a public account can be pulled in with `accounts.getOrImport`, but a private account requires its state to be transferred out of band. Without it, `preview` fails to find the account rather than returning a mismatch.
 
-- **Re-deriving a summary proves consistency, not intent.** When a proposer sends you a request, an anchor and a summary, all three come from them. Checking `anchor.commitment()` against `summary.blockCommitment()`, and re-deriving the summary at that anchor to compare `toCommitment()`, proves only that the three agree with each other — which they will, for any request the proposer chose, including one that drains the account. These checks catch a corrupted or substituted *component*; they say nothing about what the transaction does.
+- **Re-deriving a summary proves consistency, not intent.** When a proposer sends you a request and a summary, both come from them. Re-deriving the summary and comparing `toCommitment()` proves only that the two agree with each other — which they will, for any request the proposer chose, including one that drains the account. The check catches a corrupted or substituted *component*; it says nothing about what the transaction does.
 
   Before signing, inspect the effects: `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()` and `summary.expirationDelta()`, and confirm they are what you meant to approve. For storage, `summary.accountDelta().storage()` names each changed slot: `valueSlots()` gives a value slot's `slotName`, `operation` and final `value`, and `mapSlots()` gives a map slot's `slotName`, `operation` and changed `entries()` (`key`, `value`), so a change to a multisig's signer set or threshold is visible before you sign.
-
-  **Confirm the anchor names a real block.** `ChainAnchor` enforces only two internal invariants — that the chain length matches the header's block number, and that the peaks hash to the header's chain commitment. Both are computable over an entirely invented chain, so a proposer can hand you a well-formed anchor for a block that never existed. Its header then supplies the block number, timestamp and fee parameters your execution runs against. A transaction on a fabricated block cannot be submitted and the signature cannot be moved onto a real one, so the cost is a wasted proof and a misleading preview rather than loss of funds — but the check is one call, so make it a standard step:
-
-  ```js
-  import { RpcClient } from "@miden-sdk/miden-sdk";
-
-  const rpc = new RpcClient(endpoint);
-  const real = await rpc.getBlockHeaderByNumber(received.blockNum());
-  if (real.commitment().toHex() !== received.commitment().toHex()) {
-    throw new Error("anchor does not name a block on this chain");
-  }
-  ```
-- **An anchor pins chain data, not account state.** Account records and authenticated input notes still come from each participant's own local store, so all parties must agree on the account state too. If the account moved in a way that changes the transaction's effects, the re-derived summary will not match even though the anchor is correct - the most common reason a co-signing flow fails.
+- **Account state comes from each participant's own store.** So do authenticated input notes, and all parties must agree on the account state too. If the account moved in a way that changes the transaction's effects, the re-derived summary will not match - the most common reason a co-signing flow fails.
 
   **A match does not mean the two parties agree on account state.** The summary binds the account *delta* — the change — not the state it applies to. Divergence that leaves the delta and the note sets identical produces a byte-identical commitment and passes verification: an unrelated nonce bump, assets arriving, or, for a multisig, a change to the signer set or threshold. That last one matters most, because signatures gathered under one threshold remain valid after it is lowered. A `signature.masm` account additionally binds the final nonce as `summary.userParams()[0]`, which does pin the absolute pre-state; the multisig component discards it and zeroes those params, so it has no such binding. Check whatever state you actually care about — nonce, signer set, threshold, balances — directly, rather than inferring it from a matching summary.
-- **An anchor is captured for a specific request, but it is not an identity for one.** It tracks the blocks that request declares through `withBlockNumbers` and the creation blocks of its authenticated input notes, which is why `captureAnchor` takes the request. A different request executes against it as long as every block it needs is tracked. What binds a request to a summary is the summary commitment, not the anchor.
-- **The `anchor` option is only on the request-taking methods** — `preview({ operation: "custom" })`, `executeRequest`, and `submit`. `send`, `mint`, `consume` and friends build their request internally, so there is no request to have captured an anchor for.
-- **Anchored execution skips the recency check**, since it deliberately references a block older than the tip.
-- **An anchor does not extend a transaction's lifetime.** It keeps a summary reproducible however far the chain advances, but a transaction that sets an expiration still expires that many blocks after the anchored reference block. A signing round that takes longer produces a transaction the network will not accept, and because the recency check is skipped it will execute and prove locally before being rejected at submission. For a flow that may take a while, check the deadline before spending a proof — noting that `expirationDelta()` returns **0 to mean no expiration was set**, not that it expires immediately:
-
-  ```js
-  const delta = summary.expirationDelta();
-  const expiresAt = delta === 0 ? null : anchor.blockNum() + delta;
-  ```
-- **Foreign account proofs are fetched at the anchor's block**, so requests with foreign accounts additionally need the node to serve account state at that height.
-- **The anchor handle is reusable.** Unlike a `TransactionProver`, it is borrowed rather than consumed, so one anchor can drive the preview and the execution.
+- **`expirationDelta()` returns 0 to mean no expiration was set**, not that the transaction expires immediately. A transaction that sets an expiration expires that many blocks after its reference block, which is the sync height of the executing client.

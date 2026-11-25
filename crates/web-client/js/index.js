@@ -141,9 +141,7 @@ const WRITE_METHODS = new Set([
   "addAccountSecretKeyToWebStore",
   "addTag",
   "buildPswapCancelByOrder",
-  "chainAnchorForRequest",
   "executeForSummary",
-  "executeForSummaryAt",
   "feeAwareTransactionRequestBuilder",
   "fetchPrivateNotes",
   "forceImportStore",
@@ -1891,59 +1889,6 @@ class WebClient {
         throw error;
       }
     }, MethodName.EXECUTE_TRANSACTION);
-  }
-
-  async executeTransactionAt(accountId, transactionRequest, anchor) {
-    return this._serializeWasmCall(async () => {
-      try {
-        // Before the worker branch: on the main-thread path a nullish anchor
-        // would otherwise reach wasm and surface as "null pointer passed to
-        // rust", which reads like a consumed handle.
-        if (!anchor) {
-          throw new Error(
-            `anchor was ${String(anchor)}; executeTransactionAt requires one — ` +
-              "use executeTransaction to execute at the current tip"
-          );
-        }
-
-        if (!this.worker) {
-          const wasmWebClient = await this.getWasmWebClient();
-          try {
-            return await wasmWebClient.executeTransactionAt(
-              accountId,
-              transactionRequest,
-              anchor
-            );
-          } catch (error) {
-            const authError = wasmWebClient.lastAuthError();
-            if (typeof error === "string") {
-              throw appendAuthError(error, authError);
-            }
-            if (error instanceof Error) {
-              error.message = appendAuthError(error.message, authError);
-            }
-            throw error;
-          }
-        }
-
-        const wasm = await getWasmOrThrow();
-        const serializedTransactionRequest = transactionRequest.serialize();
-        const serializedAnchor = anchor.serialize();
-        const serializedResultBytes = await this.callMethodWithWorker(
-          MethodName.EXECUTE_TRANSACTION_AT,
-          accountId.toString(),
-          serializedTransactionRequest,
-          serializedAnchor
-        );
-
-        return wasm.TransactionResult.deserialize(
-          new Uint8Array(serializedResultBytes)
-        );
-      } catch (error) {
-        console.error("INDEX.JS: Error in executeTransactionAt:", error);
-        throw error;
-      }
-    }, MethodName.EXECUTE_TRANSACTION_AT);
   }
 
   async proveTransaction(transactionResult, prover) {

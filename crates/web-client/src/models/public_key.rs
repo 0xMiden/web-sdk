@@ -1,6 +1,7 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
 use miden_client::auth::{PublicKey as NativePublicKey, Signature as NativeSignature};
+use miden_protocol::crypto::dsa::ecdsa_k256_keccak;
 use miden_protocol::utils::serde::Deserializable;
 
 use crate::js_error_with_context;
@@ -8,7 +9,7 @@ use crate::models::signature::Signature;
 use crate::models::signing_inputs::SigningInputs;
 use crate::models::word::Word;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::serialize_to_bytes;
+use crate::serialization::serialize_to_bytes;
 
 #[js_export]
 #[derive(Clone)]
@@ -64,11 +65,11 @@ impl PublicKey {
                 Ok(NativePublicKey::Falcon512Poseidon2(public_key).into())
             },
             NativeSignature::EcdsaK256Keccak(ecdsa_signature) => {
-                let public_key = miden_client::crypto::ecdsa_k256_keccak::PublicKey::recover_from(
-                    native_message,
-                    &ecdsa_signature,
-                )
-                .map_err(|e| js_error_with_context(e, "Failed to recover ECDSA public key"))?;
+                let public_key =
+                    ecdsa_k256_keccak::PublicKey::recover_from(native_message, &ecdsa_signature)
+                        .map_err(|err| {
+                            js_error_with_context(err, "failed to recover ECDSA public key")
+                        })?;
                 Ok(NativePublicKey::EcdsaK256Keccak(public_key).into())
             },
         }

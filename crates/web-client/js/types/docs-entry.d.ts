@@ -23,7 +23,6 @@ export {
   BlockHeader,
   BlockProducerStatusInfo,
   BurnNote,
-  ChainAnchor,
   ClaimLeafData,
   ClaimProofData,
   ConsumableNoteRecord,

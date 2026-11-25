@@ -37,7 +37,7 @@ Never submit code that doesn't type-check. The verification loop is your quality
 
 ### 3. Context Engineering with Source Repos
 
-The basic skills (`web-client-usage`, `react-sdk-patterns`, `frontend-pitfalls`, `vite-wasm-setup`, `chain-anchored-execution`) cover standard patterns. For anything beyond those patterns, the web-sdk source repository is the knowledge base.
+The basic skills (`web-client-usage`, `react-sdk-patterns`, `frontend-pitfalls`, `vite-wasm-setup`, `multi-party-signing`) cover standard patterns. For anything beyond those patterns, the web-sdk source repository is the knowledge base.
 
 **How to use source repos effectively**:
 - Don't load entire repos into context. Use sub-agents to explore - they search, read relevant files, and summarize findings without filling the main conversation context.
@@ -103,7 +103,7 @@ The public client plus the Rust-to-WASM bridge underneath it.
 - **`src/`** - the Rust `WebClient` struct, exported to JS as `WasmWebClient`. Marked `@internal` in `js/types/index.d.ts` ("Use MidenClient instead"); `useMidenClient()` from the React SDK returns this low-level client, not `MidenClient`.
 - The standalone `RpcClient` struct (`getBlockHeaderByNumber`, `getNotesById`, `getAccountDetails`, `getAccountProof`, `syncNotes`, `getNetworkNoteStatus`, `getNullifierCommitHeight`, `getNoteScriptByRoot`, `syncStorageMaps`) lives in `src/rpc_client/`, and is exported separately from `@miden-sdk/miden-sdk` - it is NOT reachable through `useMidenClient()`.
 - **`src/models/`** - the Rust side of every JS-visible model type (`AccountId`, `Note`, `TransactionRequest` and the rest; some are directories rather than single files). This is where a method's JS name is actually decided: `#[js_export(js_name = "...")]` on the Rust fn is what both the wasm and napi builds spell. If a name in the TypeScript surface does not match the Rust one, this attribute is why.
-- **`skills/`** - the agent guides shipped with this package, including `web-client-usage` and `chain-anchored-execution`.
+- **`skills/`** - the agent guides shipped with this package, including `web-client-usage` and `multi-party-signing`.
 
 **Explore when**: A hook doesn't exist for your operation, understanding what client methods are available, debugging WASM-level errors.
 
@@ -111,7 +111,7 @@ The public client plus the Rust-to-WASM bridge underneath it.
 
 The browser storage layer for accounts, keys, notes, and transaction history.
 
-- **`src/ts/schema.ts`** - the Dexie schema and its version chain, which migrates a store across SDK upgrades. Its `version(8)` cutover clears, once, a store a client older than 0.17.0 (`MIGRATION_BASELINE`) last wrote, and `MidenDatabase.open` refuses a store a newer client wrote. See `frontend-pitfalls` FP7 and the `idxdb-patterns` skill.
+- **`src/ts/schema.ts`** - the Dexie schema and its version chain, which migrates a store across SDK upgrades. Its `version(8)` cutover clears, once, a store a client older than 0.17.0 (`MIGRATION_BASELINE`) last wrote, its `version(14)` cutover clears every store written before protocol 1.0, and `MidenDatabase.open` refuses a store a newer client wrote. See `frontend-pitfalls` FP7 and the `idxdb-patterns` skill.
 - **`src/ts/`** - per-table logic: `accounts.ts`, `auth.ts`, `chainData.ts`, `notes.ts`, `settings.ts`, `sync.ts`, `transactions.ts`, plus `export.ts` / `import.ts` for store dumps.
 
 **Explore when**: Debugging data persistence issues, understanding what's stored in IndexedDB, investigating storage isolation for external signers.
@@ -163,7 +163,7 @@ Platform-native binaries consumed through `optionalDependencies`, and the native
 | State management | `src/store/MidenStore.ts` | Zustand selectors, cached state |
 | Direct WasmWebClient usage | `src/context/MidenProvider.tsx` | useMidenClient(), runExclusive |
 | Multi-step workflow | `src/hooks/useWaitForCommit.ts`, `useWaitForNotes.ts` | Polling, timeout patterns |
-| Multisig proposal / co-signing | `src/hooks/usePreview.ts`, `useChainAnchor.ts` | Multisig: preview and submit at the tip, no anchor (chain-anchored-execution R0). Single-signature co-signing: ChainAnchor capture, `anchoredRequest`, TransactionSummary |
+| Multisig proposal / co-signing | `src/hooks/usePreview.ts`, `useTransaction.ts` | Multisig: preview and submit at the tip (multi-party-signing R0). Single-signature co-signing: preview and execute at the same sync height (R1), TransactionSummary |
 | Foreign-account (FPI) reads | `crates/web-client/js/resources/transactions.js` (`executeRequest`, `submit`) | ForeignAccount.public/private, reference-block pinning |
 | Custom MASM component | `src/hooks/useCompile.ts`, `useExecuteProgram.ts` | `@account_procedure`, `@transaction_script pub proc main` |
 | Network note | `src/hooks/useCreateNetworkNote.ts` | NetworkAccountTarget, createNetworkAuthComponents |
@@ -184,7 +184,7 @@ Paths in this table are relative to `packages/react-sdk/` unless they name anoth
 ## Common Advanced Patterns
 
 ### Custom Hooks Wrapping WasmWebClient
-For operations not covered by built-in hooks, create custom hooks over `useMidenClient()`. It returns the `WebClient` (WasmWebClient), so only call methods that exist on it - `crates/web-client/js/index.js` lists many of them in its `SYNC_METHODS` / `WRITE_METHODS` / `READ_METHODS` sets, but **those sets are not exhaustive**. `crates/web-client/scripts/check-method-classification.js` also accepts a method defined as an explicit wrapper on the JS `WebClient` class, which is how `newWallet`, `newFaucet`, `newAccountWithSecretKey`, `submitNewTransaction`, `submitNewTransactionWithProver`, `executeTransaction`, `executeTransactionAt`, `proveTransaction`, `applyTransaction`, `syncState`, `syncNoteTransport`, `syncChain` and `terminate` are reachable while appearing in none of the three sets. A name can also be both - `newAccount` is in `WRITE_METHODS` and has a class wrapper - so read the sets before concluding a method is absent from them. Check the class body too.
+For operations not covered by built-in hooks, create custom hooks over `useMidenClient()`. It returns the `WebClient` (WasmWebClient), so only call methods that exist on it - `crates/web-client/js/index.js` lists many of them in its `SYNC_METHODS` / `WRITE_METHODS` / `READ_METHODS` sets, but **those sets are not exhaustive**. `crates/web-client/scripts/check-method-classification.js` also accepts a method defined as an explicit wrapper on the JS `WebClient` class, which is how `newWallet`, `newFaucet`, `newAccountWithSecretKey`, `submitNewTransaction`, `submitNewTransactionWithProver`, `executeTransaction`, `proveTransaction`, `applyTransaction`, `syncState`, `syncNoteTransport`, `syncChain` and `terminate` are reachable while appearing in none of the three sets. A name can also be both - `newAccount` is in `WRITE_METHODS` and has a class wrapper - so read the sets before concluding a method is absent from them. Check the class body too.
 
 Wrap **multi-call sequences** in `runExclusive` so nothing interleaves between your calls (see `frontend-pitfalls` FP2). A lone call to a forwarded async method needs no wrapper: it already serializes itself through the client proxy's `_serializeWasmCall` chain. The seven `SYNC_METHODS` in `js/index.js` are the exception - the proxy binds them raw and they never join that chain. Two of them take a shared WASM borrow, `lastAuthError()` and the `keystore` getter, so those still need your own lock if any other client call may be in flight.
 

@@ -9,10 +9,9 @@ This skill targets the `@miden-sdk/miden-sdk` npm package published from
 [`0xMiden/web-sdk`](https://github.com/0xMiden/web-sdk) (the JS web client; at
 0.16.1 it builds on the `miden-client` 0.16.1 Rust crate). For React-hook usage,
 prefer the `react-sdk-patterns` skill - only fall through to the raw client when
-a hook does not cover what you need. For pinning a reference block so a
-proposer, its co-signers and the executor all derive the same transaction
-summary, see the sibling `chain-anchored-execution` skill; do not re-derive that
-flow here.
+a hook does not cover what you need. For flows where a proposer, its co-signers
+and the executor must all derive the same transaction summary, see the sibling
+`multi-party-signing` skill; do not re-derive that flow here.
 
 ## API Overview
 
@@ -22,7 +21,7 @@ The SDK exposes a top-level `MidenClient` whose state is split across typed
 | Resource             | What it covers                                                                                                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `client.accounts`    | Wallets, faucets, custom contracts, listing, import/export, addresses                                                                                                          |
-| `client.transactions` | `send` / `mint` / `bridge` / `withdrawUsdcx` / `claimAggLayerDeposit` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `retryProvenBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
+| `client.transactions` | `send` / `mint` / `bridge` / `withdrawUsdcx` / `claimAggLayerDeposit` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `retryProvenBatch` / `preview` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
 | `client.notes`       | Listing, fetching, importing/exporting, private-note transport                                                                                                                 |
 | `client.tags`        | Note-tag subscriptions                                                                                                                                                         |
 | `client.settings`    | Persistent client settings                                                                                                                                                     |
@@ -144,10 +143,10 @@ execution result.
 `rpc.submitProvenTxBatch(provenBatch, proposedBatch, transactionInputs, key)`
 requires an actual `ProvenBatch`, its matching `ProposedBatch`, and inputs in
 exact proposal order. Do not pass an array of transaction proofs as a batch.
-`TransactionInputs`, `ProposedBatch` and `ProvenBatch` expose `serialize()` /
-`deserialize(bytes)` using their corresponding
+`ProvenTransaction`, `TransactionInputs`, `ProposedBatch` and `ProvenBatch`
+expose `serialize()` / `deserialize(bytes)` using their corresponding
 `miden_objects::proto::transaction` protobuf encodings. These are not native
-`to_bytes()` payloads; `ProvenTransaction` retains its native binary encoding.
+`to_bytes()` payloads. `ProvenTransaction.deserialize` does not verify the proof.
 `ProposedBatch.deserialize` verifies transaction proofs and consistency.
 In the browser, the batch call consumes each `TransactionInputs` wrapper even
 if submission fails. Serialize the inputs first and deserialize fresh wrappers
@@ -1193,9 +1192,10 @@ computes.
 The account's state and witness are read against the transaction's reference
 block, and the vault entries and storage-map keys the foreign code touches are
 resolved during execution as per-asset and per-key witnesses rather than up
-front. Pin the transaction to a block the node still serves account state for;
-prefetching the state to execute against an older block is no longer possible
-(`foreignAccountInputs` and `ForeignAccount.prefetched` were removed in 0.17).
+front. The reference block is the sync height of the client, so sync until the
+client is at a block the node still serves account state for; prefetching the
+state is not possible (`foreignAccountInputs` and `ForeignAccount.prefetched`
+were removed in 0.17).
 
 ```typescript
 const foreign = ForeignAccount.public(foreignAccountId, storageRequirements);
@@ -1241,9 +1241,10 @@ When several clients must execute the *same* request and agree on the resulting
   each input note is consumed authenticated or unauthenticated, in the mode its
   `InputNote` carries. Repeated calls add more notes, and the note stays usable
   by the caller. `withInputNotes` leaves that choice to each executor.
-- Prefetched foreign-account inputs (above) pin the foreign state.
-- A `ChainAnchor` pins the reference block - see the `chain-anchored-execution`
-  skill.
+- Nothing pins the reference block or the foreign-account state: a transaction
+  executes at the sync height of the client and reads foreign accounts there.
+  A multisig summary binds the block its auth args name instead; see the
+  `multi-party-signing` skill.
 
 ### Skipping Invalid Notes, Network Scripts and Code Upgrades
 
@@ -1291,8 +1292,8 @@ await submitted.apply();
 ```
 
 - `executeRequest` returns a `TransactionExecution` (`.result`, `.id`,
-  `.prove(options?)`). Nothing is proven, submitted or persisted yet. It takes
-  an optional `anchor` to execute against a pinned reference block.
+  `.prove(options?)`). Nothing is proven, submitted or persisted yet. It
+  executes at the current sync height.
 - `.prove()` returns a `TransactionProof` (`.proof`, `.result`, `.submit()`).
   Pure computation: it touches neither the network nor the local store, and
   `.proof` is the `ProvenTransaction` to ship elsewhere.
@@ -1390,11 +1391,12 @@ and pass the **same** `TransactionRequest` object to both calls. Every other
 operation rebuilds its request from the options, and two builds are not
 identical: output-note serial numbers and the fee conversion salt are drawn from
 the client's RNG, so the summary you signed would not be the one the submitted
-transaction produces. Only `"custom"` accepts an `anchor`.
+transaction produces.
 
-`TransactionSummary` exposes `userParams()` (seven caller-defined field
+`TransactionSummary` exposes `userParams()` (six caller-defined field
 elements; this replaces the removed `salt()`, and the protocol assigns them no
-meaning), `blockCommitment()`, `expirationDelta()` and `toCommitment()`. Its
+meaning), `blockNum()`, `blockCommitment()`, `expirationDelta()`, `logs()` (the
+`TransactionLogs` the summary commitment binds) and `toCommitment()`. Its
 `accountDelta()` is still **relative**, unlike the absolute
 `ExecutedTransaction.accountPatch()` below. Its `storage()` is the same
 absolute `AccountStoragePatch` in both: `valueSlots()` and `mapSlots()` name

@@ -3,8 +3,8 @@ import {
   openDatabase,
   getDatabase,
   CLIENT_VERSION_SETTING_KEY,
+  PROTOCOL_V1_STAMP_KEY,
   SETTING_SCOPE_CLIENT,
-  SETTING_SCOPE_USER,
 } from "./schema.js";
 import { exportStore } from "./export.js";
 import { forceImportStore, transformForImport } from "./import.js";
@@ -50,9 +50,16 @@ function stampRow(version: string) {
   };
 }
 
-// A dump as a store before schema version 13 exported it: the settings are rows of one
-// `settings` table, the sync height is one `blockchainCheckpoint` row, and the tables that
-// replaced them are absent.
+function protocolV1StampRow() {
+  return {
+    key: PROTOCOL_V1_STAMP_KEY,
+    value: exportedBytes(new TextEncoder().encode("1")),
+  };
+}
+
+// A dump as a store before protocol 1.0 exported it: the settings are rows of one `settings`
+// table, the sync height is one `blockchainCheckpoint` row, and the tables that replaced them
+// are absent.
 async function legacyDump(
   settings: unknown[],
   checkpoint = { blockNum: 0, peaks: new Uint8Array() }
@@ -264,85 +271,21 @@ describe("forceImportStore", () => {
     expect(codesAfter.map((c) => c.root)).not.toContain("root-b-old");
   });
 
-  it("splits the settings table of a dump taken before schema version 13", async () => {
-    const row = (scope: number, key: string, byte: number) => ({
-      scope,
-      key,
-      value: exportedBytes(new Uint8Array([byte])),
-    });
+  it("refuses a dump exported before protocol 1.0", async () => {
     const jsonStr = await legacyDump([
-      { scope: SETTING_SCOPE_CLIENT, ...stampRow("0.17.1") },
-      row(SETTING_SCOPE_CLIENT, "protocol_config:0x01", 1),
-      row(SETTING_SCOPE_CLIENT, "note_transport_outbox", 2),
-      row(SETTING_SCOPE_CLIENT, "rpc_limits", 3),
-      row(SETTING_SCOPE_USER, "note_transport_outbox", 4),
-      row(SETTING_SCOPE_USER, "rpc_limits", 5),
+      { scope: SETTING_SCOPE_CLIENT, ...stampRow(CLIENT_VERSION) },
     ]);
+    const target = await openTestDb();
+    await getDatabase(target).userSettings.put({
+      key: "kept",
+      value: new Uint8Array([9]),
+    });
 
-    const dbIdB = await openTestDb();
-    await forceImportStore(dbIdB, jsonStr);
-
-    const dbB = getDatabase(dbIdB);
-    expect(
-      (await dbB.userSettings.toArray()).sort((a, b) =>
-        a.key.localeCompare(b.key)
-      )
-    ).toEqual([
-      { key: "note_transport_outbox", value: new Uint8Array([4]) },
-      { key: "rpc_limits", value: new Uint8Array([5]) },
-    ]);
-    // Of the client rows, only the protocol configuration and the stamp are kept, and the
-    // stamp is the running client's.
-    expect(
-      (await dbB.clientConfig.toArray()).sort((a, b) =>
-        a.key.localeCompare(b.key)
-      )
-    ).toEqual([
-      {
-        key: CLIENT_VERSION_SETTING_KEY,
-        value: new TextEncoder().encode(CLIENT_VERSION),
-      },
-      { key: "protocol_config:0x01", value: new Uint8Array([1]) },
-    ]);
-  });
-
-  it("turns the checkpoint of a dump taken before schema version 15 into chain anchors", async () => {
-    const peaks = new Uint8Array([1, 2, 3]);
-    const jsonStr = await legacyDump(
-      [{ scope: SETTING_SCOPE_CLIENT, ...stampRow(CLIENT_VERSION) }],
-      { blockNum: 42, peaks }
+    await expect(forceImportStore(target, jsonStr)).rejects.toThrow(
+      /exported before protocol 1\.0/
     );
-
-    const dbIdB = await openTestDb();
-    await forceImportStore(dbIdB, jsonStr);
-
-    expect(await getDatabase(dbIdB).chainAnchors.toArray()).toEqual([
-      { blockNum: 0, peaks: new Uint8Array() },
-      { blockNum: 42, peaks },
-    ]);
+    expect(await getDatabase(target).userSettings.get("kept")).toBeDefined();
   });
-
-  it.each([
-    ["stamped below the baseline", "0.16.2", /older than 0\.17\.0/],
-    ["with no stamp", null, /no client version stamp/],
-  ])(
-    "refuses a dump taken before schema version 13 %s",
-    async (_, stamp, reason) => {
-      const jsonStr = await legacyDump(
-        stamp === null
-          ? []
-          : [{ scope: SETTING_SCOPE_CLIENT, ...stampRow(stamp) }]
-      );
-      const target = await openTestDb();
-      await getDatabase(target).userSettings.put({
-        key: "kept",
-        value: new Uint8Array([9]),
-      });
-
-      await expect(forceImportStore(target, jsonStr)).rejects.toThrow(reason);
-      expect(await getDatabase(target).userSettings.get("kept")).toBeDefined();
-    }
-  );
 
   it("handles double-serialized JSON (string payload)", async () => {
     const dbIdA = await openTestDb();
@@ -369,7 +312,7 @@ describe("forceImportStore", () => {
     // the real (observed) behavior of the source rather than its intent comment.
     const dbId = await openTestDb();
     const payload = JSON.stringify({
-      clientConfig: [stampRow(CLIENT_VERSION)],
+      clientConfig: [stampRow(CLIENT_VERSION), protocolV1StampRow()],
       unknownTable: [{ id: 1, value: "x" }],
     });
     await expect(forceImportStore(dbId, payload)).rejects.toThrow(
@@ -400,7 +343,7 @@ describe("forceImportStore", () => {
     });
 
     const payload = JSON.stringify({
-      clientConfig: [stampRow(CLIENT_VERSION)],
+      clientConfig: [stampRow(CLIENT_VERSION), protocolV1StampRow()],
       unknownTable: [{ id: 1 }],
     });
 

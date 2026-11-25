@@ -215,7 +215,6 @@ const PROTOCOL_CONFIG_DOCS = [
   "crates/web-client/README.md",
   "crates/web-client/AGENTS.md",
   "crates/web-client/skills/web-client-usage/SKILL.md",
-  "crates/web-client/skills/chain-anchored-execution/SKILL.md",
   "crates/web-client/skills/signer-integration/SKILL.md",
   "crates/web-client/skills/frontend-pitfalls/SKILL.md",
   "crates/web-client/src/models/account_component.rs",

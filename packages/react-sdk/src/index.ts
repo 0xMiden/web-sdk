@@ -56,7 +56,6 @@ export { usePswapCancelByOrder } from "./hooks/usePswapCancelByOrder";
 export { useCreateNetworkNote } from "./hooks/useCreateNetworkNote";
 export { useTransaction } from "./hooks/useTransaction";
 export { useResendPrivateNotes } from "./hooks/useResendPrivateNotes";
-export { useChainAnchor } from "./hooks/useChainAnchor";
 export { usePreview } from "./hooks/usePreview";
 export { useExecuteProgram } from "./hooks/useExecuteProgram";
 export { useCompile } from "./hooks/useCompile";
@@ -121,7 +120,6 @@ export type {
   PswapLineagesResult,
   PswapLineageResult,
   ExecuteTransactionOptions,
-  CaptureAnchorOptions,
   PreviewTransactionOptions,
   TransactionResult,
   ExecuteProgramOptions,
@@ -157,7 +155,6 @@ export type {
   TransactionRecord,
   TransactionRequest,
   TransactionSummary,
-  ChainAnchor,
   NoteType,
   Note,
   AccountStorageMode,
@@ -226,7 +223,6 @@ export type { UsePswapCancelByOrderResult } from "./hooks/usePswapCancelByOrder"
 export type { UseCreateNetworkNoteResult } from "./hooks/useCreateNetworkNote";
 export type { UseTransactionResult } from "./hooks/useTransaction";
 export type { UseResendPrivateNotesResult } from "./hooks/useResendPrivateNotes";
-export type { UseChainAnchorResult } from "./hooks/useChainAnchor";
 export type { UsePreviewResult } from "./hooks/usePreview";
 export type { UseExportStoreResult } from "./hooks/useExportStore";
 export type {

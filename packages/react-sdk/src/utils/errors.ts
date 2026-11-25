@@ -6,9 +6,7 @@
  * On Node these are a `"CODE: "` prefix on the message rather than a property,
  * because the napi bindings cannot attach one.
  */
-export type WasmErrorCode =
-  | "INVALID_CHAIN_ANCHOR"
-  | "TRANSACTION_ALREADY_AUTHORIZED";
+export type WasmErrorCode = "TRANSACTION_ALREADY_AUTHORIZED";
 
 /**
  * An `Error` that may carry a machine-readable `code`.

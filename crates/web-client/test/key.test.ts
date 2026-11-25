@@ -346,13 +346,13 @@ test.describe("signing inputs", () => {
         ),
         blind: hex(
           sdk.domainSeparatedSignCommitment(
-            b64("AgEAAAAAAAAAAgAAAAAAAAADAAAAAAAAAAQAAAAAAAAA"),
+            b64("GiIKIAEAAAAAAAAAAgAAAAAAAAADAAAAAAAAAAQAAAAAAAAA"),
             "signingInputs"
           )
         ),
         arbitrary: hex(
           sdk.domainSeparatedSignCommitment(
-            b64("AQcFAAAAAAAAAAYAAAAAAAAABwAAAAAAAAA="),
+            b64("EiEKCQkFAAAAAAAAAAoJCQYAAAAAAAAACgkJBwAAAAAAAAA="),
             "signingInputs"
           )
         ),

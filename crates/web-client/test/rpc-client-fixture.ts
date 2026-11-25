@@ -145,10 +145,11 @@ export const transactionAccounts = [
 ];
 
 // Poseidon2 transaction IDs for zero initial state, final state [1|2, 0, 0, 0],
-// and empty input/output notes. The Rust decoder verifies these header IDs.
+// empty input/output notes, and zero logs and code patch commitments. The Rust
+// decoder verifies these header IDs.
 export const transactionIds = [
-  "0x1e7e9f4ff0f6f939f60a2f6d10a4fc031a64def2fc66cb968acfc004b1e2d433",
-  "0x79e4476648bc2da19e8bb298ea4424ebb2d5c5bcaf1e7ab20a535f46201dd37b",
+  "0xc7452d5d7458dd1e6e777655007c1373707788b6f72376e94ccbb3135655a18d",
+  "0x4a30eca70a1f7dbe1be832eed10333c2c83c643b20d05c1a66dda6b719095005",
 ];
 
 export function transactionAccount(hex: string): Buffer {
@@ -205,6 +206,8 @@ export function transactionPage(
         bytesField(2, transactionAccount(record.accountId)),
         bytesField(3, bytesField(1, Buffer.alloc(32))),
         bytesField(4, bytesField(1, finalState)),
+        bytesField(7, bytesField(1, Buffer.alloc(32))),
+        bytesField(8, bytesField(1, Buffer.alloc(32))),
       ]);
       return bytesField(
         2,

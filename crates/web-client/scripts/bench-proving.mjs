@@ -558,6 +558,20 @@ const setupInPage = async ({ threads: wantThreads }) => {
     );
   }
 
+  // Before the client exists, and while `Worker` is still the real constructor,
+  // which the pool's own workers need. rayon installs its global pool on first
+  // use and never replaces it. Creating the mock client builds the genesis code
+  // tree of the mock chain on rayon, so a pool started after it finds a
+  // single-threaded pool already installed and `initThreadPool` throws. The
+  // SDK's method worker starts its pool before its client for the same reason.
+  await sdk.initThreadPool(wantThreads);
+  const rayonThreads = sdk.rayonThreadCount();
+  if (rayonThreads !== wantThreads) {
+    throw new Error(
+      `rayonThreadCount() === ${rayonThreads}, expected ${wantThreads}`
+    );
+  }
+
   // Hide `Worker` during construction so the client takes its documented
   // no-worker branch. Constructing normally and terminating afterwards (the
   // recipe the test suite uses) would, on MT, first spawn a second wasm
@@ -595,15 +609,6 @@ const setupInPage = async ({ threads: wantThreads }) => {
   if (client.worker) {
     client.worker.terminate();
     client.worker = null;
-  }
-
-  // Needs the real `Worker` back, which the finally above restored.
-  await sdk.initThreadPool(wantThreads);
-  const rayonThreads = sdk.rayonThreadCount();
-  if (rayonThreads !== wantThreads) {
-    throw new Error(
-      `rayonThreadCount() === ${rayonThreads}, expected ${wantThreads}`
-    );
   }
 
   // The JS API exports a string shim named AuthScheme that shadows the wasm
