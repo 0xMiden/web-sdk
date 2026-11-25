@@ -183,6 +183,8 @@ async fn get_status_rejects_when_the_node_is_unreachable() {
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     drop(listener);
     let rpc = RpcClient::new(Endpoint::new(endpoint).unwrap()).unwrap();
-    let error = rpc.get_status().await.unwrap_err();
+    let Err(error) = rpc.get_status().await else {
+        panic!("an unreachable node answered");
+    };
     assert!(error.reason.contains("failed to get node status"));
 }
