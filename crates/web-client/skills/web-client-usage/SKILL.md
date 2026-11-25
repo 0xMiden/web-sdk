@@ -758,6 +758,17 @@ it generates the `seed` and a Falcon `auth` key when omitted, keeps
 component is legitimate beside one that has procedures; nothing can call into
 it on its own.
 
+A component, transaction script or note script can also come from a compiled
+package (`.masp`) instead of MASM source: pass `package` (a `Package` or its
+serialized bytes) in place of `code`, for example
+`client.compile.component({ package: bytes, slots })`, then pass the result to
+`accounts.create({ components })` as usual. `compile.txScript` and
+`compile.noteScript` take `{ package }` the same way. `namespace` and
+`libraries` apply to source only, and a package must be the right kind for what
+you build. A component built from a package always gets the fixed metadata name
+`"custom"`, whatever name the package declares, and `supportAllTypes` still
+defaults to `true`. The `Package` you pass stays usable afterward.
+
 A contract is whatever `accounts.create()` call carries `components` - the
 string forms `type: "MutableContract"` / `"ImmutableContract"` also route to a
 contract, but the canonical selector is `components`, and `components` none of
@@ -1705,6 +1716,11 @@ await client.compile.component({
 });
 await client.compile.txScript({ code, libraries });
 await client.compile.noteScript({ code, libraries });
+
+// From a compiled package (a `Package` or its `.masp` bytes) instead of source:
+await client.compile.component({ package, slots });
+await client.compile.txScript({ package });
+await client.compile.noteScript({ package });
 ```
 
 `namespace` on `component()` is the module path procedure identities are derived

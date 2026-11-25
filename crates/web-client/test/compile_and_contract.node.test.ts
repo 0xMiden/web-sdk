@@ -169,6 +169,145 @@ test.describe("compile.component()", () => {
   });
 });
 
+test.describe("compile.component({ package })", () => {
+  // A package built from the same source: the compiled component code, round
+  // tripped through its serialized form like a `.masp` read from disk.
+  const packageBytes = async (sdk, client) => {
+    const source = await client.compile.component({
+      code: COUNTER_CODE,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+    return source.componentCode().asPackage().serialize();
+  };
+
+  test("a package yields the same procedure hashes as its source", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const source = await client.compile.component({
+      code: COUNTER_CODE,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+    const bytes = await packageBytes(sdk, client);
+
+    const fromBytes = await client.compile.component({
+      package: bytes,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+    const pkg = sdk.Package.deserialize(bytes);
+    const fromPackage = await client.compile.component({
+      package: pkg,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+    // The same Package object is reusable after a compile call.
+    const again = await client.compile.component({
+      package: pkg,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+
+    for (const component of [fromBytes, fromPackage, again]) {
+      expect(component.getProcedureHash("get_count")).toBe(
+        source.getProcedureHash("get_count")
+      );
+      expect(component.getProcedureHash("increment_count")).toBe(
+        source.getProcedureHash("increment_count")
+      );
+    }
+  });
+
+  test("a package component creates a contract", async ({ sdk }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const bytes = await packageBytes(sdk, client);
+    const component = await client.compile.component({
+      package: bytes,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+    const seed = new Uint8Array(32).fill(0x02);
+    const account = await client.accounts.create({
+      type: "ImmutableContract",
+      storage: "public",
+      seed,
+      auth: sdk.AuthSecretKey.rpoFalconWithRNG(seed),
+      components: [component],
+    });
+    expect(account.id().toString()).toBeDefined();
+  });
+
+  test("txScript and noteScript build from a package, as Package or bytes", async ({
+    sdk,
+    client: rawClient,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const txSource = `
+      use miden::core::sys
+      @transaction_script
+      pub proc main
+        exec.sys::truncate_stack
+      end
+    `;
+    // A raw mock client builds the libraries; the package under test goes through MidenClient.
+    const builder = await rawClient.createCodeBuilder();
+    const txBytes = builder
+      .buildLibrary("pkg::tx", txSource)
+      .asPackage()
+      .serialize();
+    const noteBytes = builder
+      .buildLibrary("pkg::note", RECEIVE_NOTE_SCRIPT)
+      .asPackage()
+      .serialize();
+
+    const txFromBytes = await client.compile.txScript({ package: txBytes });
+    const txFromPackage = await client.compile.txScript({
+      package: sdk.Package.deserialize(txBytes),
+    });
+    expect(txFromBytes.root().toHex()).toBe(txFromPackage.root().toHex());
+
+    const noteFromBytes = await client.compile.noteScript({
+      package: noteBytes,
+    });
+    const noteFromPackage = await client.compile.noteScript({
+      package: sdk.Package.deserialize(noteBytes),
+    });
+    expect(noteFromBytes.root().toHex()).toBe(noteFromPackage.root().toHex());
+    // The same sources compile to the same script roots.
+    const txSourceScript = await client.compile.txScript({ code: txSource });
+    const noteSourceScript = await client.compile.noteScript({
+      code: RECEIVE_NOTE_SCRIPT,
+    });
+    expect(txFromBytes.root().toHex()).toBe(txSourceScript.root().toHex());
+    expect(noteFromBytes.root().toHex()).toBe(noteSourceScript.root().toHex());
+  });
+
+  test("a package without the script attribute is rejected by txScript and noteScript", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const bytes = await packageBytes(sdk, client);
+    await expect(client.compile.txScript({ package: bytes })).rejects.toThrow();
+    await expect(
+      client.compile.noteScript({ package: bytes })
+    ).rejects.toThrow();
+  });
+
+  test("rejects source and package together", async ({ sdk }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const bytes = await packageBytes(sdk, client);
+    await expect(
+      client.compile.component({ code: COUNTER_CODE, package: bytes })
+    ).rejects.toThrow(/either `code` or `package`/);
+  });
+});
+
 // ════════════════════════════════════════════════════════════════
 // compile.txScript()
 // ════════════════════════════════════════════════════════════════

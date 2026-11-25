@@ -36,6 +36,7 @@ import type {
   StorageSlot,
   AccountComponent,
   Library,
+  Package,
   AuthSecretKey,
   AccountStorageRequirements,
   TransactionScript,
@@ -2196,9 +2197,11 @@ export interface NotesResource {
 // Compiler types
 // ════════════════════════════════════════════════════════════════
 
-export interface CompileComponentOptions {
+export interface CompileComponentSourceOptions {
   /** MASM source code for the component. */
   code: string;
+  /** Source and package inputs are exclusive. */
+  package?: never;
   /**
    * Module path used to derive procedure identities. Use the same namespace when
    * linking this component into transaction scripts.
@@ -2224,6 +2227,30 @@ export interface CompileComponentOptions {
    */
   libraries?: Pick<CompileTxScriptLibrary, "namespace" | "code">[];
 }
+
+/** Builds a component from a compiled package (`.masp`) instead of source. */
+export interface CompileComponentPackageOptions {
+  /**
+   * A compiled package, as a `Package` or its serialized bytes, built through
+   * `AccountComponent.fromPackage`: the component gets the fixed metadata name
+   * `"custom"`.
+   */
+  package: Package | Uint8Array;
+  code?: never;
+  /** Source-only: a package carries its own code. */
+  namespace?: never;
+  /** Source-only: a package carries its own code. */
+  libraries?: never;
+  /** Initial storage slots for the component. */
+  slots?: StorageSlot[];
+  /** Same meaning as for source. Default: true. */
+  supportAllTypes?: boolean;
+}
+
+/** Exactly one of `code` and `package`. */
+export type CompileComponentOptions =
+  | CompileComponentSourceOptions
+  | CompileComponentPackageOptions;
 
 export interface CompileTxScriptLibrary {
   /** MASM namespace for the library (e.g. "counter::module"). */
@@ -2262,19 +2289,57 @@ export type CompileScriptLibrary =
   | CompileAccountComponentLibrary
   | Library;
 
-export interface CompileTxScriptOptions {
+export interface CompileTxScriptSourceOptions {
   /** MASM source code for the transaction script. */
   code: string;
+  /** Source and package inputs are exclusive. */
+  package?: never;
   /** Component libraries to link. */
   libraries?: CompileScriptLibrary[];
 }
 
-export interface CompileNoteScriptOptions {
+/** Builds the transaction script from a compiled package instead of source. */
+export interface CompileTxScriptPackageOptions {
+  /**
+   * A compiled package of the matching kind, as a `Package` or its serialized
+   * bytes.
+   */
+  package: Package | Uint8Array;
+  code?: never;
+  /** Source-only: a package carries its own code. */
+  libraries?: never;
+}
+
+/** Exactly one of `code` and `package`. */
+export type CompileTxScriptOptions =
+  | CompileTxScriptSourceOptions
+  | CompileTxScriptPackageOptions;
+
+export interface CompileNoteScriptSourceOptions {
   /** MASM source code for the note script. */
   code: string;
+  /** Source and package inputs are exclusive. */
+  package?: never;
   /** Component libraries to link. */
   libraries?: CompileScriptLibrary[];
 }
+
+/** Builds the note script from a compiled package instead of source. */
+export interface CompileNoteScriptPackageOptions {
+  /**
+   * A compiled package of the matching kind, as a `Package` or its serialized
+   * bytes.
+   */
+  package: Package | Uint8Array;
+  code?: never;
+  /** Source-only: a package carries its own code. */
+  libraries?: never;
+}
+
+/** Exactly one of `code` and `package`. */
+export type CompileNoteScriptOptions =
+  | CompileNoteScriptSourceOptions
+  | CompileNoteScriptPackageOptions;
 
 /**
  * Stable `code` of the errors MASM failures raise (a message prefix on Node.js, where the
@@ -2307,7 +2372,7 @@ export declare class CompilerResource {
   );
 
   /**
-   * Compile MASM source into an AccountComponent.
+   * Compile MASM source, or build from a compiled package, into an AccountComponent.
    *
    * Only exports marked `@account_procedure` or `@auth_script` become component
    * procedures. A component with none logs a `[miden-sdk]` console warning and
