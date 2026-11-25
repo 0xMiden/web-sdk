@@ -4,7 +4,7 @@ import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
 export async function getOutputNotes(dbId, states) {
     try {
         const db = getDatabase(dbId);
-        let notes = states.length == 0
+        const notes = states.length == 0
             ? await db.outputNotes.toArray()
             : await db.outputNotes
                 .where("stateDiscriminant")
@@ -38,7 +38,7 @@ export async function getInputNotes(dbId, states) {
 export async function getInputNotesFromIds(dbId, noteIds) {
     try {
         const db = getDatabase(dbId);
-        let notes = await db.inputNotes.where("noteId").anyOf(noteIds).toArray();
+        const notes = await db.inputNotes.where("noteId").anyOf(noteIds).toArray();
         return await processInputNotes(dbId, notes);
     }
     catch (err) {
@@ -48,7 +48,7 @@ export async function getInputNotesFromIds(dbId, noteIds) {
 export async function getInputNotesFromNullifiers(dbId, nullifiers) {
     try {
         const db = getDatabase(dbId);
-        let notes = await db.inputNotes
+        const notes = await db.inputNotes
             .where("nullifier")
             .anyOf(nullifiers)
             .toArray();
@@ -61,7 +61,7 @@ export async function getInputNotesFromNullifiers(dbId, nullifiers) {
 export async function getOutputNotesFromNullifiers(dbId, nullifiers) {
     try {
         const db = getDatabase(dbId);
-        let notes = await db.outputNotes
+        const notes = await db.outputNotes
             .where("nullifier")
             .anyOf(nullifiers)
             .toArray();
@@ -74,7 +74,7 @@ export async function getOutputNotesFromNullifiers(dbId, nullifiers) {
 export async function getInputNotesFromDetailsCommitments(dbId, detailsCommitments) {
     try {
         const db = getDatabase(dbId);
-        let notes = await db.inputNotes
+        const notes = await db.inputNotes
             .where("detailsCommitment")
             .anyOf(detailsCommitments)
             .toArray();
@@ -87,7 +87,7 @@ export async function getInputNotesFromDetailsCommitments(dbId, detailsCommitmen
 export async function getInputNotesFromScriptRoots(dbId, scriptRoots) {
     try {
         const db = getDatabase(dbId);
-        let notes = await db.inputNotes
+        const notes = await db.inputNotes
             .where("scriptRoot")
             .anyOf(scriptRoots)
             .toArray();
@@ -100,7 +100,7 @@ export async function getInputNotesFromScriptRoots(dbId, scriptRoots) {
 export async function getOutputNotesFromDetailsCommitments(dbId, detailsCommitments) {
     try {
         const db = getDatabase(dbId);
-        let notes = await db.outputNotes
+        const notes = await db.outputNotes
             .where("detailsCommitment")
             .anyOf(detailsCommitments)
             .toArray();
@@ -113,7 +113,7 @@ export async function getOutputNotesFromDetailsCommitments(dbId, detailsCommitme
 export async function getOutputNotesFromIds(dbId, noteIds) {
     try {
         const db = getDatabase(dbId);
-        let notes = await db.outputNotes.where("noteId").anyOf(noteIds).toArray();
+        const notes = await db.outputNotes.where("noteId").anyOf(noteIds).toArray();
         return await processOutputNotes(dbId, notes);
     }
     catch (err) {

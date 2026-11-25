@@ -7,8 +7,8 @@ import { logWebStoreError, putPartialBlockchainNodesNoOverwrite, uint8ArrayToBas
 export async function getNoteTags(dbId) {
     try {
         const db = getDatabase(dbId);
-        let records = await db.tags.toArray();
-        let processedRecords = records.map((record) => {
+        const records = await db.tags.toArray();
+        const processedRecords = records.map((record) => {
             record.sourceNoteId =
                 record.sourceNoteId == "" ? undefined : record.sourceNoteId;
             record.sourceAccountId =
@@ -30,7 +30,7 @@ export async function getSyncHeight(dbId) {
         const db = getDatabase(dbId);
         const record = await db.blockchainCheckpoint.get(1);
         if (record) {
-            let data = {
+            const data = {
                 blockNum: record.blockNum,
             };
             return data;
@@ -65,8 +65,8 @@ export async function getCurrentBlockchainPeaks(dbId) {
 export async function addNoteTag(dbId, tag, sourceNoteId, sourceAccountId, sourceSubscriptionKey) {
     try {
         const db = getDatabase(dbId);
-        let tagArray = new Uint8Array(tag);
-        let tagBase64 = uint8ArrayToBase64(tagArray);
+        const tagArray = new Uint8Array(tag);
+        const tagBase64 = uint8ArrayToBase64(tagArray);
         await db.tags.add({
             tag: tagBase64,
             sourceNoteId: sourceNoteId ? sourceNoteId : "",
@@ -81,8 +81,8 @@ export async function addNoteTag(dbId, tag, sourceNoteId, sourceAccountId, sourc
 export async function removeNoteTag(dbId, tag, sourceNoteId, sourceAccountId, sourceSubscriptionKey) {
     try {
         const db = getDatabase(dbId);
-        let tagArray = new Uint8Array(tag);
-        let tagBase64 = uint8ArrayToBase64(tagArray);
+        const tagArray = new Uint8Array(tag);
+        const tagBase64 = uint8ArrayToBase64(tagArray);
         const subscriptionKey = sourceSubscriptionKey ? sourceSubscriptionKey : "";
         return await db.tags
             .where({
@@ -135,7 +135,7 @@ export async function applyStateSync(dbId, stateUpdate) {
                 return upsertOutputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.recipientDigest, note.metadata, note.nullifier, note.expectedHeight, note.stateDiscriminant, note.state, note.noteScriptRoot, note.noteScript);
             })),
             Promise.all(transactionUpdates.map((transactionRecord) => {
-                let promises = [
+                const promises = [
                     upsertTransactionRecord(dbId, transactionRecord.id, transactionRecord.details, transactionRecord.blockNum, transactionRecord.statusVariant, transactionRecord.status, transactionRecord.scriptRoot),
                 ];
                 if (transactionRecord.scriptRoot && transactionRecord.txScript) {
