@@ -92,6 +92,9 @@ use utils::{
     patch_code_bytes,
 };
 
+/// Storage slots, map entries and vault assets an incremental patch writes.
+pub(crate) type PatchWritePayload = (Vec<JsStorageSlot>, Vec<JsStorageMapEntry>, Vec<JsVaultAsset>);
+
 impl IdxdbStore {
     pub(super) async fn get_account_ids(&self) -> Result<Vec<AccountId>, StoreError> {
         let promise = idxdb_get_account_ids(self.db_id());
@@ -461,7 +464,7 @@ impl IdxdbStore {
         &self,
         final_header: &AccountHeader,
         patch: &AccountPatch,
-    ) -> Result<(Vec<JsStorageSlot>, Vec<JsStorageMapEntry>, Vec<JsVaultAsset>), StoreError> {
+    ) -> Result<PatchWritePayload, StoreError> {
         let new_map_roots = self.apply_patch_to_forest(final_header, patch)?;
         Ok(build_account_patch_payload(&new_map_roots, patch))
     }

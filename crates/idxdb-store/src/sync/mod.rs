@@ -384,13 +384,16 @@ fn undo_plan(transaction_updates: &TransactionUpdateTracker) -> (Vec<String>, BT
     (undo_account_commitments, discarded_account_ids)
 }
 
+/// Full accounts to replace, and the incremental patches with the header each advances to.
+type SplitAccountUpdates<'a> = (Vec<Account>, Vec<(&'a AccountHeader, &'a AccountPatch)>);
+
 /// Separates full account updates from incremental absolute patches. An oversized newly created
 /// account (final nonce 1) arrives as a creation patch rather than a full account; it is rebuilt
 /// so it follows the same replacement path. Code on a later nonce is an upgrade and stays on the
 /// incremental path.
 fn split_public_account_updates(
     account_updates: &AccountUpdates,
-) -> Result<(Vec<Account>, Vec<(&AccountHeader, &AccountPatch)>), StoreError> {
+) -> Result<SplitAccountUpdates<'_>, StoreError> {
     let mut full_accounts: Vec<Account> = Vec::new();
     let mut patch_updates = Vec::new();
     for update in account_updates.updated_public_accounts() {
