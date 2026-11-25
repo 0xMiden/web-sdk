@@ -1,6 +1,6 @@
 ---
 name: web-client-usage
-description: Conventions for writing JavaScript/TypeScript code that uses the Miden web SDK (`@miden-sdk/miden-sdk`). Use when building apps on Miden, writing integration tests, or calling MidenClient or RpcClient methods - covers initialization, the resource-based API (accounts, transactions, notes, tags, chain, settings, compile, keystore, pswap), stateless RPC queries and submission, sync ordering, type conversions, transaction flows, fees, batching, named storage slots, custom contracts, foreign accounts, private note transport, mock-chain testing, observability, and pitfalls.
+description: Conventions for writing JavaScript/TypeScript code that uses the Miden web SDK (`@miden-sdk/miden-sdk`). Use when building apps on Miden, writing integration tests, or calling MidenClient or RpcClient methods - covers initialization, the resource-based API (accounts, transactions, notes, tags, chain, settings, compile, keystore, pswap, contracts), stateless RPC queries and submission, sync ordering, type conversions, transaction flows, fees, batching, named storage slots, custom contracts, foreign accounts, private note transport, mock-chain testing, observability, and pitfalls.
 ---
 
 # Web SDK Usage Patterns
@@ -22,6 +22,7 @@ The SDK exposes a top-level `MidenClient` whose state is split across typed
 | Resource             | What it covers                                                                                                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `client.accounts`    | Wallets, faucets, custom contracts, listing, import/export, addresses                                                                                                          |
+| `client.contracts`   | `deploy`: a contract from compiled components with a generated seed and auth                                                                                                   |
 | `client.transactions` | `send` / `mint` / `bridge` / `withdrawUsdcx` / `claimAggLayerDeposit` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `retryProvenBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
 | `client.notes`       | Listing, fetching, importing/exporting, private-note transport                                                                                                                 |
 | `client.tags`        | Note-tag subscriptions                                                                                                                                                         |
@@ -745,6 +746,11 @@ const noAuthContract = await client.accounts.create({
   components: [component],
 });
 ```
+
+`client.contracts.deploy({ components })` does the same without the boilerplate:
+it generates the `seed` and a Falcon `auth` key when omitted, keeps
+`accounts.create`'s `public` storage default, and resolves to
+`{ account, seed, auth }`. It throws without `components`.
 
 `compile.component` only turns exports marked `@account_procedure` or
 `@auth_script` into account procedures. A component with none logs a

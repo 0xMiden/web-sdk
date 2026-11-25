@@ -8,6 +8,8 @@
 * [FEATURE][web] `AccountStorage.getMapEntriesPage(slotName, offset, limit)` (also on `account.storage()`) returns at most `limit` entries of a storage map from `offset`, in the order `getMapEntries` returns, so a large map can be read in bounded pages instead of copied into JS whole on every call; `getMapEntries` is unchanged ([#97](https://github.com/0xMiden/web-sdk/issues/97)).
 * [FEATURE][web] `Account.applyPatch(patch)` returns a copy of the account with an `AccountPatch` applied, for example `ExecutedTransaction.accountPatch()`, so an off-chain update can be folded into a stored account without refetching it. It throws for a patch of another account, a nonce that does not increase, or changes that do not apply. Converting a relative `AccountDelta` into a patch is not part of this ([#439](https://github.com/0xMiden/web-sdk/issues/439), [#637](https://github.com/0xMiden/web-sdk/pull/637)).
 
+* [FEATURE][web] `client.contracts.deploy({ components, seed?, auth?, storage? })` creates a contract through `accounts.create`, generating a random 32-byte `seed` and a Falcon `AuthSecretKey` when omitted and keeping the contract default of public storage, and resolves to `{ account, seed, auth }`; it throws a `TypeError` without `components`. Deploying from a `.masp` package follows with package input ([#90](https://github.com/0xMiden/web-sdk/issues/90), [#646](https://github.com/0xMiden/web-sdk/pull/646)).
+
 ### Fixes
 
 * [FIX][web] Development faucet funding preserves the full integer value of proof-of-work targets sent as JSON numbers ([#626](https://github.com/0xMiden/web-sdk/pull/626)).

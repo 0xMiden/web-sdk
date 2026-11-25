@@ -73,8 +73,8 @@ failure that retains a `noteId`, resume that note instead of calling the faucet
 again. See `docs/external/src/web-client/library/funding.md`.
 
 State is split across resources rather than living on the client:
-`accounts`, `transactions`, `notes`, `tags`, `chain`, `settings`, `keystore`, `compile`
-and `pswap`. Client-level methods cover the lifecycle around them - `sync`,
+`accounts`, `transactions`, `notes`, `tags`, `chain`, `settings`, `keystore`, `compile`,
+`pswap` and `contracts`. Client-level methods cover the lifecycle around them - `sync`,
 `syncChain`, `syncNoteTransport`, `getSyncHeight`, `waitForIdle` and
 `terminate`.
 
