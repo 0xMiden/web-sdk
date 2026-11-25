@@ -139,6 +139,7 @@ pub mod transaction_result;
 pub mod transaction_script;
 pub mod transaction_script_inputs;
 pub mod transaction_status;
+pub mod transaction_measurements;
 pub mod transaction_store_update;
 pub mod transaction_summary;
 pub mod word;

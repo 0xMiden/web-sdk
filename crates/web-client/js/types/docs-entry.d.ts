@@ -79,6 +79,7 @@ export {
   TransactionEncryptionKey,
   TransactionInputs,
   TransactionProver,
+  TransactionMeasurements,
   TransactionRecord,
   TransactionRequest,
   TransactionRequestBuilder,

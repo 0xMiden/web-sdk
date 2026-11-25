@@ -1426,6 +1426,14 @@ To fold a patch into a copy of the account you already hold, call
 receiver unchanged; it throws for a patch of another account, a nonce that does
 not increase, or changes that do not apply to the account's state.
 
+### Cycle counts
+
+`ExecutedTransaction.measurements()` returns a `TransactionMeasurements` with the VM
+cycles of each phase: `prologue`, `notesProcessing`, `noteExecution` (an array of
+`{ noteId, cycles }`), `txScriptProcessing`, `epilogue`, `authProcedure` and
+`totalCycles` (prologue, notes, script and epilogue; `authProcedure` is reported
+separately and is not added in). Cycle counts only; there are no wall-clock timings.
+
 ### Listing transactions
 
 ```typescript
