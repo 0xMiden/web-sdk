@@ -52,7 +52,7 @@ jobs:
               | .packages
               | map(select(.id as $id | $members | index($id)))
               | map(.name)
-              | map(select(. != "miden-mobile-prover"))
+              | map(select(. != "miden-mobile-prover" and . != "test-node-genesis"))
             ')
 
           echo "packages=$PACKAGES" >> "$GITHUB_OUTPUT"
