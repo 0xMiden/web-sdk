@@ -170,7 +170,9 @@ export declare class StorageView {
   /**
    * Get at most `limit` key-value pairs from a StorageMap slot, starting at
    * position `offset` in the order `getMapEntries` returns. Only the requested
-   * page is copied into JS; a page shorter than `limit` is the last one.
+   * page is copied into JS; entries before `offset` are skipped inside WASM.
+   * `limit` must be at least 1 (`0` always returns `[]`); a page shorter than
+   * `limit` is the last one.
    * Returns `undefined` if the slot isn't a map or doesn't exist.
    */
   getMapEntriesPage(

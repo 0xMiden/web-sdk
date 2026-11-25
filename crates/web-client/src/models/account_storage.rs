@@ -83,7 +83,9 @@ impl AccountStorage {
     /// Get at most `limit` key-value pairs of the map slot identified by `slot_name`, starting
     /// at position `offset` in the map's key order (the order `getMapEntries` returns).
     /// Returns `undefined` if the slot isn't a map or doesn't exist, and `[]` once `offset` is
-    /// past the last entry. A page shorter than `limit` is the last one.
+    /// past the last entry. `limit` must be at least 1 (`0` always returns `[]`); a page
+    /// shorter than `limit` is the last one. Entries before `offset` are skipped inside WASM
+    /// without being copied.
     #[js_export(js_name = "getMapEntriesPage")]
     pub fn get_map_entries_page(
         &self,
