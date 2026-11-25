@@ -102,9 +102,12 @@ test("rejects an unregistered wallet's first transaction", async ({
 
   const rejection = await page.evaluate(async (accountId) => {
     const { client, AccountId } = window;
-    const id = AccountId.fromHex(accountId);
-    const records = await client.getConsumableNotes(id);
+    const records = await client.getConsumableNotes(
+      AccountId.fromHex(accountId)
+    );
     const notes = records.map((record) => record.inputNoteRecord().toNote());
+    // getConsumableNotes consumes its AccountId handle.
+    const id = AccountId.fromHex(accountId);
     const deploy = await client.newConsumeTransactionRequest(notes, id);
     try {
       await client.submitNewTransaction(id, deploy);
