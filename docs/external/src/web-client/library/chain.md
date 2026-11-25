@@ -20,8 +20,10 @@ const { header, mmrProof } = await client.chain.getBlockHeaderWithProof(100);
 
 ## Freeing results
 
-`BlockHeader`, `MmrProof` and each `NullifierUpdate` (with the `Word` its
-`nullifier()` returns) are WASM objects that garbage collection does not
+`BlockHeader`, `MmrProof`, each `NullifierUpdate` (with the `Word` its
+`nullifier()` returns) and the standalone `RpcClient.getBlockHeaderWithProof`
+result (`BlockHeaderWithProof`, free it after taking `header()` and `mmrProof()`)
+are WASM objects that garbage collection does not
 reclaim. Call `.free()` on them when you are done, especially in loops or
 polling. `getNullifierCommitHeights` returns plain numbers, so it needs nothing.
 
