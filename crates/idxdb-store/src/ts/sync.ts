@@ -202,6 +202,21 @@ interface JsAccountWitnessUpdate {
   witness: Uint8Array;
 }
 
+interface JsAccountPatchUpdate {
+  accountId: string;
+  nonce: string;
+  updatedSlots: JsStorageSlot[];
+  changedMapEntries: JsStorageMapEntry[];
+  changedAssets: JsVaultAsset[];
+  codeRoot: string;
+  storageRoot: string;
+  vaultRoot: string;
+  committed: boolean;
+  commitment: string;
+  code: Uint8Array;
+  initialAccountCommitment: string;
+}
+
 interface JsStateSyncUpdate {
   blockNum: number;
   flattenedNewBlockHeaders: FlattenedU8Vec;
@@ -216,6 +231,12 @@ interface JsStateSyncUpdate {
   accountUpdates: JsAccountUpdate[];
   transactionUpdates: SerializedTransactionData[];
   accountWitnesses?: JsAccountWitnessUpdate[];
+  /** Incremental public-account patches, applied inside the sync transaction. */
+  accountPatches?: JsAccountPatchUpdate[];
+  /** Commitments of discarded account states to undo inside the sync transaction. */
+  undoAccountCommitments?: string[];
+  /** Accounts to lock inside the sync transaction. */
+  lockedAccountIds?: string[];
 }
 
 export async function applyStateSync(

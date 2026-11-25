@@ -10,6 +10,7 @@ import {
   discardTransactions,
 } from "./sync.js";
 import { recordReads } from "./test-utils.js";
+import { applyAccountPatch, upsertAccountRecord } from "./accounts.js";
 
 // ---------------------------------------------------------------------------
 // Test DB helpers
@@ -1175,6 +1176,150 @@ describe("sync", () => {
 
       expect((await db.accountCodes.get("cr-A"))?.code).toEqual(codeA);
       expect((await db.accountCodes.get("cr-B"))?.code).toEqual(codeB);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // applyStateSync atomicity (#64)
+  // -------------------------------------------------------------------------
+  describe("applyStateSync account writes are atomic with the sync", () => {
+    const PATCHED = "0xpatched";
+    const UNDONE = "0xundone";
+    const LOCKED = "0xlocked";
+
+    async function seedAccounts(dbId: string) {
+      // PATCHED sits at nonce 1; UNDONE has a nonce 2 state that the sync discards.
+      await upsertAccountRecord(
+        dbId,
+        PATCHED,
+        "cr",
+        "sr",
+        "vr",
+        "1",
+        true,
+        "0xp1"
+      );
+      await upsertAccountRecord(
+        dbId,
+        UNDONE,
+        "cr",
+        "sr",
+        "vr",
+        "1",
+        true,
+        "0xu1"
+      );
+      await applyAccountPatch(
+        dbId,
+        UNDONE,
+        "2",
+        [
+          {
+            slotName: "slot",
+            slotValue: "0xnew",
+            slotType: 0,
+            patchOperation: 1,
+          },
+        ],
+        [],
+        [],
+        "cr",
+        "sr",
+        "vr",
+        true,
+        "0xu2"
+      );
+      await upsertAccountRecord(
+        dbId,
+        LOCKED,
+        "cr",
+        "sr",
+        "vr",
+        "1",
+        true,
+        "0xl1"
+      );
+    }
+
+    function accountWrites() {
+      return {
+        accountPatches: [
+          {
+            accountId: PATCHED,
+            nonce: "2",
+            updatedSlots: [
+              {
+                slotName: "slot",
+                slotValue: "0xpatch",
+                slotType: 0,
+                patchOperation: 1,
+              },
+            ],
+            changedMapEntries: [],
+            changedAssets: [],
+            codeRoot: "cr",
+            storageRoot: "sr2",
+            vaultRoot: "vr",
+            committed: true,
+            commitment: "0xp2",
+            code: new Uint8Array(0),
+            initialAccountCommitment: "0xp1",
+          },
+        ],
+        undoAccountCommitments: ["0xu2"],
+        lockedAccountIds: [LOCKED],
+      };
+    }
+
+    async function snapshot(dbId: string) {
+      const db = getDatabase(dbId);
+      return {
+        headers: await db.latestAccountHeaders.orderBy("id").toArray(),
+        slots: await db.latestAccountStorages.toArray(),
+        historicalHeaders: await db.historicalAccountHeaders.toArray(),
+        historicalSlots: await db.historicalAccountStorages.toArray(),
+        syncHeight: (await db.blockchainCheckpoint.get(1))?.blockNum,
+      };
+    }
+
+    it("applies patches, undo and locks together with the sync height", async () => {
+      const dbId = await openTestDb();
+      await seedAccounts(dbId);
+
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({ blockNum: 9, ...accountWrites() })
+      );
+
+      const db = getDatabase(dbId);
+      expect((await db.latestAccountHeaders.get(PATCHED))?.nonce).toBe("2");
+      expect((await db.latestAccountHeaders.get(UNDONE))?.nonce).toBe("1");
+      expect((await db.latestAccountHeaders.get(LOCKED))?.locked).toBe(true);
+      expect((await db.blockchainCheckpoint.get(1))?.blockNum).toBe(9);
+    });
+
+    it("leaves accounts, locks and sync height unchanged when a late write fails", async () => {
+      const dbId = await openTestDb();
+      await seedAccounts(dbId);
+      const db = getDatabase(dbId);
+      // A stored node that disagrees with the one in the update makes the late node write throw.
+      await db.partialBlockchainNodes.put({ id: 7, node: "stored" });
+      const before = await snapshot(dbId);
+
+      await expect(
+        applyStateSync(
+          dbId,
+          minimalStateUpdate({
+            blockNum: 9,
+            serializedNodeIds: ["7"],
+            serializedNodes: ["different"],
+            ...accountWrites(),
+          })
+        )
+      ).rejects.toThrow();
+
+      expect(await snapshot(dbId)).toEqual(before);
+      expect((await db.latestAccountHeaders.get(LOCKED))?.locked).toBe(false);
     });
   });
 });
