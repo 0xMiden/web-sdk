@@ -412,7 +412,10 @@ export interface FundingOptions {
    * client's RPC endpoint; other networks require this field.
    */
   faucetUrl?: string;
-  /** Amount to request. Omit to use the faucet's advertised base amount. */
+  /**
+   * Amount to request. A `number` must be a safe integer; pass a `bigint` or
+   * decimal string above that. Omit to use the faucet's advertised base amount.
+   */
   amount?: number | bigint | string;
   /**
    * Limit for each stage (faucet request, note discovery, confirmation) in

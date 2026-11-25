@@ -64,8 +64,10 @@ chain's.
 
 On testnet and devnet, `accounts.requestFundingNote(account, options?)` and
 `accounts.fundAccount(account, options?)` request the native fee asset from the
-public faucet, wait for the public P2ID note, consume it, and return
-`{ noteId, transactionId, balance }`. Defaults come from the RPC endpoint;
+public faucet. `requestFundingNote` returns the faucet receipt
+`{ noteId, transactionId, faucetId, amount }`; `fundAccount` also waits for the
+public P2ID note, consumes it, and returns `{ noteId, transactionId, balance }`.
+Defaults come from the RPC endpoint;
 other networks need `faucetUrl`. The mint request is never retried: after a
 failure that retains a `noteId`, resume that note instead of calling the faucet
 again. See `docs/external/src/web-client/library/funding.md`.
