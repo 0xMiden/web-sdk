@@ -87,7 +87,8 @@ The package exports 37 hooks from `src/hooks/`, plus the context accessors `useM
 | Hook | Kind | Notes |
 |------|------|-------|
 | `useBridge()` | transaction | AggLayer bridge-out. `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress, skipSync? })` |
-| `useWithdrawUsdcx()` | transaction | Circle xReserve USDCx withdrawal. `withdrawUsdcx({ from, faucetId, amount, destinationDomain, destinationRecipient, skipSync? })`; `destinationRecipient` is 0x-prefixed 32-byte hex. No claim hook exists for inbound AggLayer deposits: use `Note.createClaimNote` with `useTransaction` |
+| `useWithdrawUsdcx()` | transaction | Circle xReserve USDCx withdrawal. `withdrawUsdcx({ from, faucetId, amount, destinationDomain, destinationRecipient, skipSync? })`; `destinationRecipient` is 0x-prefixed 32-byte hex |
+| `useClaimAggLayerDeposit()` | transaction | AggLayer inbound claim. `claimAggLayerDeposit({ from, bridgeAccount, proof, leaf, scale, skipSync? })` resolves to `{ txId, note }`; `scale` is an integer from 0 to 18 |
 | `useCreateNetworkNote()` | transaction | see "Network Notes" below |
 | `usePswapCreate/Consume/Cancel/CancelByOrder()` | transaction | see "PSWAP" below |
 | `usePswapLineages/LineagesFor/Lineage()` | query | tracked PSWAP lineages |
@@ -95,7 +96,7 @@ The package exports 37 hooks from `src/hooks/`, plus the context accessors `useM
 | `useCompile()` | compile | `{ component, txScript, noteScript, isReady }` |
 | `useExecuteProgram()` | read-only view call | the action is named **`execute`**, not `executeProgram`: `execute({ accountId, script, adviceInputs?, foreignAccounts?, skipSync? })` returns `{ stack: bigint[] }` |
 | `useSyncControl()` | control | `{ pauseSync, resumeSync, isPaused }`. Use this instead of `autoSyncInterval: 0` when you need to stop auto-sync after mount; manual `useSyncState().sync()` still works while paused |
-| `useExportStore()` / `useImportStore()` | store portability | `isExporting` / `isImporting` |
+| `useExportStore()` / `useImportStore()` | store portability (deprecated: keep a separate store per signer through its `storeName`, or use `useExportNote()`, `useImportNote()` and `useImportAccount()`, and `useMidenClient().accounts.export(id)` to export an account) | `isExporting` / `isImporting` |
 | `useExportNote()` / `useImportNote()` | note portability | `exportNote(noteId)` returns `Uint8Array`; `importNote(bytes)` returns the note id |
 | `MultiSignerProvider` / `SignerSlot` / `useMultiSigner` | signer | see "Signer Integration" |
 
@@ -237,7 +238,7 @@ A note on `ids`: the hook uses `TransactionFilter.ids(...)` only when every entr
 ## Mutation Hooks
 
 Each returns its own action function plus `error` and `reset`. The families differ in their loading/progress fields:
-- **Transaction hooks** (`useSend`, `useMultiSend`, `useBatch`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useWithdrawUsdcx`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`, `usePswapCancel`, `usePswapCancelByOrder`, `useTransaction`) expose `isLoading` and `stage` (a `TransactionStage`).
+- **Transaction hooks** (`useSend`, `useMultiSend`, `useBatch`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useWithdrawUsdcx`, `useClaimAggLayerDeposit`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`, `usePswapCancel`, `usePswapCancelByOrder`, `useTransaction`) expose `isLoading` and `stage` (a `TransactionStage`).
 - **Account create/import hooks** (`useCreateWallet`, `useCreateFaucet`, `useImportAccount`) expose `isCreating` (or `isImporting` for the latter) and have **no** `stage`.
 - **Everything else names its own busy flag**: `useChainAnchor().isCapturing`, `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting`.
 
@@ -714,7 +715,7 @@ await runExclusive(async () => {
 });
 ```
 
-**The built-in hooks route their own client calls through `runExclusive` too.** 22 files under `src/hooks/` pull it out of `useMiden()` and wrap their multi-call work, using the pattern `const runExclusiveSafe = runExclusive ?? runExclusiveDirect;` so they still serialize when no provider-supplied lock is available: `useSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useWithdrawUsdcx`, `useTransaction`, `usePreview`, `useChainAnchor`, `useCreateWallet`, `useCreateFaucet`, `useExecuteProgram`, `useCreateNetworkNote`, `useMultiSend`, `useWaitForNotes`, the four export/import hooks and all four PSWAP transaction hooks. Use it for your own multi-step sequences for the same reason they do - the client serializes each individual forwarded call, not your group of them (see `frontend-pitfalls` FP2, which also names the raw-bound `SYNC_METHODS` that serialize themselves not at all).
+**The built-in hooks route their own client calls through `runExclusive` too.** 22 files under `src/hooks/` pull it out of `useMiden()` and wrap their multi-call work, using the pattern `const runExclusiveSafe = runExclusive ?? runExclusiveDirect;` so they still serialize when no provider-supplied lock is available: `useSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useWithdrawUsdcx`, `useClaimAggLayerDeposit`, `useTransaction`, `usePreview`, `useChainAnchor`, `useCreateWallet`, `useCreateFaucet`, `useExecuteProgram`, `useCreateNetworkNote`, `useMultiSend`, `useWaitForNotes`, the four export/import hooks and all four PSWAP transaction hooks. Use it for your own multi-step sequences for the same reason they do - the client serializes each individual forwarded call, not your group of them (see `frontend-pitfalls` FP2, which also names the raw-bound `SYNC_METHODS` that serialize themselves not at all).
 
 ## Non-Surface: Do Not Invent These
 

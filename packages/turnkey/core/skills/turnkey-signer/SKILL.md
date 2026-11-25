@@ -69,8 +69,9 @@ the type and nothing reads it.
 `accountId` comes back as the canonical hex string.
 
 What the call does, in order: creates a `MidenClient` with `autoSync: true` and
-a keystore whose `getKey` always resolves `undefined` and whose `insertKey` is
-a no-op, so no secret key is ever generated or stored locally; syncs; derives
+a keystore whose `getKey` always resolves `undefined` and whose `insertKey`
+rejects, so no secret key is ever generated or stored locally and creating an
+account with a generated key fails; syncs; derives
 the commitment from `account.publicKey`; builds an account from the account
 seed with the ECDSA auth component plus the basic wallet component; attempts
 `accounts.import(account)` so an account already on chain is hydrated rather

@@ -133,3 +133,25 @@ test("createMidenTurnkeyClient leaves the client it returns alive", async () => 
     restore();
   }
 });
+
+test("createMidenTurnkeyClient refuses to take a key it cannot keep", async () => {
+  const client = makeClient(async () => {});
+  const mocks = buildMocks(client);
+  let received;
+  mocks["@miden-sdk/miden-sdk"].MidenClient = {
+    create: async (options) => {
+      received = options;
+      return client;
+    },
+  };
+  const { createMidenTurnkeyClient, restore } = loadMidenClient(mocks);
+  try {
+    await create(createMidenTurnkeyClient);
+  } finally {
+    restore();
+  }
+  await assert.rejects(
+    received.keystore.insertKey("pk", "sk"),
+    /only signs with the Turnkey wallet key/
+  );
+});

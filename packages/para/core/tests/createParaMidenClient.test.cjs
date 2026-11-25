@@ -183,6 +183,14 @@ for (const [endpoint, transport] of [
   });
 }
 
+test("createParaMidenClient refuses to take a key it cannot keep", async () => {
+  const { keystore } = await createOptionsFor({});
+  await assert.rejects(
+    keystore.insertKey("pk", "sk"),
+    /only signs with the Para wallet key/
+  );
+});
+
 test("createParaMidenClient keeps an explicit noteTransportUrl on mainnet", async () => {
   const options = await createOptionsFor({
     endpoint: "https://rpc.mainnet.miden.io",

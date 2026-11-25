@@ -709,13 +709,16 @@ describe("WasmWebClient.terminate", () => {
     expect(client.pendingRequests.size).toBe(0);
   });
 
-  it("still runs a call nested in an in-flight _withInnerWebClient inline", async () => {
+  it("still runs a call through an in-flight _withInnerWebClient handle inline", async () => {
     const { client } = makeWebClient();
-    client._withInnerLockDepth = 1;
+    const { handle } = MidenClient._createTrustedHandle(client);
     client.terminate();
-    await expect(client._serializeWasmCall(async () => "inline")).resolves.toBe(
+    await expect(handle._serializeWasmCall(async () => "inline")).resolves.toBe(
       "inline"
     );
+    await expect(
+      client._serializeWasmCall(async () => "queued")
+    ).rejects.toThrow(/terminated/);
   });
 
   it("keeps the call chain usable and reports it when freeing the wasm client throws", async () => {
@@ -755,14 +758,15 @@ describe("WasmWebClient.terminate", () => {
     await expect(proving).rejects.toThrow("WebClient terminated");
   });
 
-  it("keeps the live route for a member read inside an in-flight _withInnerWebClient", () => {
+  it("keeps the live route for a member read through an in-flight _withInnerWebClient handle", () => {
     const { client } = makeWebClient();
     const proxy = createClientProxy(client);
-    client._withInnerLockDepth = 1;
+    const { handle } = MidenClient._createTrustedHandle(proxy);
 
     client.terminate();
-    expect(proxy.lastAuthError()).toBeNull();
-    expect(proxy.keystore).toBe("keystore");
+    expect(handle.lastAuthError()).toBeNull();
+    expect(handle.keystore).toBe("keystore");
+    expect(() => proxy.keystore).toThrow("WebClient terminated");
   });
 
   it("frees the wasm client only once a raw-bound call started before terminate settles", async () => {

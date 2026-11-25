@@ -101,7 +101,12 @@ export async function createMidenTurnkeyClient(
     seed: opts.seed,
     keystore: {
       getKey: async () => undefined,
-      insertKey: async () => {},
+      // Keys handed here would be lost: this client has no store for them.
+      insertKey: async () => {
+        throw new Error(
+          "This client only signs with the Turnkey wallet key; create other accounts with a separate MidenClient"
+        );
+      },
       sign: signCb(turnkeyConfig, handleSign),
     },
     autoSync: true,

@@ -79,6 +79,9 @@ impl WebClient {
 /// Exports the entire contents of an `IndexedDB` store as a JSON string.
 ///
 /// Use together with [`import_store`].
+///
+/// **Deprecated.** Create the client with the right `storeName` and manage store instances, or
+/// export only the state you need through the typed APIs (`accounts.export`, `notes.export`).
 #[cfg(feature = "browser")]
 #[wasm_bindgen(js_name = "exportStore")]
 pub async fn export_store(store_name: &str) -> Result<JsValue, JsValue> {

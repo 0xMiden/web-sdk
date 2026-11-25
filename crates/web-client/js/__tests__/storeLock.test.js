@@ -1260,6 +1260,46 @@ describe("store lock across WebClient instances (Web Locks)", () => {
     ]);
   });
 
+  it("queues an outside call made while an _withInnerWebClient callback awaits", async () => {
+    const a = makeWebClient(uniqueStore(), "A");
+    const midenA = new MidenClient(a.client, async () => fakeWasm, null);
+
+    const gate = deferred();
+    const hatch = midenA._withInnerWebClient(async (inner) => {
+      await inner.getAccounts("in");
+      await gate.promise;
+      return "hatch";
+    });
+    await release("A.getAccounts in");
+    const outside = a.client.getAccounts("out");
+    await flush();
+    expect(events).toEqual(["start A.getAccounts in", "end A.getAccounts in"]);
+
+    gate.resolve();
+    await expect(hatch).resolves.toBe("hatch");
+    await release("A.getAccounts out");
+    await expect(outside).resolves.toBe("A.getAccounts out");
+  });
+
+  it("queues a call made through the handle after its callback settled", async () => {
+    const a = makeWebClient(uniqueStore(), "A");
+    const midenA = new MidenClient(a.client, async () => fakeWasm, null);
+
+    let kept;
+    await midenA._withInnerWebClient(async (inner) => {
+      kept = inner;
+    });
+    const running = deferred();
+    a.instance._serializeWasmCall(() => running.promise);
+    const late = kept.getAccounts("late");
+    await flush();
+    expect(events).toEqual([]);
+
+    running.resolve();
+    await release("A.getAccounts late");
+    await expect(late).resolves.toBe("A.getAccounts late");
+  });
+
   it("runs account creation and an un-awaited transaction made after it in call order", async () => {
     const store = uniqueStore();
     const a = makeWebClient(store, "A");

@@ -147,3 +147,79 @@ test("newRegisterNoteScriptsTransactionRequest emits one public note per script 
   expect(result.roots).toEqual(result.expected);
   expect(result.executedOutputs).toBe(2);
 });
+
+test("a custom note script registration request is submitted and the script is declared for network execution", async ({
+  run,
+}) => {
+  const result = await run(async ({ client, sdk, helpers }) => {
+    const { wallet } = await helpers.setupWalletAndFaucet();
+    const builder = await client.createCodeBuilder();
+    // The browser build consumes a handle passed by value, so every use compiles its own copy.
+    const custom = async () =>
+      await builder.compileNoteScript(`
+        @note_script
+        pub proc main
+          push.7 drop
+        end
+      `);
+    const customRoot = (await custom()).root().toHex();
+    const register = await client.newRegisterNoteScriptsTransactionRequest(
+      wallet.id(),
+      new sdk.NoteScriptArray([await custom()])
+    );
+    const roots = register
+      .expectedOutputOwnNotes()
+      .map((n) => n.recipient().script().root().toHex());
+    const txId = await client.submitNewTransaction(wallet.id(), register);
+    await client.proveBlock();
+    const declared = new sdk.TransactionRequestBuilder()
+      .withExpectedNtxScripts(new sdk.NoteScriptArray([await custom()]))
+      .build()
+      .expectedNtxScripts()
+      .map((s) => s.root().toHex());
+    return {
+      custom: customRoot,
+      roots,
+      submitted: txId.toHex().length,
+      declared,
+    };
+  });
+  expect(result.roots).toEqual([result.custom]);
+  expect(result.submitted).toBeGreaterThan(0);
+  expect(result.declared).toEqual([result.custom]);
+});
+
+test("extendMerkleStore carries extra Merkle store nodes in the built request", async ({
+  run,
+}) => {
+  const result = await run(async ({ sdk }) => {
+    const word = (n) => new sdk.Word(sdk.u64Array([n, n + 1, n + 2, n + 3]));
+    const nodes = () =>
+      new sdk.InnerNodeInfoArray([
+        new sdk.InnerNodeInfo(word(10), word(20), word(30)),
+        new sdk.InnerNodeInfo(word(40), word(50), word(60)),
+      ]);
+    const request = new sdk.TransactionRequestBuilder()
+      .extendMerkleStore(nodes())
+      .build();
+    const restored = sdk.TransactionRequest.deserialize(request.serialize());
+    const read = (r) =>
+      r
+        .merkleStoreInnerNodes()
+        .map((n) => [n.value().toHex(), n.left().toHex(), n.right().toHex()])
+        .sort();
+    return {
+      none: new sdk.TransactionRequestBuilder().build().merkleStoreInnerNodes()
+        .length,
+      added: read(request),
+      restored: read(restored),
+      expected: [
+        [word(10), word(20), word(30)].map((w) => w.toHex()),
+        [word(40), word(50), word(60)].map((w) => w.toHex()),
+      ].sort(),
+    };
+  });
+  expect(result.none).toBe(0);
+  expect(result.added).toEqual(result.expected);
+  expect(result.restored).toEqual(result.expected);
+});
