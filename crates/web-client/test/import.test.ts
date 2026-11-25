@@ -78,6 +78,84 @@ test("account file import can retry after a temporary key storage error", async 
   expect(result.writes).toBe(1);
 });
 
+test("account file import resumes after saving only one of two keys", async ({
+  run,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name === "nodejs" || !isLocalhost(),
+    "requires browser keystore callbacks and a local test node"
+  );
+
+  const result = await run(async ({ client, sdk }) => {
+    const wallet = await client.newWallet(
+      sdk.AccountStorageMode.private(),
+      sdk.AuthScheme.AuthRpoFalcon512
+    );
+    await client.keystore.insert(
+      wallet.id(),
+      sdk.AuthSecretKey.ecdsaWithRNG(null)
+    );
+    const file = await client.exportAccountFile(wallet.id());
+    const bytes = file.serialize();
+    const keys = new Map<string, Uint8Array>();
+    const writeAttempts = new Map<string, number>();
+    let failSecondWrite = true;
+    const restored = await sdk.WasmWebClient.createClientWithExternalKeystore(
+      window.rpcUrl,
+      undefined,
+      undefined,
+      `${window.storeName}-multi-key-file-import`,
+      async (commitment) => keys.get(commitment.toString()),
+      async (commitment, key) => {
+        const id = commitment.toString();
+        writeAttempts.set(id, (writeAttempts.get(id) ?? 0) + 1);
+        if (keys.has(id)) throw new Error("key already stored");
+        if (failSecondWrite && keys.size === 1) {
+          throw new Error("second key write unavailable");
+        }
+        keys.set(id, key);
+      },
+      undefined,
+      undefined,
+      false,
+      undefined,
+      window.feeFaucetId
+    );
+
+    const readImportError = () =>
+      restored.importAccountFile(sdk.AccountFile.deserialize(bytes)).then(
+        () => null,
+        (error) => (error instanceof Error ? error.message : String(error))
+      );
+
+    try {
+      const firstError = await readImportError();
+      const keysAfterFailure = keys.size;
+
+      failSecondWrite = false;
+      const retryError = await readImportError();
+      const restoredKeyCount = retryError
+        ? null
+        : (await restored.exportAccountFile(wallet.id())).authSecretKeyCount();
+      return {
+        firstError,
+        keysAfterFailure,
+        retryError,
+        restoredKeyCount,
+        writeAttempts: Array.from(writeAttempts.values()),
+      };
+    } finally {
+      restored.terminate();
+    }
+  });
+
+  expect(result.firstError).toContain("second key write unavailable");
+  expect(result.keysAfterFailure).toBe(1);
+  expect(result.retryError).toBeNull();
+  expect(result.restoredKeyCount).toBe(2);
+  expect(result.writeAttempts).toEqual([1, 2]);
+});
+
 test.describe("import from seed", () => {
   test("should import same public account from seed", async ({ run }) => {
     test.slow();
