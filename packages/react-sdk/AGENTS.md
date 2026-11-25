@@ -483,9 +483,11 @@ const client = useMidenClient();
 const height = await client.getSyncHeight();
 ```
 
-**Not everything is on this client.** Block headers in particular are not:
-`getBlockHeaderByNumber` lives on the standalone `RpcClient`, which you
-construct yourself with an endpoint. Take it from `client.endpoint()`, the URL
+**Not everything is on this client.** This is the `WebClient`, which has no
+header reads; a `MidenClient` reads them with `client.chain.getBlockHeader(100)`
+(see the web client guide), but a hook-based app holds no `MidenClient`, and
+opening a second one would open a second store. Use the standalone `RpcClient`,
+whose `getBlockHeaderByNumber` you construct yourself with an endpoint. Take it from `client.endpoint()`, the URL
 of the node the client was created against, so the reads go to the network the
 provider is configured for.
 

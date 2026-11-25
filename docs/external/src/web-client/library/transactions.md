@@ -466,7 +466,7 @@ await client.transactions.submit(multisig, proposedRequest);
 Notes:
 
 - **The request still travels.** The salt in the multisig auth args is drawn fresh on every build and bound into the summary, so a co-signer must re-derive from the proposer's request bytes, exactly as in the anchored flow below.
-- **Confirm the bound block is real.** For a multisig, `summary.blockCommitment()` is the bound block's commitment. Fetch that block's header from a node you trust (`RpcClient.getBlockHeaderByNumber`, with the number from the builder's `request.blockNumbers()`) and compare commitments.
+- **Confirm the bound block is real.** For a multisig, `summary.blockCommitment()` is the bound block's commitment. Fetch that block's header from a node you trust (`RpcClient.getBlockHeaderByNumber`, with the number from the builder's `request.blockNumbers()`) and compare commitments. A `MidenClient` talking to that node can use `client.chain.getBlockHeader`.
 - **Approvals can expire.** `approvalExpirationDelta` on `feeAwareTransactionRequestBuilder` counts from the bound block, and the multisig rejects execution at or after that reference block. Omitted, the approval does not expire.
 - **A match still does not prove agreement on account state.** Everything under "Notes on anchors" about what the summary covers, and what it does not, applies unchanged.
 
@@ -552,6 +552,7 @@ Notes on anchors:
 
   const rpc = new RpcClient(endpoint);
   const real = await rpc.getBlockHeaderByNumber(received.blockNum());
+  // With a MidenClient on the same node: await client.chain.getBlockHeader(received.blockNum())
   if (real.commitment().toHex() !== received.commitment().toHex()) {
     throw new Error("anchor does not name a block on this chain");
   }

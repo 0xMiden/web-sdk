@@ -74,12 +74,15 @@ resource method: read the resource implementation in
 
 ## What is not observed
 
-Four categories emit nothing, and each has bitten someone:
+Five categories emit nothing, and each has bitten someone:
 
 - **The seven raw-bound `SYNC_METHODS`** - `buildSwapTag`, `endpoint`,
   `lastAuthError`, `proveBlock`, `serializeMockChain`,
   `serializeMockNoteTransportNode`, `usesMockChain`. They bypass the serialization wrapper entirely, which is
   where observation happens.
+- **Reads through the cached RPC client.** `client.chain.*`, `checkHealth()` and
+  `monitorHealth()` call a standalone `RpcClient`, not the observed inner client, so
+  they never reach an observer.
 - **Client construction.** `create`, `ready()` and the factories emit nothing.
   You cannot measure startup this way.
 - **The Node entry point, silently.** Under the `node` export condition the
