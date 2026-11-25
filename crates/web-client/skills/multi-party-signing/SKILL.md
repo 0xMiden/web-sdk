@@ -54,7 +54,8 @@ Build the request with `client.feeAwareTransactionRequestBuilder(account)`. For 
 multisig it binds the current sync height as the bound block in its auth args, and
 miden-client tracks that block when it executes the request, so the proposer, every
 co-signer and the executor can call `preview` / `submit`, each at its own tip, and
-derive the same summary. The builder also adds the bound block with
+derive the same summary while the fee estimate described below stays the same. The
+builder also adds the bound block with
 `withBlockNumbers`; only the height check below reads that declaration. Each party's
 client must first have synced to at least the bound block (the largest of
 `request.blockNumbers()`, by default the proposer's sync height when it built the
@@ -71,6 +72,15 @@ auth argument (`AUTH_ALREADY_SET`); any other account's request comes back uncha
 Foreign accounts, the chain's fee faucet among them, load at the tip. A proposal
 therefore still executes after the node has pruned the account state of its bound
 block (a node keeps account state for 50 blocks).
+
+The summary also binds a **max fee**. The auth args from
+`feeAwareTransactionRequestBuilder` and `withFeeAwareAuth` set none, so the auth
+procedure estimates the fee on each execution and the summary binds that estimate. The
+estimate depends on the verification base fee of the reference block and on the cycle
+count of the transaction. The parties derive the same summary at different tips only
+while the estimate comes out the same. If the base fee of the chain changes between
+the preview and the execution, the summary changes and the collected signatures no
+longer match it. Neither method takes a max fee.
 
 R2's request transport still applies: co-signers must re-derive from the proposer's
 request bytes, because the salt in the auth args is drawn fresh per build.
@@ -246,9 +256,9 @@ tolerates both shapes.
 - **`expirationDelta()` returning 0 means no expiration was set.** It does not mean the
   transaction has expired. Do not write a check that treats 0 as expired.
 - **A matching summary proves agreement, not intent.** The commitment is built from
-  exactly six things: the account delta, the input-note commitment, the output-note
-  commitment, the reference block commitment, the expiration delta and the user
-  params. The transaction script root, the advice map, note arguments and
+  exactly seven things: the account delta, the input-note commitment, the output-note
+  commitment, the reference block commitment (the bound block, for a multisig), the
+  logs commitment, the expiration delta and the user params. The transaction script root, the advice map, note arguments and
   foreign-account inputs are **not** among them. Two different requests that produce
   the same delta and the same note sets therefore produce the same commitment, and one
   set of signatures authorizes both. Do not rely on "a different request would be
@@ -261,16 +271,22 @@ tolerates both shapes.
   arriving, or, for a multisig, a change to the signer set or threshold. That last one
   matters most, because signatures gathered under one threshold remain valid after it
   is lowered. A `signature.masm` account additionally binds the final nonce as
-  `summary.userParams()[0]`; the multisig component zeroes those params and binds
-  nothing. Check the state you care about directly rather than inferring it from a
-  matching summary.
-- **`summary.outputNotes()` includes the fee note** on any chain whose verification
-  base fee is non-zero. Every standard auth procedure calls `fee::pay_fee` before
-  building the summary, so the fee note is inside what a co-signer signs over.
-  `TransactionSummary` has no `userOutputNotes()` / `feeNote()` split, unlike
-  `ExecutedTransaction`. Label it in a confirmation UI rather than presenting it as
-  one of the user's own, and do not assume `outputNotes()[0]` is the note they asked
-  for.
+  `summary.userParams()[0]`. A multisig does not bind the nonce: its user params hold
+  the approval expiration, the max fee and the salt. Check the state you care about
+  directly rather than inferring it from a matching summary.
+- **A single-signature summary includes the fee note, and a multisig summary does
+  not.** This applies on any chain whose verification base fee is non-zero.
+  - A `signature.masm` account pays the fee before it builds the summary, so
+    `summary.outputNotes()` includes the fee note. `TransactionSummary` has no
+    `userOutputNotes()` / `feeNote()` split, unlike `ExecutedTransaction`. Label the fee
+    note in a confirmation UI rather than presenting it as one of the user's own, and
+    do not assume `outputNotes()[0]` is the note they asked for.
+  - A multisig pays the fee after it has checked the signatures, so its summary has no
+    fee note. The approvers sign the max fee instead, which is
+    `summary.userParams()[1]`. Show that value in a confirmation UI.
+- **A multisig preview does not reach the fee payment.** An unsigned execution stops
+  at the signature check. A fee that the account cannot pay therefore fails only the
+  signed execution, not the preview.
 - **`preview` only yields a summary while authorization is pending.** The summary is
   produced when the account's auth procedure aborts with the unauthorized event, e.g. a
   multisig below its signing threshold. A fully authorized transaction produces no
@@ -315,8 +331,8 @@ request; in the browser build it consumes the `Felt`s it is given.
 | `blockNum()` | `u32` | Number of that block |
 | `expirationDelta()` | `u16` | 0 means no expiration was set, not expired |
 | `accountDelta()` | `AccountDelta` | Inspect before signing; `.storage().valueSlots()` / `.mapSlots()` name the changed slots and map entries |
-| `inputNotes()` / `outputNotes()` | `InputNotes` / `OutputNotes` | Inspect before signing; `outputNotes()` includes the fee note |
-| `userParams()` | `Felt[]` | Six elements; `signature.masm` puts the final nonce in `[0]`, multisig zeroes them |
+| `inputNotes()` / `outputNotes()` | `InputNotes` / `OutputNotes` | Inspect before signing; `outputNotes()` includes the fee note for a `signature.masm` account, and not for a multisig |
+| `userParams()` | `Felt[]` | Six elements; `signature.masm` puts the final nonce in `[0]`; a multisig puts the approval expiration in `[0]`, the max fee in `[1]` and the salt in the other four |
 | `logs()` | `TransactionLogs` | The logs the transaction emitted, bound by the summary commitment; its `logs()` returns each `TransactionLog` (`emitter()`, `topicPrefix()`, `topicSuffix()`, `content()`) |
 | `serialize()` / `TransactionSummary.deserialize(bytes)` | bytes / `TransactionSummary` | Transport |
 
@@ -413,5 +429,6 @@ Before considering multi-party signing work complete, confirm each of these:
 - [ ] Error handling covers both the property and message-prefix shapes of client
       codes (§3).
 - [ ] No check treats `expirationDelta() === 0` as expired (§4).
-- [ ] A confirmation UI labels the fee note in `summary.outputNotes()` rather than
-      presenting it as one of the user's own (§4).
+- [ ] A confirmation UI labels the fee note in the `summary.outputNotes()` of a
+      single-signature account rather than presenting it as one of the user's own, and
+      shows the max fee of a multisig summary (§4).

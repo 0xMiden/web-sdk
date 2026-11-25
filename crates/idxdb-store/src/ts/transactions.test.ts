@@ -1,7 +1,9 @@
 import { describe, it, expect, afterEach, vi, beforeEach } from "vitest";
 import { openDatabase, getDatabase } from "./schema.js";
 import {
+  getTransactionLogs,
   getTransactions,
+  insertTransactionLogs,
   insertTransactionScript,
   upsertTransactionRecord,
 } from "./transactions.js";
@@ -387,5 +389,83 @@ describe("transactions", () => {
     expect(ids).toEqual(
       expect.arrayContaining(["multi-1", "multi-2", "multi-3"])
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // Transaction logs
+  // -------------------------------------------------------------------------
+
+  async function insertPendingTransaction(dbId: string, id: string) {
+    await upsertTransactionRecord(
+      dbId,
+      id,
+      new Uint8Array([1]),
+      1,
+      0,
+      new Uint8Array([0])
+    );
+  }
+
+  const TOPIC_A = new Uint8Array([
+    1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0,
+  ]);
+  const TOPIC_B = new Uint8Array([
+    3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0,
+  ]);
+  const WORD = new Uint8Array(32).fill(7);
+  const TWO_WORDS = new Uint8Array(64).fill(9);
+
+  it("returns the logs of a transaction in emission order", async () => {
+    const dbId = await openTestDb();
+    await insertPendingTransaction(dbId, "tx-logs");
+
+    await insertTransactionLogs(dbId, "tx-logs", [
+      { emitter: "0xemitter", topic: TOPIC_A, content: WORD },
+      // A log with no content words.
+      { emitter: "0xemitter", topic: TOPIC_B, content: new Uint8Array() },
+      // A duplicate of the first log, which the store must keep.
+      { emitter: "0xemitter", topic: TOPIC_A, content: WORD },
+      { emitter: "0xforeign", topic: TOPIC_A, content: TWO_WORDS },
+    ]);
+
+    expect(await getTransactionLogs(dbId, "tx-logs")).toEqual([
+      {
+        emitter: "0xemitter",
+        topic: toBase64(TOPIC_A),
+        content: toBase64(WORD),
+      },
+      { emitter: "0xemitter", topic: toBase64(TOPIC_B), content: "" },
+      {
+        emitter: "0xemitter",
+        topic: toBase64(TOPIC_A),
+        content: toBase64(WORD),
+      },
+      {
+        emitter: "0xforeign",
+        topic: toBase64(TOPIC_A),
+        content: toBase64(TWO_WORDS),
+      },
+    ]);
+  });
+
+  it("returns undefined for a transaction that the store does not hold", async () => {
+    const dbId = await openTestDb();
+    await insertPendingTransaction(dbId, "tx-known");
+    // Rows without a transaction, as nothing else could tell the two cases apart.
+    await insertTransactionLogs(dbId, "tx-unknown", [
+      { emitter: "0xemitter", topic: TOPIC_A, content: WORD },
+    ]);
+
+    expect(await getTransactionLogs(dbId, "tx-unknown")).toBeUndefined();
+    expect(await getTransactionLogs(dbId, "tx-never-seen")).toBeUndefined();
+  });
+
+  it("rejects when the database was never opened", async () => {
+    await expect(
+      insertTransactionLogs("never-opened-logs", "tx", [])
+    ).rejects.toThrow();
+    await expect(
+      getTransactionLogs("never-opened-logs", "tx")
+    ).rejects.toThrow();
   });
 });

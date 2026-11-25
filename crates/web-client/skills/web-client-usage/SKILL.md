@@ -21,7 +21,7 @@ The SDK exposes a top-level `MidenClient` whose state is split across typed
 | Resource             | What it covers                                                                                                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `client.accounts`    | Wallets, faucets, custom contracts, listing, import/export, addresses                                                                                                          |
-| `client.transactions` | `send` / `mint` / `bridge` / `withdrawUsdcx` / `claimAggLayerDeposit` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `retryProvenBatch` / `preview` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
+| `client.transactions` | `send` / `mint` / `bridge` / `withdrawUsdcx` / `claimAggLayerDeposit` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `retryProvenBatch` / `preview` / `executeRequest` / `submit` / `submitProven` / `list` / `logs` / `waitFor` |
 | `client.notes`       | Listing, fetching, importing/exporting, private-note transport                                                                                                                 |
 | `client.tags`        | Note-tag subscriptions                                                                                                                                                         |
 | `client.settings`    | Persistent client settings                                                                                                                                                     |
@@ -1419,6 +1419,9 @@ change most likely to pass unnoticed.
   record is read back from the store and the fee script root is not exposed to
   JS, so if you read `outputNotes()` on either, account for the extra note
   yourself.
+- The `TransactionSummary` of a multisig has no fee note. A multisig pays the
+  fee after it has checked the signatures, so its summary binds a max fee
+  instead (`summary.userParams()[1]`); see the `multi-party-signing` skill.
 
 `ExecutedTransaction.accountPatch()` and `TransactionStoreUpdate.accountPatch()`
 replaced `accountDelta()` and return the absolute-valued `AccountPatch` /
@@ -1437,6 +1440,63 @@ removed - expiry is now decided during state sync.
 `transactions.list({ expiredBefore })` **throws** rather than silently falling
 back to the unfiltered query. Use `{ status: "uncommitted" }` and compare
 `TransactionRecord.expirationBlockNum()` against the height you care about.
+
+### Reading transaction logs
+
+An account procedure can emit logs while a transaction executes. The client
+stores the logs of every transaction that it applies, so this reads the store
+and does not contact the node.
+
+```typescript
+const logs = await client.transactions.logs(txId); // hex string or TransactionId
+
+if (logs === null) {
+  // The client does not track this transaction.
+} else {
+  for (const log of logs.logs()) {
+    log.emitter(); // AccountId; can be a foreign account
+    log.topicPrefix(); // Felt
+    log.topicSuffix(); // Felt
+    log.content(); // Word[]
+  }
+}
+```
+
+- The result is `null` for a transaction that the client does not track, and an
+  empty collection (`logs.isEmpty()`) for a transaction that emitted no logs.
+  Do not treat `null` and empty as the same case.
+- The logs are in emission order. `logs.commitment()` commits to the logs and
+  to their order. `logs.numLogs()` and `logs.numContentWords()` give the sizes.
+- The logs are stored when the transaction is applied, so they are available
+  before it is committed. The store also keeps the logs of a discarded
+  transaction, which the network did not apply. Check
+  `transactionStatus()` on the record from `transactions.list({ ids: [txId] })`
+  when that matters.
+- `result.executedTransaction().logs()` returns the same collection before the
+  transaction is submitted, and `summary.logs()` returns the logs that a
+  transaction summary binds.
+
+For a transaction that the client does not track, ask the node with the
+stateless `RpcClient`:
+
+```typescript
+const info = await rpc.getTransactionLogs(
+  AccountId.fromHex(accountIdHex),
+  TransactionId.fromHex(txIdHex),
+);
+if (info !== undefined) {
+  info.blockNum(); // number
+  info.transactionIndex(); // number, the position in the block
+  info.logsCommitment(); // Word, set for public and private accounts
+  info.logs(); // TransactionLogs, or undefined for a private account
+}
+```
+
+`getTransactionLogs` resolves to `undefined` when the node has no committed
+transaction with this ID for this account, which includes a pending
+transaction and a transaction of another account. The node holds the logs of a
+public account, and only their commitment for a private account. The result
+relies on trusting the node.
 
 ### Waiting for a transaction
 

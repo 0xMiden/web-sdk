@@ -19,3 +19,15 @@ pub struct TransactionIdxdbObject {
     #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
     pub status: Vec<u8>,
 }
+
+/// A stored transaction log. The topic and the content are base64 strings of their byte
+/// encodings.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionLogIdxdbObject {
+    pub emitter: String,
+    #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
+    pub topic: Vec<u8>,
+    #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
+    pub content: Vec<u8>,
+}

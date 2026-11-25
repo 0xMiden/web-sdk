@@ -703,7 +703,9 @@ export class MidenClient {
    * The summary stays bound to the bound block while foreign accounts, the fee
    * faucet among them, load at the tip, so the request still executes after
    * the node has pruned the bound block's account state (about 50 blocks), and
-   * `transactions.preview` reproduces the proposal's summary at the tip. The
+   * `transactions.preview` reproduces the proposal's summary at the tip while
+   * the fee estimate that the summary binds comes out the same: the auth args
+   * set no max fee, so the auth procedure estimates it on each execution. The
    * builder also declares the bound block through `withBlockNumbers`, which
    * only the height check below reads.
    * Each party's client must first have synced to at least that bound block,

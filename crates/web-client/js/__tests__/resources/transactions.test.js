@@ -1971,6 +1971,42 @@ describe("TransactionsResource", () => {
     });
   });
 
+  describe("logs", () => {
+    it("returns the stored logs of the transaction with the given hex ID", async () => {
+      const storedLogs = { numLogs: () => 2 };
+      const { resource, inner, wasm } = makeResource({
+        getTransactionLogs: vi.fn().mockResolvedValue(storedLogs),
+      });
+
+      const result = await resource.logs("0xtx");
+
+      expect(result).toBe(storedLogs);
+      expect(wasm.TransactionId.fromHex).toHaveBeenCalledWith("0xtx");
+      expect(inner.getTransactionLogs).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xtx" })
+      );
+    });
+
+    it("returns null for a transaction that the client does not track", async () => {
+      // The browser binding resolves to undefined and the Node.js binding to null.
+      for (const missing of [undefined, null]) {
+        const { resource } = makeResource({
+          getTransactionLogs: vi.fn().mockResolvedValue(missing),
+        });
+        expect(await resource.logs("0xunknown")).toBeNull();
+      }
+    });
+
+    it("rejects a missing transaction ID before it reads the store", async () => {
+      const getTransactionLogs = vi.fn();
+      const { resource } = makeResource({ getTransactionLogs });
+      await expect(resource.logs(undefined)).rejects.toThrow(
+        /Transaction ID cannot be null or undefined/
+      );
+      expect(getTransactionLogs).not.toHaveBeenCalled();
+    });
+  });
+
   describe("waitFor", () => {
     it("uses default 60s timeout when opts.timeout is not provided", async () => {
       const committedStatus = {

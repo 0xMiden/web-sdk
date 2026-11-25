@@ -23,6 +23,25 @@ const V6_STORES: Record<string, string> = {
   accountWitnesses: "&accountId",
 };
 
+// The schema the version chain reaches at v17: the indexes of v11 and v12, and the settings and
+// the blockchain checkpoint moved to the tables that v13 and v15 add.
+const V17_STORES: Record<string, string> = Object.fromEntries(
+  Object.entries({
+    ...V6_STORES,
+    inputNotes:
+      "detailsCommitment,noteId,nullifier,scriptRoot,stateDiscriminant,[consumerAccountId+consumedBlockHeight+consumedTxOrder+detailsCommitment],[stateDiscriminant+nullifier]",
+    latestAccountHeaders: "&id,accountCommitment,codeRoot",
+    historicalAccountHeaders:
+      "&accountCommitment,id,[id+replacedAtNonce],codeRoot",
+    foreignAccountCode: "accountId,codeRoot",
+    tags: "id++,tag,sourceNoteId,sourceAccountId,[tag+sourceNoteId+sourceAccountId]",
+    clientConfig: "key",
+    userSettings: "key",
+    pswapLineages: "orderId,creatorAccountId,[state+currentTipNoteId]",
+    chainAnchors: "blockNum",
+  }).filter(([name]) => name !== "settings" && name !== "blockchainCheckpoint")
+);
+
 // Track DBs for cleanup.
 const openDbs: Dexie[] = [];
 
@@ -680,6 +699,57 @@ describe("MidenDatabase migrations", () => {
     expect(seen.historicalAccountHeaders).toBe(1);
     expect(seen.foreignAccountCode).toBe(1);
     expect(seen.tags).toEqual([1, 2]);
+  });
+
+  // v18: the transaction logs table. A v17 store has run the protocol 1.0 cutover, so the
+  // upgrade must keep its rows. A transaction from before the table has no log rows.
+  it("v18 migration adds transactionLogs and keeps the rows of a v17 store", async () => {
+    const name = uniqueDbName();
+    const transaction = {
+      id: "0xtx",
+      details: new Uint8Array([1]),
+      blockNum: 1,
+      statusVariant: 0,
+      status: new Uint8Array([2]),
+    };
+
+    const dbV17 = trackDb(new Dexie(name));
+    dbV17.version(17).stores(V17_STORES);
+    await dbV17.open();
+    expect(dbV17.tables.map((table) => table.name)).not.toContain(
+      "transactionLogs"
+    );
+    await dbV17.table("transactions").put(transaction);
+    dbV17.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    await mdb.dexie.open();
+
+    expect(await mdb.transactions.toArray()).toEqual([transaction]);
+    expect(await mdb.transactionLogs.count()).toBe(0);
+
+    await mdb.transactionLogs.bulkPut([
+      {
+        transactionId: "0xtx",
+        logIndex: 1,
+        emitter: "0xacc",
+        topic: "topic-b",
+        content: new Uint8Array([3]),
+      },
+      {
+        transactionId: "0xtx",
+        logIndex: 0,
+        emitter: "0xacc",
+        topic: "topic-a",
+        content: new Uint8Array(),
+      },
+    ]);
+    expect(
+      (await mdb.transactionLogs.toArray()).map((row) => row.logIndex)
+    ).toEqual([0, 1]);
+    expect(
+      await mdb.transactionLogs.where("topic").equals("topic-b").count()
+    ).toBe(1);
   });
 });
 
