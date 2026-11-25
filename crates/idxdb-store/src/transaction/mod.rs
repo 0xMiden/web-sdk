@@ -3,7 +3,6 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use miden_client::Word;
-use miden_client::account::StorageSlotContent;
 use miden_client::store::{StoreError, TransactionFilter};
 use miden_client::sync::NoteTagSource;
 use miden_client::transaction::{
@@ -15,17 +14,13 @@ use miden_client::transaction::{
     TransactionStoreUpdate,
 };
 use miden_client::utils::Serializable;
-use miden_client_proto::{decode_unchecked, encode};
+use miden_client_proto::decode_unchecked;
 use serde::Serialize;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::js_sys;
 
 use super::IdxdbStore;
-use super::account::utils::{
-    build_account_patch_payload,
-    creation_account_from_patch,
-    patch_code_bytes,
-};
+use super::account::utils::{creation_account_from_patch, patch_code_bytes};
 use super::account::{JsStorageMapEntry, JsStorageSlot, JsVaultAsset};
 use super::note::utils::{
     SerializedInputNoteData,
@@ -34,6 +29,7 @@ use super::note::utils::{
     serialize_output_note,
 };
 use crate::promise::await_js;
+use crate::sync::JsAccountUpdate;
 
 mod js_bindings;
 use js_bindings::{idxdb_apply_transaction_batch, idxdb_get_transactions};
@@ -225,7 +221,6 @@ impl IdxdbStore {
 
     /// Pre-computes all SMT work for a single update and builds the serializable payload
     /// for the batch JS call. Mirrors `apply_transaction` but without the JS writes.
-    #[allow(clippy::too_many_lines)]
     fn prepare_update_for_batch(
         &self,
         update: &TransactionStoreUpdate,
@@ -245,47 +240,29 @@ impl IdxdbStore {
         {
             self.smt_forest.write().rebuild_account(&account)?;
 
-            let storage_slots: Vec<JsStorageSlot> =
-                account.storage().slots().iter().map(JsStorageSlot::from_slot).collect();
-
-            let storage_map_entries: Vec<JsStorageMapEntry> = account
-                .storage()
-                .slots()
-                .iter()
-                .filter_map(|slot| match slot.content() {
-                    StorageSlotContent::Map(map) => {
-                        Some(JsStorageMapEntry::from_map(map, &slot.name().to_string()))
-                    },
-                    StorageSlotContent::Value(_) => None,
-                })
-                .flatten()
-                .collect();
-
-            let assets: Vec<JsVaultAsset> =
-                account.vault().assets().map(|a| JsVaultAsset::from_asset(&a)).collect();
+            // The same full-account shape the sync path writes, seed included.
+            let update = JsAccountUpdate::from_account(&account, account.seed());
 
             BatchAccountState::Full {
                 account: BatchFullAccountState {
-                    account_id: account.id().to_string(),
-                    nonce: account.nonce().to_string(),
-                    storage_slots,
-                    storage_map_entries,
-                    assets,
-                    code_root: account.code().commitment().to_string(),
-                    storage_root: account.storage().to_commitment().to_string(),
-                    vault_root: account.vault().root().to_string(),
-                    committed: account.is_public(),
-                    account_commitment: account.to_commitment().to_string(),
-                    account_seed: account.seed().map(|seed| seed.to_bytes()),
-                    code: encode(account.code()),
+                    account_id: update.account_id,
+                    nonce: update.nonce,
+                    storage_slots: update.storage_slots,
+                    storage_map_entries: update.storage_map_entries,
+                    assets: update.assets,
+                    code_root: update.code_root,
+                    storage_root: update.storage_root,
+                    vault_root: update.vault_root,
+                    committed: update.committed,
+                    account_commitment: update.account_commitment,
+                    account_seed: update.account_seed,
+                    code: update.code,
                 },
             }
         } else {
             let code = patch_code_bytes(patch, final_header)?;
-            let new_map_roots = self.apply_patch_to_forest(final_header, patch)?;
-
             let (js_slots, js_map_entries, js_assets) =
-                build_account_patch_payload(&new_map_roots, patch);
+                self.prepare_patch_write(final_header, patch)?;
 
             BatchAccountState::Delta {
                 account_id: account_id.to_string(),
