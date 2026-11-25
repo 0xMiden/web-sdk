@@ -24,7 +24,7 @@ use crate::models::library::Library;
 use crate::models::note_script::NoteScript;
 use crate::models::transaction_script::TransactionScript;
 use crate::platform::{JsErr, from_str_err_with_code};
-use crate::{MASM_COMPILE_FAILED, js_compile_error};
+use crate::{MASM_COMPILE_FAILED, js_compile_error, js_error_with_context};
 
 /// Utility for linking libraries and compiling transaction/note scripts.
 #[derive(Clone)]
@@ -165,7 +165,7 @@ impl CodeBuilder {
         source_code: String,
     ) -> Result<Library, JsErr> {
         let library_path = Path::validate(&library_path).map_err(|e| {
-            js_compile_error(
+            js_error_with_context(
                 e,
                 &format!("script builder: failed to build library -- invalid path {library_path}"),
             )
@@ -215,7 +215,7 @@ impl CodeBuilder {
         account_code: String,
     ) -> Result<AccountComponentCode, JsErr> {
         let component_path = Path::validate(&component_path)
-            .map_err(|err| js_compile_error(err, "invalid account component module path"))?;
+            .map_err(|err| js_error_with_context(err, "invalid account component module path"))?;
         let native_code: NativeAccountComponentCode = self
             .builder
             .clone()
