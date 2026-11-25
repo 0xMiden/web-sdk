@@ -53,11 +53,11 @@ poll loop declaratively on mount and whenever watched inputs change.
 
 | Field | Type | Description |
 |---|---|---|
-| `accountId` | `AccountRef` | Account ID (hex string, Bech32, `AccountId`, or `AccountHeader`) to watch. Optional if supplied to `useWaitForAccountUpdate(accountId, options)`. |
-| `baselineCommitment` | `string \| Word` | Known account commitment hex or `Word` to compare against when `slot` is omitted. If omitted, the first non-null polled snapshot becomes the baseline. |
+| `accountId` | `AccountRef` | Account ID (hex string, Bech32, `AccountId`, `Account`, or `AccountHeader`) to watch. Optional if supplied to `useWaitForAccountUpdate(accountId, options)`. |
+| `baselineCommitment` | `string \| Word` | Known commitment hex or `Word` to compare against `account.to_commitment()` when `slot` is omitted, or against the slot commitment / map entry when `slot` is set and `baselineValue` is omitted. If omitted, the first non-null polled snapshot becomes the baseline. |
 | `slot` | `string` | Optional storage slot name to watch instead of the overall account commitment. |
 | `mapKey` | `string \| Word` | Optional map key (hex `Word` or `Word` instance) within `slot` to watch a specific storage map entry. Requires `slot`. |
-| `baselineValue` | `string \| Word \| bigint \| null` | Known baseline value for `slot` or `mapKey`. Pass `null` when watching for a new map entry to appear. |
+| `baselineValue` | `string \| Word \| bigint \| null` | Known baseline value for `slot` or `mapKey` (applies only when `slot` is set, taking precedence over `baselineCommitment`). Pass `null` when watching for a new map entry to appear. |
 | `timeoutMs` | `number` | Maximum time to wait before rejecting with a timeout error. Default: `10000`. |
 | `intervalMs` | `number` | Poll interval in milliseconds between sync checks. Default: `1000`. |
 | `enabled` | `boolean` | Hook-level option (`UseWaitForAccountUpdateOptions`) that starts polling automatically when truthy. Default: `false`. |
@@ -68,4 +68,4 @@ poll loop declaratively on mount and whenever watched inputs change.
 - Calling `unsubscribe()` rejects the in-flight `waitForAccountUpdate` promise, clears any pending timer, and stops polling.
 - Calling `reset()` rejects any in-flight `waitForAccountUpdate` promise, stops polling, clears pending timers, and resets `account`, `error`, and `isWaiting`.
 - Component unmount stops polling and clears timers cleanly without leaving background `syncState()` calls or rejecting unawaited promises.
-- Calling `waitForAccountUpdate()` while another wait from the same hook instance is active supersedes the previous wait.
+- Calling `waitForAccountUpdate()` while another wait from the same hook instance is active supersedes and rejects the previous wait.

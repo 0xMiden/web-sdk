@@ -52,8 +52,8 @@ export interface UseWaitForAccountUpdateResult {
   /** Error from the most recent wait, or `null`. */
   error: Error | null;
   /**
-   * Cancel any active wait, reset `account` and `error` state, and reject
-   * an in-flight `waitForAccountUpdate` promise.
+   * Cancel any active wait, reset `account`, `error`, and `isWaiting` state,
+   * and reject an in-flight `waitForAccountUpdate` promise.
    */
   reset: () => void;
 }
@@ -66,8 +66,9 @@ export interface UseWaitForAccountUpdateResult {
  * Polls `syncState()` and `getAccount()` inside `runExclusive`, comparing
  * `account.to_commitment()` (or `account.storage()` for a `slot` / `mapKey`)
  * against the provided baseline or the initial polled snapshot. Rejects at
- * `timeoutMs` or on `unsubscribe()`, and stops polling with zero leaked timers
- * on component unmount.
+ * `timeoutMs`, on `unsubscribe()` or `reset()`, when superseded by another
+ * wait, or with `STALE_CLIENT` if the client changes, and silently stops
+ * polling with zero leaked timers on component unmount.
  *
  * @example
  * ```tsx
