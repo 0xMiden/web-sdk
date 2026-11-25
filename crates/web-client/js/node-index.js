@@ -208,6 +208,9 @@ export const BasicFungibleFaucetComponent = /* @__PURE__ */ _reexport(
 );
 export const BatchItem = /* @__PURE__ */ _reexport("BatchItem");
 export const BlockHeader = /* @__PURE__ */ _reexport("BlockHeader");
+export const BlockHeaderWithProof = /* @__PURE__ */ _reexport(
+  "BlockHeaderWithProof"
+);
 export const BlockProducerStatusInfo = /* @__PURE__ */ _reexport(
   "BlockProducerStatusInfo"
 );
@@ -250,6 +253,7 @@ export const Library = /* @__PURE__ */ _reexport("Library");
 export const MempoolStatsInfo = /* @__PURE__ */ _reexport("MempoolStatsInfo");
 export const MerklePath = /* @__PURE__ */ _reexport("MerklePath");
 export const MintNote = /* @__PURE__ */ _reexport("MintNote");
+export const MmrProof = /* @__PURE__ */ _reexport("MmrProof");
 export const NetworkAccountTarget = /* @__PURE__ */ _reexport(
   "NetworkAccountTarget"
 );
