@@ -2648,7 +2648,12 @@ export declare function domainSeparatedSignCommitment(
   kind: "word" | "signingInputs"
 ): Word;
 
-/** Exports the entire contents of an IndexedDB store as a JSON string. */
+/**
+ * Exports the entire contents of an IndexedDB store as a JSON string.
+ *
+ * @deprecated Create the client with the right `storeName` and manage store instances, or export
+ * only the state you need through the typed APIs (`accounts.export`, `notes.export`).
+ */
 export declare function exportStore(storeName: string): Promise<string>;
 
 /**
@@ -2657,6 +2662,9 @@ export declare function exportStore(storeName: string): Promise<string>;
  * Rejects, leaving the store unchanged, a dump the store could not have kept: one with no client
  * version stamp, or stamped by a client older than 0.17.0 (its data belongs to networks that no
  * longer exist) or newer than this one (upgrade the SDK to import it).
+ *
+ * @deprecated Create the client with the right `storeName` and manage store instances, or restore
+ * only the state you need through the typed APIs (`accounts.import`, `notes.import`).
  */
 export declare function importStore(
   storeName: string,
