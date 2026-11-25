@@ -53,26 +53,19 @@ test.describe("wasm-bindgen wrapper classes — safe JSON.stringify contract (re
   test("no exported wrapper class re-enters WASM under JSON.stringify with __wbg_ptr = 0", async ({
     page,
   }) => {
-    const result = await page.evaluate(() => {
-      // Snapshot every export on `window` placed there by the global
-      // setup's `Object.entries(sdkExports)` copy.
+    const result = await page.evaluate(async (entry) => {
+      const sdkExports = await import(entry);
       const candidates: { name: string; ctor: Function }[] = [];
-      for (const [name, value] of Object.entries(
-        window as unknown as Record<string, unknown>
-      )) {
+      for (const [name, value] of Object.entries(sdkExports)) {
         if (typeof value !== "function") continue;
         const ctor = value as unknown as {
-          __wrap?: unknown;
           prototype?: { __destroy_into_raw?: unknown };
         };
-        // Standard wasm-bindgen wrapper signature: static `__wrap` to
-        // construct from a pointer, and `__destroy_into_raw` on the
-        // prototype to release it. Anything matching both is a
-        // pointer-backed wrapper and must satisfy the JSON-safe
-        // contract. Enums, plain helpers, hand-written JS classes,
-        // and TS-side facades are correctly filtered out.
-        if (typeof ctor.__wrap !== "function") continue;
+        // Constructor-only bindings such as WebClient also own WASM pointers
+        // but have no __wrap helper. Their destructor identifies them.
         if (typeof ctor.prototype?.__destroy_into_raw !== "function") continue;
+        // 0.18.x keeps the published toJSON/toString of StorageMapEntry.
+        if (name === "StorageMapEntry") continue;
         candidates.push({ name, ctor: value as Function });
       }
 
@@ -133,19 +126,17 @@ test.describe("wasm-bindgen wrapper classes — safe JSON.stringify contract (re
         mustHaveMissing: mustHave.filter((n) => !presentMustHave.includes(n)),
         offenders,
       };
-    });
+    }, "./index.js");
 
     expect(
       result.mustHaveMissing,
       `Lost SDK exports the test relies on: ${result.mustHaveMissing.join(", ")}. ` +
-        `Either the SDK no longer exports these (update the list) or the global ` +
-        `setup is no longer copying exports onto window.`
+        `Check the browser entry's WASM bindings.`
     ).toEqual([]);
 
     expect(
       result.totalCandidates,
-      "Expected dozens of wasm-bindgen wrapper classes on window; got too few. " +
-        "Did the global setup stop attaching SDK exports?"
+      "Expected dozens of wasm-bindgen wrapper classes in the browser entry."
     ).toBeGreaterThan(20);
 
     expect(
