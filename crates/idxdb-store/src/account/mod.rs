@@ -89,6 +89,34 @@ use utils::{
     patch_code_bytes,
 };
 
+/// The account components one snapshot read loads alongside the header.
+#[derive(Clone, Copy)]
+enum SnapshotParts {
+    /// Code, storage with its maps, and the vault.
+    Full,
+    /// Code and storage slot headers only.
+    Minimal,
+    /// The vault assets only.
+    Vault,
+    /// The account code only.
+    Code,
+    /// Storage slots and their maps.
+    Storage,
+}
+
+impl SnapshotParts {
+    /// Returns `(code, storage, maps, assets)` in the order the JS snapshot reader takes them.
+    fn flags(self) -> (bool, bool, bool, bool) {
+        match self {
+            Self::Full => (true, true, true, true),
+            Self::Minimal => (true, true, false, false),
+            Self::Vault => (false, false, false, true),
+            Self::Code => (true, false, false, false),
+            Self::Storage => (false, true, true, false),
+        }
+    }
+}
+
 impl IdxdbStore {
     pub(super) async fn get_account_ids(&self) -> Result<Vec<AccountId>, StoreError> {
         let promise = idxdb_get_account_ids(self.db_id());
@@ -183,7 +211,7 @@ impl IdxdbStore {
         &self,
         account_id: AccountId,
     ) -> Result<Option<AccountRecord>, StoreError> {
-        let Some(snapshot) = self.get_account_snapshot(account_id, true, true, true, true).await?
+        let Some(snapshot) = self.get_account_snapshot(account_id, SnapshotParts::Full).await?
         else {
             return Ok(None);
         };
@@ -212,11 +240,9 @@ impl IdxdbStore {
     async fn get_account_snapshot(
         &self,
         account_id: AccountId,
-        code: bool,
-        storage: bool,
-        maps: bool,
-        assets: bool,
+        parts: SnapshotParts,
     ) -> Result<Option<AccountSnapshotIdxdbObject>, StoreError> {
+        let (code, storage, maps, assets) = parts.flags();
         await_js(
             idxdb_get_account_snapshot(
                 self.db_id(),
@@ -270,8 +296,7 @@ impl IdxdbStore {
         &self,
         account_id: AccountId,
     ) -> Result<Option<AccountRecord>, StoreError> {
-        let Some(snapshot) =
-            self.get_account_snapshot(account_id, true, true, false, false).await?
+        let Some(snapshot) = self.get_account_snapshot(account_id, SnapshotParts::Minimal).await?
         else {
             return Ok(None);
         };
@@ -501,7 +526,7 @@ impl IdxdbStore {
         account_id: AccountId,
     ) -> Result<AssetVault, StoreError> {
         let snapshot = self
-            .get_account_snapshot(account_id, false, false, false, true)
+            .get_account_snapshot(account_id, SnapshotParts::Vault)
             .await?
             .ok_or(StoreError::AccountDataNotFound(account_id))?;
 
@@ -513,8 +538,7 @@ impl IdxdbStore {
         &self,
         account_id: AccountId,
     ) -> Result<Option<AccountCode>, StoreError> {
-        let Some(snapshot) =
-            self.get_account_snapshot(account_id, true, false, false, false).await?
+        let Some(snapshot) = self.get_account_snapshot(account_id, SnapshotParts::Code).await?
         else {
             return Ok(None);
         };
@@ -530,7 +554,7 @@ impl IdxdbStore {
         filter: AccountStorageFilter,
     ) -> Result<AccountStorage, StoreError> {
         let snapshot = self
-            .get_account_snapshot(account_id, false, true, true, false)
+            .get_account_snapshot(account_id, SnapshotParts::Storage)
             .await?
             .ok_or(StoreError::AccountDataNotFound(account_id))?;
         let account_storage_idxdb = snapshot.storage;
