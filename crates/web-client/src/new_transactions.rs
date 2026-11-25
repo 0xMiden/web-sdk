@@ -1180,7 +1180,7 @@ fn js_batch_submit_error(err: ClientError, context: &str) -> JsErr {
                 Reflect::set(&js_error, &JsValue::from_str("submission"), &JsValue::from(wrapped));
             let _ = Reflect::set(&js_error, &JsValue::from_str("transactionIds"), &ids_js.into());
         }
-        return js_error;
+        js_error
     }
 
     #[cfg(feature = "nodejs")]

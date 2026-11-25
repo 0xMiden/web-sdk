@@ -1885,11 +1885,13 @@ describe("TransactionsResource", () => {
         "submitBatch",
         // Never execute a transaction against a reference block, so there is
         // no tip for an ignored anchor to silently fall back to: executeProgram
-        // runs a program, submitProven submits an already-proven result, and
+        // runs a program, submitProven submits an already-proven result,
+        // retryProvenBatch resends a proven batch without executing, and
         // list and waitFor do not execute anything. None takes an options bag
         // an anchor could hide in, except waitFor, whose opts is a timeout.
         "executeProgram",
         "submitProven",
+        "retryProvenBatch",
         "list",
         "waitFor",
         // Receives the request directly and has no options bag.
