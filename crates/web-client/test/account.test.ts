@@ -1388,7 +1388,7 @@ test.describe("Account.applyPatch tests", () => {
         return { message: String(e?.message ?? e) };
       }
     });
-    expect(result.message).toMatch(/not greater than/);
+    expect(result.message).toMatch(/not strictly greater than/);
   });
 
   test("rejects a patch whose nonce is below the account's", async ({
@@ -1427,6 +1427,6 @@ test.describe("Account.applyPatch tests", () => {
         return { message: String(e?.message ?? e) };
       }
     });
-    expect(result.message).toMatch(/not greater than/);
+    expect(result.message).toMatch(/not strictly greater than/);
   });
 });
