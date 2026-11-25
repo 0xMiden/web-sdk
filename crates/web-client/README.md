@@ -485,6 +485,10 @@ console.log(`Balance: ${balance}`); // 900n
 client.terminate();
 ```
 
+### Transaction cycle counts
+
+`ExecutedTransaction.measurements()` reports the VM cycles of each execution phase (`prologue`, `notesProcessing`, `noteExecution`, `txScriptProcessing`, `epilogue`, `authProcedure` and `totalCycles`). See the [transactions guide](https://docs.miden.xyz/builder/tools/clients/web-client/) for details.
+
 ### Stateless RPC queries and submission
 
 Use `RpcClient` when your application keeps its own state or submits

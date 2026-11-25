@@ -281,6 +281,9 @@ export const NoteDetailsAndTag = /* @__PURE__ */ _reexport("NoteDetailsAndTag");
 export const NoteDetailsAndTagArray = /* @__PURE__ */ _reexport(
   "NoteDetailsAndTagArray"
 );
+export const NoteExecutionCycles = /* @__PURE__ */ _reexport(
+  "NoteExecutionCycles"
+);
 export const NoteExecutionHint = /* @__PURE__ */ _reexport("NoteExecutionHint");
 export const NoteExportFormat = /* @__PURE__ */ _reexport("NoteExportFormat");
 export const NoteFile = /* @__PURE__ */ _reexport("NoteFile");
@@ -372,6 +375,9 @@ export const TransactionEncryptionKey = /* @__PURE__ */ _reexport(
 export const TransactionFilter = /* @__PURE__ */ _reexport("TransactionFilter");
 export const TransactionId = /* @__PURE__ */ _reexport("TransactionId");
 export const TransactionInputs = /* @__PURE__ */ _reexport("TransactionInputs");
+export const TransactionMeasurements = /* @__PURE__ */ _reexport(
+  "TransactionMeasurements"
+);
 export const TransactionProver = /* @__PURE__ */ _reexport("TransactionProver");
 export const TransactionRecord = /* @__PURE__ */ _reexport("TransactionRecord");
 export const TransactionRequest =
