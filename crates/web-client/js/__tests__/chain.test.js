@@ -243,4 +243,31 @@ describe("MidenClient.chain hygiene", () => {
     }
     expect(wasm.RpcClient).not.toHaveBeenCalled();
   });
+
+  it.each([[-1], [1.5], [Number.NaN], [2 ** 32], ["1"]])(
+    "rejects the invalid block number %j before any RPC call",
+    async (bad) => {
+      const { client, rpc, wasm } = makeClient();
+      for (const call of [
+        () => client.chain.getBlockHeader(bad),
+        () => client.chain.getBlockHeaderWithProof(bad),
+        () =>
+          client.chain.getNullifierCommitHeights(["0xaa"], { blockFrom: bad }),
+        () => client.chain.syncNullifiers([1], bad, 1),
+        () => client.chain.syncNullifiers([1], 0, bad),
+      ]) {
+        await expect(call()).rejects.toThrow(RangeError);
+      }
+      expect(wasm.RpcClient).not.toHaveBeenCalled();
+      expect(rpc.getBlockHeaderByNumber).not.toHaveBeenCalled();
+    }
+  );
+
+  it("accepts the latest block and the u32 bounds", async () => {
+    const { client, rpc } = makeClient();
+    await client.chain.getBlockHeader();
+    await client.chain.getBlockHeader(0);
+    await client.chain.getBlockHeader(2 ** 32 - 1);
+    expect(rpc.getBlockHeaderByNumber).toHaveBeenCalledTimes(3);
+  });
 });
