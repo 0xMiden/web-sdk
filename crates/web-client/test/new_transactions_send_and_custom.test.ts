@@ -110,6 +110,43 @@ test.describe("send transaction tests", () => {
 // =======================================================================================================
 
 test.describe("custom transaction tests", () => {
+  test("exposes a custom MASM assertion as a browser diagnostic", async ({
+    run,
+  }, testInfo) => {
+    test.skip(testInfo.project.name === "nodejs", "browser error properties");
+
+    const failure = await run(async ({ client, sdk }) => {
+      const wallet = await client.newWallet(
+        sdk.AccountStorageMode.private(),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const builder = await client.createCodeBuilder();
+      const script = builder.compileTxScript(`
+        @transaction_script
+        pub proc main
+          push.0
+          assert.err="custom transaction assertion"
+        end
+      `);
+      const request = new sdk.TransactionRequestBuilder()
+        .withCustomScript(script)
+        .build();
+
+      try {
+        await client.executeTransaction(wallet.id(), request);
+      } catch (error) {
+        return { message: error.message, masm: error.masm };
+      }
+      return null;
+    });
+
+    expect(failure?.message).toContain("custom transaction assertion");
+    expect(failure?.masm).toMatchObject({
+      errorCode: expect.stringMatching(/^\d+$/),
+      assertionMessage: "custom transaction assertion",
+    });
+  });
+
   test("custom transaction completes successfully", async ({ run }) => {
     const result = await run(async ({ client, sdk }) => {
       const wallet = await client.newWallet(
