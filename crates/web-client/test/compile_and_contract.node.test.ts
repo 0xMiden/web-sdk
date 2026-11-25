@@ -969,6 +969,32 @@ test.describe("MASM error codes", () => {
     );
   });
 
+  test("compile.component() rejects an invalid source library with a MASM_COMPILE_FAILED prefix", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+
+    let message = null;
+    try {
+      await client.compile.component({
+        code: "pub proc noop push.1 drop end",
+        libraries: [
+          {
+            namespace: "external_contract::broken",
+            code: "pub proc broken not_an_instruction end",
+          },
+        ],
+      });
+    } catch (e: any) {
+      message = e.message ?? String(e);
+    }
+
+    expect(message).not.toBeNull();
+    expect(message).toMatch(/^MASM_COMPILE_FAILED: /);
+  });
+
   test("a failing assertion rejects with a TRANSACTION_EXECUTION_FAILED prefix and its cause", async ({
     sdk,
   }) => {

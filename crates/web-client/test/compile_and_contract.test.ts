@@ -1055,6 +1055,31 @@ test.describe("MASM error codes", () => {
     expect(result.message).toContain("failed to compile transaction script");
   });
 
+  test("compile.component() rejects an invalid source library with code MASM_COMPILE_FAILED", async ({
+    page,
+  }) => {
+    const result = await page.evaluate(async () => {
+      const client = await window.MidenClient.createMock();
+      try {
+        await client.compile.component({
+          code: "pub proc noop push.1 drop end",
+          libraries: [
+            {
+              namespace: "external_contract::broken",
+              code: "pub proc broken not_an_instruction end",
+            },
+          ],
+        });
+        return null;
+      } catch (e: any) {
+        return { code: e.code ?? null, message: e.message ?? String(e) };
+      }
+    });
+
+    expect(result).not.toBeNull();
+    expect(result.code).toBe("MASM_COMPILE_FAILED");
+  });
+
   test("a failing assertion rejects with code TRANSACTION_EXECUTION_FAILED and its cause", async ({
     page,
   }) => {
