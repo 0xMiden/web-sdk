@@ -3,6 +3,7 @@ import { openDatabase, getDatabase } from "./schema.js";
 import {
   getForestsWithDebugInfo,
   getProcedure,
+  getProcedureRoots,
   insertProceduresWithDebugInfo,
   type CodeForestInput,
 } from "./code.js";
@@ -135,11 +136,28 @@ describe("code registry", () => {
     );
   });
 
+  it("returns every registered procedure root once", async () => {
+    const dbId = await openTestDb();
+    expect(await getProcedureRoots(dbId)).toEqual([]);
+
+    await insertProceduresWithDebugInfo(dbId, [
+      forest("0xf1", ["0xa", "0xb"], 1),
+      forest("0xf2", ["0xb", "0xc"], 2),
+    ]);
+
+    expect((await getProcedureRoots(dbId))?.sort()).toEqual([
+      "0xa",
+      "0xb",
+      "0xc",
+    ]);
+  });
+
   it("rethrows errors of an unknown database", async () => {
     await expect(getForestsWithDebugInfo("missing-db", [])).rejects.toThrow();
     await expect(
       insertProceduresWithDebugInfo("missing-db", [])
     ).rejects.toThrow();
     await expect(getProcedure("missing-db", "0xa")).rejects.toThrow();
+    await expect(getProcedureRoots("missing-db")).rejects.toThrow();
   });
 });

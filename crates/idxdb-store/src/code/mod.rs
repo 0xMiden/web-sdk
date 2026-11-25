@@ -1,5 +1,8 @@
 //! The code registry: the MAST forests that the store knows, with their debug info, and the
 //! procedure roots of each forest.
+//!
+//! The procedure roots are the leaves of the code tree. The store keeps only the leaves and builds
+//! the tree in memory when its root or a witness is read.
 
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
@@ -7,10 +10,11 @@ use alloc::vec::Vec;
 
 use miden_client::store::StoreError;
 use miden_processor::LoadedMastForest;
-use miden_protocol::MastForest;
+use miden_protocol::block::code_tree::{CodeTree, CodeTreeRoot, CodeWitness};
 use miden_protocol::code::ProcedureRoot;
 use miden_protocol::utils::serde::{Deserializable, Serializable};
 use miden_protocol::vm::{Package, PackageDebugInfo};
+use miden_protocol::{MastForest, Word};
 
 mod js_bindings;
 mod models;
@@ -18,6 +22,7 @@ mod models;
 use js_bindings::{
     idxdb_get_forests_with_debug_info,
     idxdb_get_procedure,
+    idxdb_get_procedure_roots,
     idxdb_insert_procedures_with_debug_info,
 };
 use models::{CodeForestIdxdbInput, CodeForestIdxdbObject};
@@ -101,5 +106,35 @@ impl IdxdbStore {
             .map(|bytes| PackageDebugInfo::read_from_bytes(&bytes))
             .transpose()?;
         Ok(Some(LoadedMastForest::with_package_debug_info(mast, Ok(debug_info))))
+    }
+
+    /// Returns a witness that proves the presence or absence of the procedure in the code tree.
+    pub(crate) async fn get_procedure_witness(
+        &self,
+        procedure_root: ProcedureRoot,
+    ) -> Result<CodeWitness, StoreError> {
+        Ok(self.code_tree().await?.open(&procedure_root))
+    }
+
+    /// Returns the root of the code tree.
+    pub(crate) async fn get_code_tree_root(&self) -> Result<CodeTreeRoot, StoreError> {
+        Ok(self.code_tree().await?.root())
+    }
+
+    // HELPERS
+    // --------------------------------------------------------------------------------------------
+
+    /// Builds the code tree from the procedure roots of the code registry.
+    async fn code_tree(&self) -> Result<CodeTree, StoreError> {
+        let promise = idxdb_get_procedure_roots(self.db_id());
+        let procedure_roots: Vec<String> =
+            await_js(promise, "failed to get code registry procedure roots").await?;
+        let procedure_roots = procedure_roots
+            .iter()
+            .map(|root| Ok(ProcedureRoot::from_raw(Word::try_from(root.as_str())?)))
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        CodeTree::with_entries(procedure_roots).map_err(|err| {
+            StoreError::DatabaseError(format!("failed to build the code tree: {err}"))
+        })
     }
 }

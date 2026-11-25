@@ -13,6 +13,9 @@ extern "C" {
         commitments: Vec<String>,
     ) -> js_sys::Promise;
 
+    #[wasm_bindgen(js_name = getProcedureRoots)]
+    pub fn idxdb_get_procedure_roots(db_id: &str) -> js_sys::Promise;
+
     #[wasm_bindgen(js_name = insertProceduresWithDebugInfo)]
     pub fn idxdb_insert_procedures_with_debug_info(
         db_id: &str,

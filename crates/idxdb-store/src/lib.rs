@@ -67,6 +67,7 @@ use miden_client_core::store::{
     PartialBlockchainFilter,
 };
 use miden_processor::LoadedMastForest;
+use miden_protocol::block::code_tree::{CodeTreeRoot, CodeWitness};
 use miden_protocol::code::ProcedureRoot;
 use miden_protocol::vm::Package;
 use serde::de::Error;
@@ -572,6 +573,17 @@ impl Store for IdxdbStore {
         procedure_root: ProcedureRoot,
     ) -> Result<Option<LoadedMastForest>, StoreError> {
         self.get_procedure(procedure_root).await
+    }
+
+    async fn get_procedure_witness(
+        &self,
+        procedure_root: ProcedureRoot,
+    ) -> Result<CodeWitness, StoreError> {
+        self.get_procedure_witness(procedure_root).await
+    }
+
+    async fn get_code_tree_root(&self) -> Result<CodeTreeRoot, StoreError> {
+        self.get_code_tree_root().await
     }
 
     // RPC LIMITS
