@@ -847,7 +847,7 @@ export interface WithdrawUsdcxOptions extends TransactionOptions {
    * `2 ** 53 - 1`.
    */
   amount: number | bigint;
-  /** Circle domain of the destination chain (for example 6 for Arbitrum). */
+  /** Circle domain ID as an integer from 0 to 4294967295, inclusive. */
   destinationDomain: number;
   /**
    * Destination recipient as Circle's 32-byte form, 0x-prefixed hex (64 hex

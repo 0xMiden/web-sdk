@@ -24,6 +24,7 @@
 * [FIX][docs] Added `crates/js-export-macro/README.md` and configured `readme = "README.md"` in `crates/js-export-macro/Cargo.toml` so the published `js-export-macro` crate includes documentation on crates.io ([#191](https://github.com/0xMiden/web-sdk/issues/191)).
 * [FIX][idxdb] A sync now commits account locks, the undo of discarded transactions and incremental public-account patches in the same IndexedDB transaction as the sync height and notes, so a failure late in the sync no longer leaves account rows ahead of the sync height ([#64](https://github.com/0xMiden/web-sdk/issues/64)).
 * [FIX][web] Transaction failures from a supplied prover include help for checking the prover configuration and remote endpoint, alongside the original error ([#89](https://github.com/0xMiden/web-sdk/issues/89)).
+* [FIX][web] `withdrawUsdcx` rejects a destination domain outside the unsigned 32-bit integer range before building the withdrawal ([#651](https://github.com/0xMiden/web-sdk/issues/651)).
 
 ## 0.18.1 (2026-11-25)
 

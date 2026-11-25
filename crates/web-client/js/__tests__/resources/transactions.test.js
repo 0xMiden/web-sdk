@@ -1072,30 +1072,63 @@ describe("TransactionsResource", () => {
     const RECIPIENT =
       "0x1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30";
 
-    it("builds an xReserve burn request and submits", async () => {
-      const { resource, inner } = makeResource();
-      const result = await resource.withdrawUsdcx({
-        account: "0xsender",
-        token: "0xfaucet",
-        amount: 250,
-        destinationDomain: 6,
-        destinationRecipient: RECIPIENT,
-      });
+    it.each([0, 6, 4294967295])(
+      "builds and submits an xReserve burn request for destination domain %s",
+      async (destinationDomain) => {
+        const { resource, inner } = makeResource();
+        const result = await resource.withdrawUsdcx({
+          account: "0xsender",
+          token: "0xfaucet",
+          amount: 250,
+          destinationDomain,
+          destinationRecipient: RECIPIENT,
+        });
 
-      // Pin the argument order: a sender/faucet swap burns from the wrong side.
-      expect(inner.newXReserveBurnTransactionRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ hex: "0xsender" }),
-        expect.objectContaining({ hex: "0xfaucet" }),
-        250n,
-        6,
-        Uint8Array.from(
-          RECIPIENT.slice(2)
-            .match(/../g)
-            .map((byte) => parseInt(byte, 16))
-        )
+        // Pin the argument order: a sender/faucet swap burns from the wrong side.
+        expect(inner.newXReserveBurnTransactionRequest).toHaveBeenCalledWith(
+          expect.objectContaining({ hex: "0xsender" }),
+          expect.objectContaining({ hex: "0xfaucet" }),
+          250n,
+          destinationDomain,
+          Uint8Array.from(
+            RECIPIENT.slice(2)
+              .match(/../g)
+              .map((byte) => parseInt(byte, 16))
+          )
+        );
+        expect(inner.executeTransaction).toHaveBeenCalled();
+        expect(result.txId).toBeDefined();
+      }
+    );
+
+    it.each([
+      ["missing", undefined],
+      ["null", null],
+      ["a string", "6"],
+      ["a bigint", 6n],
+      ["NaN", NaN],
+      ["infinite", Infinity],
+      ["fractional", 1.5],
+      ["negative", -1],
+      ["above u32", 4294967296],
+    ])("rejects a destinationDomain that is %s", async (_label, domain) => {
+      const { resource, inner, wasm } = makeResource();
+      inner.newXReserveBurnTransactionRequest.mockRejectedValue(
+        new Error("Withdrawal request builder reached")
       );
-      expect(inner.executeTransaction).toHaveBeenCalled();
-      expect(result.txId).toBeDefined();
+      await expect(
+        resource.withdrawUsdcx({
+          account: "0xsender",
+          token: "0xfaucet",
+          amount: 250,
+          destinationDomain: domain,
+          destinationRecipient: RECIPIENT,
+        })
+      ).rejects.toThrow(
+        /destinationDomain must be an integer from 0 to 4294967295/
+      );
+      expect(wasm.AccountId.fromHex).not.toHaveBeenCalled();
+      expect(inner.newXReserveBurnTransactionRequest).not.toHaveBeenCalled();
     });
 
     it.each([
