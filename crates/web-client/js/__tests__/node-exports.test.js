@@ -79,6 +79,10 @@ const fakeNative = vi.hoisted(() => {
       received.push(scripts);
       return this;
     }
+    extendMerkleStore(nodes) {
+      received.push(nodes);
+      return this;
+    }
   }
   class NoteStorage {
     constructor(felts) {
@@ -286,6 +290,19 @@ describe("Node napi boundary", () => {
     expect(Array.isArray(received)).toBe(true);
     expect(received).toEqual([script]);
     expect(received[0]).toBe(script);
+  });
+
+  it("unwraps an InnerNodeInfoArray passed to extendMerkleStore", () => {
+    expect(nodeIndex.InnerNodeInfoArray).toBeTypeOf("function");
+    const node = {};
+    new nodeIndex.TransactionRequestBuilder().extendMerkleStore(
+      new nodeIndex.InnerNodeInfoArray([node])
+    );
+
+    const received = fakeNative.received.at(-1);
+    expect(Array.isArray(received)).toBe(true);
+    expect(received).toEqual([node]);
+    expect(received[0]).toBe(node);
   });
 
   it("unwraps a NoteScriptArray passed to newRegisterNoteScriptsTransactionRequest", async () => {

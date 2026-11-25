@@ -275,6 +275,25 @@ describe("request builder documentation", () => {
     }
   );
 
+  it.each(REQUEST_BUILDER_DOCS)(
+    "%s documents extendMerkleStore and reading the nodes back",
+    (file) => {
+      const text = readFileSync(new URL(file, REPO_ROOT), "utf8");
+      expect(text).toContain("extendMerkleStore");
+      expect(text).toContain("InnerNodeInfoArray");
+      expect(text).toContain("merkleStoreInnerNodes");
+    }
+  );
+
+  it("extendMerkleStore documents that the store does not check node values", () => {
+    const setterDoc = rustDoc(
+      `${BUILDER}transaction_request_builder.rs`,
+      "extendMerkleStore"
+    );
+    expect(setterDoc).toContain("InnerNodeInfo");
+    expect(setterDoc).toContain("not checked");
+  });
+
   it("withExpectedNtxScripts does not promise automatic registration", () => {
     const setterDoc = rustDoc(
       `${BUILDER}transaction_request_builder.rs`,

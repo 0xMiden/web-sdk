@@ -236,6 +236,9 @@ export const FungibleAsset = /* @__PURE__ */ _reexport("FungibleAsset");
 export const GetProceduresResultItem = /* @__PURE__ */ _reexport(
   "GetProceduresResultItem"
 );
+export const InnerNodeInfo = /* @__PURE__ */ _reexport("InnerNodeInfo");
+export const InnerNodeInfoArray =
+  /* @__PURE__ */ _reexport("InnerNodeInfoArray");
 export const InputNote = /* @__PURE__ */ _reexport("InputNote");
 export const InputNoteRecord = /* @__PURE__ */ _reexport("InputNoteRecord");
 export const InputNoteState = /* @__PURE__ */ _reexport("InputNoteState");

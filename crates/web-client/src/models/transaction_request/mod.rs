@@ -5,10 +5,13 @@ use miden_client::transaction::TransactionRequest as NativeTransactionRequest;
 use miden_client::vm::AdviceMap as NativeAdviceMap;
 use miden_client::{Felt as NativeFelt, Word as NativeWord};
 use miden_protocol::crypto::SequentialCommit;
+use miden_protocol::crypto::merkle::NodeIndex;
+use miden_protocol::crypto::merkle::store::MerkleStore as NativeMerkleStore;
 
 use crate::models::account_code::AccountCode;
 use crate::models::advice_map::AdviceMap;
 use crate::models::felt::Felt;
+use crate::models::inner_node_info::InnerNodeInfo;
 use crate::models::note::Note;
 use crate::models::note_script::NoteScript;
 use crate::models::word::Word;
@@ -127,6 +130,19 @@ impl TransactionRequest {
     #[js_export(js_name = "feeConversionSalt")]
     pub fn fee_conversion_salt(&self) -> Option<Word> {
         self.0.fee_conversion_salt().map(Word::from)
+    }
+
+    /// Returns the Merkle store nodes added through `extendMerkleStore`, in no particular order.
+    /// The empty-subtree nodes every store starts with are left out.
+    #[js_export(js_name = "merkleStoreInnerNodes")]
+    pub fn merkle_store_inner_nodes(&self) -> Vec<InnerNodeInfo> {
+        let empty = NativeMerkleStore::new();
+        self.0
+            .merkle_store()
+            .inner_nodes()
+            .filter(|node| empty.get_node(node.value, NodeIndex::root()).is_err())
+            .map(Into::into)
+            .collect()
     }
 
     /// Returns a copy of the advice map carried by this request.
