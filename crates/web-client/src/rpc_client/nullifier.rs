@@ -1,4 +1,7 @@
+use alloc::collections::BTreeSet;
+
 use js_export_macro::js_export;
+use miden_client::note::Nullifier;
 use miden_client::rpc::domain::nullifier::NullifierUpdate as NativeNullifierUpdate;
 
 use super::RpcClient;
@@ -91,7 +94,25 @@ impl RpcClient {
         nullifiers: Vec<Word>,
         block_from: u32,
     ) -> Result<Vec<NullifierUpdate>, JsErr> {
-        let _ = (nullifiers, block_from);
-        Err(from_str_err("not implemented"))
+        let requested: BTreeSet<Nullifier> =
+            nullifiers.iter().map(|word| Nullifier::from_raw(word.into())).collect();
+        if requested.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        self.inner
+            .get_nullifier_commit_heights(requested, block_from.into())
+            .await
+            .map(|heights| {
+                heights
+                    .into_iter()
+                    .filter_map(|(nullifier, height)| {
+                        height.map(|block_num| {
+                            NullifierUpdate(NativeNullifierUpdate { nullifier, block_num })
+                        })
+                    })
+                    .collect()
+            })
+            .map_err(|err| js_error_with_context(err, "failed to get nullifier commit heights"))
     }
 }

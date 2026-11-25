@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.2 (TBD)
+
+### Enhancements
+
+* [FEATURE][web] `client.chain` reads chain data from the node without the local store: `getBlockHeader(blockNum?)`, `getBlockHeaderWithProof(blockNum)` (the header and its `MmrProof`), `getNullifierCommitHeights(nullifiers, { blockFrom })` (a `Map` from each nullifier's hex to its commit height or `null`) and `syncNullifiers(prefixes, blockFrom, blockTo)`. The standalone `RpcClient` gains `getBlockHeaderWithProof(blockNum)`, which returns the `MmrProof` that `getBlockHeaderByNumber` drops, and `getNullifierCommitHeights(nullifiers, blockFrom)`, the multi-nullifier form of `getNullifierCommitHeight`; both are additive on the browser and Node.js entries. Part of [#86](https://github.com/0xMiden/web-sdk/issues/86).
+
 ## 0.18.1 (2026-11-25)
 
 ### Enhancements

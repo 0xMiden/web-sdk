@@ -21,6 +21,8 @@ export {
   AssetVault,
   BasicFungibleFaucetComponent,
   BlockHeader,
+  BlockHeaderWithProof,
+  MmrProof,
   BlockProducerStatusInfo,
   BurnNote,
   ChainAnchor,

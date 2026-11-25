@@ -47,7 +47,7 @@ export class MidenClient {
     this.transactions = new TransactionsResource(inner, getWasm, this);
     this.notes = new NotesResource(inner, getWasm, this);
     this.tags = new TagsResource(inner, getWasm, this);
-    this.chain = new ChainResource();
+    this.chain = new ChainResource(getWasm, this, (fn) => this.#withRpc(fn));
     this.settings = new SettingsResource(inner, getWasm, this);
     this.compile = new CompilerResource(inner, getWasm, this);
     this.keystore = new KeystoreResource(inner, this);
@@ -643,7 +643,9 @@ export class MidenClient {
     this.#healthRpc = null;
   }
 
-  async #probeHealth() {
+  // Runs `fn` with the cached RPC client, creating it on first use, and keeps it alive until
+  // `fn` settles even if the client is terminated meanwhile.
+  async #withRpc(fn) {
     let held = false;
     try {
       if (!this.#healthRpc) {
@@ -655,43 +657,53 @@ export class MidenClient {
       }
       held = true;
       this.#healthRpcUsers++;
-      const status = await this.#healthRpc.getStatus();
-      const producer = status.blockProducer;
-      const mempool = producer?.mempoolStats;
-      const genesis = status.genesisCommitment;
-      try {
-        return {
-          reachable: true,
-          version: status.version,
-          chainTip: status.chainTip,
-          ...(genesis && { genesisCommitment: genesis.toHex() }),
-          ...(producer && {
-            blockProducer: {
-              version: producer.version,
-              status: producer.status,
-              chainTip: producer.chainTip,
-              ...(mempool && {
-                mempoolStats: {
-                  unbatchedTransactions: Number(mempool.unbatchedTransactions),
-                  proposedBatches: Number(mempool.proposedBatches),
-                  provenBatches: Number(mempool.provenBatches),
-                },
-              }),
-            },
-          }),
-        };
-      } finally {
-        for (const wrapper of [mempool, genesis, producer, status]) {
-          wrapper?.free?.();
-        }
-      }
-    } catch (error) {
-      return { reachable: false, error: error?.message ?? String(error) };
+      return await fn(this.#healthRpc);
     } finally {
       if (held) {
         this.#healthRpcUsers--;
         if (this.#terminated) this.#releaseHealthRpc();
       }
+    }
+  }
+
+  async #probeHealth() {
+    try {
+      return await this.#withRpc(async (rpc) => {
+        const status = await rpc.getStatus();
+        const producer = status.blockProducer;
+        const mempool = producer?.mempoolStats;
+        const genesis = status.genesisCommitment;
+        try {
+          return {
+            reachable: true,
+            version: status.version,
+            chainTip: status.chainTip,
+            ...(genesis && { genesisCommitment: genesis.toHex() }),
+            ...(producer && {
+              blockProducer: {
+                version: producer.version,
+                status: producer.status,
+                chainTip: producer.chainTip,
+                ...(mempool && {
+                  mempoolStats: {
+                    unbatchedTransactions: Number(
+                      mempool.unbatchedTransactions
+                    ),
+                    proposedBatches: Number(mempool.proposedBatches),
+                    provenBatches: Number(mempool.provenBatches),
+                  },
+                }),
+              },
+            }),
+          };
+        } finally {
+          for (const wrapper of [mempool, genesis, producer, status]) {
+            wrapper?.free?.();
+          }
+        }
+      });
+    } catch (error) {
+      return { reachable: false, error: error?.message ?? String(error) };
     }
   }
 

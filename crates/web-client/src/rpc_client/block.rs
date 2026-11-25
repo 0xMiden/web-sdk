@@ -2,6 +2,7 @@ use js_export_macro::js_export;
 use miden_client::crypto::MmrProof as NativeMmrProof;
 
 use super::RpcClient;
+use crate::js_error_with_context;
 use crate::models::block_header::BlockHeader;
 use crate::models::merkle_path::MerklePath;
 use crate::models::word::Word;
@@ -76,7 +77,16 @@ impl RpcClient {
         &self,
         block_num: u32,
     ) -> Result<BlockHeaderWithProof, JsErr> {
-        let _ = block_num;
-        Err(from_str_err("not implemented"))
+        let (header, proof) = self
+            .inner
+            .get_block_header_by_number(Some(block_num.into()), true)
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to get block header with proof"))?;
+        let proof = proof.ok_or_else(|| from_str_err("the node returned no MMR proof"))?;
+
+        Ok(BlockHeaderWithProof {
+            header: header.into(),
+            proof: MmrProof(proof),
+        })
     }
 }

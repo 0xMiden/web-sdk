@@ -31,6 +31,16 @@ Node.js entries use `undefined` for these missing results; RPC errors reject
 the Promise. Check `height !== undefined` rather than truthiness so a height
 of `0` remains a valid number.
 
+## Block headers with proofs and many nullifiers
+
+`getBlockHeaderWithProof(blockNum)` returns a `BlockHeaderWithProof` with
+`header()` and `mmrProof()`; `getBlockHeaderByNumber` returns the header alone.
+`getNullifierCommitHeights(nullifiers, blockFrom)` looks up many nullifiers at
+once and returns a `NullifierUpdate` for each one consumed from `blockFrom` to
+the chain tip. Nullifiers not consumed in that range are left out. On the
+browser entries the passed `Word`s are consumed. `client.chain` wraps both; see
+[Chain data](./chain.md).
+
 ## Find consumed notes
 
 `syncNullifiers(prefixes, blockFrom, blockTo)` returns every matching
