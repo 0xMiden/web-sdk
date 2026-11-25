@@ -1909,8 +1909,8 @@ export interface TransactionsResource {
    * usually means the original attempt landed, but it records nothing locally and
    * a sync does not insert the missing records: look the ids up on the node.
    *
-   * Browser builds only: the Node.js build reports the code but cannot attach
-   * the submission, so it cannot retry yet.
+   * Browser builds only: the Node.js build prefixes the message with the code but
+   * cannot attach the submission, so it cannot retry yet.
    *
    * Accepting an externally proved transaction as a batch member
    * (`push_proven_transaction`) needs a rust-sdk release that exposes it on
