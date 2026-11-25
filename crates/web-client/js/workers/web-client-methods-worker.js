@@ -376,6 +376,12 @@ const methodHandlers = {
       if (error instanceof Error) {
         error.message = appendAuthError(error.message, authError);
       }
+      if (error?.code === "ApplyTransactionAfterSubmitFailed") {
+        // The node took the batch; nothing is left to retry.
+        provenBatchSubmissions.delete(String(submissionId));
+        submission.free?.();
+        return Promise.reject(error);
+      }
       throw stashProvenBatchSubmission(error, String(submissionId));
     }
   },

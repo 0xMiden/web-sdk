@@ -1906,7 +1906,8 @@ export interface TransactionsResource {
    * After a successful retry, confirm with {@link waitFor} / {@link list} for
    * the transaction ids on the error (`error.transactionIds` or
    * `submission.transactionIds()`). A retry the node rejects as a conflict
-   * usually means the original attempt landed; sync and inspect those ids.
+   * usually means the original attempt landed, but it records nothing locally and
+   * a sync does not insert the missing records: look the ids up on the node.
    *
    * Browser builds only: the Node.js build reports the code but cannot attach
    * the submission, so it cannot retry yet.
