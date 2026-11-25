@@ -155,6 +155,12 @@ local apply fails, so `apply` and the single-transaction `transactions.*` helper
 local update fails after the node accepted it rejects with the same `code` and the
 accepted block in its message, without those fields. Do not submit it again.
 
+**Submitting never registers network scripts.** Scripts a request declares
+through `withExpectedNtxScripts` are not registered by any submit path; submit
+`newRegisterNoteScriptsTransactionRequest` first. Nodes added with
+`extendMerkleStore` are stored as given, so each `InnerNodeInfo` value must
+already be the Poseidon2 merge of its children.
+
 **Amounts are always `BigInt`.** Passing a `number` either throws at the WASM
 boundary or silently loses precision above 2^53. Convert at the edges of your
 own code, not in the middle of a transaction builder.

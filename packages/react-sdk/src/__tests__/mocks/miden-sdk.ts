@@ -253,6 +253,7 @@ export const createMockTransactionRequest = () => ({
   ignoresInvalidInputNotes: vi.fn(() => false),
   expectedNtxScripts: vi.fn(() => []),
   accountCodeUpgrade: vi.fn(() => undefined),
+  merkleStoreInnerNodes: vi.fn(() => []),
   adviceMap: vi.fn(() => ({}) as unknown as AdviceMap),
   extendAdviceMap: vi.fn(
     () => createMockTransactionRequest() as unknown as TransactionRequest

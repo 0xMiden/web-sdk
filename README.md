@@ -314,7 +314,7 @@ pnpm dev
 | **Webpack 5** | Supported | Use the module-worker variant; webpack auto-handles the `import.meta.url` worker pattern. |
 | **Next.js (App Router)** | Supported | Mark client components with `"use client"`. SSR will skip WASM init; the lazy entry point is recommended. |
 | **Browser (Chromium ≥ 88)** | Supported | The default (ST) build runs anywhere. The `/mt` build needs cross-origin isolation (COOP/COEP) for `SharedArrayBuffer` — see [Single-threaded vs multi-threaded proving](#single-threaded-vs-multi-threaded-proving). |
-| **Browser (Safari ≥ 16.4)** | Supported | The plugin auto-applies the classic-Worker + TLA-free WASM glue needed by WKWebView. |
+| **Browser (Safari ≥ 16.4)** | Supported | Uses the classic worker (auto). The main thread resolves the hashed WASM URL and passes it into the worker init message so production Vite/webpack builds find the asset (#286). |
 | **Browser (Firefox ≥ 108)** | Supported | Same constraints as Chromium. |
 | **Node.js** | Not yet | Tracked separately; the Rust client has a Node.js binding in flight via napi-rs. |
 

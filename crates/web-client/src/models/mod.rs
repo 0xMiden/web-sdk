@@ -71,6 +71,7 @@ pub mod felt;
 pub mod fetched_account;
 pub mod foreign_account;
 pub mod fungible_asset;
+pub mod inner_node_info;
 pub mod input_note;
 pub mod input_note_record;
 pub mod input_note_state;
@@ -148,6 +149,7 @@ declare_js_miden_arrays! {
     (crate::models::account::Account) -> AccountArray,
     (crate::models::account_id::AccountId) -> AccountIdArray,
     (crate::models::foreign_account::ForeignAccount) -> ForeignAccountArray,
+    (crate::models::inner_node_info::InnerNodeInfo) -> InnerNodeInfoArray,
     (crate::models::note_recipient::NoteRecipient) -> NoteRecipientArray,
     (crate::models::note::Note) -> NoteArray,
     (crate::models::note_script::NoteScript) -> NoteScriptArray,
