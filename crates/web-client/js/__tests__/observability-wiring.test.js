@@ -31,6 +31,7 @@ vi.mock("../wasm.js", () => ({
       all: () => ({}),
     },
   }),
+  resolveWasmUrl: async () => undefined,
 }));
 
 import {

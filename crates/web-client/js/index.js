@@ -1,4 +1,4 @@
-import loadWasm from "./wasm.js";
+import loadWasm, { resolveWasmUrl } from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
 import {
   coalesceRun,
@@ -752,8 +752,13 @@ class WebClient {
         this._failWorker("the worker sent a message that could not be read");
       });
 
-      // Once the worker script has loaded, initialize the worker.
-      this.loaded.then(() => this.initializeWorker());
+      // Once the worker script has loaded, initialize the worker. Classic
+      // init is async (resolves the WASM URL on this thread first — #286).
+      this.loaded.then(() => {
+        Promise.resolve(this.initializeWorker()).catch((error) => {
+          this.readyRejecter(error);
+        });
+      });
     } else {
       console.log(
         this.useWorker
@@ -1092,7 +1097,7 @@ class WebClient {
   // TODO: This will soon conflict with some changes in main.
   // More context here:
   // https://github.com/0xMiden/miden-client/pull/1645?notification_referrer_id=NT_kwHOA1yg7NoAJVJlcG9zaXRvcnk7NjU5MzQzNzAyO0lzc3VlOzM3OTY4OTU1Nzk&notifications_query=is%3Aunread#discussion_r2696075480
-  initializeWorker() {
+  async initializeWorker() {
     // Pass `numThreads` to the worker so it can call `wasm.initThreadPool(n)`
     // inside its OWN WASM instance — the SDK worker's instance is separate
     // from the main thread's, and rayon's global pool is per-instance.
@@ -1109,6 +1114,13 @@ class WebClient {
         numThreads = navigator.hardwareConcurrency;
       }
     } catch {}
+    // Classic worker: resolve the hashed WASM URL here. The classic build
+    // rewrites import.meta.url → self.location.href inside the worker, so the
+    // worker cannot trace the bundler's emitted asset itself (#286).
+    let wasmUrl;
+    if (WebClient._shouldUseClassicWorker()) {
+      wasmUrl = await resolveWasmUrl();
+    }
     this.worker.postMessage({
       action: WorkerAction.INIT,
       args: [
@@ -1125,6 +1137,7 @@ class WebClient {
         this._noteTransportMaxRetries,
         this._noteTransportRetryIntervalMs,
         this._callbackTimeoutMs,
+        wasmUrl,
       ],
     });
   }
@@ -2164,7 +2177,16 @@ class MockWebClient extends WebClient {
       }
     } catch {}
     this.mockChainReady.then(
-      ([serializedMockChain, serializedMockNoteTransportNode]) => {
+      async ([serializedMockChain, serializedMockNoteTransportNode]) => {
+        let wasmUrl;
+        if (WebClient._shouldUseClassicWorker()) {
+          try {
+            wasmUrl = await resolveWasmUrl();
+          } catch (error) {
+            this.readyRejecter(error);
+            return;
+          }
+        }
         this.worker.postMessage({
           action: WorkerAction.INIT_MOCK,
           args: [
@@ -2174,6 +2196,7 @@ class MockWebClient extends WebClient {
             serializedMockChain,
             serializedMockNoteTransportNode,
             this.storeName,
+            wasmUrl,
           ],
         });
       }
