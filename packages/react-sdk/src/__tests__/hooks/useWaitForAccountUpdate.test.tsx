@@ -172,6 +172,61 @@ describe("useWaitForAccountUpdate", () => {
 
       expect(resolved).toBe(updated);
     });
+
+    it("accepts real-shape WASM AccountId without toHex or isFaucet as first argument with options", async () => {
+      const updated = createAccountWithCommitment("0xreal_new");
+      const getAccount = vi.fn().mockResolvedValue(updated);
+      const mockClient = createMockWebClient({
+        syncState: vi.fn().mockResolvedValue({}),
+        getAccount,
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      useMidenStore.getState().setClient(mockClient as never);
+
+      // Real WASM AccountId exposes isPublic/isPrivate/toString/toBech32/prefix/suffix,
+      // and has no id(), toHex(), or isFaucet() methods.
+      const realShapeAccountId = {
+        isPublic: vi.fn(() => true),
+        isPrivate: vi.fn(() => false),
+        toString: vi.fn(() => "0xreal_wasm_id"),
+        toBech32: vi.fn(() => "mtst1real"),
+        prefix: vi.fn(() => ({})),
+        suffix: vi.fn(() => ({})),
+        free: vi.fn(),
+      };
+
+      const { result } = renderHook(() => useWaitForAccountUpdate());
+      let resolved: unknown;
+      await act(async () => {
+        resolved = await result.current.waitForAccountUpdate(
+          realShapeAccountId as never,
+          {
+            baselineCommitment: "0xold",
+            timeoutMs: 200,
+            intervalMs: 1,
+          }
+        );
+      });
+      expect(resolved).toBe(updated);
+      expect(realShapeAccountId.free).not.toHaveBeenCalled();
+
+      // When hook default accountId exists, real-shape AccountId must still override it
+      const { result: configured } = renderHook(() =>
+        useWaitForAccountUpdate("0xhook_default")
+      );
+      getAccount.mockClear();
+      await act(async () => {
+        await configured.current.waitForAccountUpdate(
+          realShapeAccountId as never,
+          {
+            baselineCommitment: "0xold",
+            timeoutMs: 200,
+            intervalMs: 1,
+          }
+        );
+      });
+      expect(getAccount.mock.calls[0]?.[0]?.toString()).toBe("0xreal_wasm_id");
+    });
   });
 
   describe("commitment updates", () => {

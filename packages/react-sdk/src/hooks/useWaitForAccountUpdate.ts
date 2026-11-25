@@ -517,18 +517,23 @@ export function useWaitForAccountUpdate(
   };
 }
 
+const ACCOUNT_REF_METHODS = [
+  "id",
+  "toBech32",
+  "prefix",
+  "suffix",
+  "isPublic",
+  "isPrivate",
+  "toHex",
+  "isFaucet",
+] as const;
+
 function isAccountRef(value: unknown): value is AccountRef {
   if (typeof value === "string") return true;
   if (value === null || typeof value !== "object") return false;
-  const candidate = value as {
-    id?: unknown;
-    toHex?: unknown;
-    isFaucet?: unknown;
-  };
-  return (
-    typeof candidate.id === "function" ||
-    typeof candidate.toHex === "function" ||
-    typeof candidate.isFaucet === "function"
+  const candidate = value as Record<string, unknown>;
+  return ACCOUNT_REF_METHODS.some(
+    (method) => typeof candidate[method] === "function"
   );
 }
 
