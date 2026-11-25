@@ -2159,19 +2159,11 @@ export interface NotesResource {
 // Compiler types
 // ════════════════════════════════════════════════════════════════
 
-export interface CompileComponentOptions {
-  /**
-   * MASM source code for the component. Pass exactly one of `code` and
-   * `package`.
-   */
-  code?: string;
-  /**
-   * A compiled package (`.masp`), as a `Package` or its serialized bytes,
-   * built through `AccountComponent.fromPackage`: the component gets the fixed
-   * metadata name `"custom"`. `namespace` and `libraries` do not apply and
-   * throw a `TypeError` beside it. Pass exactly one of `code` and `package`.
-   */
-  package?: Package | Uint8Array;
+export interface CompileComponentSourceOptions {
+  /** MASM source code for the component. */
+  code: string;
+  /** Source and package inputs are exclusive. */
+  package?: never;
   /**
    * Module path used to derive procedure identities. Use the same namespace when
    * linking this component into transaction scripts.
@@ -2197,6 +2189,30 @@ export interface CompileComponentOptions {
    */
   libraries?: Pick<CompileTxScriptLibrary, "namespace" | "code">[];
 }
+
+/** Builds a component from a compiled package (`.masp`) instead of source. */
+export interface CompileComponentPackageOptions {
+  /**
+   * A compiled package, as a `Package` or its serialized bytes, built through
+   * `AccountComponent.fromPackage`: the component gets the fixed metadata name
+   * `"custom"`.
+   */
+  package: Package | Uint8Array;
+  code?: never;
+  /** Source-only: a package carries its own code. */
+  namespace?: never;
+  /** Source-only: a package carries its own code. */
+  libraries?: never;
+  /** Initial storage slots for the component. */
+  slots?: StorageSlot[];
+  /** Same meaning as for source. Default: true. */
+  supportAllTypes?: boolean;
+}
+
+/** Exactly one of `code` and `package`. */
+export type CompileComponentOptions =
+  | CompileComponentSourceOptions
+  | CompileComponentPackageOptions;
 
 export interface CompileTxScriptLibrary {
   /** MASM namespace for the library (e.g. "counter::module"). */
@@ -2235,29 +2251,57 @@ export type CompileScriptLibrary =
   | CompileAccountComponentLibrary
   | Library;
 
-export interface CompileTxScriptOptions {
-  /** MASM source code for the transaction script. Pass exactly one of `code` and `package`. */
-  code?: string;
-  /**
-   * A compiled package of the matching kind, as a `Package` or its serialized
-   * bytes. `libraries` do not apply and throw a `TypeError` beside it.
-   */
-  package?: Package | Uint8Array;
+export interface CompileTxScriptSourceOptions {
+  /** MASM source code for the transaction script. */
+  code: string;
+  /** Source and package inputs are exclusive. */
+  package?: never;
   /** Component libraries to link. */
   libraries?: CompileScriptLibrary[];
 }
 
-export interface CompileNoteScriptOptions {
-  /** MASM source code for the note script. Pass exactly one of `code` and `package`. */
-  code?: string;
+/** Builds the transaction script from a compiled package instead of source. */
+export interface CompileTxScriptPackageOptions {
   /**
    * A compiled package of the matching kind, as a `Package` or its serialized
-   * bytes. `libraries` do not apply and throw a `TypeError` beside it.
+   * bytes.
    */
-  package?: Package | Uint8Array;
+  package: Package | Uint8Array;
+  code?: never;
+  /** Source-only: a package carries its own code. */
+  libraries?: never;
+}
+
+/** Exactly one of `code` and `package`. */
+export type CompileTxScriptOptions =
+  | CompileTxScriptSourceOptions
+  | CompileTxScriptPackageOptions;
+
+export interface CompileNoteScriptSourceOptions {
+  /** MASM source code for the note script. */
+  code: string;
+  /** Source and package inputs are exclusive. */
+  package?: never;
   /** Component libraries to link. */
   libraries?: CompileScriptLibrary[];
 }
+
+/** Builds the note script from a compiled package instead of source. */
+export interface CompileNoteScriptPackageOptions {
+  /**
+   * A compiled package of the matching kind, as a `Package` or its serialized
+   * bytes.
+   */
+  package: Package | Uint8Array;
+  code?: never;
+  /** Source-only: a package carries its own code. */
+  libraries?: never;
+}
+
+/** Exactly one of `code` and `package`. */
+export type CompileNoteScriptOptions =
+  | CompileNoteScriptSourceOptions
+  | CompileNoteScriptPackageOptions;
 
 export declare class CompilerResource {
   /**
