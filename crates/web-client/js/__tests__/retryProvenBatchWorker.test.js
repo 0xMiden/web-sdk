@@ -3,6 +3,7 @@ import { MethodName, WorkerAction } from "../constants.js";
 
 const posted = [];
 let outcomes = [];
+const retried = [];
 
 const makeSubmission = (ids) => ({
   free: vi.fn(),
@@ -30,6 +31,7 @@ beforeAll(async () => {
         throw outcomes.shift();
       }
       async retryProvenBatch(submission) {
+        retried.push(submission);
         const next = outcomes.shift();
         if (next) throw next;
         return 9;
@@ -83,6 +85,7 @@ describe("worker retryProvenBatch (#571)", () => {
       failed.error.submissionId,
     ]);
     expect(ok.result).toBe(9);
+    expect(retried.at(-1)).toBe(submission);
     expect(submission.free).toHaveBeenCalledTimes(1);
 
     const again = await call(MethodName.RETRY_PROVEN_BATCH, [

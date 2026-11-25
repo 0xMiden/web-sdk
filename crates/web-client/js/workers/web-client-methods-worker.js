@@ -368,7 +368,7 @@ const methodHandlers = {
     const submission = provenBatchSubmissions.get(String(submissionId));
     if (!submission) {
       throw new Error(
-        `Unknown proven batch submission id: ${submissionId}. Retries must use the submissionId from the same worker that produced BATCH_SUBMISSION_OUTCOME_UNKNOWN.`
+        `Unknown proven batch submission id: ${submissionId}. Retries must use the submissionId from the same worker that produced BATCH_SUBMISSION_OUTCOME_UNKNOWN, and the worker keeps only the ${MAX_PROVEN_BATCH_SUBMISSIONS} most recent unresolved ones.`
       );
     }
     try {
