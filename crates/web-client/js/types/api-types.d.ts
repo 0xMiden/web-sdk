@@ -567,6 +567,41 @@ export interface ContractCreateOptions {
   storage?: StorageMode;
 }
 
+/** Options for {@link ContractsResource.deploy}. */
+export interface DeployContractOptions {
+  /** Pre-compiled components, as for `accounts.create`. Required. */
+  components: AccountComponent[];
+  /** Raw 32-byte seed. Defaults to 32 random bytes. */
+  seed?: Uint8Array;
+  /**
+   * Auth secret key, or `"none"` for a NoAuth contract. Defaults to a freshly
+   * generated Falcon key, stored with the account.
+   */
+  auth?: AuthSecretKey | "none";
+  /** Storage mode. Defaults to "public", as `accounts.create` does for contracts. */
+  storage?: StorageMode;
+}
+
+/** The account {@link ContractsResource.deploy} created and the inputs it used. */
+export interface DeployedContract {
+  account: Account;
+  seed: Uint8Array;
+  auth: AuthSecretKey | "none";
+}
+
+export interface ContractsResource {
+  /**
+   * Create a contract from compiled components, generating the `seed` and
+   * `auth` that are omitted. It is `accounts.create` for a contract and shares
+   * its validation, so `components` must include a non-auth procedure. The
+   * account is tracked locally; it reaches the chain with its first
+   * transaction.
+   *
+   * @throws TypeError if `components` is missing, instead of creating a wallet.
+   */
+  deploy(options: DeployContractOptions): Promise<DeployedContract>;
+}
+
 /**
  * A single account's full on-chain state, as returned by
  * {@link AccountsResource.getDetails}.
@@ -2480,6 +2515,7 @@ export declare class MidenClient {
   readonly compile: CompilerResource;
   readonly keystore: KeystoreResource;
   readonly pswap: PswapResource;
+  readonly contracts: ContractsResource;
 
   /** Syncs the client: fetches private notes from the Note Transport Layer, then syncs on-chain state. Fails fast on either. */
   sync(): Promise<SyncSummary>;
