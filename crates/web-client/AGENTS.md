@@ -62,11 +62,29 @@ It rejects with "the network's protocol configuration is not known yet" until
 the first sync stores the configuration; a mock client is seeded with its
 chain's.
 
+On testnet and devnet, `accounts.requestFundingNote(account, options?)` and
+`accounts.fundAccount(account, options?)` request the native fee asset from the
+public faucet. `requestFundingNote` returns the faucet receipt
+`{ noteId, transactionId, faucetId, amount }`; `fundAccount` also waits for the
+public P2ID note, consumes it, and returns `{ noteId, transactionId, balance }`.
+Defaults come from the RPC endpoint;
+other networks need `faucetUrl`. The mint request is never retried: after a
+failure that retains a `noteId`, resume that note instead of calling the faucet
+again. See `docs/external/src/web-client/library/funding.md`.
+
 State is split across resources rather than living on the client:
 `accounts`, `transactions`, `notes`, `tags`, `settings`, `keystore`, `compile`
 and `pswap`. Client-level methods cover the lifecycle around them - `sync`,
 `syncChain`, `syncNoteTransport`, `getSyncHeight`, `waitForIdle` and
 `terminate`.
+
+`client.checkHealth()` resolves to `{ reachable: true, version, chainTip,
+genesisCommitment?, blockProducer? }` or `{ reachable: false, error }` and never
+rejects for a node problem, so do not wrap it in `try`.
+`client.monitorHealth({ intervalMs, onChange })` (`intervalMs` at most
+2147483647) calls `onChange` with the first
+result and then only when reachability or the block producer's `status` changes,
+and returns `stop()`; `terminate()` stops it as well.
 
 For an application that manages its own state, construct `RpcClient` directly:
 
@@ -146,6 +164,18 @@ local apply fails, so `apply` and the single-transaction `transactions.*` helper
 `transactionId`, `submissionHeight` and the original error as `cause`. A batch whose
 local update fails after the node accepted it rejects with the same `code` and the
 accepted block in its message, without those fields. Do not submit it again.
+A batch whose admission is indeterminate rejects with
+`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` and nothing recorded locally; resend it
+with `transactions.retryProvenBatch(error.submission ?? { submissionId: error.submissionId })`
+and never re-run `batch` / `submitBatch`. A rejected retry records nothing and a
+sync does not insert the records, so look the ids up on the node. Browser builds
+only: Node.js errors only prefix the message with the code.
+
+**Submitting never registers network scripts.** Scripts a request declares
+through `withExpectedNtxScripts` are not registered by any submit path; submit
+`newRegisterNoteScriptsTransactionRequest` first. Nodes added with
+`extendMerkleStore` are stored as given, so each `InnerNodeInfo` value must
+already be the Poseidon2 merge of its children.
 
 **Amounts are always `BigInt`.** Passing a `number` either throws at the WASM
 boundary or silently loses precision above 2^53. Convert at the edges of your

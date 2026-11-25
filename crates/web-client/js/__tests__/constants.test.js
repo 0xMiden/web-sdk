@@ -40,6 +40,7 @@ describe("MethodName", () => {
     expect(MethodName.SUBMIT_NEW_TRANSACTION_BATCH).toBe(
       "submitNewTransactionBatch"
     );
+    expect(MethodName.RETRY_PROVEN_BATCH).toBe("retryProvenBatch");
     expect(MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER).toBe(
       "submitNewTransactionWithProver"
     );

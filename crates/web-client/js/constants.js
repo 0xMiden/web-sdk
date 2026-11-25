@@ -22,6 +22,7 @@ export const MethodName = Object.freeze({
   SUBMIT_NEW_TRANSACTION_MOCK: "submitNewTransactionMock",
   // No mock counterpart: see MockWebClient._dispatchBatch.
   SUBMIT_NEW_TRANSACTION_BATCH: "submitNewTransactionBatch",
+  RETRY_PROVEN_BATCH: "retryProvenBatch",
   SUBMIT_NEW_TRANSACTION_WITH_PROVER: "submitNewTransactionWithProver",
   SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK: "submitNewTransactionWithProverMock",
   SYNC_STATE: "syncState",

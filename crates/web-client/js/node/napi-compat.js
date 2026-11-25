@@ -280,9 +280,11 @@ function patchSdkPrototypes(rawSdk) {
   // null -> undefined for Option<T> getters. napi-rs defines them as
   // configurable prototype accessors; any other shape is left as it is.
   for (const [cls, getters] of [
+    [rawSdk.BlockProducerStatusInfo, ["mempoolStats"]],
     [rawSdk.Endpoint, ["port"]],
     [rawSdk.FetchedNote, ["note"]],
     [rawSdk.NetworkNoteStatusInfo, ["lastAttemptBlockNum", "lastError"]],
+    [rawSdk.RpcStatusInfo, ["blockProducer", "genesisCommitment"]],
     [rawSdk.StorageValueSlotPatch, ["value"]],
   ]) {
     if (!cls?.prototype) continue;
@@ -404,6 +406,7 @@ export const NODE_ARRAY_TYPES = Object.freeze([
   "AccountIdArray",
   "FeltArray",
   "ForeignAccountArray",
+  "InnerNodeInfoArray",
   "NoteAndArgsArray",
   "NoteArray",
   "NoteDetailsAndTagArray",

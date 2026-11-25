@@ -17,6 +17,7 @@ import type {
   TransactionResult,
   TransactionStoreUpdate,
   ProtocolConfig,
+  ProvenBatchSubmission,
   ProvenTransaction,
   TransactionSummary,
   ChainAnchor,
@@ -215,6 +216,57 @@ export interface MidenObservation {
 // Client options
 // ════════════════════════════════════════════════════════════════
 
+/** Mempool statistics of the node's block producer. */
+export interface HealthMempoolStats {
+  /** Transactions not yet in a batch. */
+  unbatchedTransactions: number;
+  /** Proposed batches not yet proven. */
+  proposedBatches: number;
+  /** Proven batches not yet in a block. */
+  provenBatches: number;
+}
+
+/** Status of the node's block producer. */
+export interface HealthBlockProducer {
+  version: string;
+  /** The block producer's status as the node reports it. */
+  status: string;
+  /** Block number of the block producer's chain tip. */
+  chainTip: number;
+  /** Present when the node reports it. */
+  mempoolStats?: HealthMempoolStats;
+}
+
+/** Result of {@link MidenClient.checkHealth}. */
+export type HealthStatus =
+  | {
+      reachable: true;
+      /** The node's RPC version. */
+      version: string;
+      /** Block number of the node's chain tip. */
+      chainTip: number;
+      /** Hex genesis commitment, when the node reports one. */
+      genesisCommitment?: string;
+      /** Present when the node reports it. */
+      blockProducer?: HealthBlockProducer;
+    }
+  | {
+      reachable: false;
+      /** Why the node could not be reached or did not answer. */
+      error: string;
+    };
+
+/** Options of {@link MidenClient.monitorHealth}. */
+export interface MonitorHealthOptions {
+  /**
+   * Delay in milliseconds between one check settling and the next starting,
+   * at most 2147483647 (the longest delay a timer can hold).
+   */
+  intervalMs: number;
+  /** Called with the first result and whenever the health state changes. */
+  onChange: (status: HealthStatus) => void;
+}
+
 export interface ClientOptions {
   /**
    * RPC endpoint. Accepts shorthands or a raw URL:
@@ -400,6 +452,57 @@ export interface Asset {
   token: AccountRef;
   /** Auto-converted to bigint internally. A `number` must be a safe integer; pass a `bigint` above `2 ** 53 - 1`. */
   amount: number | bigint;
+}
+
+/**
+ * Options for development funding via `accounts.requestFundingNote` /
+ * `accounts.fundAccount`. Amounts are in the native fee asset's base units.
+ */
+export interface FundingOptions {
+  /**
+   * Faucet API base URL. Testnet and devnet have defaults derived from the
+   * client's RPC endpoint; other networks require this field.
+   */
+  faucetUrl?: string;
+  /**
+   * Amount to request. A `number` must be a safe integer; pass a `bigint` or
+   * decimal string above that. Omit to use the faucet's advertised base amount.
+   */
+  amount?: number | bigint | string;
+  /**
+   * Limit for each stage (faucet request, note discovery, confirmation) in
+   * milliseconds. Must be an integer between 1 and 2_147_483_647. Default 60_000.
+   */
+  timeout?: number;
+  /**
+   * Delay between chain syncs while waiting for the funding note, in
+   * milliseconds. Same bounds as `timeout`. Default 5_000.
+   */
+  pollInterval?: number;
+  /**
+   * Override the network inferred from the RPC endpoint when selecting the
+   * default faucet URL and validating a bech32 faucet id.
+   */
+  network?: "testnet" | "devnet" | "mainnet" | string;
+}
+
+/** Receipt when the faucet accepts a funding request. The note can still be pending. */
+export interface FundingNote {
+  noteId: string;
+  /** Faucet transaction that creates the note. */
+  transactionId: string;
+  /** Hex account id of the fee faucet. */
+  faucetId: string;
+  amount: bigint;
+}
+
+/** Confirmed funding result after the note is consumed. */
+export interface FundingResult {
+  noteId: string;
+  /** Transaction that consumes the funding note. */
+  transactionId: string;
+  /** Balance of the fee asset after the consumption fee is paid. */
+  balance: bigint;
 }
 
 /**
@@ -1299,6 +1402,36 @@ export interface AccountsResource {
    */
   isInvitationCodeValid(invitationCode: string): Promise<boolean>;
   /**
+   * Request a public P2ID note of the chain's native fee asset from a
+   * development faucet. Does not consume the note or sign a transaction.
+   *
+   * Defaults to the public testnet / devnet faucet APIs when the client RPC
+   * endpoint names those networks; other networks require `faucetUrl`. The
+   * request is never retried: a timeout during minting can leave a note on
+   * the chain.
+   *
+   * @param account - Account that will receive the note.
+   * @param options - Faucet URL, amount, and per-stage timeouts.
+   */
+  requestFundingNote(
+    account: AccountRef,
+    options?: FundingOptions
+  ): Promise<FundingNote>;
+  /**
+   * Fund a tracked account from a development faucet: request a public P2ID
+   * note of the native fee asset, wait until it is committed locally, consume
+   * it, and wait for confirmation. A fresh wallet can pay its first fee from
+   * this note. After a failure that retains a note id, resume that note
+   * instead of requesting funds again.
+   *
+   * @param account - Tracked account to fund.
+   * @param options - Faucet URL, amount, and per-stage timeouts.
+   */
+  fundAccount(
+    account: AccountRef,
+    options?: FundingOptions
+  ): Promise<FundingResult>;
+  /**
    * Retrieve an account by ID. Returns `null` if not found in the local store.
    * Browser stores read a coherent persisted snapshot, including changes made
    * by other clients sharing the database. This does not sync from the network.
@@ -1758,6 +1891,40 @@ export interface TransactionsResource {
     items: { account: AccountRef; request: TransactionRequest }[],
     options?: Omit<BatchOptions, "operations">
   ): Promise<BatchSubmitResult>;
+
+  /**
+   * Resubmit an already-proven batch after an indeterminate admission response.
+   *
+   * When {@link batch} / {@link submitBatch} fails with
+   * `code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`, the node may or may not have
+   * accepted the batch and nothing was recorded locally. Pass
+   * `error.submission` (in-thread / no worker) or
+   * `{ submissionId: error.submissionId }` (worker) to resend the same proven
+   * bytes without re-proving. Do not call `batch` / `submitBatch` again for
+   * that attempt: a new prove changes identities.
+   *
+   * After a successful retry, confirm with {@link waitFor} / {@link list} for
+   * the transaction ids on the error (`error.transactionIds` or
+   * `submission.transactionIds()`). A retry the node rejects as a conflict
+   * usually means the original attempt landed, but it records nothing locally and
+   * a sync does not insert the missing records: look the ids up on the node.
+   *
+   * Browser builds only: the Node.js build prefixes the message with the code but
+   * cannot attach the submission or `transactionIds`, so it cannot retry yet.
+   *
+   * Accepting an externally proved transaction as a batch member
+   * (`push_proven_transaction`) needs a rust-sdk release that exposes it on
+   * the pinned client and is tracked as a follow-up on #571.
+   *
+   * @param submission - ProvenBatchSubmission handle, worker `submissionId`,
+   *   or `{ submissionId }` from the unknown-outcome error.
+   */
+  retryProvenBatch(
+    submission:
+      | ProvenBatchSubmission
+      | { submissionId: string; submission?: ProvenBatchSubmission }
+      | string
+  ): Promise<{ blockNumber: number }>;
 
   /** Execute a program (view call) and return the resulting stack output. */
   executeProgram(options: ExecuteProgramOptions): Promise<FeltArray>;
@@ -2342,6 +2509,33 @@ export declare class MidenClient {
   endpoint(): string | undefined;
 
   /**
+   * Asks the node for its status through its `Status` endpoint.
+   *
+   * Never rejects for a node problem: an unreachable node, a failed request
+   * or a mock client (which has no node) resolve to
+   * `{ reachable: false, error }`. It rejects only on a terminated client. The
+   * request runs outside the client's call queue, so it answers while a sync
+   * or a transaction is in flight, and it skips version negotiation, so a node
+   * running an incompatible version still reports its `version`.
+   */
+  checkHealth(): Promise<HealthStatus>;
+
+  /**
+   * Checks the node's health now and then every `intervalMs` after the
+   * previous check settles, so checks never overlap.
+   *
+   * `onChange` receives the first result, then a result only when
+   * reachability or the block producer's `status` changes; a new chain tip
+   * alone is not a change. Returns a function that stops the monitor;
+   * `terminate()` stops every monitor of the client. An error thrown by
+   * `onChange` is logged and the monitor keeps running.
+   *
+   * @throws TypeError when `intervalMs` is not a positive number of at most
+   *   2147483647 or `onChange` is not a function.
+   */
+  monitorHealth(options: MonitorHealthOptions): () => void;
+
+  /**
    * Returns a `TransactionRequestBuilder` that already declares a fee
    * conversion salt where the account that will execute the request needs one.
    *
@@ -2648,7 +2842,12 @@ export declare function domainSeparatedSignCommitment(
   kind: "word" | "signingInputs"
 ): Word;
 
-/** Exports the entire contents of an IndexedDB store as a JSON string. */
+/**
+ * Exports the entire contents of an IndexedDB store as a JSON string.
+ *
+ * @deprecated Create the client with the right `storeName` and manage store instances, or export
+ * only the state you need through the typed APIs (`accounts.export`, `notes.export`).
+ */
 export declare function exportStore(storeName: string): Promise<string>;
 
 /**
@@ -2657,6 +2856,9 @@ export declare function exportStore(storeName: string): Promise<string>;
  * Rejects, leaving the store unchanged, a dump the store could not have kept: one with no client
  * version stamp, or stamped by a client older than 0.17.0 (its data belongs to networks that no
  * longer exist) or newer than this one (upgrade the SDK to import it).
+ *
+ * @deprecated Create the client with the right `storeName` and manage store instances, or restore
+ * only the state you need through the typed APIs (`accounts.import`, `notes.import`).
  */
 export declare function importStore(
   storeName: string,

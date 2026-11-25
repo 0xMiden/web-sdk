@@ -22,7 +22,7 @@ The SDK exposes a top-level `MidenClient` whose state is split across typed
 | Resource             | What it covers                                                                                                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `client.accounts`    | Wallets, faucets, custom contracts, listing, import/export, addresses                                                                                                          |
-| `client.transactions` | `send` / `mint` / `bridge` / `withdrawUsdcx` / `claimAggLayerDeposit` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
+| `client.transactions` | `send` / `mint` / `bridge` / `withdrawUsdcx` / `claimAggLayerDeposit` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `retryProvenBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
 | `client.notes`       | Listing, fetching, importing/exporting, private-note transport                                                                                                                 |
 | `client.tags`        | Note-tag subscriptions                                                                                                                                                         |
 | `client.settings`    | Persistent client settings                                                                                                                                                     |
@@ -237,6 +237,19 @@ lives every other open of its store throws. `terminate()` releases the store.
 `"https://rpc.testnet.miden.io"` when `rpcUrl` was omitted; a `createMock()`
 client returns `undefined`. Build a standalone `RpcClient` against the same node
 with `new RpcClient(new Endpoint(client.endpoint()!))`.
+
+`await client.checkHealth()` reports the node's health without throwing:
+`{ reachable: true, version, chainTip, genesisCommitment?, blockProducer? }`,
+where `blockProducer` has `version`, `status`, `chainTip` and `mempoolStats`
+(`unbatchedTransactions`, `proposedBatches`, `provenBatches`, as numbers), or
+`{ reachable: false, error }` for an unreachable node or a mock client. It does
+not queue behind a sync. For a connection indicator use
+`const stop = client.monitorHealth({ intervalMs, onChange })` (`intervalMs` at most 2147483647): checks never
+overlap, `onChange` fires for the first result and then only when reachability
+or the block producer's `status` changes (not on every new chain tip), and
+`stop()` or `terminate()` ends it. `rpc.getStatus()` on a standalone
+`RpcClient` returns the raw `RpcStatusInfo` and rejects when the node is
+unreachable.
 
 `noteTransportMaxRetries` (an integer from 0 to 10, default 3) and
 `noteTransportRetryIntervalMs` (0 to 60000, default 250, doubling for each
@@ -1254,6 +1267,13 @@ await client.submitNewTransaction(sender, register);
 
 `buildAccountCodeUpgrade(code)` finalizes a request that upgrades the executing account to `code`. The account needs the `UpgradeManager` component with `AuthControlled` authority, and `code` must keep the storage layout. It replaces any custom script and script argument, and fails when own output notes or an expiration delta are set. `withAccountCodeUpgrade(code)` only places the code in the advice map, and `request.accountCodeUpgrade()` returns it.
 
+`extendMerkleStore(nodes)` adds Merkle tree nodes to the store the transaction executes with, so its scripts can read Merkle paths through them. Each `InnerNodeInfo(value, left, right)` is stored as given: `value` must be the Poseidon2 merge of `left` and `right`, and it is not checked. `request.merkleStoreInnerNodes()` returns the added nodes, without the empty-subtree nodes every store starts with.
+
+```typescript
+const nodes = new InnerNodeInfoArray([new InnerNodeInfo(value, left, right)]);
+const request = new TransactionRequestBuilder().extendMerkleStore(nodes).build();
+```
+
 ### Staged transaction lifecycle
 
 `transactions.submit(account, request, options?)` runs execute, prove, submit
@@ -1322,7 +1342,17 @@ The result is `{ blockNumber }` only - the Rust V1 batch API returns no
 per-transaction ids, and the number is the node's chain tip as of submission,
 not the block the batch commits in. `waitForConfirmation: true` resolves the
 call once every transaction of the batch is committed, and rejects if the node
-discards one or `timeout` (default 60 s) runs out. A
+discards one or `timeout` (default 60 s) runs out.
+
+If submit fails with `code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`, do not call
+`batch` / `submitBatch` again. Pass `error.submission` (in-thread) or
+`{ submissionId: error.submissionId }` (worker) to
+`transactions.retryProvenBatch(...)` so the same proven bytes go out without a
+new prove. Confirm with `waitFor` / `list` for `error.transactionIds`. A conflict on retry usually means the original attempt landed, but a rejected retry records nothing locally and a sync does not insert the missing records, so look the ids up on the node, not in the local store. Browser builds only: Node.js errors prefix the message with the code and carry no submission handle or `transactionIds`.
+`ApplyTransactionAfterSubmitFailed` means the node already accepted the batch:
+sync, do not resubmit or retry.
+
+A
 `custom` operation carries a request you built, so the fee rules above apply to
 it: use `client.feeAwareTransactionRequestBuilder(account)`, or
 `client.withFeeAwareAuth(request, account)` for a finished request you did not
@@ -1498,6 +1528,11 @@ await client.accounts.insert({ account, overwrite }); // start tracking an exist
 await client.accounts.getBalance(account, token); // single-asset balance, returns bigint
 await client.accounts.addAddress(ref, address); // track / untrack an address
 await client.accounts.removeAddress(ref, address);
+
+// Development faucets (testnet / devnet): native fee asset for a fresh wallet
+await client.accounts.requestFundingNote(wallet); // { noteId, transactionId, faucetId, amount }
+await client.accounts.fundAccount(wallet); // request → wait → consume → confirm → { noteId, transactionId, balance }
+await client.accounts.fundAccount(wallet, { faucetUrl, amount, timeout, pollInterval });
 
 await client.accounts.import(ref); // by id - fetches state from the network
 await client.accounts.import({ file }); // from an exported AccountFile

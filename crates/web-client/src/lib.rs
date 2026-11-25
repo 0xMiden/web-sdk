@@ -876,9 +876,12 @@ where
             Some(help) => format!("{error_message} [help: {help}]"),
             None => error_message,
         };
-        // napi cannot attach a `code`, so the post-submit code prefixes the message
-        // (the `from_str_err_with_code` shape).
-        match forced_code.or_else(|| post_submit_code(&err)) {
+        // napi cannot attach a `code`, so the post-submit / outcome-unknown codes
+        // prefix the message (the `from_str_err_with_code` shape).
+        match forced_code
+            .or_else(|| post_submit_code(&err))
+            .or_else(|| batch_outcome_unknown_code(&err))
+        {
             Some(code) => napi::Error::from_reason(format!("{code}: {message}")),
             None => napi::Error::from_reason(message),
         }
@@ -908,6 +911,11 @@ fn hint_from_error(err: &(dyn Error + 'static)) -> Option<String> {
 /// API raises the same string from `transactions.js`; wallets must not resubmit on it.
 pub(crate) const APPLY_AFTER_SUBMIT_FAILED: &str = "ApplyTransactionAfterSubmitFailed";
 
+/// Code for a batch submission whose outcome the node never confirmed. The error carries a
+/// `ProvenBatchSubmission` (browser) or the same code as a message prefix (Node.js); callers must
+/// retry with `retryProvenBatch` and must not re-prove.
+pub(crate) const BATCH_SUBMISSION_OUTCOME_UNKNOWN: &str = "BATCH_SUBMISSION_OUTCOME_UNKNOWN";
+
 /// [`APPLY_AFTER_SUBMIT_FAILED`] for the typed variants that report an accepted submission whose
 /// local store update failed. Uncertain outcomes (`BatchSubmissionOutcomeUnknown`) are not
 /// accepted submissions and map to `None`.
@@ -926,6 +934,20 @@ fn post_submit_code(err: &(dyn Error + 'static)) -> Option<&'static str> {
     err.source().and_then(post_submit_code)
 }
 
+/// [`BATCH_SUBMISSION_OUTCOME_UNKNOWN`] for an indeterminate batch submission.
+fn batch_outcome_unknown_code(err: &(dyn Error + 'static)) -> Option<&'static str> {
+    if let Some(client_error) = err.downcast_ref::<ClientError>() {
+        return match client_error {
+            ClientError::BatchBuilder(BatchBuilderError::BatchSubmissionOutcomeUnknown {
+                ..
+            }) => Some(BATCH_SUBMISSION_OUTCOME_UNKNOWN),
+            _ => None,
+        };
+    }
+
+    err.source().and_then(batch_outcome_unknown_code)
+}
+
 /// Maps the typed [`ClientError`] variants that JS callers need to distinguish
 /// to stable string codes (exposed as the `code` property on the thrown JS
 /// error). Only the variants consumers branch on are mapped; everything else
@@ -933,6 +955,9 @@ fn post_submit_code(err: &(dyn Error + 'static)) -> Option<&'static str> {
 #[cfg(feature = "browser")]
 fn code_from_error(err: &(dyn Error + 'static)) -> Option<&'static str> {
     if let Some(code) = post_submit_code(err) {
+        return Some(code);
+    }
+    if let Some(code) = batch_outcome_unknown_code(err) {
         return Some(code);
     }
 
@@ -1011,6 +1036,17 @@ mod post_submit_code_tests {
     fn batch_post_submit_variants_carry_the_code() {
         assert_eq!(post_submit_code(&batch_apply_failed()), Some(APPLY_AFTER_SUBMIT_FAILED));
         assert_eq!(post_submit_code(&batch_update_build_failed()), Some(APPLY_AFTER_SUBMIT_FAILED));
+    }
+
+    #[test]
+    fn indeterminate_batch_outcome_is_not_post_submit_and_has_its_own_code() {
+        // A real ProvenBatchSubmission needs a proven batch, so only the negative
+        // case is unit-testable here: other BatchBuilder errors stay unmapped.
+        assert_eq!(post_submit_code(&ClientError::BatchBuilder(BatchBuilderError::Empty)), None);
+        assert_eq!(
+            batch_outcome_unknown_code(&ClientError::BatchBuilder(BatchBuilderError::Empty)),
+            None
+        );
     }
 
     #[test]

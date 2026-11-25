@@ -654,6 +654,29 @@ await client.transactions.consumeAll({ account: wallet });
 
 `register` fails with code `ACCOUNT_ALREADY_ALLOWED` for an account the node already allows, keeping the code, and a submission that would create an unregistered account fails with `ACCOUNT_NOT_ALLOWLISTED`. `accounts.isInvitationCodeValid` answers `false` for an unknown or registered code, and `true` when the node does not enforce an allowlist. `RpcClient.registerAccount`, `RpcClient.isAccountAllowed` and `RpcClient.isInvitationCodeValid` expose the node endpoints directly for flows that hold no account state. See [the allowlist guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/allowlist.md) for the full flow.
 
+### Fund from a Development Faucet
+
+On testnet and devnet, request the native fee asset and consume it so a fresh
+wallet can pay its first transaction fee:
+
+```typescript
+const client = await MidenClient.createTestnet();
+const wallet = await client.accounts.create();
+
+// Full flow: faucet → wait for note → consume → wait for confirmation
+const { noteId, transactionId, balance } =
+  await client.accounts.fundAccount(wallet);
+
+// Or request only and resume later:
+const receipt = await client.accounts.requestFundingNote(wallet);
+```
+
+Defaults use `https://faucet-api.testnet.miden.io` /
+`https://faucet-api.devnet.miden.io` from the RPC endpoint. Other networks need
+`faucetUrl`. The mint request is never retried: after a failure that retains a
+`noteId`, resume that note instead of calling the faucet again. See
+[the funding guide](https://github.com/0xMiden/web-sdk/blob/next/docs/external/src/web-client/library/funding.md).
+
 ### Create a Faucet
 
 ```typescript
@@ -929,7 +952,10 @@ await client.sync();
 const txs = await client.transactions.list();
 ```
 
-One more failure mode worth handling: the node can accept a batch and the local store update still fail, which surfaces as a rejected promise whose message contains `batch was accepted at block N but building store updates failed` (or `applying to the store failed`). The node has taken the batch in that case, so retrying would submit it twice; sync instead.
+Two failure modes worth handling after a batch submit:
+
+1. The node can accept a batch and the local store update still fail (`code: "ApplyTransactionAfterSubmitFailed"`, or a message containing `batch was accepted at block N but building store updates failed` / `applying to the store failed`). Do not submit again; sync instead.
+2. The submission can come back without a definite outcome (`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` with `submission` in-thread or `submissionId` under a Web Worker, plus `transactionIds`). Resend with `client.transactions.retryProvenBatch(error.submission ?? { submissionId: error.submissionId })` without calling `batch` / `submitBatch` again. After a successful retry, confirm with `waitFor` / `list` for those ids. A conflict on retry usually means the original attempt landed, but a rejected retry records nothing locally and a sync does not insert the missing records, so look the ids up on the node, not in the local store. Browser builds only: Node.js errors prefix the message with the code and carry no submission handle or `transactionIds`.
 
 ### Manual Transaction Lifecycle
 
@@ -983,6 +1009,13 @@ await client.submitNewTransaction(sender, register);
 ```
 
 `buildAccountCodeUpgrade(code)` finalizes a request that upgrades the executing account to `code`. The account needs the `UpgradeManager` component with `AuthControlled` authority, and `code` must keep the storage layout. It replaces any custom script and script argument, and fails when own output notes or an expiration delta are set. `withAccountCodeUpgrade(code)` only places the code in the advice map, and `request.accountCodeUpgrade()` returns it.
+
+`extendMerkleStore(nodes)` adds Merkle tree nodes to the store the transaction executes with, so its scripts can read Merkle paths through them. Each `InnerNodeInfo(value, left, right)` is stored as given: `value` must be the Poseidon2 merge of `left` and `right`, and it is not checked. `request.merkleStoreInnerNodes()` returns the added nodes, without the empty-subtree nodes every store starts with.
+
+```typescript
+const nodes = new InnerNodeInfoArray([new InnerNodeInfo(value, left, right)]);
+const request = new TransactionRequestBuilder().extendMerkleStore(nodes).build();
+```
 
 ### Paying Transaction Fees
 
@@ -1326,6 +1359,21 @@ client.endpoint(); // "https://rpc.devnet.miden.io"
 
 const rpc = new RpcClient(new Endpoint(client.endpoint()!));
 const header = await rpc.getBlockHeaderByNumber(100, false);
+```
+
+### Check the Node's Health
+
+`client.checkHealth()` asks the node for its status and never rejects for a node problem: it resolves to `{ reachable: true, version, chainTip, genesisCommitment?, blockProducer? }`, where `blockProducer` carries the block producer's `version`, `status`, `chainTip` and `mempoolStats` (`unbatchedTransactions`, `proposedBatches`, `provenBatches`), or to `{ reachable: false, error }`. A mock client reports unreachable. The request runs outside the client's call queue, so it answers during a sync. `client.monitorHealth({ intervalMs, onChange })` checks every `intervalMs` (at most 2147483647) after the previous check settles, calls `onChange` with the first result and then only when reachability or the block producer's `status` changes, and returns a function that stops it; `terminate()` stops it too. `RpcClient.getStatus()` returns the same status as a `RpcStatusInfo` and rejects when the node cannot be reached.
+
+```typescript
+const health = await client.checkHealth();
+if (!health.reachable) console.warn(health.error);
+
+const stop = client.monitorHealth({
+  intervalMs: 15_000,
+  onChange: (health) => setOnline(health.reachable),
+});
+stop();
 ```
 
 ### Verify a signBytes signature
