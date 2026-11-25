@@ -33,6 +33,9 @@ const serializeUnknown = (value) => {
 // here and round-trip a submissionId so retryProvenBatch can reuse the same
 // worker WASM instance without re-proving (#571).
 const provenBatchSubmissions = new Map();
+// A caller can abandon an unknown outcome without retrying; bound what those
+// leave behind by releasing the oldest handle first.
+const MAX_PROVEN_BATCH_SUBMISSIONS = 8;
 let nextProvenBatchSubmissionId = 1;
 
 const stashProvenBatchSubmission = (error, reuseId) => {
@@ -48,6 +51,11 @@ const stashProvenBatchSubmission = (error, reuseId) => {
   const submissionId = reuseId ?? String(nextProvenBatchSubmissionId++);
   provenBatchSubmissions.get(submissionId)?.free?.();
   provenBatchSubmissions.set(submissionId, error.submission);
+  if (provenBatchSubmissions.size > MAX_PROVEN_BATCH_SUBMISSIONS) {
+    const [oldestId, oldest] = provenBatchSubmissions.entries().next().value;
+    provenBatchSubmissions.delete(oldestId);
+    oldest.free?.();
+  }
   error.submissionId = submissionId;
   if (
     !error.transactionIds &&
