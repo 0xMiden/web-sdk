@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.2 (TBD)
+
+### Fixes
+
+* [FIX][web] Development faucet funding preserves the full integer value of proof-of-work targets sent as JSON numbers ([#626](https://github.com/0xMiden/web-sdk/pull/626)).
+
 ## 0.18.1 (2026-11-25)
 
 ### Enhancements
@@ -33,7 +39,6 @@
 
 ### Fixes
 
-* [FIX][web] Development faucet funding preserves the full integer value of proof-of-work targets sent as JSON numbers ([#626](https://github.com/0xMiden/web-sdk/pull/626)).
 * [FIX][vite-plugin] `midenVitePlugin` no longer forces `resolve.preserveSymlinks: true`, which made Vite fail to resolve a dependency of a package in pnpm's `.pnpm` store (`Rollup failed to resolve import "zustand"` from `@miden-sdk/react`). The setting is now the opt-in `preserveSymlinks` option, off by default, for linked local checkouts ([web-sdk#601](https://github.com/0xMiden/web-sdk/pull/601)).
 * [FIX][web] Reading a stored note script from the IndexedDB store no longer fails. `getNoteScript` returned the raw database row (`scriptRoot`, `Uint8Array`) where the Rust store expects `noteScriptRoot` and a base64 string, so a stored script failed with `invalid type: byte array, expected a string`, and a missing one failed with `invalid type: unit value, expected struct NoteScriptIdxdbObject`. That aborted a transaction creating an output note with a script that is not bundled with the SDK. It now returns the expected shape, or `null` when absent, which the store reports as `NoteScriptNotFound` ([web-sdk#599](https://github.com/0xMiden/web-sdk/pull/599)).
 * [FIX][para] `useParaMiden` now terminates and clears its client, account id and error when the Para session logs out, the EVM wallet changes, the client config (`nodeUrl`, `storageMode`, `opts` fields, `showSigningModal`) changes, or the component unmounts, and builds a new one for the next user instead of keeping the previous user's client and account id. A new `para`, wallets, `opts` or `customSignConfirmStep` reference with the same values no longer restarts setup, and a setup superseded while pending settles and terminates its client before the next one starts ([web-sdk#540](https://github.com/0xMiden/web-sdk/pull/540)).
