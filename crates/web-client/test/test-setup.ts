@@ -34,7 +34,7 @@ import {
 } from "./playwright.global.setup";
 import { wrapClient } from "../js/node/napi-compat.js";
 import { getNodeSdk, loadNodeSdk } from "./node-adapter.ts";
-import { claimFunderMacBytes, installBrowserFunderHelpers } from "./fee-funder";
+import { installBrowserFunderHelpers } from "./fee-funder";
 
 const require = createRequire(import.meta.url);
 
@@ -1005,9 +1005,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
 
   await installBrowserFunderHelpers(page, {
     rpcUrl,
-    localTxProverUrl: "http://localhost:50051",
     feeFaucetId,
-    funderMacBytes: claimFunderMacBytes(rpcUrl)?.bytes ?? null,
   });
 }
 

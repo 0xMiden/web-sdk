@@ -297,13 +297,15 @@ describe("fee-funder runtime recovery and sharing", () => {
     globalThis.window = fakeWindow;
 
     const fakePage = {
+      exposeFunction: async (name, fn) => {
+        fakeWindow[name] = fn;
+      },
       evaluate: async (fn, arg) => await fn(arg),
     };
     await feeFunder.installBrowserFunderHelpers(fakePage, {
       rpcUrl: "http://localhost:57291",
       localTxProverUrl: "http://localhost:50051",
       feeFaucetId: "0xfee",
-      funderMacBytes: [1],
     });
 
     await expect(
@@ -372,5 +374,68 @@ describe("fee-funder runtime recovery and sharing", () => {
 
     feeFunder.releaseWorkerFunderLock();
     expect(healthyClient.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it("defers funder lock claiming lazily via WeakSet-guarded exposeFunction and defaults local prover port", async () => {
+    const fundersDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "miden-fee-funder-lazy-")
+    );
+    const lockDir = lockDirFor(fundersDir);
+    createdDirs.push(fundersDir, lockDir);
+    fs.writeFileSync(
+      path.join(fundersDir, "wallet_0000.mac"),
+      Buffer.from([1])
+    );
+    process.env.TEST_MIDEN_FUNDER_ACCOUNTS_DIR = fundersDir;
+
+    expect(feeFunder.REMOTE_TX_PROVER_PORT).toBe(50051);
+    expect(feeFunder.DEFAULT_LOCAL_TX_PROVER_URL).toBe(
+      "http://localhost:50051"
+    );
+
+    const healthyClient = createHealthyFunderClient();
+    const newRemoteProverSpy = vi.fn((url) => ({ remoteUrl: url }));
+    const fakeWindow = {
+      ...createRuntimeSdkMock(),
+      TransactionProver: {
+        newLocalProver: () => ({ local: true }),
+        newRemoteProver: newRemoteProverSpy,
+      },
+      WasmWebClient: { createClient: vi.fn(async () => healthyClient) },
+    };
+    globalThis.window = fakeWindow;
+
+    const exposeFunction = vi.fn(async (name, fn) => {
+      fakeWindow[name] = fn;
+    });
+    const fakePage = {
+      exposeFunction,
+      evaluate: async (fn, arg) => await fn(arg),
+    };
+
+    await feeFunder.installBrowserFunderHelpers(fakePage, {
+      rpcUrl: "http://localhost:57291",
+      feeFaucetId: "0xfee",
+    });
+
+    expect(exposeFunction).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(lockDir)).toBe(false);
+
+    await feeFunder.installBrowserFunderHelpers(fakePage, {
+      rpcUrl: "http://localhost:57291",
+      feeFaucetId: "0xfee",
+    });
+    expect(exposeFunction).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(lockDir)).toBe(false);
+
+    const res = await fakeWindow.helpers.sendFundingNotes(["0xaaa"]);
+    expect(res?.txId).toBe("0xtx_1");
+    expect(fs.existsSync(path.join(lockDir, "wallet_0000.mac.lock"))).toBe(
+      true
+    );
+    expect(newRemoteProverSpy).toHaveBeenCalledWith(
+      "http://localhost:50051",
+      BigInt(120_000)
+    );
   });
 });

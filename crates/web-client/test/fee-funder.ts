@@ -24,10 +24,13 @@ const DEFAULT_FUNDER_DIR = path.join(
 const LOCK_TIMEOUT_MS = 60_000;
 const LOCK_RETRY_INTERVAL_MS = 250;
 const STALE_EMPTY_LOCK_GRACE_MS = 10_000;
+export const REMOTE_TX_PROVER_PORT = 50051;
+export const DEFAULT_LOCAL_TX_PROVER_URL = `http://localhost:${REMOTE_TX_PROVER_PORT}`;
 
 let _activeLock: ActiveLock | null = null;
 let _exitHookRegistered = false;
 let _lockSeq = 0;
+const _exposedFunderPages = new WeakSet<Page>();
 const _sharedNodeStates = new Map<string, () => Promise<any>>();
 const _nodeFunderClients = new Set<any>();
 
@@ -272,19 +275,28 @@ export async function installBrowserFunderHelpers(
   page: Page,
   options: {
     rpcUrl: string;
-    localTxProverUrl: string;
+    localTxProverUrl?: string;
     feeFaucetId: string | undefined;
-    funderMacBytes: number[] | null;
   }
 ): Promise<void> {
+  const { rpcUrl, feeFaucetId } = options;
+  const localTxProverUrl =
+    options.localTxProverUrl ?? DEFAULT_LOCAL_TX_PROVER_URL;
+
+  if (
+    typeof (page as { exposeFunction?: unknown }).exposeFunction ===
+      "function" &&
+    !_exposedFunderPages.has(page)
+  ) {
+    await page.exposeFunction(
+      "__midenClaimFunderMacBytes",
+      (targetRpcUrl: string) => claimFunderMacBytes(targetRpcUrl)?.bytes ?? null
+    );
+    _exposedFunderPages.add(page);
+  }
+
   await page.evaluate(
-    ({
-      rpcUrl,
-      localTxProverUrl,
-      feeFaucetId,
-      funderMacBytes,
-      runtimeFactorySource,
-    }) => {
+    ({ rpcUrl, localTxProverUrl, feeFaucetId, runtimeFactorySource }) => {
       const w = window as unknown as Record<string, any>;
       w.helpers = w.helpers || {};
 
@@ -295,9 +307,6 @@ export async function installBrowserFunderHelpers(
       );
 
       const getFunderState = async () => {
-        if (!funderMacBytes || funderMacBytes.length === 0) {
-          return null;
-        }
         if (cachedFunderState) {
           return cachedFunderState;
         }
@@ -305,6 +314,14 @@ export async function installBrowserFunderHelpers(
           funderStatePromise = (async () => {
             let client: any = null;
             try {
+              const macBytes =
+                typeof w.__midenClaimFunderMacBytes === "function"
+                  ? await w.__midenClaimFunderMacBytes(rpcUrl)
+                  : null;
+              if (!macBytes || macBytes.length === 0) {
+                funderStatePromise = null;
+                return null;
+              }
               const funderStoreName = `funder_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
               client = await w.WasmWebClient.createClient(
                 rpcUrl,
@@ -317,7 +334,7 @@ export async function installBrowserFunderHelpers(
                 feeFaucetId
               );
               const accountFile = w.AccountFile.deserialize(
-                new Uint8Array(funderMacBytes)
+                new Uint8Array(macBytes)
               );
               const funderHex = accountFile.accountId().toString();
               await client.importAccountFile(accountFile);
@@ -386,7 +403,9 @@ export async function installBrowserFunderHelpers(
       w.helpers.ensureFunded = runtime.ensureFunded;
     },
     {
-      ...options,
+      rpcUrl,
+      localTxProverUrl,
+      feeFaucetId,
       runtimeFactorySource: createFundingRuntime.toString(),
     }
   );
