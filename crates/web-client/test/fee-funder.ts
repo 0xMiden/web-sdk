@@ -12,6 +12,7 @@ interface ClaimedFunder {
 
 interface ActiveLock {
   lockPath: string;
+  payload: string;
   claimed: ClaimedFunder;
 }
 
@@ -22,9 +23,11 @@ const DEFAULT_FUNDER_DIR = path.join(
 );
 const LOCK_TIMEOUT_MS = 60_000;
 const LOCK_RETRY_INTERVAL_MS = 250;
+const STALE_EMPTY_LOCK_GRACE_MS = 10_000;
 
 let _activeLock: ActiveLock | null = null;
 let _exitHookRegistered = false;
+let _lockSeq = 0;
 
 function isLocalhostRpc(rpcUrl: string): boolean {
   return rpcUrl.includes("localhost") || rpcUrl.includes("127.0.0.1");
@@ -68,46 +71,108 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
-function tryAcquireLock(lockPath: string): boolean {
-  try {
-    const fd = fs.openSync(lockPath, "wx");
-    try {
-      fs.writeFileSync(fd, `${process.pid}\n`);
-    } finally {
-      fs.closeSync(fd);
-    }
-    return true;
-  } catch (err: unknown) {
-    if ((err as { code?: string }).code !== "EEXIST") {
-      throw err;
-    }
+function parseLockPid(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const colonIdx = trimmed.indexOf(":");
+  const pidPart = colonIdx >= 0 ? trimmed.slice(0, colonIdx) : trimmed;
+  if (!/^[1-9]\d*$/.test(pidPart)) return null;
+  const pid = Number(pidPart);
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+}
 
-    try {
-      const content = fs.readFileSync(lockPath, "utf8").trim();
-      const holderPid = Number.parseInt(content, 10);
-      if (!isPidAlive(holderPid)) {
-        fs.rmSync(lockPath, { force: true });
-        return tryAcquireLockRetryOnce(lockPath);
-      }
-    } catch {
-      // Another worker may have rotated the lockfile simultaneously.
-    }
+function isLockStale(raw: string, mtimeMs: number): boolean {
+  const pid = parseLockPid(raw);
+  if (pid !== null) {
+    return !isPidAlive(pid);
+  }
+  return Date.now() - mtimeMs >= STALE_EMPTY_LOCK_GRACE_MS;
+}
+
+function ownsActiveLock(lock: ActiveLock): boolean {
+  try {
+    return fs.readFileSync(lock.lockPath, "utf8") === lock.payload;
+  } catch {
     return false;
   }
 }
 
-function tryAcquireLockRetryOnce(lockPath: string): boolean {
+function publishLockFile(lockPath: string, payload: string): boolean {
+  const tmpPath = `${lockPath}.${process.pid}.${++_lockSeq}.tmp`;
+  const fd = fs.openSync(tmpPath, "wx");
   try {
-    const fd = fs.openSync(lockPath, "wx");
-    try {
-      fs.writeFileSync(fd, `${process.pid}\n`);
-    } finally {
-      fs.closeSync(fd);
-    }
+    fs.writeFileSync(fd, payload);
+  } finally {
+    fs.closeSync(fd);
+  }
+  try {
+    fs.linkSync(tmpPath, lockPath);
     return true;
+  } catch (err: unknown) {
+    if ((err as { code?: string }).code === "EEXIST") {
+      return false;
+    }
+    throw err;
+  } finally {
+    fs.rmSync(tmpPath, { force: true });
+  }
+}
+
+function tryReapStaleLock(lockPath: string): boolean {
+  let content: string;
+  let stat: fs.Stats;
+  try {
+    content = fs.readFileSync(lockPath, "utf8");
+    stat = fs.statSync(lockPath);
   } catch {
     return false;
   }
+
+  if (!isLockStale(content, stat.mtimeMs)) {
+    return false;
+  }
+
+  const reapDir = `${lockPath}.reap`;
+  try {
+    fs.mkdirSync(reapDir);
+  } catch (err: unknown) {
+    if ((err as { code?: string }).code === "EEXIST") {
+      try {
+        const reapStat = fs.statSync(reapDir);
+        if (Date.now() - reapStat.mtimeMs >= STALE_EMPTY_LOCK_GRACE_MS) {
+          fs.rmSync(reapDir, { recursive: true, force: true });
+        }
+      } catch {
+        // Ignore concurrent reap cleanup.
+      }
+      return false;
+    }
+    throw err;
+  }
+
+  try {
+    const current = fs.readFileSync(lockPath, "utf8");
+    const currentStat = fs.statSync(lockPath);
+    if (current !== content || !isLockStale(current, currentStat.mtimeMs)) {
+      return false;
+    }
+    fs.rmSync(lockPath, { force: true });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    fs.rmSync(reapDir, { recursive: true, force: true });
+  }
+}
+
+function tryAcquireLock(lockPath: string, payload: string): boolean {
+  if (publishLockFile(lockPath, payload)) {
+    return true;
+  }
+  if (!tryReapStaleLock(lockPath)) {
+    return false;
+  }
+  return publishLockFile(lockPath, payload);
 }
 
 function sleepSync(ms: number): void {
@@ -115,14 +180,17 @@ function sleepSync(ms: number): void {
   Atomics.wait(view, 0, 0, ms);
 }
 
-function releaseWorkerFunderLock(): void {
-  if (!_activeLock) return;
+export function releaseWorkerFunderLock(): void {
+  const lock = _activeLock;
+  _activeLock = null;
+  if (!lock) return;
   try {
-    fs.rmSync(_activeLock.lockPath, { force: true });
+    if (ownsActiveLock(lock)) {
+      fs.rmSync(lock.lockPath, { force: true });
+    }
   } catch {
     // Best-effort cleanup on worker exit.
   }
-  _activeLock = null;
 }
 
 function registerExitHook(): void {
@@ -136,7 +204,11 @@ function registerExitHook(): void {
  * process so concurrent Playwright workers never race on the same funder nonce.
  */
 export function claimFunderMacBytes(rpcUrl: string): ClaimedFunder | null {
-  if (_activeLock && fs.existsSync(_activeLock.claimed.path)) {
+  if (
+    _activeLock &&
+    fs.existsSync(_activeLock.claimed.path) &&
+    ownsActiveLock(_activeLock)
+  ) {
     return _activeLock.claimed;
   }
   _activeLock = null;
@@ -166,10 +238,11 @@ export function claimFunderMacBytes(rpcUrl: string): ClaimedFunder | null {
     for (let offset = 0; offset < macFiles.length; offset++) {
       const macPath = macFiles[(startOffset + offset) % macFiles.length];
       const lockPath = path.join(lockDir, `${path.basename(macPath)}.lock`);
-      if (tryAcquireLock(lockPath)) {
+      const payload = `${process.pid}:${crypto.randomUUID()}\n`;
+      if (tryAcquireLock(lockPath, payload)) {
         const bytes = Array.from(fs.readFileSync(macPath));
         const claimed = { path: macPath, bytes };
-        _activeLock = { lockPath, claimed };
+        _activeLock = { lockPath, payload, claimed };
         registerExitHook();
         return claimed;
       }
