@@ -148,7 +148,7 @@ test("newRegisterNoteScriptsTransactionRequest emits one public note per script 
   expect(result.executedOutputs).toBe(2);
 });
 
-test("a custom note script is registered and declared for network execution", async ({
+test("a custom note script registration request is submitted and the script is declared for network execution", async ({
   run,
 }) => {
   const result = await run(async ({ client, sdk, helpers }) => {
