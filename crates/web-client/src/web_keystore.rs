@@ -27,15 +27,7 @@ use crate::web_keystore_callbacks::{
     SignCallback,
     decode_secret_key_from_bytes,
 };
-use crate::web_keystore_db::{
-    get_account_auth_by_pub_key_commitment,
-    get_account_id_by_key_commitment,
-    get_key_commitments_by_account_id,
-    insert_account_auth,
-    insert_account_key_mapping,
-    remove_account_auth,
-    remove_all_mappings_for_key,
-};
+use crate::web_keystore_db::KeystoreDb;
 
 /// A web-based keystore that stores keys in [browser's local storage](https://developer.mozilla.org/en-US/docs/Web/API/Web_Storage_API)
 /// and provides transaction authentication functionality.
@@ -44,8 +36,8 @@ pub struct WebKeyStore<R: Rng> {
     /// The random number generator used to generate signatures.
     rng: Arc<RwLock<R>>,
     callbacks: Arc<JsCallbacks>,
-    /// The database ID for `IndexedDB` operations.
-    db_id: String,
+    /// Where the keys and the accounts they belong to are kept.
+    db: Arc<KeystoreDb>,
 }
 
 struct JsCallbacks {
@@ -66,26 +58,31 @@ unsafe impl Send for JsCallbacks {}
 unsafe impl Sync for JsCallbacks {}
 
 impl<R: Rng> WebKeyStore<R> {
-    /// Creates a new instance of the web keystore with the provided RNG.
+    /// Creates a new instance of the web keystore with the provided RNG, which keeps its keys in
+    /// the `IndexedDB` store named `db_id`.
     pub fn new(rng: R, db_id: String) -> Self {
-        WebKeyStore {
-            rng: Arc::new(RwLock::new(rng)),
-            callbacks: Arc::new(JsCallbacks {
-                get_key: None,
-                insert_key: None,
-                sign: None,
-                last_auth_error: RefCell::new(JsValue::NULL),
-                last_get_key_error: RefCell::new(None),
-            }),
-            db_id,
-        }
+        Self::new_with_db(rng, KeystoreDb::Idxdb { db_id }, None, None, None)
     }
 
-    /// Creates a new instance with optional JavaScript callbacks.
+    /// Creates a new instance with optional JavaScript callbacks, which keeps its keys in the
+    /// `IndexedDB` store named `db_id`.
     /// When provided, these callbacks override the default `IndexedDB` storage and local signing.
     pub fn new_with_callbacks(
         rng: R,
         db_id: String,
+        get_key: Option<Function>,
+        insert_key: Option<Function>,
+        sign: Option<Function>,
+    ) -> Self {
+        Self::new_with_db(rng, KeystoreDb::Idxdb { db_id }, get_key, insert_key, sign)
+    }
+
+    /// Creates a new instance with optional JavaScript callbacks, which keeps its keys in `db`.
+    /// When provided, these callbacks override the storage of secret keys in `db` and local
+    /// signing. The accounts the keys belong to are kept in `db` either way.
+    pub(crate) fn new_with_db(
+        rng: R,
+        db: KeystoreDb,
         get_key: Option<Function>,
         insert_key: Option<Function>,
         sign: Option<Function>,
@@ -99,7 +96,7 @@ impl<R: Rng> WebKeyStore<R> {
                 last_auth_error: RefCell::new(JsValue::NULL),
                 last_get_key_error: RefCell::new(None),
             }),
-            db_id,
+            db: Arc::new(db),
         }
     }
 
@@ -130,6 +127,12 @@ impl<R: Rng> WebKeyStore<R> {
         *self.callbacks.last_get_key_error.borrow_mut() = None;
     }
 
+    /// Builds the error for a failed read or write of the keystore's storage: `action` followed
+    /// by the name of the storage, as in "Failed to get secret key from `IndexedDB`".
+    fn storage_error(&self, action: &str) -> KeyStoreError {
+        KeyStoreError::StorageError(format!("{action} {}", self.db.storage_name()))
+    }
+
     /// Adds a secret key to the keystore without updating account mappings.
     ///
     /// This is an internal method. Use [`Keystore::add_key`] instead.
@@ -143,11 +146,10 @@ impl<R: Rng> WebKeyStore<R> {
         let pub_key_commitment = NativeWord::from(key.public_key().to_commitment()).to_hex();
         let secret_key_hex = hex::encode(key.to_bytes());
 
-        insert_account_auth(&self.db_id, pub_key_commitment, secret_key_hex)
+        self.db
+            .insert_account_auth(pub_key_commitment, secret_key_hex)
             .await
-            .map_err(|_| {
-                KeyStoreError::StorageError("Failed to insert item into IndexedDB".to_string())
-            })?;
+            .map_err(|_| self.storage_error("Failed to insert item into"))?;
 
         Ok(())
     }
@@ -258,13 +260,10 @@ impl<R: Rng> Keystore for WebKeyStore<R> {
         let account_id_hex = account_id.to_hex();
         let pub_key_hex = NativeWord::from(pub_key_commitment).to_hex();
 
-        insert_account_key_mapping(&self.db_id, account_id_hex, pub_key_hex)
+        self.db
+            .insert_account_key_mapping(account_id_hex, pub_key_hex)
             .await
-            .map_err(|_| {
-                KeyStoreError::StorageError(
-                    "Failed to insert account key mapping into IndexedDB".to_string(),
-                )
-            })?;
+            .map_err(|_| self.storage_error("Failed to insert account key mapping into"))?;
 
         Ok(())
     }
@@ -273,18 +272,16 @@ impl<R: Rng> Keystore for WebKeyStore<R> {
         let pub_key_hex = NativeWord::from(pub_key).to_hex();
 
         // Remove all account-key mappings for this key
-        remove_all_mappings_for_key(&self.db_id, pub_key_hex.clone())
+        self.db
+            .remove_all_mappings_for_key(pub_key_hex.clone())
             .await
-            .map_err(|_| {
-                KeyStoreError::StorageError(
-                    "Failed to remove account key mappings from IndexedDB".to_string(),
-                )
-            })?;
+            .map_err(|_| self.storage_error("Failed to remove account key mappings from"))?;
 
         // Remove the key itself
-        remove_account_auth(&self.db_id, pub_key_hex).await.map_err(|_| {
-            KeyStoreError::StorageError("Failed to remove key from IndexedDB".to_string())
-        })?;
+        self.db
+            .remove_account_auth(pub_key_hex)
+            .await
+            .map_err(|_| self.storage_error("Failed to remove key from"))?;
 
         Ok(())
     }
@@ -304,14 +301,11 @@ impl<R: Rng> Keystore for WebKeyStore<R> {
             return result;
         }
         let pub_key_commitment = NativeWord::from(pub_key).to_hex();
-        let secret_key_hex =
-            get_account_auth_by_pub_key_commitment(&self.db_id, pub_key_commitment)
-                .await
-                .map_err(|_| {
-                    KeyStoreError::StorageError(
-                        "Failed to get secret key from IndexedDB".to_string(),
-                    )
-                })?;
+        let secret_key_hex = self
+            .db
+            .get_account_auth_by_pub_key_commitment(pub_key_commitment)
+            .await
+            .map_err(|_| self.storage_error("Failed to get secret key from"))?;
 
         let Some(secret_key_hex) = secret_key_hex else {
             return Ok(None);
@@ -332,10 +326,8 @@ impl<R: Rng> Keystore for WebKeyStore<R> {
         let pub_key_hex = NativeWord::from(pub_key_commitment).to_hex();
 
         let account_id_hex =
-            get_account_id_by_key_commitment(&self.db_id, pub_key_hex).await.map_err(|_| {
-                KeyStoreError::StorageError(
-                    "Failed to get account id by key commitment from IndexedDB".to_string(),
-                )
+            self.db.get_account_id_by_key_commitment(pub_key_hex).await.map_err(|_| {
+                self.storage_error("Failed to get account id by key commitment from")
             })?;
 
         match account_id_hex {
@@ -355,13 +347,11 @@ impl<R: Rng> Keystore for WebKeyStore<R> {
     ) -> Result<BTreeSet<PublicKeyCommitment>, KeyStoreError> {
         let account_id_hex = account_id.to_hex();
 
-        let commitment_hexes = get_key_commitments_by_account_id(&self.db_id, account_id_hex)
+        let commitment_hexes = self
+            .db
+            .get_key_commitments_by_account_id(account_id_hex)
             .await
-            .map_err(|_| {
-                KeyStoreError::StorageError(
-                    "Failed to get key commitments from IndexedDB".to_string(),
-                )
-            })?;
+            .map_err(|_| self.storage_error("Failed to get key commitments from"))?;
 
         let commitments = commitment_hexes
             .into_iter()

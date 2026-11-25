@@ -474,6 +474,27 @@ function checkRetryOption(name, value, cap) {
   }
 }
 
+/** The storages a browser client can keep its store and its keys in. */
+const STORE_BACKENDS = Object.freeze(["indexeddb", "sqlite"]);
+
+/**
+ * Validates the `storeBackend` client option before any worker or WASM call
+ * sees it, so every way of building a client rejects the same values.
+ *
+ * `undefined` means "use the default" (`"indexeddb"`) and is accepted.
+ *
+ * @param {unknown} storeBackend - `"indexeddb"`, `"sqlite"`, or undefined.
+ * @throws {TypeError} If it is any other value.
+ */
+export function validateStoreBackend(storeBackend) {
+  if (storeBackend === undefined) return;
+  if (!STORE_BACKENDS.includes(storeBackend)) {
+    throw new TypeError(
+      `storeBackend must be "indexeddb" or "sqlite", got ${String(storeBackend)}`
+    );
+  }
+}
+
 // BigInt() rounds an unsafe number silently, so reject one before any WASM call.
 export function toAmount(amount, method) {
   if (typeof amount === "number" && !Number.isSafeInteger(amount)) {

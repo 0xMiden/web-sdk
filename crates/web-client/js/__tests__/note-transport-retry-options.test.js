@@ -145,7 +145,7 @@ describe("WasmWebClient factories pass the retry options to WASM", () => {
       1_000
     );
     const [args] = calls.createClient;
-    expect(args).toHaveLength(7);
+    expect(args).toHaveLength(8);
     expect(args[4]).toBe("0xfee");
     expect(args[5]).toBe(5);
     expect(args[6]).toBe(1_000);
@@ -170,7 +170,7 @@ describe("WasmWebClient factories pass the retry options to WASM", () => {
       60_000
     );
     const [args] = calls.createClientWithExternalKeystore;
-    expect(args).toHaveLength(10);
+    expect(args).toHaveLength(11);
     expect(args[4]).toBe("0xfee");
     expect(args[7]).toBe(sign);
     expect(args[8]).toBe(0);
@@ -292,7 +292,7 @@ describe("MidenClient.create forwards the retry options", () => {
       noteTransportRetryIntervalMs: 100,
     });
     const [args] = calls.createClient;
-    expect(args).toHaveLength(12);
+    expect(args).toHaveLength(13);
     expect(args[7]).toBe("0xfee");
     expect(args[8]).toBe(2);
     expect(args[9]).toBe(100);
@@ -308,7 +308,7 @@ describe("MidenClient.create forwards the retry options", () => {
       noteTransportRetryIntervalMs: 60_000,
     });
     const [args] = calls.createClientWithExternalKeystore;
-    expect(args).toHaveLength(15);
+    expect(args).toHaveLength(16);
     expect(args[10]).toBe("0xfee");
     expect(args[11]).toBe(0);
     expect(args[12]).toBe(60_000);

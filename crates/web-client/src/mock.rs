@@ -1,12 +1,11 @@
 use alloc::sync::Arc;
 
-#[cfg(feature = "browser")]
-use idxdb_store::IdxdbStore;
 use js_export_macro::js_export;
 use miden_client::block::BlockNumber;
 use miden_client::crypto::eddsa_25519_sha512::KeyExchangeKey;
 use miden_client::protocol_config::ProtocolConfig;
 use miden_client::rpc::encryption::TransactionEncryptionKey;
+#[cfg(feature = "nodejs")]
 use miden_client::store::Store;
 use miden_client::testing::MockChain;
 use miden_client::testing::mock::MockRpcApi;
@@ -15,10 +14,12 @@ use miden_client::utils::{Deserializable, RwLock, Serializable};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
-use crate::platform::{JsErr, from_str_err};
-use crate::{WebClient, create_rng, js_error_with_context};
 #[cfg(feature = "browser")]
-use crate::{WebKeyStore, idxdb_store_init_error};
+use crate::WebKeyStore;
+use crate::platform::{JsErr, from_str_err};
+#[cfg(feature = "browser")]
+use crate::store_backend::{self, StoreBackend};
+use crate::{WebClient, create_rng, js_error_with_context};
 
 #[cfg(feature = "browser")]
 #[js_export]
@@ -26,10 +27,13 @@ impl WebClient {
     /// Creates a new client with a mock RPC API. Useful for testing purposes and proof-of-concept
     /// applications as it uses a mock chain that simulates the behavior of a real node.
     ///
-    /// `store_name` selects the `IndexedDB` database. Omit it (or pass `None`) to keep the
-    /// historical default `"mock_client_db"`. Pass a distinct name when a second mock client
-    /// must not share that database with another live mock in the same origin; sharing it with
-    /// a different mock chain makes `syncState` fail genesis tip validation.
+    /// `store_name` selects the store. Omit it (or pass `None`) to keep the historical default
+    /// `"mock_client_db"`. Pass a distinct name when a second mock client must not share that
+    /// store with another live mock in the same origin; sharing it with a different mock chain
+    /// makes `syncState` fail genesis tip validation.
+    ///
+    /// `store_backend` selects the storage the store and the keys are kept in, as it does for
+    /// `createClient`: `"indexeddb"`, the default, or `"sqlite"`.
     #[js_export(js_name = "createMockClient")]
     pub async fn create_mock_client(
         &self,
@@ -37,7 +41,10 @@ impl WebClient {
         serialized_mock_chain: Option<Vec<u8>>,
         serialized_mock_note_transport_node: Option<Vec<u8>>,
         store_name: Option<String>,
+        store_backend: Option<String>,
     ) -> Result<String, JsErr> {
+        let store_backend = StoreBackend::parse(store_backend.as_deref())?;
+
         let mock_rpc_api = match serialized_mock_chain {
             Some(chain) => {
                 Arc::new(MockRpcApi::new(MockChain::read_from_bytes(&chain).map_err(|err| {
@@ -59,18 +66,9 @@ impl WebClient {
 
         let store_name = store_name.unwrap_or_else(|| "mock_client_db".to_owned());
         let mut rng = create_rng(seed)?;
-        let store: Arc<dyn Store> = Arc::new(
-            IdxdbStore::new(store_name.clone())
-                .await
-                .map_err(|err| idxdb_store_init_error(&err))?,
-        );
-        let keystore = WebKeyStore::new_with_callbacks(
-            StdRng::from_rng(&mut rng),
-            store_name,
-            None,
-            None,
-            None,
-        );
+        let (store, keystore_db) = store_backend::open_store(&store_name, store_backend).await?;
+        let keystore =
+            WebKeyStore::new_with_db(StdRng::from_rng(&mut rng), keystore_db, None, None, None);
 
         let protocol_config = mock_rpc_api.protocol_config();
         self.setup_client(

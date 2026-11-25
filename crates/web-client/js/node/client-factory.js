@@ -9,7 +9,11 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { wrapClient, normalizeArg } from "./napi-compat.js";
-import { claimStore, validateNoteTransportRetryOptions } from "../utils.js";
+import {
+  claimStore,
+  validateNoteTransportRetryOptions,
+  validateStoreBackend,
+} from "../utils.js";
 
 let _counter = 0;
 
@@ -58,10 +62,26 @@ function normBytes(val) {
 }
 
 /**
+ * Checks the `storeBackend` option on Node.js, where the store is always
+ * SQLite: `"sqlite"` and an omitted value are what it already is.
+ *
+ * @param {unknown} storeBackend
+ * @throws {TypeError} If it names no storage, or names IndexedDB.
+ */
+function rejectIndexedDbBackend(storeBackend) {
+  validateStoreBackend(storeBackend);
+  if (storeBackend === "indexeddb") {
+    throw new TypeError(
+      'storeBackend "indexeddb" is not available on Node.js, where the store is always SQLite'
+    );
+  }
+}
+
+/**
  * Creates the WasmWebClient factory for Node.js.
  *
  * Matches the browser interface:
- *   WasmWebClient.createClient(rpcUrl, noteTransportUrl, seed, storeName, logLevel, useWorker, observability, feeFaucetId, noteTransportMaxRetries, noteTransportRetryIntervalMs, callbackTimeoutMs, exclusive)
+ *   WasmWebClient.createClient(rpcUrl, noteTransportUrl, seed, storeName, logLevel, useWorker, observability, feeFaucetId, noteTransportMaxRetries, noteTransportRetryIntervalMs, callbackTimeoutMs, exclusive, storeBackend)
  *   WasmWebClient.createClientWithExternalKeystore(rpcUrl, noteTransportUrl, seed, storeName, getKey, insertKey, sign, logLevel, useWorker, observability, feeFaucetId, noteTransportMaxRetries, noteTransportRetryIntervalMs, callbackTimeoutMs)
  *   WasmWebClient.buildSwapTag(...)
  *
@@ -76,7 +96,8 @@ export function createWasmWebClient(rawSdk, options) {
 
     // The trailing parameters exist so this matches what `MidenClient.create`
     // passes the browser factory; `feeFaucetId` and the two retry options reach
-    // the native client.
+    // the native client. The native store is always SQLite, so `storeBackend`
+    // only has to not ask for another one.
     createClient: async (
       rpcUrl,
       noteTransportUrl,
@@ -89,12 +110,14 @@ export function createWasmWebClient(rawSdk, options) {
       noteTransportMaxRetries,
       noteTransportRetryIntervalMs,
       _callbackTimeoutMs,
-      exclusive = false
+      exclusive = false,
+      storeBackend
     ) => {
       validateNoteTransportRetryOptions(
         noteTransportMaxRetries,
         noteTransportRetryIntervalMs
       );
+      rejectIndexedDbBackend(storeBackend);
       // `storeIdentifier()` is the open store's SQLite path: reopen that file.
       const dbPath =
         storeName && path.isAbsolute(storeName) && storeName.endsWith(".db")
@@ -144,17 +167,23 @@ export function createWasmWebClient(rawSdk, options) {
  * Creates the MockWasmWebClient factory for Node.js.
  *
  * Matches the browser interface:
- *   MockWasmWebClient.createClient(serializedMockChain, serializedNoteTransport, seed)
+ *   MockWasmWebClient.createClient(serializedMockChain, serializedNoteTransport, seed, logLevel, storeName, storeBackend)
  *
  * @param {object} rawSdk - The raw napi SDK module.
  */
 export function createMockWasmWebClient(rawSdk) {
   return {
+    // The native store is always SQLite, so `storeBackend` only has to not ask
+    // for another one.
     createClient: async (
       serializedMockChain,
       serializedNoteTransport,
-      seed
+      seed,
+      _logLevel,
+      _storeName,
+      storeBackend
     ) => {
+      rejectIndexedDbBackend(storeBackend);
       const dir = createTempDir("mock");
       const client = new rawSdk.WebClient();
       await client.createMockClient(

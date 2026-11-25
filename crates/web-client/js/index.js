@@ -16,7 +16,11 @@ import { emitObservation, hasObserver, setObserver } from "./observability.js";
 import { assertBatchItems } from "./utils.js";
 import { MidenClient } from "./client.js";
 import { CompilerResource } from "./resources/compiler.js";
-import { claimStore, validateNoteTransportRetryOptions } from "./utils.js";
+import {
+  claimStore,
+  validateNoteTransportRetryOptions,
+  validateStoreBackend,
+} from "./utils.js";
 import {
   createP2IDNote,
   createP2IDENote,
@@ -572,9 +576,16 @@ class WebClient {
    * @param {number | undefined} [callbackTimeoutMs] - The `callbackTimeoutMs`
    *   field of `ClientOptions`: how long the Web Worker waits for each external
    *   keystore callback. See `callbackTimeoutFor` in `callbackBridge.js`.
+   * @param {"indexeddb" | "sqlite" | undefined} [storeBackend] - The
+   *   `storeBackend` field of `ClientOptions`: the storage the store and the
+   *   keys are kept in, `"indexeddb"` when omitted. `"sqlite"` keeps them in
+   *   SQLite databases in the origin private file system, which one WASM
+   *   instance holds at a time, so it turns the Web Worker shim off whatever
+   *   `useWorker` says: the shim's worker would be a second instance.
    * @throws {TypeError} If either retry option is out of range or their total
-   *   backoff exceeds 120000 ms. Checked here, before any worker or WASM call,
-   *   so every way of building a client rejects the same values.
+   *   backoff exceeds 120000 ms, or if `storeBackend` names no storage. Checked
+   *   here, before any worker or WASM call, so every way of building a client
+   *   rejects the same values.
    */
   constructor(
     rpcUrl,
@@ -590,12 +601,14 @@ class WebClient {
     feeFaucetId,
     noteTransportMaxRetries,
     noteTransportRetryIntervalMs,
-    callbackTimeoutMs
+    callbackTimeoutMs,
+    storeBackend
   ) {
     validateNoteTransportRetryOptions(
       noteTransportMaxRetries,
       noteTransportRetryIntervalMs
     );
+    validateStoreBackend(storeBackend);
     this.rpcUrl = rpcUrl;
     this.noteTransportUrl = noteTransportUrl;
     this.seed = seed;
@@ -612,7 +625,10 @@ class WebClient {
     this._noteTransportMaxRetries = noteTransportMaxRetries;
     this._noteTransportRetryIntervalMs = noteTransportRetryIntervalMs;
     this._callbackTimeoutMs = validateCallbackTimeoutMs(callbackTimeoutMs);
-    this.useWorker = useWorker !== false;
+    // The SQLite store's files are held by the one WASM instance that opened
+    // them, which has to be this one, so the shim's worker cannot have a
+    // client of its own on the store.
+    this.useWorker = useWorker !== false && storeBackend !== "sqlite";
 
     // Check if Web Workers are available AND the caller didn't opt out via
     // `useWorker: false`. The opt-out is load-bearing for `CallbackProver`
@@ -785,7 +801,9 @@ class WebClient {
       console.log(
         this.useWorker
           ? "WebClient: Web Workers are not available."
-          : "WebClient: Web Worker shim disabled by caller (useWorker=false)."
+          : storeBackend === "sqlite"
+            ? "WebClient: Web Worker shim disabled for the SQLite store."
+            : "WebClient: Web Worker shim disabled by caller (useWorker=false)."
       );
       // Worker not available or explicitly disabled; set up fallback values.
       this.worker = null;
@@ -1190,6 +1208,8 @@ class WebClient {
    * @param {boolean} [exclusive=false] - Refuse a store another live client has open, and make
    *   every other open of this store refuse until this client terminates. Without it, opening
    *   an open store warns naming the client that has it.
+   * @param {"indexeddb" | "sqlite" | undefined} [storeBackend] - The storage the store and the
+   *   keys are kept in; see the constructor.
    */
   static async createClient(
     rpcUrl,
@@ -1203,7 +1223,8 @@ class WebClient {
     noteTransportMaxRetries,
     noteTransportRetryIntervalMs,
     callbackTimeoutMs,
-    exclusive = false
+    exclusive = false,
+    storeBackend
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -1220,7 +1241,8 @@ class WebClient {
       feeFaucetId,
       noteTransportMaxRetries,
       noteTransportRetryIntervalMs,
-      callbackTimeoutMs
+      callbackTimeoutMs,
+      storeBackend
     );
 
     try {
@@ -1245,7 +1267,8 @@ class WebClient {
         network,
         feeFaucetId,
         noteTransportMaxRetries,
-        noteTransportRetryIntervalMs
+        noteTransportRetryIntervalMs,
+        storeBackend
       );
 
       // Wait for the worker to be ready
@@ -1284,6 +1307,8 @@ class WebClient {
    *   retry; see the constructor.
    * @param {number | undefined} [callbackTimeoutMs] - See the constructor.
    * @param {boolean} [exclusive=false] - See `createClient`.
+   * @param {"indexeddb" | "sqlite" | undefined} [storeBackend] - The storage the store and the
+   *   accounts of the keys are kept in; see the constructor.
    */
   static async createClientWithExternalKeystore(
     rpcUrl,
@@ -1300,7 +1325,8 @@ class WebClient {
     noteTransportMaxRetries,
     noteTransportRetryIntervalMs,
     callbackTimeoutMs,
-    exclusive = false
+    exclusive = false,
+    storeBackend
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -1317,7 +1343,8 @@ class WebClient {
       feeFaucetId,
       noteTransportMaxRetries,
       noteTransportRetryIntervalMs,
-      callbackTimeoutMs
+      callbackTimeoutMs,
+      storeBackend
     );
 
     try {
@@ -1345,7 +1372,8 @@ class WebClient {
         insertKeyCb,
         signCb,
         noteTransportMaxRetries,
-        noteTransportRetryIntervalMs
+        noteTransportRetryIntervalMs,
+        storeBackend
       );
 
       await instance.ready;
@@ -2140,7 +2168,7 @@ class WebClient {
 }
 
 class MockWebClient extends WebClient {
-  constructor(seed, logLevel, storeName) {
+  constructor(seed, logLevel, storeName, storeBackend) {
     super(
       null,
       null,
@@ -2149,7 +2177,14 @@ class MockWebClient extends WebClient {
       undefined,
       undefined,
       undefined,
-      logLevel
+      logLevel,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      storeBackend
     );
     // The worker's mock client has to start from the main thread's mock
     // chain: both clients open the same IndexedDB store, and a worker that
@@ -2201,7 +2236,8 @@ class MockWebClient extends WebClient {
    * @param serializedMockNoteTransportNode - Serialized mock note transport node data (optional). Will use a new instance if not provided.
    * @param seed - The seed for the account (optional).
    * @param logLevel - Optional log level.
-   * @param storeName - Optional IndexedDB name. Defaults to `mock_client_db`. Use a distinct name for a second independent mock in the same origin.
+   * @param storeName - Optional store name. Defaults to `mock_client_db`. Use a distinct name for a second independent mock in the same origin.
+   * @param storeBackend - Optional storage the store and the keys are kept in, `"indexeddb"` (the default) or `"sqlite"`; see the `WebClient` constructor.
    * @returns A promise that resolves to a MockWebClient.
    */
   static async createClient(
@@ -2209,10 +2245,11 @@ class MockWebClient extends WebClient {
     serializedMockNoteTransportNode,
     seed,
     logLevel,
-    storeName
+    storeName,
+    storeBackend
   ) {
     // Construct the instance (synchronously).
-    const instance = new MockWebClient(seed, logLevel, storeName);
+    const instance = new MockWebClient(seed, logLevel, storeName, storeBackend);
 
     try {
       // Set up logging on the main thread before creating the client.
@@ -2227,7 +2264,8 @@ class MockWebClient extends WebClient {
         seed ?? null,
         serializedMockChain ?? null,
         serializedMockNoteTransportNode ?? null,
-        instance.storeName
+        instance.storeName,
+        storeBackend
       );
 
       // Hand the main-thread chain to the worker's INIT_MOCK.

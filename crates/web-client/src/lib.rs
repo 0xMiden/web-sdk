@@ -15,8 +15,6 @@ use alloc::sync::Arc;
 use core::error::Error;
 use core::fmt::Write;
 
-#[cfg(feature = "browser")]
-use idxdb_store::IdxdbStore;
 use js_export_macro::js_export;
 #[cfg(feature = "browser")]
 use js_sys::{Function, Reflect};
@@ -42,6 +40,8 @@ use platform::maybe_wrap_send;
 use platform::{AsyncCell, ClientAuth, JsErr, from_str_err};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
+#[cfg(feature = "browser")]
+use store_backend::StoreBackend;
 #[cfg(feature = "browser")]
 use tracing::Level;
 #[cfg(feature = "browser")]
@@ -72,6 +72,10 @@ pub mod utils;
 
 #[cfg(feature = "browser")]
 pub mod keystore_api;
+#[cfg(all(feature = "sqlite-store", any(feature = "browser", test)))]
+mod sqlite_keystore_db;
+#[cfg(feature = "browser")]
+mod store_backend;
 #[cfg(feature = "browser")]
 mod web_keystore;
 #[cfg(feature = "browser")]
@@ -465,6 +469,10 @@ impl WebClient {
     ///   transport failure. `None` keeps the transport's default.
     /// * `note_transport_retry_interval_ms`: Optional delay before the first such retry, doubling
     ///   for each later one. `None` keeps the transport's default.
+    /// * `store_backend`: Optional storage the store and the keys are kept in: `"indexeddb"`, the
+    ///   default, or `"sqlite"`. `"sqlite"` keeps them in `SQLite` databases in the origin private
+    ///   file system, which only a dedicated Web Worker can open, and which one worker of the
+    ///   origin holds at a time. It is rejected by a build without the `SQLite` store.
     #[wasm_bindgen(js_name = "createClient")]
     #[allow(clippy::too_many_arguments)]
     pub async fn create_client(
@@ -476,8 +484,10 @@ impl WebClient {
         fee_faucet_id: Option<String>,
         note_transport_max_retries: Option<u32>,
         note_transport_retry_interval_ms: Option<u32>,
+        store_backend: Option<String>,
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_endpoint(node_url)?;
+        let store_backend = StoreBackend::parse(store_backend.as_deref())?;
 
         let web_rpc_client =
             Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
@@ -493,18 +503,9 @@ impl WebClient {
         let store_name = store_name_for(&endpoint, store_name);
 
         let mut rng = create_rng(seed)?;
-        let store: Arc<dyn Store> = Arc::new(
-            IdxdbStore::new(store_name.clone())
-                .await
-                .map_err(|err| idxdb_store_init_error(&err))?,
-        );
-        let keystore = WebKeyStore::new_with_callbacks(
-            StdRng::from_rng(&mut rng),
-            store_name.clone(),
-            None,
-            None,
-            None,
-        );
+        let (store, keystore_db) = store_backend::open_store(&store_name, store_backend).await?;
+        let keystore =
+            WebKeyStore::new_with_db(StdRng::from_rng(&mut rng), keystore_db, None, None, None);
 
         let fee_faucet = fee_faucet_id.map(|id| parse_fee_faucet_id(&id)).transpose()?;
 
@@ -544,6 +545,11 @@ impl WebClient {
     ///   transport failure. `None` keeps the transport's default.
     /// * `note_transport_retry_interval_ms`: Optional delay before the first such retry, doubling
     ///   for each later one. `None` keeps the transport's default.
+    /// * `store_backend`: Optional storage the store and the accounts of the keys are kept in:
+    ///   `"indexeddb"`, the default, or `"sqlite"`. `"sqlite"` keeps them in `SQLite` databases in
+    ///   the origin private file system, which only a dedicated Web Worker can open, and which one
+    ///   worker of the origin holds at a time. It is rejected by a build without the `SQLite`
+    ///   store.
     #[wasm_bindgen(js_name = "createClientWithExternalKeystore")]
     #[allow(clippy::too_many_arguments)]
     pub async fn create_client_with_external_keystore(
@@ -558,8 +564,10 @@ impl WebClient {
         sign_cb: Option<Function>,
         note_transport_max_retries: Option<u32>,
         note_transport_retry_interval_ms: Option<u32>,
+        store_backend: Option<String>,
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_endpoint(node_url)?;
+        let store_backend = StoreBackend::parse(store_backend.as_deref())?;
 
         let web_rpc_client =
             Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
@@ -575,14 +583,10 @@ impl WebClient {
         let store_name = store_name_for(&endpoint, store_name);
 
         let mut rng = create_rng(seed)?;
-        let store: Arc<dyn Store> = Arc::new(
-            IdxdbStore::new(store_name.clone())
-                .await
-                .map_err(|err| idxdb_store_init_error(&err))?,
-        );
-        let keystore = WebKeyStore::new_with_callbacks(
+        let (store, keystore_db) = store_backend::open_store(&store_name, store_backend).await?;
+        let keystore = WebKeyStore::new_with_db(
             StdRng::from_rng(&mut rng),
-            store_name,
+            keystore_db,
             get_key_cb,
             insert_key_cb,
             sign_cb,
@@ -825,11 +829,18 @@ pub(crate) fn create_rng(seed: Option<Vec<u8>>) -> Result<StdRng, JsErr> {
 /// store's own reason, such as a store written by a newer client.
 #[cfg(feature = "browser")]
 pub(crate) fn idxdb_store_init_error(err: &JsValue) -> JsErr {
-    let cause = match err.dyn_ref::<js_sys::Error>() {
+    let cause = js_error_message(err);
+    from_str_err(&format!("Failed to initialize IdxdbStore: {cause}"))
+}
+
+/// The message of a value JavaScript threw: the `message` of an `Error`, a string as it is, and
+/// the debug rendering of anything else.
+#[cfg(feature = "browser")]
+pub(crate) fn js_error_message(err: &JsValue) -> String {
+    match err.dyn_ref::<js_sys::Error>() {
         Some(error) => String::from(error.message()),
         None => err.as_string().unwrap_or_else(|| format!("{err:?}")),
-    };
-    from_str_err(&format!("Failed to initialize IdxdbStore: {cause}"))
+    }
 }
 
 pub(crate) fn js_error_with_context<T>(err: T, context: &str) -> JsErr

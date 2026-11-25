@@ -178,6 +178,21 @@ if (!isMt) {
   process.env.RUSTUP_TOOLCHAIN = "stable";
 }
 
+// The MT variant links the SQLite store (the `sqlite-store` feature, in
+// mtOnlyCargoArgs below), whose SQLite is compiled from C for wasm32. A
+// shared-memory module only links objects built with atomics and bulk memory,
+// so the C compiler gets the same target features the MT rustflags give rustc.
+// The cargo subprocess spawned by @wasm-tool/rollup-plugin-rust inherits this
+// env. Compiling C for wasm32 needs a clang with a WebAssembly backend, which
+// Apple clang lacks: on macOS point CC_wasm32_unknown_unknown at an LLVM
+// clang, as the Makefile does for Homebrew's.
+if (isMt) {
+  const cFlagsEnv = "CFLAGS_wasm32_unknown_unknown";
+  process.env[cFlagsEnv] = [process.env[cFlagsEnv], "-matomics -mbulk-memory"]
+    .filter(Boolean)
+    .join(" ");
+}
+
 // MT-only target rustflags. These set up the WASM module's atomics + shared
 // memory imports that wasm-bindgen-rayon needs. Passed via cargo's
 // `--config target.<triple>.rustflags=[...]` so they only apply to the MT
@@ -349,7 +364,7 @@ const mtOnlyCargoArgs = isMt
       "-Z",
       "build-std=std,panic_abort",
       "--features",
-      "mt-threads",
+      "mt-threads,sqlite-store",
       // Cargo --config accepts an inline TOML expression. Quote-wrap each
       // entry so spaces/commas in the rustflags array don't get mangled
       // by shell parsing. cargo expects the value as: `[ "-C", "...", ... ]`.

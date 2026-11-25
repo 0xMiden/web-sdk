@@ -10,6 +10,7 @@ import {
   hashSeed,
   resolveAccountRef,
   validateNoteTransportRetryOptions,
+  validateStoreBackend,
 } from "./utils.js";
 import { validateCallbackTimeoutMs } from "./callbackBridge.js";
 
@@ -128,8 +129,9 @@ export class MidenClient {
    * configuration, which names the fee asset, from the node when it syncs. The
    * option only sets what `feeFaucetId()` reports before that first sync.
    *
-   * `noteTransportMaxRetries` and `noteTransportRetryIntervalMs` are checked
-   * before anything is created; an out-of-range value throws a `TypeError`.
+   * `noteTransportMaxRetries`, `noteTransportRetryIntervalMs` and
+   * `storeBackend` are checked before anything is created; an out-of-range
+   * value throws a `TypeError`.
    *
    * @param {ClientOptions} [options] - Client configuration options.
    * @returns {Promise<MidenClient>} A fully initialized client.
@@ -139,6 +141,7 @@ export class MidenClient {
       options?.noteTransportMaxRetries,
       options?.noteTransportRetryIntervalMs
     );
+    validateStoreBackend(options?.storeBackend);
 
     if (!options?.rpcUrl) {
       return MidenClient.createTestnet(options);
@@ -186,7 +189,8 @@ export class MidenClient {
         options?.noteTransportMaxRetries,
         options?.noteTransportRetryIntervalMs,
         options?.callbackTimeoutMs,
-        options?.exclusive
+        options?.exclusive,
+        options?.storeBackend
       );
     } else {
       inner = await WebClientClass.createClient(
@@ -201,7 +205,8 @@ export class MidenClient {
         options?.noteTransportMaxRetries,
         options?.noteTransportRetryIntervalMs,
         undefined,
-        options?.exclusive
+        options?.exclusive,
+        options?.storeBackend
       );
     }
 
@@ -342,6 +347,8 @@ export class MidenClient {
       );
     }
 
+    validateStoreBackend(options?.storeBackend);
+
     const seed = options?.seed ? await hashSeed(options.seed) : undefined;
 
     const inner = await MockWebClientClass.createClient(
@@ -349,7 +356,8 @@ export class MidenClient {
       options?.serializedNoteTransport,
       seed,
       undefined,
-      options?.storeName
+      options?.storeName,
+      options?.storeBackend
     );
 
     const client = new MidenClient(inner, getWasm, null);

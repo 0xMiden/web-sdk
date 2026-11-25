@@ -8,11 +8,24 @@ help: ## Show description of all commands
 
 WEB_CLIENT_DIR=crates/web-client
 
+# The SQLite store (the web client's `sqlite-store` feature, part of the MT build) compiles SQLite
+# from C for wasm32. Apple clang has no WebAssembly backend, so on macOS default to Homebrew's LLVM
+# (`brew install llvm`) when it is installed and no compiler was chosen. Elsewhere the `clang` on
+# PATH is used.
+ifeq ($(shell uname -s),Darwin)
+HOMEBREW_LLVM_CLANG := $(firstword $(wildcard /opt/homebrew/opt/llvm/bin/clang /usr/local/opt/llvm/bin/clang))
+ifneq ($(HOMEBREW_LLVM_CLANG),)
+export CC_wasm32_unknown_unknown ?= $(HOMEBREW_LLVM_CLANG)
+endif
+endif
+
 # --- Linting -------------------------------------------------------------------------------------
 
 .PHONY: clippy-wasm
 clippy-wasm: rust-client-ts-build ## Run Clippy for the WASM packages (web client and idxdb store)
 	cargo clippy --package miden-client-web --target wasm32-unknown-unknown --all-targets -- -D warnings
+	# The SQLite store is only part of the MT build, so the default features above do not reach it.
+	cargo clippy --package miden-client-web --target wasm32-unknown-unknown --all-targets --features sqlite-store -- -D warnings
 	cargo clippy --package miden-idxdb-store --target wasm32-unknown-unknown --all-targets -- -D warnings
 
 .PHONY: fix-wasm
@@ -185,6 +198,13 @@ test-web-client-rpc: ## Run native RPC contract and error-code tests (no node or
 	# Dynamic symbols let the Rust test executable link without a Node.js host.
 	cargo test -p miden-client-web --no-default-features --features nodejs,testing,napi/dyn-symbols --profile $(RUST_TEST_PROFILE) --lib rpc_client:: -- post_submit_code_tests header_at_sync_height_tests
 
+.PHONY: test-web-client-sqlite-keystore
+test-web-client-sqlite-keystore: ## Run native tests of the browser keystore's SQLite database (no browser required)
+	# The database only runs in a browser inside a dedicated worker, but its SQL is plain rusqlite,
+	# so the native test build covers it. Dynamic symbols let the test executable link without a
+	# Node.js host.
+	cargo test -p miden-client-web --no-default-features --features nodejs,testing,sqlite-store,napi/dyn-symbols --profile $(RUST_TEST_PROFILE) --lib sqlite_keystore_db::
+
 .PHONY: test-web-client-rpc-nodejs
 test-web-client-rpc-nodejs: ## Run native RPC binding tests (no Miden node or local store required)
 	cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
@@ -320,11 +340,16 @@ build-wasm-mt: rust-client-ts-build ## Build the WASM packages — MT variant (n
 	# passed via `--config target.wasm32-unknown-unknown.rustflags=[...]`
 	# so they only apply to this invocation. (See rollup.config.js for
 	# the canonical list — Makefile mirrors it for the sanity-check build.)
+	#
+	# The MT build carries the SQLite store, whose C objects have to be
+	# compiled with the atomics and bulk-memory features to link into a
+	# shared-memory module.
+	CFLAGS_wasm32_unknown_unknown="$(CFLAGS_wasm32_unknown_unknown) -matomics -mbulk-memory" \
 	cargo +nightly build \
 		-Z build-std=std,panic_abort \
 		--package miden-client-web --package miden-idxdb-store \
 		--target wasm32-unknown-unknown --locked \
-		--features miden-client-web/mt-threads \
+		--features miden-client-web/mt-threads,miden-client-web/sqlite-store \
 		--config 'target.wasm32-unknown-unknown.rustflags=["-C","target-feature=+atomics,+bulk-memory,+mutable-globals","-C","link-arg=--shared-memory","-C","link-arg=--import-memory","-C","link-arg=--export=__wasm_init_tls","-C","link-arg=--export=__tls_size","-C","link-arg=--export=__tls_align","-C","link-arg=--export=__tls_base","-C","link-arg=--max-memory=4294967296","-C","panic=abort","--cfg","getrandom_backend=\"wasm_js\""]'
 
 .PHONY: rust-client-ts-build

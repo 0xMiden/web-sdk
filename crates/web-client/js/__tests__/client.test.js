@@ -1221,7 +1221,8 @@ describe("WebClient factories", () => {
       null,
       null,
       null,
-      "mock_client_db"
+      "mock_client_db",
+      undefined
     );
   });
 
@@ -1239,7 +1240,8 @@ describe("WebClient factories", () => {
       null,
       null,
       null,
-      "mock_isolated_db"
+      "mock_isolated_db",
+      undefined
     );
     expect(client.storeName).toBe("mock_isolated_db");
   });
@@ -1261,7 +1263,8 @@ describe("WebClient factories", () => {
       null,
       null,
       null,
-      ""
+      "",
+      undefined
     );
     expect(client.storeName).toBe("");
     expect(client._storeLockId()).toBe("");

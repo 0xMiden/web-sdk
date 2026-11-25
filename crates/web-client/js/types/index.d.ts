@@ -205,7 +205,8 @@ export declare class WasmWebClient extends WasmWebClientBase {
     noteTransportMaxRetries?: number,
     noteTransportRetryIntervalMs?: number,
     callbackTimeoutMs?: number,
-    exclusive?: boolean
+    exclusive?: boolean,
+    storeBackend?: "indexeddb" | "sqlite"
   ): Promise<WasmWebClient>;
 
   static createClientWithExternalKeystore(
@@ -223,7 +224,8 @@ export declare class WasmWebClient extends WasmWebClientBase {
     noteTransportMaxRetries?: number,
     noteTransportRetryIntervalMs?: number,
     callbackTimeoutMs?: number,
-    exclusive?: boolean
+    exclusive?: boolean,
+    storeBackend?: "indexeddb" | "sqlite"
   ): Promise<WasmWebClient>;
 
   // The wrapper resolves a friendly scheme to the wasm enum and passes a
@@ -294,7 +296,8 @@ export declare class MockWasmWebClient extends WasmWebClient {
     serializedMockNoteTransportNode?: Uint8Array,
     seed?: Uint8Array,
     logLevel?: LogLevel,
-    storeName?: string
+    storeName?: string,
+    storeBackend?: "indexeddb" | "sqlite"
   ): Promise<MockWasmWebClient>;
 
   proveBlock(): Promise<void>;

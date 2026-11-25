@@ -254,6 +254,30 @@ export interface ClientOptions {
   /** Store isolation key. */
   storeName?: string;
   /**
+   * The storage the client keeps its store and its keys in. Defaults to
+   * `"indexeddb"`.
+   *
+   * `"sqlite"` keeps them in SQLite databases in the origin private file
+   * system (OPFS). It has three requirements:
+   *
+   * - **The multi-threaded build.** Only the `/mt` and `/mt/lazy` entry points
+   *   include the SQLite store. Client creation rejects on the others.
+   * - **A dedicated Web Worker.** OPFS only gives a dedicated worker the
+   *   synchronous file access SQLite needs, so create the client inside one.
+   *   The client then runs its WASM calls on that worker's thread, without the
+   *   worker shim of its own: `useWorker` is treated as `false`.
+   * - **One holder per origin.** The worker that opens the store holds its
+   *   files until it terminates. Client creation rejects in a second worker
+   *   or tab of the same origin while it does.
+   *
+   * An IndexedDB store and a SQLite store of the same `storeName` are separate
+   * stores; nothing is moved from one to the other.
+   *
+   * On Node.js the store is always SQLite: `"sqlite"` changes nothing and
+   * `"indexeddb"` throws a `TypeError`.
+   */
+  storeBackend?: "indexeddb" | "sqlite";
+  /**
    * Refuse to share the store. Opening a store that another live client in
    * this realm has open warns by default, naming that client; with
    * `exclusive: true` the open throws instead, and while this client lives
@@ -1196,12 +1220,18 @@ export interface MockOptions {
   serializedMockChain?: Uint8Array;
   serializedNoteTransport?: Uint8Array;
   /**
-   * IndexedDB database name for this mock client. Defaults to `mock_client_db`.
+   * Store name for this mock client. Defaults to `mock_client_db`.
    * Use a distinct name when a second mock client in the same origin must not
    * share store state with another live mock (otherwise `syncState` can fail
    * genesis tip validation).
    */
   storeName?: string;
+  /**
+   * The storage the mock client keeps its store and its keys in. Defaults to
+   * `"indexeddb"`. See {@link ClientOptions.storeBackend} for what `"sqlite"`
+   * requires.
+   */
+  storeBackend?: "indexeddb" | "sqlite";
 }
 
 // ════════════════════════════════════════════════════════════════

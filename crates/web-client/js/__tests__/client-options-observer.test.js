@@ -314,7 +314,7 @@ describe("MidenClient.create forwards the observability options", () => {
     // The observability bag sits just before `feeFaucetId`, which the two
     // note transport retry options follow.
     const args = calls.createClient[0];
-    expect(args).toHaveLength(12);
+    expect(args).toHaveLength(13);
     const observability = args[6];
     expect(observability.observer).toBe(observer);
     expect(observability.observeSensitive).toBe(true);
@@ -328,7 +328,7 @@ describe("MidenClient.create forwards the observability options", () => {
     });
     expect(calls.createClient).toHaveLength(1);
     const args = calls.createClient[0];
-    expect(args).toHaveLength(12);
+    expect(args).toHaveLength(13);
     expect(args[7]).toBe("0x1234567890abcdef");
   });
 
@@ -341,7 +341,7 @@ describe("MidenClient.create forwards the observability options", () => {
     });
     expect(calls.createClientWithExternalKeystore).toHaveLength(1);
     const args = calls.createClientWithExternalKeystore[0];
-    expect(args).toHaveLength(15);
+    expect(args).toHaveLength(16);
     expect(args[10]).toBe("0x1234567890abcdef");
   });
 
@@ -354,7 +354,7 @@ describe("MidenClient.create forwards the observability options", () => {
     });
     expect(calls.createClientWithExternalKeystore).toHaveLength(1);
     const args = calls.createClientWithExternalKeystore[0];
-    expect(args).toHaveLength(15);
+    expect(args).toHaveLength(16);
     expect(args[13]).toBe(120000);
   });
 
@@ -406,7 +406,7 @@ describe("MidenClient.create forwards the observability options", () => {
     });
     expect(calls.createClientWithExternalKeystore).toHaveLength(1);
     const args = calls.createClientWithExternalKeystore[0];
-    expect(args).toHaveLength(15);
+    expect(args).toHaveLength(16);
     const observability = args[9];
     expect(observability.observer).toBe(observer);
     expect(observability.observeSensitive).toBe(true);
@@ -419,7 +419,7 @@ describe("MidenClient.create forwards the observability options", () => {
     // observability bag, and these optional-chained assertions would pass
     // whatever they read there.
     const args = calls.createClient[0];
-    expect(args).toHaveLength(12);
+    expect(args).toHaveLength(13);
     const observability = args[6];
     expect(observability?.observer).toBeUndefined();
     expect(observability?.observeSensitive).toBeUndefined();

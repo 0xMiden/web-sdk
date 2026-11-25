@@ -42,7 +42,12 @@ nodejs = [
   "miden-client/std",
   "miden-client/tonic",
 ]
-testing = ["miden-client/testing"]
+# SQLite store for the browser, kept in the origin private file system (OPFS). The store is the
+# one the Node.js binding uses, built for wasm32. It needs `miden-crypto/concurrent` and turns it on
+# for the whole build, which `mt-threads` already does and the single-threaded build must not, so
+# enable this feature only together with `mt-threads`.
+sqlite-store = ["dep:miden-client-sqlite-store", "dep:rusqlite", "dep:sqlite-wasm-rs", "dep:sqlite-wasm-vfs"]
+testing      = ["miden-client/testing"]
 # Multi-threaded WASM build. When enabled, pulls in wasm-bindgen-rayon (the
 # rayon thread pool over Web Workers + SharedArrayBuffer) and propagates
 # `concurrent` through the full miden-client dependency tree:
@@ -136,17 +141,29 @@ tracing-wasm             = { optional = true, version = "0.2" }
 wasm-bindgen             = { features = ["serde-serialize"], optional = true, version = "=0.2.108" }
 wasm-bindgen-futures     = { optional = true, version = "0.4" }
 
-# Node.js-only dependencies (napi-rs)
+# SQLite store dependencies. `miden-client-sqlite-store` is the store of the Node.js binding and,
+# with `sqlite-store`, of the browser. `rusqlite` is what the browser keystore reads and writes its
+# own database through, and has to stay on the version `miden-client-sqlite-store` links.
 miden-client-sqlite-store = { optional = true, workspace = true }
-napi                      = { features = ["tokio_rt"], optional = true, workspace = true }
-napi-derive               = { optional = true, workspace = true }
-tokio                     = { optional = true, workspace = true }
+rusqlite                  = { features = ["bundled"], optional = true, version = "0.41" }
+
+# Node.js-only dependencies (napi-rs)
+napi        = { features = ["tokio_rt"], optional = true, workspace = true }
+napi-derive = { optional = true, workspace = true }
+tokio       = { optional = true, workspace = true }
 
 # web-sys is a browser-only dependency used for console logging
 web-sys = { features = ["console"], optional = true, version = "0.3" }
 
 [build-dependencies]
 napi-build = { optional = true, workspace = true }
+
+# `sqlite-wasm-rs` is the SQLite build `rusqlite` links on wasm32, and `sqlite-wasm-vfs` keeps its
+# files in OPFS. `0.5` is the last `sqlite-wasm-rs` line that accepts the `wasm-bindgen` pinned
+# above; `rusqlite` accepts `0.6` as well, and this requirement is what holds it on `0.5`.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+sqlite-wasm-rs  = { optional = true, version = "0.5" }
+sqlite-wasm-vfs = { optional = true, version = "0.2" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 h2    = "0.4"
