@@ -1,4 +1,4 @@
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -211,7 +211,7 @@ impl IdxdbStore {
 
         // Restore the previous account states. The forest keeps the undone roots until a reader
         // sees them differ from the tables and refreshes the account.
-        let mut undo_account_commitments = transaction_updates
+        let undo_account_commitments = transaction_updates
             .discarded_transactions()
             .map(|tx_record| tx_record.details.final_account_state.to_string())
             .collect::<Vec<_>>();
@@ -245,16 +245,18 @@ impl IdxdbStore {
             }
         }
 
-        // A patch is prepared against the account as persisted, and the forest roots and initial
-        // commitment it carries must describe the state after the undo. That state exists only
-        // once the undo has been written, so a patch for an account with a discarded transaction
-        // is the one case where the undo commits ahead of the sync transaction.
-        let patches_discarded_account = patch_updates
+        // A patch for an account with a discarded transaction applies to the state after the undo,
+        // which is written with the sync, so read that state without persisting the undo.
+        let overlapping: Vec<AccountId> = patch_updates
             .iter()
-            .any(|(header, _)| discarded_account_ids.contains(&header.id()));
-        if patches_discarded_account {
-            self.undo_account_states(core::mem::take(&mut undo_account_commitments)).await?;
-        }
+            .map(|(header, _)| header.id())
+            .filter(|id| discarded_account_ids.contains(id))
+            .collect();
+        let mut post_undo_headers = if overlapping.is_empty() {
+            BTreeMap::new()
+        } else {
+            self.headers_after_undo(undo_account_commitments.clone(), &overlapping).await?
+        };
 
         // Prepare partial patches incrementally. Their values are already absolute, so no account
         // reconstruction is required. They are written inside the sync transaction below.
@@ -264,19 +266,20 @@ impl IdxdbStore {
 
             // Sync patches must move the account state forward; a stale or replayed patch would
             // otherwise silently rewind tracked state.
-            let (local_header, _) = self
-                .get_account_header(account_id)
-                .await?
-                .ok_or(StoreError::AccountDataNotFound(account_id))?;
-            if new_header.nonce().as_canonical_u64() <= local_header.nonce().as_canonical_u64() {
+            let initial = match post_undo_headers.remove(&account_id) {
+                Some(header) => header,
+                None => self.current_account_header(account_id).await?,
+            };
+            if new_header.nonce().as_canonical_u64() <= initial.nonce().as_canonical_u64() {
                 return Err(StoreError::DatabaseError(format!(
                     "sync account patch nonce {} is not greater than the local nonce {} for account {account_id}",
                     new_header.nonce().as_canonical_u64(),
-                    local_header.nonce().as_canonical_u64(),
+                    initial.nonce().as_canonical_u64(),
                 )));
             }
 
-            account_patches.push(self.prepare_incremental_account_patch(new_header, patch).await?);
+            account_patches
+                .push(self.prepare_incremental_account_patch(new_header, patch, &initial).await?);
         }
 
         // Persist the protocol configuration the node sent before the chain state that commits to

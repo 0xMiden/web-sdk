@@ -1299,8 +1299,8 @@ describe("sync", () => {
     });
 
     it("rejects a patch whose initial commitment predates an undo of the same account, leaving everything unchanged", async () => {
-      // The sync routes this overlap through a prior undo, so the patch is prepared against the
-      // post-undo state; combining them in one transaction would make the guard fire.
+      // The sync prepares such a patch against the post-undo state, so its commitment is not the
+      // pre-undo one; a stale commitment must fail the guard and roll the sync back.
       const dbId = await openTestDb();
       await seedAccounts(dbId);
       const before = await snapshot(dbId);

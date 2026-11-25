@@ -122,8 +122,12 @@ extern "C" {
     // --------------------------------------------------------------------------------------------
 
     /// Prunes historical account states for the specified account up to the given nonce.
-    #[wasm_bindgen(js_name = undoAccountStates)]
-    pub fn idxdb_undo_account_states(db_id: &str, account_hashes: Vec<String>) -> js_sys::Promise;
+    #[wasm_bindgen(js_name = getAccountSnapshotsAfterUndo)]
+    pub fn idxdb_get_account_snapshots_after_undo(
+        db_id: &str,
+        account_commitments: Vec<String>,
+        account_ids: Vec<String>,
+    ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = pruneAccountHistory)]
     pub fn idxdb_prune_account_history(

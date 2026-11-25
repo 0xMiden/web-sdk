@@ -64,11 +64,11 @@ use js_bindings::{
     idxdb_get_account_headers,
     idxdb_get_account_ids,
     idxdb_get_account_snapshot,
+    idxdb_get_account_snapshots_after_undo,
     idxdb_get_account_storage,
     idxdb_get_account_vault_assets,
     idxdb_get_foreign_account_code,
     idxdb_prune_account_history,
-    idxdb_undo_account_states,
     idxdb_upsert_foreign_account_code,
 };
 
@@ -189,6 +189,14 @@ impl IdxdbStore {
         let Some(snapshot) = self.get_account_snapshot(account_id, true, true).await? else {
             return Ok(None);
         };
+        self.account_record_from_snapshot(account_id, snapshot).map(Some)
+    }
+
+    fn account_record_from_snapshot(
+        &self,
+        account_id: AccountId,
+        snapshot: AccountSnapshotIdxdbObject,
+    ) -> Result<AccountRecord, StoreError> {
         let (header, status, client_type) = parse_account_record_idxdb_object(snapshot.header)?;
         let code = snapshot
             .code
@@ -208,7 +216,7 @@ impl IdxdbStore {
         }
         // Other clients share the tables, but each store owns its forest.
         self.smt_forest.write().refresh_account(&account)?;
-        Ok(Some(AccountRecord::new(AccountRecordData::Full(account), status, client_type)))
+        Ok(AccountRecord::new(AccountRecordData::Full(account), status, client_type))
     }
 
     async fn get_account_snapshot(
@@ -417,9 +425,9 @@ impl IdxdbStore {
         &self,
         final_header: &AccountHeader,
         patch: &AccountPatch,
+        initial: &AccountHeader,
     ) -> Result<JsAccountPatchUpdate, StoreError> {
         let account_id = final_header.id();
-        let initial = self.current_account_header(account_id).await?;
         if final_header.nonce() <= initial.nonce() {
             return Err(StoreError::DatabaseError(format!(
                 "account patch nonce does not advance persisted state for {account_id}",
@@ -712,14 +720,33 @@ impl IdxdbStore {
         Ok(foreign_account_code)
     }
 
-    pub(crate) async fn undo_account_states(
+    /// Returns the headers `accounts` would have if `account_commitments` were undone, and
+    /// refreshes this store's forest to those states, without persisting the undo.
+    ///
+    /// A sync prepares a patch for an account with a discarded transaction against this state;
+    /// the undo itself is written with the rest of the sync.
+    pub(crate) async fn headers_after_undo(
         &self,
         account_commitments: Vec<String>,
-    ) -> Result<(), StoreError> {
-        let promise = idxdb_undo_account_states(self.db_id(), account_commitments);
-        await_js_value(promise, "failed to undo account states").await?;
+        accounts: &[AccountId],
+    ) -> Result<BTreeMap<AccountId, AccountHeader>, StoreError> {
+        let promise = idxdb_get_account_snapshots_after_undo(
+            self.db_id(),
+            account_commitments,
+            accounts.iter().map(ToString::to_string).collect(),
+        );
+        let snapshots: Vec<Option<AccountSnapshotIdxdbObject>> =
+            await_js(promise, "failed to preview account state after undo").await?;
 
-        Ok(())
+        let mut headers = BTreeMap::new();
+        for (account_id, snapshot) in accounts.iter().zip(snapshots) {
+            let snapshot = snapshot.ok_or(StoreError::AccountDataNotFound(*account_id))?;
+            let record = self.account_record_from_snapshot(*account_id, snapshot)?;
+            let account = Account::try_from(record)
+                .map_err(|error| StoreError::DatabaseError(error.to_string()))?;
+            headers.insert(*account_id, AccountHeader::from(&account));
+        }
+        Ok(headers)
     }
 
     /// Whether a mismatched digest should lock the account. Mismatched digests may be due to stale
