@@ -75,6 +75,7 @@ describe("ContractsResource.deploy", () => {
       auth: "none",
     });
     expect(ctx.wasm.AuthSecretKey.rpoFalconWithRNG).not.toHaveBeenCalled();
+    expect(ctx.client.accounts.create.mock.calls[0][0].auth).toBe("none");
     expect(result.auth).toBe("none");
   });
 
