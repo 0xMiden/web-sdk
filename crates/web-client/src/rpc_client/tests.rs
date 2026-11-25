@@ -188,3 +188,105 @@ async fn get_status_rejects_when_the_node_is_unreachable() {
     };
     assert!(error.reason.contains("failed to get node status"));
 }
+
+/// Length-delimited protobuf field with a varint length.
+fn ld(tag: u8, payload: &[u8]) -> Vec<u8> {
+    let mut out = vec![tag];
+    let mut len = payload.len();
+    while len >= 0x80 {
+        out.push((len & 0x7f) as u8 | 0x80);
+        len >>= 7;
+    }
+    out.push(len as u8);
+    out.extend_from_slice(payload);
+    out
+}
+
+/// Serves each request with `answer(path)` as a gRPC response.
+async fn serve(
+    answer: impl Fn(&str) -> Vec<u8> + Send + 'static,
+) -> (RpcClient, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut connection = h2::server::handshake(socket).await.unwrap();
+        while let Some(request) = connection.accept().await {
+            let (request, mut respond) = request.unwrap();
+            let message = answer(request.uri().path());
+            let head = http::Response::builder()
+                .header("content-type", "application/grpc")
+                .body(())
+                .unwrap();
+            let mut body = respond.send_response(head, false).unwrap();
+            let mut frame = vec![0];
+            frame.extend_from_slice(&u32::try_from(message.len()).unwrap().to_be_bytes());
+            frame.extend(message);
+            body.send_data(frame.into(), false).unwrap();
+            let mut trailers = http::HeaderMap::new();
+            trailers.insert("grpc-status", "0".parse().unwrap());
+            body.send_trailers(trailers).unwrap();
+        }
+    });
+    (RpcClient::new(Endpoint::new(endpoint).unwrap()).unwrap(), server)
+}
+
+/// A `GetBlockHeaderByNumberResponse` for the genesis block, with an MMR path and chain length.
+fn genesis_header_response() -> (miden_client::block::BlockHeader, Vec<u8>) {
+    let genesis = MockChain::new().genesis_block_header();
+    let mut header = Vec::new();
+    proto::blockchain::BlockHeader::from(&genesis).encode(&mut header).unwrap();
+    let mut response = ld(0x0a, &header);
+    response.extend(ld(0x12, &[])); // mmr_path: an empty Merkle path
+    response.push(0x1d); // chain_length, fixed32
+    response.extend_from_slice(&1_u32.to_le_bytes());
+    (genesis, response)
+}
+
+#[tokio::test]
+async fn block_header_with_proof_returns_the_mmr_proof_the_node_sent() {
+    let (genesis, response) = genesis_header_response();
+    let (rpc, server) = serve(move |_| response.clone()).await;
+    let result = rpc.get_block_header_with_proof(0).await.unwrap();
+    server.abort();
+
+    assert_eq!(result.header().commitment().to_hex(), genesis.commitment().to_hex());
+    let proof = result.mmr_proof();
+    assert_eq!(proof.leaf().to_hex(), genesis.commitment().to_hex());
+    assert_eq!((proof.position(), proof.forest(), proof.peak_index()), (0, 1, 0));
+    assert_eq!(proof.merkle_path().depth(), 0);
+}
+
+#[tokio::test]
+async fn nullifier_commit_heights_match_full_nullifiers_and_omit_unspent_ones() {
+    let (_, header_response) = genesis_header_response();
+    let spent = miden_client::Word::from([1_u32, 2, 3, 4]);
+    // Same 16-bit prefix as `spent`, so the node returns it for both lookups.
+    let unspent = miden_client::Word::from([5_u32, 6, 7, 4]);
+    let word: Vec<u8> = [1_u64, 2, 3, 4].iter().flat_map(|felt| felt.to_le_bytes()).collect();
+    let mut update = ld(0x0a, &ld(0x0a, &word)); // NullifierUpdate.nullifier
+    update.push(0x15); // block_num, fixed32
+    update.extend_from_slice(&0_u32.to_le_bytes());
+    let mut page = ld(0x0a, &[0x0d, 0, 0, 0, 0, 0x15, 0, 0, 0, 0]); // chain_tip 0, block_num 0
+    page.extend(ld(0x12, &update));
+
+    let (rpc, server) = serve(move |path| {
+        if path.ends_with("/GetBlockHeaderByNumber") {
+            header_response.clone()
+        } else {
+            assert!(path.ends_with("/SyncNullifiers"), "unexpected RPC path: {path}");
+            page.clone()
+        }
+    })
+    .await;
+    rpc.inner.set_rpc_limits(Default::default()).await;
+    let updates = rpc
+        .get_nullifier_commit_heights(vec![Word::from(&spent), Word::from(&unspent)], 0)
+        .await
+        .unwrap();
+    server.abort();
+
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0].nullifier().to_hex(), Word::from(&spent).to_hex());
+    assert_eq!(updates[0].block_num(), 0);
+}

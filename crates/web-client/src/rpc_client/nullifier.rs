@@ -74,3 +74,24 @@ impl RpcClient {
             .map_err(|err| js_error_with_context(err, "failed to sync nullifiers"))
     }
 }
+
+#[js_export]
+impl RpcClient {
+    /// Fetches the block in which each given nullifier was consumed.
+    ///
+    /// Scans from `block_from` (inclusive) up to the chain tip and compares full nullifiers, not
+    /// prefixes. A nullifier with no commitment in that range is left out of the result. On the
+    /// browser entries the `nullifiers` handles are consumed; pass copies you still need.
+    ///
+    /// @param nullifiers - The nullifiers to look up.
+    /// @param block_from - First block to scan, inclusive.
+    #[js_export(js_name = "getNullifierCommitHeights")]
+    pub async fn get_nullifier_commit_heights(
+        &self,
+        nullifiers: Vec<Word>,
+        block_from: u32,
+    ) -> Result<Vec<NullifierUpdate>, JsErr> {
+        let _ = (nullifiers, block_from);
+        Err(from_str_err("not implemented"))
+    }
+}
