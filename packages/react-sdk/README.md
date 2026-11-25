@@ -1694,9 +1694,11 @@ Returns three async methods, one per output type:
 
 | Method | Input | Output |
 |---|---|---|
-| `component(options)` | `{ code, slots?, supportAllTypes? }` | `AccountComponent` |
-| `txScript(options)`  | `{ code, libraries? }` | `TransactionScript` |
-| `noteScript(options)` | `{ code, libraries? }` | `NoteScript` |
+| `component(options)` | `{ code, slots?, supportAllTypes? }` or `{ package, slots?, supportAllTypes? }` | `AccountComponent` |
+| `txScript(options)`  | `{ code, libraries? }` or `{ package }` | `TransactionScript` |
+| `noteScript(options)` | `{ code, libraries? }` or `{ package }` | `NoteScript` |
+
+`package` is a compiled `Package` or its serialized `.masp` bytes, passed in place of `code`; `namespace` and `libraries` apply to source only. A component built from a package has the fixed metadata name `"custom"`.
 
 Each `libraries` entry takes `{ namespace, code, linking? }`. `linking` accepts
 the `Linking` enum (`Linking.Dynamic`, `Linking.Static`) or the raw strings

@@ -802,7 +802,8 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 `useCompile()` returns `{ component, txScript, noteScript, isReady }`, where the
 first three are themselves async compile functions wrapping `CompilerResource`.
 There is no `compile` callback, no `isLoading` and no `reset`, and the options
-field is `code`, not `source`:
+field is `code`, not `source` (or `package`, a compiled `Package` or its `.masp`
+bytes, in place of `code`; `libraries` and `namespace` apply to source only):
 
 ```tsx
 const { noteScript, isReady } = useCompile();
