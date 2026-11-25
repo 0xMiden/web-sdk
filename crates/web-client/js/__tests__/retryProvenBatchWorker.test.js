@@ -75,11 +75,12 @@ const submitBatch = () =>
 describe("worker retryProvenBatch (#571)", () => {
   it("stashes the handle behind a cloneable id and frees it after a successful retry", async () => {
     const submission = makeSubmission(["0x1", "0x2"]);
-    outcomes = [unknownOutcome(submission)];
+    const thrown = unknownOutcome(submission);
+    outcomes = [thrown];
     const failed = await submitBatch();
+    expect(thrown.submission).toBeUndefined();
     expect(failed.error.code).toBe("BATCH_SUBMISSION_OUTCOME_UNKNOWN");
     expect(failed.error.transactionIds).toEqual(["0x1", "0x2"]);
-    expect(failed.error.submission).toBeUndefined();
 
     const ok = await call(MethodName.RETRY_PROVEN_BATCH, [
       failed.error.submissionId,
