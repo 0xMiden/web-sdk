@@ -239,13 +239,8 @@ describe("requestNoteFromFaucet", () => {
       },
       {
         match: (u) => u.includes("/pow"),
-        response: () => ({
-          ok: true,
-          json: async () => ({
-            challenge: "0102",
-            target: "18446744073709551615",
-          }),
-        }),
+        response: () =>
+          new Response('{"challenge":"0102","target":"18446744073709551615"}'),
       },
       {
         match: (u) => u.includes("/get_tokens"),
@@ -327,44 +322,56 @@ describe("requestNoteFromFaucet", () => {
     ).rejects.toThrow(/safe integer/);
   });
 
-  it("accepts a JSON number target that rounds above u64::MAX", async () => {
-    const fetchFn = mockFetch([
-      {
-        match: (u) => u.includes("/get_metadata"),
-        response: () => ({
-          ok: true,
-          json: async () => ({ id: faucetHex, ["base_amount"]: 100 }),
-        }),
-      },
-      {
-        match: (u) => u.includes("/pow"),
-        response: () => ({
-          ok: true,
-          // The faucet sends a bare u64; JSON.parse rounds u64::MAX up to 2 ** 64.
-          json: async () =>
-            JSON.parse('{"challenge":"0102","target":18446744073709551615}'),
-        }),
-      },
-      {
-        match: (u) => u.includes("/get_tokens"),
-        response: () => ({
-          ok: true,
-          json: async () => ({ ["note_id"]: noteId, ["tx_id"]: txId }),
-        }),
-      },
-    ]);
+  it.each(["9007199254740993", "18446744073709551615"])(
+    "preserves the exact bare u64 PoW target %s",
+    async (target) => {
+      const digest = new Uint8Array(32);
+      new DataView(digest.buffer).setBigUint64(0, BigInt(target) - 1n);
+      const hash = vi
+        .spyOn(globalThis.crypto.subtle, "digest")
+        .mockResolvedValueOnce(digest.buffer)
+        .mockResolvedValueOnce(new Uint8Array(32).buffer);
+      const fetchFn = mockFetch([
+        {
+          match: (u) => u.includes("/get_metadata"),
+          response: () => ({
+            ok: true,
+            json: async () => ({ id: faucetHex, ["base_amount"]: 100 }),
+          }),
+        },
+        {
+          match: (u) => u.includes("/pow"),
+          response: () =>
+            new Response(`{"challenge":"0102","target":${target}}`),
+        },
+        {
+          match: (u) => u.includes("/get_tokens"),
+          response: () => ({
+            ok: true,
+            json: async () => ({ ["note_id"]: noteId, ["tx_id"]: txId }),
+          }),
+        },
+      ]);
 
-    const result = await requestNoteFromFaucet({
-      faucetUrl: "http://127.0.0.1:9/api",
-      accountIdHex: accountHex,
-      feeFaucetIdHex: faucetHex,
-      network: "testnet",
-      amount: null,
-      wasm,
-      fetch: fetchFn,
-    });
-    expect(result.noteId).toBe(noteId);
-  });
+      try {
+        await requestNoteFromFaucet({
+          faucetUrl: "http://127.0.0.1:9/api",
+          accountIdHex: accountHex,
+          feeFaucetIdHex: faucetHex,
+          network: "testnet",
+          amount: null,
+          wasm,
+          fetch: fetchFn,
+        });
+
+        expect(
+          new URL(fetchFn.mock.calls[2][0]).searchParams.get("nonce")
+        ).toBe("0");
+      } finally {
+        hash.mockRestore();
+      }
+    }
+  );
 
   it("stops before get_tokens when the faucet asset mismatches", async () => {
     const fetchFn = mockFetch([
