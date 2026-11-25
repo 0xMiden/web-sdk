@@ -256,6 +256,8 @@ pub fn setup_logging(log_level: &str) {
 #[js_export]
 pub struct WebClient {
     inner: AsyncCell<Option<Client<ClientAuth>>>,
+    #[cfg(feature = "browser")]
+    sync_height_store: std::cell::RefCell<Option<Arc<dyn Store>>>,
     /// Fee faucet the caller declared at creation, or the mock chain's own. What `feeFaucetId()`
     /// reports until the first sync stores the protocol configuration the chain commits to.
     fee_faucet: AsyncCell<Option<NativeAccountId>>,
@@ -310,6 +312,8 @@ impl WebClient {
 
         WebClient {
             inner: AsyncCell::new(None),
+            #[cfg(feature = "browser")]
+            sync_height_store: std::cell::RefCell::new(None),
             fee_faucet: AsyncCell::new(None),
             mock_rpc_api: AsyncCell::new(None),
             mock_note_transport_api: AsyncCell::new(None),
@@ -618,7 +622,7 @@ impl WebClient {
         let mut builder = ClientBuilder::new()
             .rpc(rpc_client)
             .rng(Box::new(rng))
-            .store(store)
+            .store(Arc::clone(&store))
             .authenticator(Arc::new(keystore));
 
         if let Some(transport) = note_transport_client {
@@ -639,7 +643,12 @@ impl WebClient {
         // accessors report the faucet and endpoint of a client that exists, or nothing.
         *self.fee_faucet.lock().await = fee_faucet;
         *self.endpoint.write().unwrap_or_else(std::sync::PoisonError::into_inner) = endpoint;
-        *self.inner.lock().await = Some(client);
+        let mut inner = self.inner.lock().await;
+        // Install the client and its height store together before releasing the previous store.
+        let previous_store = self.sync_height_store.replace(Some(store));
+        *inner = Some(client);
+        drop(inner);
+        drop(previous_store);
 
         Ok(())
     }
