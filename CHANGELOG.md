@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.2 (TBD)
+
+### Fixes
+
+* [FIX][web] Development faucet funding preserves the full integer value of proof-of-work targets sent as JSON numbers ([#626](https://github.com/0xMiden/web-sdk/pull/626)).
+
 ## 0.18.1 (2026-11-25)
 
 ### Enhancements
