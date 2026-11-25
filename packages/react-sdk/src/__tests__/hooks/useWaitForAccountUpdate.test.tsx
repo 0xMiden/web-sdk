@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { AccountId, Word } from "@miden-sdk/miden-sdk";
+import { AccountId, Address, Word } from "@miden-sdk/miden-sdk";
 import { useWaitForAccountUpdate } from "../../hooks/useWaitForAccountUpdate";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
@@ -2144,6 +2144,153 @@ describe("useWaitForAccountUpdate", () => {
         expect(storeThrowAcc.free).toHaveBeenCalledTimes(1);
       } finally {
         useMidenStore.setState({ setAccountDetails: origSetAccountDetails });
+      }
+    });
+
+    it("clears hook slot on explicit slot: undefined and matches canonical equivalent AccountRefs", async () => {
+      vi.useFakeTimers();
+      const getItem = vi.fn(() => ({ toBigInt: () => 5n, free: vi.fn() }));
+      const acc1 = createAccountWithCommitment("0xacc_v1", {
+        getCommitment: vi.fn(() => createWord("0xslot_unchanged")),
+        getItem,
+      });
+      const acc2 = createAccountWithCommitment("0xacc_v2", {
+        getCommitment: vi.fn(() => createWord("0xslot_unchanged")),
+        getItem,
+      });
+      const slotClient = createMockWebClient({
+        syncState: vi.fn().mockResolvedValue({}),
+        getAccount: vi.fn().mockResolvedValueOnce(acc1).mockResolvedValue(acc2),
+      });
+      mockUseMiden.mockReturnValue({ client: slotClient, isReady: true });
+      useMidenStore.getState().setClient(slotClient as never);
+
+      // 1. Explicit { slot: undefined } switches back to account-level commitment polling
+      const { result: slotHook } = renderHook(() =>
+        useWaitForAccountUpdate("0xacc", {
+          slot: "s1",
+          baselineValue: 5n,
+          timeoutMs: 200,
+          intervalMs: 50,
+        })
+      );
+      let slotClearOutcome!: Promise<
+        { ok: true; value: unknown } | { ok: false; error: unknown }
+      >;
+      act(() => {
+        slotClearOutcome = slotHook.current
+          .waitForAccountUpdate({
+            slot: undefined,
+            timeoutMs: 200,
+            intervalMs: 50,
+          })
+          .then(
+            (value) => ({ ok: true as const, value }),
+            (error) => ({ ok: false as const, error })
+          );
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(250);
+      });
+      expect(await slotClearOutcome).toEqual({ ok: true, value: acc2 });
+      expect(getItem).not.toHaveBeenCalled();
+
+      // 2. Canonical equivalent Bech32 / hex / AccountId inputs share sameAccount and free temp handles
+      const changed = createAccountWithCommitment("0xchanged");
+      const canonicalClient = createMockWebClient({
+        syncState: vi.fn().mockResolvedValue({}),
+        getAccount: vi.fn().mockResolvedValue(changed),
+      });
+      mockUseMiden.mockReturnValue({ client: canonicalClient, isReady: true });
+      useMidenStore.getState().setClient(canonicalClient as never);
+
+      const freedTempIds: ReturnType<typeof createMockAccountId>[] = [];
+      const hexSpy = vi
+        .spyOn(AccountId, "fromHex")
+        .mockImplementation((hex: string) => {
+          const id = createMockAccountId(
+            hex.toLowerCase() === "0xhex_same" ? "0x1234" : hex
+          );
+          freedTempIds.push(id);
+          return id as never;
+        });
+      const bech32Spy = vi
+        .spyOn(Address, "fromBech32")
+        .mockImplementation((bech32: string) => {
+          const id = createMockAccountId(
+            bech32 === "mtst1same" ? "0x1234" : bech32
+          );
+          freedTempIds.push(id);
+          return {
+            _live: true,
+            accountId: vi.fn(() => id),
+            toString: vi.fn(() => bech32),
+          } as never;
+        });
+
+      try {
+        const { result: canonicalHook } = renderHook(() =>
+          useWaitForAccountUpdate("0xhex_same", {
+            baselineCommitment: "0xold",
+            timeoutMs: 200,
+            intervalMs: 50,
+          })
+        );
+        let bech32Outcome!: Promise<
+          { ok: true; value: unknown } | { ok: false; error: unknown }
+        >;
+        act(() => {
+          bech32Outcome = canonicalHook.current
+            .waitForAccountUpdate("mtst1same", {
+              timeoutMs: 200,
+              intervalMs: 50,
+            })
+            .then(
+              (value) => ({ ok: true as const, value }),
+              (error) => ({ ok: false as const, error })
+            );
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(250);
+        });
+        expect(await bech32Outcome).toEqual({ ok: true, value: changed });
+        expect(freedTempIds.length).toBeGreaterThan(0);
+        for (const tempId of freedTempIds) {
+          expect(tempId.free).toHaveBeenCalledTimes(1);
+        }
+
+        const callerAccountId = createMockAccountId("0x1234");
+        let callerObjOutcome!: Promise<
+          { ok: true; value: unknown } | { ok: false; error: unknown }
+        >;
+        act(() => {
+          callerObjOutcome = canonicalHook.current
+            .waitForAccountUpdate(callerAccountId as never, {
+              timeoutMs: 200,
+              intervalMs: 50,
+            })
+            .then(
+              (value) => ({ ok: true as const, value }),
+              (error) => ({ ok: false as const, error })
+            );
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(250);
+        });
+        expect(await callerObjOutcome).toEqual({ ok: true, value: changed });
+        expect(callerAccountId.free).not.toHaveBeenCalled();
+
+        // Blank string accountId override clears inherited baseline and avoids WASM parsing
+        hexSpy.mockClear();
+        await act(async () => {
+          await expect(
+            canonicalHook.current.waitForAccountUpdate("   ")
+          ).rejects.toThrow("Account ID is required");
+        });
+        expect(hexSpy).not.toHaveBeenCalled();
+      } finally {
+        hexSpy.mockRestore();
+        bech32Spy.mockRestore();
       }
     });
   });

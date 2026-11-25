@@ -542,11 +542,14 @@ function isAccountRef(value: unknown): value is AccountRef {
   );
 }
 
-function tryNormalizeAccountRefKey(
+function tryCanonicalAccountIdKey(
   accountId: AccountRef | null | undefined
 ): string | undefined {
+  if (!accountId || (typeof accountId === "string" && !accountId.trim())) {
+    return undefined;
+  }
   try {
-    return normalizeAccountRefKey(accountId ?? undefined);
+    return parseCanonicalAccountIdKey(accountId);
   } catch {
     return undefined;
   }
@@ -575,6 +578,7 @@ function mergeOptions(
     : (overrides?.accountId ?? defaults.accountId);
   const timeoutMs = overrides?.timeoutMs ?? defaults.timeoutMs;
   const intervalMs = overrides?.intervalMs ?? defaults.intervalMs;
+  const hasExplicitSlot = overrides !== undefined && "slot" in overrides;
   const hasExplicitMapKey = overrides !== undefined && "mapKey" in overrides;
 
   if (
@@ -590,7 +594,7 @@ function mergeOptions(
     };
   }
 
-  const slot = overrides?.slot ?? defaults.slot;
+  const slot = hasExplicitSlot ? overrides.slot : defaults.slot;
   const sameSlot = slot === defaults.slot;
   const mapKey = hasExplicitMapKey
     ? overrides.mapKey
@@ -602,9 +606,11 @@ function mergeOptions(
     defaults.accountId === undefined ||
     accountId === defaults.accountId ||
     (() => {
-      const targetKey = tryNormalizeAccountRefKey(accountId);
-      const defaultKey = tryNormalizeAccountRefKey(defaults.accountId);
-      return targetKey !== undefined && targetKey === defaultKey;
+      const targetKey = tryCanonicalAccountIdKey(accountId);
+      return (
+        targetKey !== undefined &&
+        targetKey === tryCanonicalAccountIdKey(defaults.accountId)
+      );
     })();
   const sameKey =
     sameSlot && readWordHex(mapKey) === readWordHex(defaults.mapKey);
@@ -646,14 +652,7 @@ function safeFree(value: unknown): void {
   }
 }
 
-function normalizeAccountRefKey(
-  accountId: AccountRef | undefined
-): string | undefined {
-  if (!accountId) return undefined;
-  if (typeof accountId === "string") {
-    const trimmed = accountId.trim();
-    return trimmed ? trimmed : undefined;
-  }
+function parseCanonicalAccountIdKey(accountId: AccountRef): string {
   const parsed = parseAccountId(accountId);
   try {
     return parsed.toString();
@@ -662,6 +661,17 @@ function normalizeAccountRefKey(
       safeFree(parsed);
     }
   }
+}
+
+function normalizeAccountRefKey(
+  accountId: AccountRef | undefined
+): string | undefined {
+  if (!accountId) return undefined;
+  if (typeof accountId === "string") {
+    const trimmed = accountId.trim();
+    return trimmed ? trimmed : undefined;
+  }
+  return parseCanonicalAccountIdKey(accountId);
 }
 
 function readWordHex(value: unknown): string | null {
