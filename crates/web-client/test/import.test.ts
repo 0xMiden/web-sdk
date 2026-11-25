@@ -1,5 +1,82 @@
 // @ts-nocheck
 import { test, expect } from "./test-setup";
+import { isLocalhost } from "./playwright.global.setup";
+
+test("account file import can retry after a temporary key storage error", async ({
+  run,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name === "nodejs" || !isLocalhost(),
+    "requires browser keystore callbacks and a local test node"
+  );
+
+  const result = await run(async ({ client, sdk }) => {
+    const wallet = await client.newWallet(
+      sdk.AccountStorageMode.private(),
+      sdk.AuthScheme.AuthRpoFalcon512
+    );
+    const file = await client.exportAccountFile(wallet.id());
+    const bytes = file.serialize();
+    const keys = new Map<string, Uint8Array>();
+    let storageAvailable = false;
+    let writes = 0;
+    const restored = await sdk.WasmWebClient.createClientWithExternalKeystore(
+      window.rpcUrl,
+      undefined,
+      undefined,
+      `${window.storeName}-file-import`,
+      async (commitment) => keys.get(commitment.toString()),
+      async (commitment, key) => {
+        if (!storageAvailable) throw new Error("key storage unavailable");
+        writes++;
+        keys.set(commitment.toString(), key);
+      },
+      undefined,
+      undefined,
+      false,
+      undefined,
+      window.feeFaucetId
+    );
+
+    const importFile = () =>
+      restored.importAccountFile(sdk.AccountFile.deserialize(bytes));
+    const readImportError = () =>
+      importFile().then(
+        () => null,
+        (error) => (error instanceof Error ? error.message : String(error))
+      );
+
+    try {
+      const error = await readImportError();
+      const trackedAfterFailure = Boolean(
+        await restored.getAccount(wallet.id())
+      );
+
+      storageAvailable = true;
+      const retryError = await readImportError();
+      const imported = await restored.getAccount(wallet.id());
+      const duplicateError = await readImportError();
+      return {
+        error,
+        trackedAfterFailure,
+        retryError,
+        imported: imported?.id().toString(),
+        expectedId: wallet.id().toString(),
+        duplicateError,
+        writes,
+      };
+    } finally {
+      restored.terminate();
+    }
+  });
+
+  expect(result.error).toContain("key storage unavailable");
+  expect(result.trackedAfterFailure).toBe(false);
+  expect(result.retryError).toBeNull();
+  expect(result.imported).toBe(result.expectedId);
+  expect(result.duplicateError).toContain("already being tracked");
+  expect(result.writes).toBe(1);
+});
 
 test.describe("import from seed", () => {
   test("should import same public account from seed", async ({ run }) => {
