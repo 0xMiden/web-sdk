@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+* [FEATURE][web] Browser transaction assertion errors can include `error.masm` with the full-precision decimal `errorCode`, optional assertion text, and a source file and byte range when available. The diagnostic survives the Web Worker boundary ([#192](https://github.com/0xMiden/web-sdk/issues/192)).
+
 ### Enhancements
 
 * [FEATURE][web] `getSyncHeight()` can return the last committed height while worker sync or proving is in progress. Earlier queued writes keep their order, and `waitForIdle()` drains both the ordered calls and concurrent height reads ([#567](https://github.com/0xMiden/web-sdk/issues/567)).
