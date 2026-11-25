@@ -36,6 +36,7 @@ import type {
   StorageSlot,
   AccountComponent,
   Library,
+  Package,
   AuthSecretKey,
   AccountStorageRequirements,
   TransactionScript,
@@ -2159,8 +2160,18 @@ export interface NotesResource {
 // ════════════════════════════════════════════════════════════════
 
 export interface CompileComponentOptions {
-  /** MASM source code for the component. */
-  code: string;
+  /**
+   * MASM source code for the component. Pass exactly one of `code` and
+   * `package`.
+   */
+  code?: string;
+  /**
+   * A compiled package (`.masp`), as a `Package` or its serialized bytes,
+   * built through `AccountComponent.fromPackage`: the component gets the fixed
+   * metadata name `"custom"`. `namespace` and `libraries` do not apply and
+   * throw a `TypeError` beside it. Pass exactly one of `code` and `package`.
+   */
+  package?: Package | Uint8Array;
   /**
    * Module path used to derive procedure identities. Use the same namespace when
    * linking this component into transaction scripts.
@@ -2225,15 +2236,25 @@ export type CompileScriptLibrary =
   | Library;
 
 export interface CompileTxScriptOptions {
-  /** MASM source code for the transaction script. */
-  code: string;
+  /** MASM source code for the transaction script. Pass exactly one of `code` and `package`. */
+  code?: string;
+  /**
+   * A compiled package of the matching kind, as a `Package` or its serialized
+   * bytes. `libraries` do not apply and throw a `TypeError` beside it.
+   */
+  package?: Package | Uint8Array;
   /** Component libraries to link. */
   libraries?: CompileScriptLibrary[];
 }
 
 export interface CompileNoteScriptOptions {
-  /** MASM source code for the note script. */
-  code: string;
+  /** MASM source code for the note script. Pass exactly one of `code` and `package`. */
+  code?: string;
+  /**
+   * A compiled package of the matching kind, as a `Package` or its serialized
+   * bytes. `libraries` do not apply and throw a `TypeError` beside it.
+   */
+  package?: Package | Uint8Array;
   /** Component libraries to link. */
   libraries?: CompileScriptLibrary[];
 }
@@ -2259,7 +2280,7 @@ export declare class CompilerResource {
   );
 
   /**
-   * Compile MASM source into an AccountComponent.
+   * Compile MASM source, or build from a compiled package, into an AccountComponent.
    *
    * Only exports marked `@account_procedure` or `@auth_script` become component
    * procedures. A component with none logs a `[miden-sdk]` console warning and

@@ -39,6 +39,17 @@ anyone can call and that stores no key. Omitting `auth` is rejected and does
 not default to NoAuth. `"none"` is only valid on a contract; wallet and faucet
 `auth` stays `AuthScheme.Falcon` or `AuthScheme.ECDSA`.
 
+A component, transaction script or note script can also come from a compiled
+package (`.masp`) instead of MASM source: pass `package` (a `Package` or its
+serialized bytes) in place of `code`, for example
+`client.compile.component({ package: bytes, slots })`, then pass the result to
+`accounts.create({ components })` as usual. `compile.txScript` and
+`compile.noteScript` take `{ package }` the same way. `namespace` and
+`libraries` apply to source only, and a package must be the right kind for what
+you build. A component built from a package always gets the fixed metadata name
+`"custom"`, whatever name the package declares, and `supportAllTypes` still
+defaults to `true`. The `Package` you pass stays usable afterward.
+
 `accounts.create()` still reads the legacy selectors `0`, `1` and
 `"NonFungibleFaucet"` as faucet types (`0` fungible; the non-fungible ones are
 rejected, since non-fungible faucets are not supported yet). `0` and `1` are

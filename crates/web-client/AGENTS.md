@@ -205,6 +205,17 @@ not default to NoAuth. `"none"` is only valid on a contract; wallet and faucet
 selectors and equal `AccountType.Private` / `Public`, so never pass a visibility
 value as `type`.
 
+A component, transaction script or note script can also come from a compiled
+package (`.masp`) instead of MASM source: pass `package` (a `Package` or its
+serialized bytes) in place of `code`, for example
+`client.compile.component({ package: bytes, slots })`, then pass the result to
+`accounts.create({ components })` as usual. `compile.txScript` and
+`compile.noteScript` take `{ package }` the same way. `namespace` and
+`libraries` apply to source only, and a package must be the right kind for what
+you build. A component built from a package always gets the fixed metadata name
+`"custom"`, whatever name the package declares, and `supportAllTypes` still
+defaults to `true`. The `Package` you pass stays usable afterward.
+
 ## Read non-fungible assets
 
 ```typescript
