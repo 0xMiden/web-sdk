@@ -24,6 +24,12 @@ export class NotesResource {
     return await this.#inner.getInputNotes(filter);
   }
 
+  /**
+   * Browser-only bounded scan of input notes. The limit must be an integer
+   * from 1 to 256. Use the last record's detailsCommitment().toHex() as the
+   * exclusive next cursor. Each page reflects the store at the time of its
+   * own read.
+   */
   async listPage({ after, limit }) {
     this.#client.assertNotTerminated();
     if (!Number.isInteger(limit) || limit < 1 || limit > 256) {

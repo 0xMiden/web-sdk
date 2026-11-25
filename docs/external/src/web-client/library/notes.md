@@ -91,6 +91,29 @@ lazy entry, await `MidenClient.ready()` first.
 `useWaitForNotes()` and `useSessionAccount`'s funding poll all report and act on
 payments that are consumable now.
 
+## Browser storage and note recovery
+
+Browser clients can set `beforeNoteAcquisition` to retain private note files
+before import writes and before the note transport cursor advances. Each call
+receives up to 2 MiB of serialized notes and has 30 seconds to acknowledge
+them. A timeout or rejection prevents the import; a retry can repeat a batch
+that was already acknowledged. The callback must not re-enter the client or
+its store. Node.js rejects this option.
+
+The browser-only `indexedDb` option accepts `durability` (`"default"`,
+`"strict"` or `"relaxed"`) and `onFailure`, which receives failure phase,
+kind and error name without database names, messages or note data. Node.js
+rejects this option too.
+
+Use `notes.listPage({ after, limit })` for a bounded browser-only input-note
+scan. `limit` is an integer from 1 to 256; pass the previous page's last
+`detailsCommitment().toHex()` as the exclusive `after` cursor. Each page
+reflects the store at the time of its own read. To look up retained notes by
+commitment, use `notes.list({ detailsCommitments })`. An
+`InputNoteRecord.recoveryNoteFile()` returns an unspent note file with its
+stored scan hint or inclusion proof, or no file when the record cannot provide
+either.
+
 ## Decoding standard notes
 
 `P2idNote`, `P2ideNote` and `SwapNote` decode a standard note into its typed
