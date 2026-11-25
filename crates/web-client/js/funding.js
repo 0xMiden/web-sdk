@@ -134,19 +134,32 @@ export async function withinTimeout(timeoutMs, stage, work) {
  * @param {AbortSignal | undefined} signal
  */
 export function throwIfAborted(signal) {
-  if (signal?.aborted) {
-    const err = new Error("funding stage aborted");
-    err.code = "FundingAborted";
-    throw err;
-  }
+  if (signal?.aborted) throw fundingAborted();
 }
 
 /**
+ * Resolve after `ms`; reject with `FundingAborted` and clear the timer as soon
+ * as `signal` aborts, so a long delay never outlives its stage.
  * @param {number} ms
+ * @param {AbortSignal} [signal]
  * @returns {Promise<void>}
  */
-export function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+export function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(fundingAborted());
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(fundingAborted());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 /**
@@ -184,8 +197,7 @@ export async function solvePow(challengeHex, target, signal) {
       return nonce;
     }
     if (nonce % 1000n === 999n) {
-      await sleep(1);
-      throwIfAborted(signal);
+      await sleep(1, signal);
     }
   }
   throw fundingInvalid("faucet proof of work has no solution");
@@ -355,6 +367,12 @@ export function fundingInvalid(message) {
   return err;
 }
 
+function fundingAborted() {
+  const err = new Error("funding stage aborted");
+  err.code = "FundingAborted";
+  return err;
+}
+
 function fundingTimeout(stage) {
   const err = new Error(`funding timed out while waiting for ${stage}`);
   err.code = "FundingTimeout";
@@ -388,6 +406,12 @@ function validateTimerMs(value, name) {
 }
 
 function toPositiveU64(value, label) {
+  // An unsafe number may already be rounded: larger values must be a bigint or string.
+  if (typeof value === "number" && !Number.isSafeInteger(value)) {
+    throw fundingInvalid(
+      `${label} must be a safe integer; pass a bigint or string for larger values`
+    );
+  }
   const n = toU64(value, label);
   if (n === 0n) {
     throw fundingInvalid(`${label} must be positive`);

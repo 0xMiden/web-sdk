@@ -3,6 +3,7 @@ import {
   resolveStorageMode,
   resolveAuthScheme,
   hashSeed,
+  isStandardPaymentNote,
   toAmount,
 } from "../utils.js";
 import {
@@ -514,19 +515,23 @@ export class AccountsResource {
                 );
               }
               if (kind === "committed") {
+                // Any other script can spend from the account when consumed.
+                if (!isStandardPaymentNote(record, wasm)) {
+                  throw fundingInvalid(
+                    "funding note is not a standard payment note"
+                  );
+                }
                 return;
               }
             }
-            await sleep(opts.pollIntervalMs);
+            await sleep(opts.pollIntervalMs, signal);
           }
         }
       );
 
       const { txId } = await this.#client.transactions.consume({
         account: accountIdHex,
-        noteIds: [receipt.noteId],
-        waitForConfirmation: true,
-        timeout: opts.timeoutMs,
+        notes: [receipt.noteId],
       });
       consumptionTxId =
         typeof txId?.toHex === "function"
@@ -534,6 +539,10 @@ export class AccountsResource {
           : typeof txId?.toString === "function"
             ? txId.toString()
             : String(txId);
+      // Confirm separately so a timeout still reports the submitted id.
+      await this.#client.transactions.waitFor(consumptionTxId, {
+        timeout: opts.timeoutMs,
+      });
 
       const balance = await this.getBalance(accountIdHex, receipt.faucetId);
       return {

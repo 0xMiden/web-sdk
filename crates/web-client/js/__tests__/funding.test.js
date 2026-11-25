@@ -8,6 +8,7 @@ import {
   networkFromEndpoint,
   normalizeFundingOptions,
   requestNoteFromFaucet,
+  sleep,
   solvePow,
   withinTimeout,
 } from "../funding.js";
@@ -30,6 +31,18 @@ describe("normalizeFundingOptions", () => {
     expect(() => normalizeFundingOptions({ timeout: 2_147_483_648 })).toThrow(
       /timeout/
     );
+  });
+
+  it("rejects numbers above Number.MAX_SAFE_INTEGER but keeps bigint and string amounts exact", () => {
+    expect(() =>
+      normalizeFundingOptions({ amount: Number.MAX_SAFE_INTEGER + 2 })
+    ).toThrow(/safe integer/);
+    expect(normalizeFundingOptions({ amount: "9007199254740993" }).amount).toBe(
+      9_007_199_254_740_993n
+    );
+    expect(
+      normalizeFundingOptions({ amount: Number.MAX_SAFE_INTEGER }).amount
+    ).toBe(BigInt(Number.MAX_SAFE_INTEGER));
   });
 
   it("accepts bigint amounts above Number.MAX_SAFE_INTEGER", () => {
@@ -126,16 +139,48 @@ describe("classifyInputNoteState", () => {
   });
 
   it("uses wasm enum constants when provided", () => {
+    // Values chosen outside the numeric fallback so only the enum branch can match.
     const wasm = {
       InputNoteState: {
-        Committed: 2,
-        ProcessingAuthenticated: 4,
-        ConsumedExternal: 8,
+        Committed: 20,
+        ProcessingAuthenticated: 40,
+        ProcessingUnauthenticated: 41,
+        ConsumedAuthenticatedLocal: 60,
+        ConsumedUnauthenticatedLocal: 61,
+        ConsumedExternal: 80,
       },
     };
+    expect(classifyInputNoteState(20, wasm)).toBe("committed");
+    expect(classifyInputNoteState(41, wasm)).toBe("processing");
+    expect(classifyInputNoteState(80, wasm)).toBe("consumed");
     expect(classifyInputNoteState(2, wasm)).toBe("committed");
-    expect(classifyInputNoteState(4, wasm)).toBe("processing");
-    expect(classifyInputNoteState(8, wasm)).toBe("consumed");
+  });
+});
+
+describe("sleep", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("rejects on abort and clears its timer", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const pending = sleep(60_000, controller.signal);
+    const assertion = expect(pending).rejects.toMatchObject({
+      code: "FundingAborted",
+    });
+    expect(vi.getTimerCount()).toBe(1);
+    controller.abort();
+    await assertion;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("rejects immediately when the signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(sleep(60_000, controller.signal)).rejects.toMatchObject({
+      code: "FundingAborted",
+    });
   });
 });
 
@@ -220,9 +265,39 @@ describe("requestNoteFromFaucet", () => {
     const tokensCall = fetchFn.mock.calls
       .map(([u]) => (typeof u === "string" ? u : u.href))
       .find((u) => u.includes("get_tokens"));
+    const paths = fetchFn.mock.calls.map(
+      ([u]) => new URL(typeof u === "string" ? u : u.href).pathname
+    );
+    expect(paths).toEqual(["/api/get_metadata", "/api/pow", "/api/get_tokens"]);
     expect(tokensCall).toContain(`asset_amount=${baseAmount.toString()}`);
     expect(tokensCall).toContain("is_private_note=false");
     expect(tokensCall).toContain(`account_id=${accountHex}`);
+  });
+
+  it("rejects an unsafe numeric faucet base_amount", async () => {
+    const fetchFn = mockFetch([
+      {
+        match: (u) => u.includes("/get_metadata"),
+        response: () => ({
+          ok: true,
+          json: async () => ({
+            id: faucetHex,
+            ["base_amount"]: Number.MAX_SAFE_INTEGER + 2,
+          }),
+        }),
+      },
+    ]);
+    await expect(
+      requestNoteFromFaucet({
+        faucetUrl: "http://127.0.0.1:9/api",
+        accountIdHex: accountHex,
+        feeFaucetIdHex: faucetHex,
+        network: "testnet",
+        amount: null,
+        wasm,
+        fetch: fetchFn,
+      })
+    ).rejects.toThrow(/safe integer/);
   });
 
   it("accepts a JSON number target that rounds above u64::MAX", async () => {

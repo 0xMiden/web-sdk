@@ -6,12 +6,29 @@ const ACC = "0xacc";
 const NOTE = "0x".padEnd(66, "a");
 const MINT_TX = "0x".padEnd(66, "b");
 const CONSUME_TX = "0x".padEnd(66, "c");
+const P2ID_ROOT = "0xp2id";
+const OTHER_ROOT = "0xother";
+
+function noteRecord(state, root = P2ID_ROOT) {
+  return {
+    state: () => state,
+    details: () => ({
+      recipient: () => ({
+        script: () => ({ root: () => ({ toHex: () => root }) }),
+      }),
+    }),
+  };
+}
 
 function makeWasm() {
   return {
     AccountId: {
       fromHex: vi.fn((hex) => ({ hex, toString: () => hex })),
       fromBech32: vi.fn((b) => ({ bech32: b, toString: () => FEE })),
+    },
+    NoteScript: {
+      p2id: () => ({ root: () => ({ toHex: () => P2ID_ROOT }) }),
+      p2ide: () => ({ root: () => ({ toHex: () => "0xp2ide" }) }),
     },
     InputNoteState: {
       Committed: "Committed",
@@ -65,7 +82,7 @@ describe("AccountsResource.requestFundingNote / fundAccount", () => {
       notes: {
         get: vi.fn(async () => {
           if (noteState === null) return null;
-          return { state: () => noteState };
+          return noteRecord(noteState);
         }),
       },
       transactions: {
@@ -73,6 +90,7 @@ describe("AccountsResource.requestFundingNote / fundAccount", () => {
           txId: { toHex: () => CONSUME_TX },
           result: {},
         }),
+        waitFor: vi.fn().mockResolvedValue(undefined),
       },
     };
 
@@ -136,8 +154,11 @@ describe("AccountsResource.requestFundingNote / fundAccount", () => {
     let polls = 0;
     client.notes.get.mockImplementation(async () => {
       polls += 1;
-      if (polls < 2) return null;
-      return { state: () => "Committed" };
+      return polls < 3 ? null : noteRecord("Committed");
+    });
+    client.transactions.consume.mockImplementation(async () => {
+      if (polls < 3) throw new Error("consumed before the note committed");
+      return { txId: { toHex: () => CONSUME_TX }, result: {} };
     });
 
     const result = await resource.fundAccount(ACC, {
@@ -146,6 +167,7 @@ describe("AccountsResource.requestFundingNote / fundAccount", () => {
       pollInterval: 1,
     });
 
+    expect(polls).toBe(3);
     expect(result).toEqual({
       noteId: NOTE,
       transactionId: CONSUME_TX,
@@ -153,10 +175,84 @@ describe("AccountsResource.requestFundingNote / fundAccount", () => {
     });
     expect(client.transactions.consume).toHaveBeenCalledWith({
       account: ACC,
-      noteIds: [NOTE],
-      waitForConfirmation: true,
+      notes: [NOTE],
+    });
+    expect(client.transactions.waitFor).toHaveBeenCalledWith(CONSUME_TX, {
       timeout: 5_000,
     });
+  });
+
+  it("fundAccount never consumes a note that is not a standard payment", async () => {
+    const { resource, client, fetchFn } = setup(happyFetch);
+    client.notes.get.mockResolvedValue(noteRecord("Committed", OTHER_ROOT));
+
+    await expect(
+      resource.fundAccount(ACC, {
+        fetch: fetchFn,
+        timeout: 5_000,
+        pollInterval: 1,
+      })
+    ).rejects.toMatchObject({
+      code: "FundingAfterRequest",
+      noteId: NOTE,
+      sourceCode: "FundingInvalid",
+    });
+    expect(client.transactions.consume).not.toHaveBeenCalled();
+  });
+
+  it("fundAccount keeps the consumption transaction id when confirmation times out", async () => {
+    const { resource, client, fetchFn } = setup(happyFetch);
+    client.notes.get.mockResolvedValue(noteRecord("Committed"));
+    client.transactions.waitFor.mockRejectedValue(new Error("timed out"));
+
+    await expect(
+      resource.fundAccount(ACC, {
+        fetch: fetchFn,
+        timeout: 5_000,
+        pollInterval: 1,
+      })
+    ).rejects.toMatchObject({
+      code: "FundingAfterRequest",
+      noteId: NOTE,
+      transactionId: CONSUME_TX,
+    });
+  });
+
+  it("fundAccount clears the poll timer when the note wait times out first", async () => {
+    const { resource, client, fetchFn } = setup(happyFetch);
+    client.notes.get.mockResolvedValue(null);
+    const created = [];
+    const cleared = new Set();
+    const realSet = globalThis.setTimeout;
+    const realClear = globalThis.clearTimeout;
+    const setSpy = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation((fn, ms, ...args) => {
+        const handle = realSet(fn, ms, ...args);
+        if (ms === 600_000) created.push(handle);
+        return handle;
+      });
+    const clearSpy = vi
+      .spyOn(globalThis, "clearTimeout")
+      .mockImplementation((handle) => {
+        cleared.add(handle);
+        return realClear(handle);
+      });
+    try {
+      await expect(
+        resource.fundAccount(ACC, {
+          fetch: fetchFn,
+          timeout: 200,
+          pollInterval: 600_000,
+        })
+      ).rejects.toMatchObject({ code: "FundingAfterRequest" });
+      expect(created).toHaveLength(1);
+      expect(cleared.has(created[0])).toBe(true);
+    } finally {
+      created.forEach((handle) => realClear(handle));
+      setSpy.mockRestore();
+      clearSpy.mockRestore();
+    }
   });
 
   it("fundAccount stops syncing once the note wait times out", async () => {
@@ -189,9 +285,7 @@ describe("AccountsResource.requestFundingNote / fundAccount", () => {
 
   it("fundAccount wraps post-mint failures with the note id", async () => {
     const { resource, client, fetchFn } = setup(happyFetch);
-    client.notes.get.mockResolvedValue({
-      state: () => "ConsumedExternal",
-    });
+    client.notes.get.mockResolvedValue(noteRecord("ConsumedExternal"));
 
     await expect(
       resource.fundAccount(ACC, {
