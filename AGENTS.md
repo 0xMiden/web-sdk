@@ -31,6 +31,7 @@ The `Cargo.toml` workspace dep `miden-client = "x.y.z"` pins compatibility with 
 - **Package manager**: pnpm 9 (workspace at `pnpm-workspace.yaml`). **Never** use `yarn` or `npm install` — they will desync the lockfile.
 - **Node**: ≥ 20 (`engines.node` in `package.json`, `.nvmrc`).
 - **Rust**: MSRV 1.98.1 (`rust-version` under `[workspace.package]` in `Cargo.toml`) plus the nightly pinned in `rust-toolchain.toml` (`nightly-2026-08-06`). The nightly is load-bearing, not a convenience: `-Z build-std` and `cfg(target_feature = "atomics")` are nightly-only and the MT WASM build needs both. It also backs `cargo +nightly fmt`, `clippy` and `fix`.
+- **A C compiler that targets WebAssembly**, for the MT build only. The MT variant links the SQLite store, whose SQLite is compiled from C for `wasm32-unknown-unknown`. Apple clang has no WebAssembly backend: on macOS `brew install llvm`, and the `Makefile` then points `CC_wasm32_unknown_unknown` at it. Outside `make`, export `CC_wasm32_unknown_unknown="$(brew --prefix llvm)/bin/clang"` yourself. The `clang` of a Linux distribution works as it is, and `llvm-ar` is found next to the compiler.
 - **Lefthook** runs pre-commit; `pnpm install` wires it via the `prepare` script.
 
 ## Build / lint / test
@@ -64,6 +65,10 @@ make test-react-sdk                # vitest unit (jsdom)
 make test-web-client-unit          # vitest unit (web-client)
 make integration-test-web-client   # playwright (chromium); accepts SHARD_PARAMETER
 make integration-test-web-client-webkit
+
+# The SQLite store, end to end in a browser. Needs a built dist (`make build-web-client`).
+# MIDEN_SMOKE_BROWSER_CHANNEL=chrome drives an installed Chrome instead of Playwright's Chromium.
+node crates/web-client/scripts/verify-sqlite-store.mjs
 ```
 
 CI (`.github/workflows/test.yml`) runs all of the above on every PR. `main` and `next` warm sccache + Swatinem/rust-cache.
@@ -162,6 +167,7 @@ When in doubt, drop the entry and apply `no changelog`. A missing entry the revi
 - **No yarn.** The repo migrated from yarn to pnpm. If you see a doc, comment, or script that says `yarn ...`, it's stale — fix it (or flag it).
 - **Don't chain `pnpm --filter ... -- arg` through npm-script `&&`.** pnpm's argument forwarding only wires through to the LAST command in the chain. The Makefile splits multi-step playwright invocations across explicit Make recipes for this reason; preserve that pattern (see `integration-test-web-client` in `Makefile`).
 - **Test sharding is manually balanced.** `crates/web-client/playwright.config.ts` defines four CI shard projects (`ci-shard-1-tx-flows`, `ci-shard-2-sync-and-state`, `ci-shard-3-accounts-and-keys`, `ci-shard-4-compile-and-misc`) with explicit `testMatch` arrays sized empirically from observed run timings; `.github/workflows/test.yml` runs them as a matrix. Rebalance by moving file paths between arrays - no workflow edits needed. The comment block above the projects explains the history, and `crates/web-client/js/__tests__/playwrightShards.test.js` fails if a spec falls out of every shard. (`packages/react-sdk/playwright.config.ts` is unsharded: two projects, `chromium` and `webkit`.)
+- **The SQLite store ships in the MT build only.** The web client's `sqlite-store` cargo feature links `miden-client-sqlite-store`, which turns on `miden-crypto/concurrent` for the whole build. `mt-threads` already does that and the ST build must not, so `rollup.config.js` and `make build-wasm-mt` enable `sqlite-store` only together with `mt-threads`. The `storeBackend` option exists on all four entry points and the ST ones reject `"sqlite"`. `sqlite-wasm-rs` is held on `0.5` by the web client's own requirement, because `0.6` needs a newer `wasm-bindgen` than the one pinned there: bump the two together. In a browser the store only runs inside a dedicated worker, so its one end-to-end test is `crates/web-client/scripts/verify-sqlite-store.mjs`, which the release job in `test.yml` runs; `make test-web-client-sqlite-keystore` covers the keystore's SQL natively.
 - **Network-bound tests don't belong in CI.** Anything that hits a live RPC node (testnet/devnet) is excluded. If you add such a test, gate it on an env var and skip by default.
 - **Account ID display.** Hooks accept hex (`0x…`) and bech32 (`mtst1q…`) interchangeably. The bech32 prefix tracks the active network: `mtst1` testnet, `mdev1` devnet, `mm1` mainnet. Don't hardcode prefixes - `packages/react-sdk/src/utils/accountBech32.ts` infers the `NetworkId` from the provider client's `endpoint()` (mainnet `mm1` when it names no known network; hex only before a client exists), and `packages/react-sdk/test/accountBech32.test.ts` pins all three.
 - **Code comments describe current state, not history.** Don't reference PR review threads, "earlier revisions", "per review feedback", or links to specific comment IDs in source comments — that context rots the moment the PR merges or the thread resolves. State the present-tense rationale a future reader needs ("X is gated behind `testing` so it doesn't ship in production WASM bundles"), and leave the historical "why we changed it" to the commit message and PR description.

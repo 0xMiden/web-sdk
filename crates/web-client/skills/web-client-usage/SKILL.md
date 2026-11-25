@@ -206,6 +206,7 @@ const client = await MidenClient.create({
   noteTransportMaxRetries: 3, // optional - in-call retries of a private note send; see below
   noteTransportRetryIntervalMs: 250, // optional - delay before the first retry, in ms
   storeName: "my-store",
+  storeBackend: "indexeddb", // optional - "sqlite" keeps the store in OPFS instead; see below
   exclusive: false, // optional - true refuses a store another live client has open; see below
   seed: new Uint8Array(32), // optional - string or Uint8Array; see below
   proverUrl: "testnet", // optional - sets a default prover
@@ -233,6 +234,37 @@ coordinate. Opening a store another live client in the realm has open warns
 (`console.warn`, naming the owner as `client #N`); with `exclusive: true` the
 open throws an error naming the owner instead, and while an exclusive client
 lives every other open of its store throws. `terminate()` releases the store.
+
+`storeBackend` chooses where the store and the keys are kept: `"indexeddb"`
+(the default) or `"sqlite"`, SQLite databases in the origin private file system
+(OPFS). `"sqlite"` works only under three conditions, and client creation
+rejects otherwise:
+
+- The import is `@miden-sdk/miden-sdk/mt` or `/mt/lazy`. The single-threaded
+  entry points reject with `This build of the SDK has no SQLite store`.
+- The client is created **inside a dedicated Web Worker**. The page, a shared
+  worker and a service worker all reject. An MV3 extension has to start that
+  worker from an offscreen document.
+- No other worker or tab of the origin holds a SQLite store. The worker that
+  opens one holds the files of every SQLite store of the origin until the
+  worker itself terminates; `client.terminate()` does not release them.
+
+With `"sqlite"` the client runs on the calling worker's thread with no worker
+shim of its own (`useWorker` is treated as `false`), so call
+`await initThreadPool(n)` in that worker before `create()` if you want parallel
+proving. The two backends are separate stores even under one `storeName`:
+switching backend starts from an empty store, and nothing migrates. On Node.js
+the store is always SQLite, so `"sqlite"` changes nothing and `"indexeddb"`
+throws a `TypeError`. `createMock({ storeBackend })` takes the same option.
+
+Clients created in one worker on the same SQLite `storeName` share a single
+connection, so a second client there is safe; after a WASM trap, replace the
+worker, not the client. `exportStore`/`importStore` do not see a SQLite store.
+Use `await exportSqliteStore(storeName)`, which returns
+`{ store: Uint8Array, keystore: Uint8Array }`, and
+`await importSqliteStore(storeName, store, keystore)`, which replaces the store
+and rejects while a client of that worker has it open. Both run in the
+dedicated worker.
 
 `client.endpoint()` returns the resolved node URL synchronously, e.g.
 `"https://rpc.testnet.miden.io"` when `rpcUrl` was omitted; a `createMock()`

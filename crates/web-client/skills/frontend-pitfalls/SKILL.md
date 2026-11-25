@@ -329,18 +329,20 @@ If you genuinely need the low-level constructors, these are the current signatur
 WasmWebClient.createClient(
   rpcUrl, noteTransportUrl, seed, network,
   logLevel, useWorker = true, observability,
-  feeFaucetId, noteTransportMaxRetries, noteTransportRetryIntervalMs
+  feeFaucetId, noteTransportMaxRetries, noteTransportRetryIntervalMs,
+  callbackTimeoutMs, exclusive = false, storeBackend
 ): Promise<WebClient>
 
 WasmWebClient.createClientWithExternalKeystore(
   rpcUrl, noteTransportUrl, seed, storeName,
   getKeyCb, insertKeyCb, signCb,
   logLevel, useWorker = true, observability,
-  feeFaucetId, noteTransportMaxRetries, noteTransportRetryIntervalMs
+  feeFaucetId, noteTransportMaxRetries, noteTransportRetryIntervalMs,
+  callbackTimeoutMs, exclusive = false, storeBackend
 ): Promise<WebClient>
 ```
 
-`observability` is `{ observer?: (observation: object) => void, observeSensitive?: boolean }`. The fourth positional argument is the store name in both; `createClient` documents it as `network` and `createClientWithExternalKeystore` as `storeName`, but it is the same slot and the same meaning - set it when several clients share one browser. The last three mirror the `ClientOptions` fields of the same names; the two retry options throw a `TypeError` when out of range (0 to 10 and 0 to 60000, and at most 120000 ms of total computed backoff, `interval * (2^retries - 1)` with an omitted value at its default). The retries run inside the client's serialized call, so a slow or rate-limiting transport blocks other client calls until the send finishes; a non-zero service `retry-after` replaces the computed delay with no upper bound and a zero one falls back to it. `noteTransportMaxRetries: 0` bounds a send to one attempt, which suits a latency-sensitive UI.
+`observability` is `{ observer?: (observation: object) => void, observeSensitive?: boolean }`. The fourth positional argument is the store name in both; `createClient` documents it as `network` and `createClientWithExternalKeystore` as `storeName`, but it is the same slot and the same meaning - set it when several clients share one browser. The arguments from `feeFaucetId` on mirror the `ClientOptions` fields of the same names; `storeBackend: "sqlite"` turns the worker shim off whatever `useWorker` says. The two retry options throw a `TypeError` when out of range (0 to 10 and 0 to 60000, and at most 120000 ms of total computed backoff, `interval * (2^retries - 1)` with an omitted value at its default). The retries run inside the client's serialized call, so a slow or rate-limiting transport blocks other client calls until the send finishes; a non-zero service `retry-after` replaces the computed delay with no upper bound and a zero one falls back to it. `noteTransportMaxRetries: 0` bounds a send to one attempt, which suits a latency-sensitive UI.
 
 ## FP10: outputNotes() Includes the Fee Note (CRITICAL - fails silently)
 

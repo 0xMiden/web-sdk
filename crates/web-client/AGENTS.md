@@ -131,6 +131,14 @@ Account witnesses refresh when another client changes that state, preserving
 untouched vault assets and storage maps. This does not fetch new chain state;
 continue to sync before relying on on-chain balances.
 
+**SQLite store.** `MidenClient.create({ ..., storeBackend: "sqlite" })` keeps
+the store and the keys in SQLite databases in OPFS instead of IndexedDB. It
+needs the `/mt` or `/mt/lazy` entry point and a client created inside a
+dedicated Web Worker, and one worker of the origin holds the SQLite stores
+until that worker terminates; anything else makes client creation reject. The
+client then runs without its own worker shim. Nothing migrates between the two
+backends. Details are in the `web-client-usage` skill.
+
 **One client per store.** Two live clients on one store do not coordinate.
 Opening a store another live client in the realm has open (the same IndexedDB
 name in the browser, the same SQLite file on Node.js) logs a `console.warn`
