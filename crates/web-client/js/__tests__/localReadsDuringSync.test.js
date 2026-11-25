@@ -129,39 +129,52 @@ describe("local reads during worker sync/prove (#567)", () => {
     }
   );
 
-  it("keeps importNoteFile behind an in-flight worker sync via the store lock", async () => {
-    const { client } = createWorkerClient("local-reads-import");
+  it("keeps a second client's import behind worker sync on the same store", async () => {
+    const storeName = "local-reads-import";
+    const { client, proxy } = createWorkerClient(storeName);
+    const { client: importingClient, proxy: importer } =
+      createWorkerClient(storeName);
+    const lockTails = new Map();
+    const request = vi.fn((name, _options, fn) => {
+      const granted = (lockTails.get(name) ?? Promise.resolve()).then(fn);
+      lockTails.set(
+        name,
+        granted.catch(() => {})
+      );
+      return granted;
+    });
+    vi.stubGlobal("navigator", { locks: { request } });
+
+    const syncStarted = deferred();
     const syncGate = deferred();
     const importStarted = deferred();
-
-    vi.spyOn(client, "callMethodWithWorker").mockImplementation(
-      async (method) => {
-        if (method === MethodName.SYNC_STATE) {
-          await syncGate.promise;
-          return new Uint8Array([1]);
-        }
-        importStarted.resolve(method);
-        return undefined;
-      }
-    );
-
-    const syncPromise = client.syncState();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    const importPromise = client._withStoreLock(async () => {
-      await client.callMethodWithWorker("importNoteFile");
-      return "imported";
-    }, "importNoteFile");
-
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(await outcomeAfterFlush(importStarted.promise)).toEqual({
-      status: "pending",
+    const noteFile = new Uint8Array([2]);
+    vi.spyOn(client, "callMethodWithWorker").mockImplementation(async () => {
+      syncStarted.resolve();
+      await syncGate.promise;
+      return new Uint8Array([1]);
+    });
+    vi.spyOn(importingClient, "getWasmWebClient").mockResolvedValue({
+      importNoteFile: async (file) => {
+        importStarted.resolve(file);
+        return "imported";
+      },
     });
 
+    const syncing = proxy.syncState();
+    await syncStarted.promise;
+    const importing = importer.importNoteFile(noteFile);
+    const duringSync = await outcomeAfterFlush(importStarted.promise);
     syncGate.resolve();
-    await expect(syncPromise).resolves.toEqual({ kind: "sync", length: 1 });
-    await expect(importPromise).resolves.toBe("imported");
-    await expect(importStarted.promise).resolves.toBe("importNoteFile");
+
+    await expect(syncing).resolves.toEqual({ kind: "sync", length: 1 });
+    await expect(importing).resolves.toBe("imported");
+    expect(duringSync).toEqual({ status: "pending" });
+    await expect(importStarted.promise).resolves.toBe(noteFile);
+    expect(request.mock.calls.map(([name]) => name)).toEqual([
+      `miden-sync-${storeName}`,
+      `miden-sync-${storeName}`,
+    ]);
   });
 
   it("does not let a later worker sync overtake a queued note import", async () => {
