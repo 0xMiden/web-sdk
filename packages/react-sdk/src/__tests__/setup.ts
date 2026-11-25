@@ -405,6 +405,12 @@ vi.mock("@miden-sdk/miden-sdk", () => {
         toU64s() {
           return Array.from(this.values);
         }
+        toHex() {
+          return (
+            "0x" +
+            this.values.map((v) => v.toString(16).padStart(16, "0")).join("")
+          );
+        }
       },
       {
         deserialize: vi.fn(
@@ -413,6 +419,14 @@ vi.mock("@miden-sdk/miden-sdk", () => {
               values = new BigUint64Array(4);
             })()
         ),
+        fromHex: vi.fn((hex: string) => ({
+          values: [0n, 0n, 0n, 0n],
+          toHex: () => hex,
+          toU64s: () => new BigUint64Array(4),
+          toFelts: () => [],
+          serialize: () => new Uint8Array(),
+          free: vi.fn(),
+        })),
       }
     ),
     NoteAttachment: (() => {

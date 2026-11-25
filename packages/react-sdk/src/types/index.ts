@@ -32,6 +32,7 @@ import type {
   NoteScript,
   StorageMode,
   PswapLineageRecord,
+  Word,
 } from "@miden-sdk/miden-sdk";
 
 // Re-export SDK types for convenience
@@ -55,6 +56,7 @@ export type {
   Note,
   AccountStorageMode,
   PswapLineageRecord,
+  Word,
 };
 
 export type { AccountRef } from "../utils/accountParsing";
@@ -514,6 +516,54 @@ export interface WaitForNotesOptions {
   timeoutMs?: number;
   /** Polling interval in milliseconds. Default: 1000 */
   intervalMs?: number;
+}
+
+export interface WaitForAccountUpdateOptions {
+  /**
+   * Account ID to watch (hex, bech32, AccountId, Account, or AccountHeader).
+   * Required unless provided as the first argument to `useWaitForAccountUpdate`
+   * or `waitForAccountUpdate`.
+   */
+  accountId?: AccountRef;
+  /**
+   * Baseline commitment hex string or `Word`.
+   * Compared against `account.to_commitment()` when `slot` is omitted, or
+   * against the slot commitment / map entry when `slot` is set and
+   * `baselineValue` is omitted. When omitted, the first polled snapshot
+   * establishes the baseline.
+   */
+  baselineCommitment?: string | Word;
+  /**
+   * Optional storage slot name to monitor instead of the whole account
+   * commitment.
+   */
+  slot?: string;
+  /**
+   * Optional storage map key (`Word` or hex string) within `slot`. Requires
+   * `slot` to be specified.
+   */
+  mapKey?: string | Word;
+  /**
+   * Optional baseline value for `slot` / `mapKey` (`Word`, hex string,
+   * `bigint` for Value slots, or `null` when expecting an initially absent
+   * entry). Takes precedence over `baselineCommitment` when `slot` is set.
+   */
+  baselineValue?: string | Word | bigint | null;
+  /** Timeout in milliseconds. Default: 10000 */
+  timeoutMs?: number;
+  /** Polling interval in milliseconds. Default: 1000 */
+  intervalMs?: number;
+}
+
+export interface UseWaitForAccountUpdateOptions extends Omit<
+  WaitForAccountUpdateOptions,
+  "accountId"
+> {
+  /**
+   * When `true`, starts waiting automatically once the client is ready and
+   * `accountId` is provided. Default: `false`.
+   */
+  enabled?: boolean;
 }
 
 // Mint options
