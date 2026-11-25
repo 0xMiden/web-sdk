@@ -1424,7 +1424,7 @@ It has three requirements:
 - **A dedicated Web Worker.** OPFS only gives a dedicated worker the synchronous file access SQLite needs, so client creation rejects on the page and in shared or service workers. The client then runs on that worker's thread without its own worker shim (`useWorker` is treated as `false`), which is why the thread pool is yours to start.
 - **One worker per origin.** The worker that opens a SQLite store holds the files of every SQLite store of the origin until it terminates, and client creation rejects in any other worker or tab meanwhile. `client.terminate()` closes the client; the worker ending is what releases the files.
 
-Clients created in the same worker on the same `storeName` share one connection to the store. `exportSqliteStore(storeName)` returns the store's two database files as `{ store, keystore }` and `importSqliteStore(storeName, store, keystore)` replaces the store with them; both run in that worker, and the import rejects while a client has the store open. `exportStore` and `importStore` stay IndexedDB-only.
+Clients created in the same worker on the same `storeName` share one connection to the store. `exportStore` and `importStore` read and write IndexedDB stores only.
 
 A Manifest V3 extension service worker can neither open the store nor start the worker that could, so start the worker from an offscreen document. An IndexedDB store and a SQLite store of the same `storeName` are separate, and nothing is moved between them. The SQLite store is exercised in Chromium; other browsers are untested. See the [SQLite store guide](https://docs.miden.xyz/builder/tools/clients/web-client/library/sqlite-store) for the details.
 

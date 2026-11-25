@@ -92,37 +92,8 @@ path there, `/<storeName>.sqlite3`.
 
 An IndexedDB store and a SQLite store of the same `storeName` are separate
 stores. Nothing is moved from one to the other, so a client that switches
-backend starts from an empty store.
-
-## Export and import
-
-`exportStore` and `importStore` read and write IndexedDB stores only. A SQLite
-store has its own pair, which work on the two database files as they are:
-
-```typescript
-import {
-  MidenClient,
-  exportSqliteStore,
-  importSqliteStore,
-} from "@miden-sdk/miden-sdk/mt/lazy";
-
-await MidenClient.ready();
-
-// { store: Uint8Array, keystore: Uint8Array }
-const dump = await exportSqliteStore("wallet");
-
-await importSqliteStore("wallet", dump.store, dump.keystore);
-```
-
-Both run in the dedicated worker, like the client. `exportSqliteStore` can run
-while clients of that worker have the store open. `importSqliteStore` replaces
-the store, or creates it, and rejects while a client has it open: terminate
-the client first. The files are checked by opening them as a client would,
-which also brings a store exported by an older SDK up to date; if they do not
-open, the import rejects and the store is left as it was.
-
-`store` is an ordinary SQLite database, the same file the Node.js binding and
-the Miden CLI keep.
+backend starts from an empty store. `exportStore` and `importStore` read and
+write IndexedDB stores only.
 
 With an external keystore (`keystore: { getKey, insertKey, sign }`), secret
 keys stay with your callbacks, as they do on IndexedDB. Only the record of

@@ -5,7 +5,7 @@ use alloc::sync::Arc;
 
 use idxdb_store::IdxdbStore;
 use miden_client::store::Store;
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsValue;
 
 use crate::idxdb_store_init_error;
 use crate::platform::from_str_err;
@@ -67,89 +67,12 @@ pub(crate) async fn open_store(
             }
             #[cfg(not(feature = "sqlite-store"))]
             {
-                Err(sqlite_store_unavailable())
+                Err(from_str_err(
+                    "This build of the SDK has no SQLite store. The SQLite store is part of the \
+                     multi-threaded build.",
+                ))
             }
         },
-    }
-}
-
-/// The error of a call that needs the `SQLite` store in a build that has none.
-#[cfg(not(feature = "sqlite-store"))]
-fn sqlite_store_unavailable() -> JsValue {
-    from_str_err(
-        "This build of the SDK has no SQLite store. The SQLite store is part of the \
-         multi-threaded build.",
-    )
-}
-
-// SQLITE STORE DUMPS
-// ================================================================================================
-
-/// Exports the `SQLite` store named `store_name` as the bytes of its two database files: `store`,
-/// the store itself, and `keystore`, the keys and the accounts they belong to.
-///
-/// Use together with [`import_sqlite_store`]. Like a client on the store, it has to run in a
-/// dedicated Web Worker, and it can run while clients of that worker have the store open.
-///
-/// # Errors
-/// Fails if this build has no `SQLite` store, if the store does not exist, or if its files cannot
-/// be opened.
-#[wasm_bindgen(
-    js_name = "exportSqliteStore",
-    unchecked_return_type = "{ store: Uint8Array; keystore: Uint8Array }"
-)]
-#[cfg_attr(
-    not(feature = "sqlite-store"),
-    allow(clippy::unused_async, reason = "returns a promise in every build")
-)]
-pub async fn export_sqlite_store(store_name: String) -> Result<JsValue, JsValue> {
-    #[cfg(feature = "sqlite-store")]
-    {
-        let (store, keystore) = sqlite::export(&store_name).await?;
-        let dump = js_sys::Object::new();
-        for (key, bytes) in [("store", store), ("keystore", keystore)] {
-            js_sys::Reflect::set(
-                &dump,
-                &JsValue::from_str(key),
-                &js_sys::Uint8Array::from(bytes.as_slice()),
-            )?;
-        }
-        Ok(dump.into())
-    }
-    #[cfg(not(feature = "sqlite-store"))]
-    {
-        let _ = store_name;
-        Err(sqlite_store_unavailable())
-    }
-}
-
-/// Replaces the `SQLite` store named `store_name` with the two database files
-/// [`export_sqlite_store`] returned, creating the store if it does not exist.
-///
-/// The files are checked by opening them as a client would, which also brings a store exported by
-/// an older client up to date. If they do not open, the store is left as it was.
-///
-/// # Errors
-/// Fails if this build has no `SQLite` store, if a client of this worker has the store open, or if
-/// the files are not a store this client can open.
-#[wasm_bindgen(js_name = "importSqliteStore")]
-#[cfg_attr(
-    not(feature = "sqlite-store"),
-    allow(clippy::unused_async, reason = "returns a promise in every build")
-)]
-pub async fn import_sqlite_store(
-    store_name: String,
-    store: Vec<u8>,
-    keystore: Vec<u8>,
-) -> Result<(), JsValue> {
-    #[cfg(feature = "sqlite-store")]
-    {
-        sqlite::import(&store_name, &store, &keystore).await
-    }
-    #[cfg(not(feature = "sqlite-store"))]
-    {
-        let _ = (store_name, store, keystore);
-        Err(sqlite_store_unavailable())
     }
 }
 
@@ -300,143 +223,6 @@ mod sqlite {
         };
 
         Ok((store, KeystoreDb::Sqlite(keystore_db)))
-    }
-
-    /// Opens the two databases of the store named `store_name` the way a client does, and closes
-    /// them again.
-    ///
-    /// Opening a database makes `SQLite` finish a write that was cut short, checks that the file
-    /// is a store this client can open, and brings its schema up to date.
-    async fn open_and_close(store_name: &str) -> Result<(), JsValue> {
-        SqliteStore::new(PathBuf::from(store_path(store_name)))
-            .await
-            .map_err(|err| from_str_err(&format!("Failed to initialize SqliteStore: {err}")))?;
-        SqliteKeystoreDb::open(&keystore_path(store_name)).map_err(|err| {
-            from_str_err(&format!("Failed to initialize the SQLite keystore: {err}"))
-        })?;
-        Ok(())
-    }
-
-    /// Returns the bytes of the store database and of the keystore database of the store named
-    /// `store_name`.
-    pub(super) async fn export(store_name: &str) -> Result<(Vec<u8>, Vec<u8>), JsValue> {
-        let pool = install_file_system().await?;
-
-        let store_path = store_path(store_name);
-        if !pool.exists(&store_path).map_err(|err| opfs_error(&err))? {
-            return Err(from_str_err(&format!(
-                "Failed to export the SQLite store: there is no store named \"{store_name}\""
-            )));
-        }
-
-        // The files are read as they are, so no write may be half done in them. A client that has
-        // a database open has already settled it; a database nobody has open is opened once here.
-        let (store, keystore_db) = open_databases(store_name);
-        if store.is_none() || keystore_db.is_none() {
-            pool.reserve_minimum_capacity(pool.count() + FILES_PER_CLIENT)
-                .await
-                .map_err(|err| opfs_error(&err))?;
-            if store.is_none() && keystore_db.is_none() {
-                open_and_close(store_name).await?;
-            }
-        }
-
-        let read = |path: &str| {
-            pool.export_db(path)
-                .map_err(|err| from_str_err(&format!("Failed to export the SQLite store: {err}")))
-        };
-        Ok((read(&store_path)?, read(&keystore_path(store_name))?))
-    }
-
-    /// The error of an import that failed for the reason `err`.
-    fn import_error(err: &dyn core::fmt::Display) -> JsValue {
-        from_str_err(&format!("Failed to import the SQLite store: {err}"))
-    }
-
-    /// Removes the database at `path` from the OPFS file system, with the rollback journal that
-    /// may be left beside it.
-    fn remove_database(pool: &OpfsSAHPoolUtil, path: &str) -> Result<(), JsValue> {
-        pool.delete_db(&format!("{path}-journal")).map_err(|err| import_error(&err))?;
-        pool.delete_db(path).map_err(|err| import_error(&err))?;
-        Ok(())
-    }
-
-    /// Makes the file system write the database at `path` through to disk.
-    ///
-    /// An imported database is written without `SQLite`, which is what asks the file system to
-    /// flush a file. Setting the schema version to the value it has is a write that changes
-    /// nothing, and committing it flushes the file.
-    fn flush_database(path: &str) -> rusqlite::Result<()> {
-        let conn = rusqlite::Connection::open(path)?;
-        let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        conn.pragma_update(None, "user_version", version)
-    }
-
-    /// Replaces the two databases of the store named `store_name` with `store` and `keystore_db`,
-    /// or puts back what was there if the new databases do not open.
-    pub(super) async fn import(
-        store_name: &str,
-        store: &[u8],
-        keystore_db: &[u8],
-    ) -> Result<(), JsValue> {
-        let pool = install_file_system().await?;
-
-        let (open_store, open_keystore_db) = open_databases(store_name);
-        if open_store.is_some() || open_keystore_db.is_some() {
-            return Err(from_str_err(&format!(
-                "Failed to import the SQLite store: a client has the store \"{store_name}\" open. \
-                 Terminate it first."
-            )));
-        }
-
-        pool.reserve_minimum_capacity(pool.count() + FILES_PER_CLIENT)
-            .await
-            .map_err(|err| opfs_error(&err))?;
-
-        let paths = [store_path(store_name), keystore_path(store_name)];
-
-        // What is there now, to put back if the new databases do not open.
-        let mut previous = Vec::with_capacity(paths.len());
-        for path in &paths {
-            let bytes = if pool.exists(path).map_err(|err| opfs_error(&err))? {
-                Some(pool.export_db(path).map_err(|err| import_error(&err))?)
-            } else {
-                None
-            };
-            previous.push(bytes);
-        }
-
-        let mut imported = Ok(());
-        for (path, bytes) in paths.iter().zip([store, keystore_db]) {
-            imported = remove_database(&pool, path)
-                .and_then(|()| pool.import_db(path, bytes).map_err(|err| import_error(&err)));
-            if imported.is_err() {
-                break;
-            }
-        }
-        if imported.is_ok() {
-            imported = open_and_close(store_name).await;
-        }
-        if imported.is_ok() {
-            imported = paths
-                .iter()
-                .try_for_each(|path| flush_database(path))
-                .map_err(|err| import_error(&err));
-        }
-
-        let Err(err) = imported else {
-            return Ok(());
-        };
-
-        // Put back what was there. The bytes were read from databases that opened, so they are
-        // written back unchecked.
-        for (path, bytes) in paths.iter().zip(previous) {
-            remove_database(&pool, path)?;
-            if let Some(bytes) = bytes {
-                pool.import_db_unchecked(path, &bytes).map_err(|err| import_error(&err))?;
-            }
-        }
-        Err(err)
     }
 
     /// The error a client constructor reports when the OPFS file system fails to open, carrying

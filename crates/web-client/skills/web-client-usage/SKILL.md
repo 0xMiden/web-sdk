@@ -260,11 +260,6 @@ throws a `TypeError`. `createMock({ storeBackend })` takes the same option.
 Clients created in one worker on the same SQLite `storeName` share a single
 connection, so a second client there is safe; after a WASM trap, replace the
 worker, not the client. `exportStore`/`importStore` do not see a SQLite store.
-Use `await exportSqliteStore(storeName)`, which returns
-`{ store: Uint8Array, keystore: Uint8Array }`, and
-`await importSqliteStore(storeName, store, keystore)`, which replaces the store
-and rejects while a client of that worker has it open. Both run in the
-dedicated worker.
 
 `client.endpoint()` returns the resolved node URL synchronously, e.g.
 `"https://rpc.testnet.miden.io"` when `rpcUrl` was omitted; a `createMock()`

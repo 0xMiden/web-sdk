@@ -17,14 +17,9 @@
 // 6. The ST build, which has no SQLite store, says so.
 // 7. A store whose worker was killed while writing to it opens again.
 // 8. Two clients of one worker share a store, and one outlives the other.
-// 9. An exported store imports under another name with its balance and its
-//    key, an import is refused while a client has the store open, and a file
-//    that is not a store leaves the store it would have replaced as it was.
 //
 // Set MIDEN_SMOKE_BROWSER_CHANNEL (for example to "chrome") to drive an
-// installed browser instead of Playwright's bundled Chromium, and
-// MIDEN_SMOKE_KILL_AFTER_MS to change how long the worker of step 7 writes
-// before it is killed.
+// installed browser instead of Playwright's bundled Chromium.
 
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
@@ -42,7 +37,7 @@ const stDistDir = path.resolve(scriptDir, "../dist/st");
 const STORE_NAME = "sqlite_smoke_store";
 const MINT_AMOUNT = 1000n;
 // How long the worker of step 7 writes before it is killed.
-const KILL_AFTER_MS = Number(process.env.MIDEN_SMOKE_KILL_AFTER_MS ?? 300);
+const KILL_AFTER_MS = 300;
 
 // The module the dedicated workers run, on the SDK bundle its `sdk` query
 // parameter names. Each message names one step and gets one reply,
@@ -205,28 +200,6 @@ const steps = {
     const afterTerminate = (await second.getAccounts()).length;
     second.terminate();
     return { seenBySecond, seenByFirst, afterTerminate };
-  },
-
-  // Opens a store that already holds the account and reads its balance.
-  async readBalance({ storeName, mockChain, noteTransport, accountId, faucetId }) {
-    await open({ storeName, storeBackend: "sqlite", mockChain, noteTransport });
-    return {
-      balance: await balance(
-        sdk.AccountId.fromHex(accountId),
-        sdk.AccountId.fromHex(faucetId)
-      ),
-    };
-  },
-
-  async exportStore({ storeName }) {
-    await sdk.MidenClient.ready();
-    return sdk.exportSqliteStore(storeName);
-  },
-
-  async importStore({ storeName, store, keystore }) {
-    await sdk.MidenClient.ready();
-    await sdk.importSqliteStore(storeName, store, keystore);
-    return {};
   },
 
   // Creates accounts on the open store until the worker is terminated.
@@ -510,47 +483,6 @@ try {
   );
   await stop("third");
 
-  // 9a. Export the store, with nobody holding it and then with a client on it.
-  check((await start("exporter")).ok, "the exporting worker did not load");
-  const exportedClosed = await mustStep("exporter", {
-    step: "exportStore",
-    storeName: STORE_NAME,
-  });
-  const balanceAtExport = await mustStep("exporter", {
-    step: "readBalance",
-    storeName: STORE_NAME,
-    mockChain: reopenedAgain.mockChain,
-    noteTransport: reopenedAgain.noteTransport,
-    accountId: created.accountId,
-    faucetId: created.faucetId,
-  });
-  const exported = await mustStep("exporter", {
-    step: "exportStore",
-    storeName: STORE_NAME,
-  });
-  const sqliteMagic = "SQLite format 3";
-  for (const [name, bytes] of [
-    ["store", exported.store],
-    ["keystore", exported.keystore],
-    ["store exported while closed", exportedClosed.store],
-  ]) {
-    check(
-      Buffer.from(bytes.slice(0, sqliteMagic.length)).toString("latin1") ===
-        sqliteMagic,
-      `the exported ${name} is not a SQLite database`
-    );
-  }
-  const missing = await step("exporter", {
-    step: "exportStore",
-    storeName: `${STORE_NAME}_missing`,
-  });
-  check(!missing.ok, "a store that does not exist was exported");
-  check(
-    /no store named/.test(missing.error),
-    `unexpected error exporting a missing store: ${missing.error}`
-  );
-  await stop("exporter");
-
   // 4. The page itself cannot open the store.
   const onPage = await page.evaluate(async (storeName) => {
     const sdk = await import("./index.js");
@@ -650,73 +582,6 @@ try {
     `two clients on one store did not see each other's accounts: ${JSON.stringify(shared)}`
   );
   await stop("shared");
-
-  // 9b. Import the exported store under another name: the balance and the key
-  // come with it.
-  const restoredStore = `${STORE_NAME}_restored`;
-  check((await start("restore")).ok, "the restoring worker did not load");
-  await mustStep("restore", {
-    step: "importStore",
-    storeName: restoredStore,
-    store: exported.store,
-    keystore: exported.keystore,
-  });
-  const restored = await mustStep("restore", {
-    step: "reopen",
-    storeName: restoredStore,
-    storeBackend: "sqlite",
-    mockChain: reopenedAgain.mockChain,
-    noteTransport: reopenedAgain.noteTransport,
-    accountId: created.accountId,
-    faucetId: created.faucetId,
-    amount: MINT_AMOUNT,
-  });
-  check(
-    restored.balanceBefore === balanceAtExport.balance,
-    `expected the imported store to hold ${balanceAtExport.balance}, got ${restored.balanceBefore}`
-  );
-  check(
-    restored.balanceAfter ===
-      String(BigInt(balanceAtExport.balance) + MINT_AMOUNT),
-    `expected the imported key to sign a mint, got a balance of ${restored.balanceAfter}`
-  );
-
-  // 9c. An import is refused while a client has the store open.
-  const whileOpen = await step("restore", {
-    step: "importStore",
-    storeName: restoredStore,
-    store: exported.store,
-    keystore: exported.keystore,
-  });
-  check(!whileOpen.ok, "a store was imported while a client had it open");
-  check(
-    /Terminate it first/.test(whileOpen.error),
-    `unexpected error importing into an open store: ${whileOpen.error}`
-  );
-
-  // 9d. A file that is not a store is refused, and the store it would have
-  // replaced is as it was.
-  await mustStep("restore", { step: "terminate" });
-  const notAStore = await step("restore", {
-    step: "importStore",
-    storeName: restoredStore,
-    store: new Uint8Array(4096),
-    keystore: exported.keystore,
-  });
-  check(!notAStore.ok, "a file that is not a store was imported");
-  const afterRefusal = await mustStep("restore", {
-    step: "readBalance",
-    storeName: restoredStore,
-    mockChain: restored.mockChain,
-    noteTransport: restored.noteTransport,
-    accountId: created.accountId,
-    faucetId: created.faucetId,
-  });
-  check(
-    afterRefusal.balance === restored.balanceAfter,
-    `expected the store to keep ${restored.balanceAfter} after a refused import, got ${afterRefusal.balance}`
-  );
-  await stop("restore");
 
   console.log(
     `SQLite store smoke passed: balance ${reopenedAgain.balanceAfter} after ` +
