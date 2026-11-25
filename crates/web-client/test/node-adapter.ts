@@ -318,7 +318,6 @@ export async function setupNodeGlobals(
     PswapNote: sdk.PswapNote,
     ProcedureThreshold: sdk.ProcedureThreshold,
     PublicKey: sdk.PublicKey,
-    Rpo: sdk.Rpo,
     RpcClient: sdk.RpcClient,
     Signature: sdk.Signature,
     SigningInputs: sdk.SigningInputs,

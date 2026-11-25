@@ -58,9 +58,10 @@ truncated to 32 bytes, defaulting to 32 zero bytes. Changing it, or changing
 anything after the first 32 bytes, silently moves the user to a different
 account.
 
-**The commitment changed in 0.16.** The preimage is now the
-decompressed `x` and `y` coordinates as sixteen 32-bit limbs; a pre-0.16 release
-hashed nine field elements packed from the compressed key. The same Turnkey key
+**The commitment changed in 0.16, and again in 0.19.** In 0.16 the preimage
+became the decompressed `x` and `y` coordinates as sixteen 32-bit limbs; a
+pre-0.16 release hashed nine field elements packed from the compressed key. In
+0.19 the hash moved from Poseidon2 to Eidos. The same Turnkey key
 derives a different account than it used to, and nothing migrates the old one.
 The skill spells out the consequences.
 

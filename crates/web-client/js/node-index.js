@@ -139,9 +139,8 @@ function _reexport(name) {
 // Manual re-exports that aren't plain 1:1 napi passthroughs:
 //   - AuthSchemeNative: the napi `AuthScheme` class under a name that does not
 //     collide with the JS `AuthScheme` enum above.
-//   - Rpo / exportStore / importStore: legacy export names kept for back-compat.
+//   - exportStore / importStore: legacy export names kept for back-compat.
 export const AuthSchemeNative = /* @__PURE__ */ _reexport("AuthScheme");
-export const Rpo = /* @__PURE__ */ _reexport("Rpo");
 export const exportStore = /* @__PURE__ */ _reexport("exportStore");
 export const importStore = /* @__PURE__ */ _reexport("importStore");
 

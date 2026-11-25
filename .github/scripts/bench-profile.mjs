@@ -102,9 +102,13 @@ export const DEFAULT_PROFILE = Object.freeze({
    *
    * Re-calibrate when the runner class, thread count, repetition count or the
    * workload changes; each invalidates this. See docs/benchmarks/calibration.md.
+   *
+   * PROVISIONAL: the floor was measured on Poseidon2 proofs, and the prover now
+   * proves with Eidos. `calibration` below still records the Poseidon2 run that
+   * set the floor. Re-measure with Eidos before flipping this back to false.
    */
   thresholdPct: 1.9,
-  thresholdProvisional: false,
+  thresholdProvisional: true,
 
   /**
    * What the calibration actually measured, kept beside the threshold so the

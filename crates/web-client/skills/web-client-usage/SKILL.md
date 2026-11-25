@@ -1718,7 +1718,10 @@ dApp's `signBytes` request. Verify the returned signature with
 `publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)`.
 
 The wallet signs under the domain tag `miden-wallet/sign-bytes/v1`, the
-Poseidon2 hash of that string, one field element per UTF-8 byte. `"word"`:
+Poseidon2 hash of that string, one field element per UTF-8 byte. The SDK
+supplies the tag, so a dApp does not compute it; its four elements are
+`0x38a8bcdddf30cacf`, `0x240d1b8455bc2c58`, `0x18162f6af29602dd` and
+`0x5385955edcd341a4`. `"word"`:
 `data` is a serialized `Word`; the signed commitment is that of
 `SigningInputs.newArbitrary([...tag, ...word.toFelts()])`. `"signingInputs"`:
 `data` is serialized `SigningInputs`. A Blind payload signs

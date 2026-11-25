@@ -159,8 +159,10 @@ least significant limb first.
 
 > **Upgrade trap.** 0.15 hashed a different preimage - nine felts packed from
 > the 33-byte compressed SEC1 encoding. The same Para wallet therefore derives a
-> different commitment, and a different account id, on 0.16. There is no
-> migration: it is a new account.
+> different commitment, and a different account id, on 0.16. 0.19 changed it
+> again, when the hash moved from Poseidon2 to Eidos, so an account derived on
+> 0.16-0.18 does not carry over either. There is no migration: it is a new
+> account.
 
 Account bootstrap, for a public account, tries `client.accounts.import(account)`
 first and only inserts a fresh one when nothing was on chain. That is what makes

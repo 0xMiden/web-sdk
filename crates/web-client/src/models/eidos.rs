@@ -1,6 +1,6 @@
 use js_export_macro::js_export;
 use miden_client::Felt as NativeFelt;
-use miden_client::crypto::Hasher as NativeEidos;
+use miden_protocol::crypto::hash::eidos::Eidos as NativeEidos;
 
 use super::felt::Felt;
 use super::word::Word;
@@ -22,5 +22,13 @@ impl Eidos {
         let native_digest = NativeEidos::hash_elements(&native_felts);
 
         native_digest.into()
+    }
+
+    /// Computes the Merkle inner node of `left` and `right`.
+    ///
+    /// This is the value an `InnerNodeInfo` must carry. It differs from `hashElements` over the
+    /// eight elements of `left` and `right`.
+    pub fn merge(left: &Word, right: &Word) -> Word {
+        NativeEidos::merge(&[left.into(), right.into()]).into()
     }
 }

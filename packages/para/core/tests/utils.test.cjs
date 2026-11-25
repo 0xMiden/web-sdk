@@ -266,9 +266,10 @@ test("evmPkToCommitment hashes x and y as sixteen limbs", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// ECDSA public-key commitment — golden vectors (0.16 line).
+// ECDSA public-key commitment — golden vectors (0.19 line).
 //
-// Generated from @miden-sdk/miden-sdk@0.16.0-rc.4. For every vector,
+// Commitments computed with the Eidos hash of miden-crypto 1.0.0-rc.0, the
+// version the 0.19 SDK uses. For every vector,
 //   AuthSecretKey.ecdsaWithRNG(seed).publicKey().toCommitment()
 //     === Eidos.hashElements(felts)
 // where `felts` is the preimage this module builds. Both halves are pinned so

@@ -223,3 +223,27 @@ test("extendMerkleStore carries extra Merkle store nodes in the built request", 
   expect(result.added).toEqual(result.expected);
   expect(result.restored).toEqual(result.expected);
 });
+
+test("Eidos.merge computes the Merkle inner node, not hashElements over the children", async ({
+  run,
+}) => {
+  const result = await run(async ({ sdk }) => {
+    const left = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
+    const right = new sdk.Word(sdk.u64Array([5, 6, 7, 8]));
+    return {
+      merge: sdk.Eidos.merge(left, right).toHex(),
+      hashElements: sdk.Eidos.hashElements(
+        new sdk.FeltArray(
+          [1, 2, 3, 4, 5, 6, 7, 8].map((v) => new sdk.Felt(BigInt(v)))
+        )
+      ).toHex(),
+    };
+  });
+  // Reference values from miden-crypto 1.0.0-rc.0 `Eidos::merge` and `Eidos::hash_elements`.
+  expect(result.merge).toBe(
+    "0xcdbf8833f8b9a46c760d63109a17f5359945e35edbe38f252b9e9ce638af0977"
+  );
+  expect(result.hashElements).toBe(
+    "0x0cde6d494f9c540ae1d67bc839565b0fcc774f6cdafc300baa83ecf9c652c25b"
+  );
+});

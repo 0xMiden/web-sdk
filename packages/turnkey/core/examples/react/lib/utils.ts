@@ -53,23 +53,6 @@ export function isValidUuid(s: string): boolean {
   return regex.test(s);
 }
 
-export const evmPkToCommitment = async (compressedPk: string) => {
-  const { Felt, Rpo256, FeltArray } = await import("@miden-sdk/miden-sdk");
-  const bytes = hexToBytes(compressedPk);
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-
-  // convert bytes to a felt array
-  // 4 bytes per felt therefore a 9 felt array
-  const felts = Array.from(
-    { length: 8 },
-    (_, i) => new Felt(BigInt(view.getUint32(i * 4, true)))
-  );
-  // push the last 33rd byte
-  felts.push(new Felt(BigInt(bytes[32])));
-  const pk = Rpo256.hashElements(new FeltArray(felts));
-  return pk;
-};
-
 /**
  * Derives a 32-byte seed buffer from a UTF-8 string, truncating when longer than 32 bytes.
  */
