@@ -5,8 +5,9 @@ sidebar_position: 80
 
 # Troubleshoot browser WASM errors
 
-React hooks can report a `MidenError` with a `code` and the original exception
-in `cause`. For direct calls, check the original error message.
+Start with the original error message for both the Web Client and the React SDK.
+An optional `wrapWasmError(error)` call maps a recognized message to a
+`MidenError` and preserves the original exception in `cause`.
 
 ## `expected instance of AccountId` or `_assertClass`
 
