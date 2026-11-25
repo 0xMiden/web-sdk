@@ -22,6 +22,8 @@ scaffolds the whole stack with this already done.
 
 React hooks library for the Miden Web Client. Provides a simple, ergonomic interface for building React applications on the Miden rollup.
 
+The [React SDK docs](https://docs.miden.xyz/builder/tools/clients/react-sdk/) cover provider setup, hooks, and signer integration.
+
 ## Features
 
 - **Easy Setup** - Single provider component handles WASM initialization and client setup
