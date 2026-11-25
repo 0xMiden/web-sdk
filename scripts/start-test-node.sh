@@ -202,7 +202,7 @@ done
 
 # Hardcoded insecure test-only keys matching the validator golden storage-key bundle.
 SIGNING_KEY="9cbcf0fc18b2a4afeff56ef43ad96af92e804fae64615c9802cff2a182e9cae2"
-VALIDATOR_PUBLIC_KEY="020c06515b355a62133ae98e53e4b5d3e6ee9ff60ce20a436780e4e308a3ff3e9"
+VALIDATOR_PUBLIC_KEY="020c06515b355a62133ae98e53e4b5d3e6ee9ff60ce620a436780e4e308a3ff3e9"
 ENCRYPTION_KEY="9964dbb2590adeb415d3291b64a0a9991fbcac5adacb05ee17efee5296d081d7"
 
 {

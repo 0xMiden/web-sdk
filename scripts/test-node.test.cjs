@@ -233,3 +233,27 @@ test("patch-linked-test-node.sh leaves web-sdk start-test-node.sh untouched and 
   assert.match(patched, /fee-collector create/);
   assert.match(patched, /fee-collector deploy/);
 });
+
+test("start-test-node.sh embeds matching raw-hex validator keys", () => {
+  const script = fs.readFileSync(
+    path.join(__dirname, "start-test-node.sh"),
+    "utf8"
+  );
+  const extractKey = (name) => {
+    const match = script.match(new RegExp(`^${name}="([^"]+)"$`, "m"));
+    assert.ok(match, `${name} assignment should exist in start-test-node.sh`);
+    return match[1];
+  };
+
+  const signingKey = extractKey("SIGNING_KEY");
+  const validatorPublicKey = extractKey("VALIDATOR_PUBLIC_KEY");
+  const encryptionKey = extractKey("ENCRYPTION_KEY");
+
+  assert.match(signingKey, /^[0-9a-f]{64}$/);
+  assert.match(encryptionKey, /^[0-9a-f]{64}$/);
+  assert.match(validatorPublicKey, /^(02|03)[0-9a-f]{64}$/);
+
+  const ecdh = require("node:crypto").createECDH("secp256k1");
+  ecdh.setPrivateKey(signingKey, "hex");
+  assert.equal(ecdh.getPublicKey("hex", "compressed"), validatorPublicKey);
+});
