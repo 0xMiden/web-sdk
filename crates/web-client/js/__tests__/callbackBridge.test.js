@@ -246,6 +246,53 @@ describe("the production WebClient worker bridge", () => {
     expect(deliveryErrors).toEqual([]);
   });
 
+  it("preserves structured MASM diagnostics across a worker execution error", async () => {
+    vi.stubGlobal("Worker", RecordingWorker);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const failure = Object.assign(new Error("transaction assertion failed"), {
+      code: "EXECUTION_FAILED",
+      help: "Inspect the transaction script.",
+      masm: {
+        errorCode: "18446744069414584320",
+        assertionMessage: "expected a nonzero amount",
+        file: "transaction.masm",
+        span: { start: 12, end: 23 },
+      },
+    });
+    class WorkerWebClient {
+      async createClient() {}
+      lastAuthError() {
+        return null;
+      }
+      async executeTransaction() {
+        throw failure;
+      }
+    }
+    const { client, worker } = createClient();
+    const { deliveryErrors } = await connectWorker(worker, {
+      WebClient: WorkerWebClient,
+      AccountId: { fromHex: (value) => value },
+      TransactionRequest: { deserialize: () => ({}) },
+    });
+
+    const received = await client
+      .callMethodWithWorker(
+        MethodName.EXECUTE_TRANSACTION,
+        "account",
+        new Uint8Array()
+      )
+      .catch((error) => error);
+    expect(received).toBeInstanceOf(Error);
+    expect(received).toMatchObject({
+      message: failure.message,
+      code: failure.code,
+      help: failure.help,
+      masm: failure.masm,
+    });
+    expect(deliveryErrors).toEqual([]);
+  });
+
   it.each([
     [MethodName.SUBMIT_NEW_TRANSACTION, "proving"],
     [MethodName.SUBMIT_NEW_TRANSACTION, "submission"],
