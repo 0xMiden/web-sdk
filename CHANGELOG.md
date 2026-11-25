@@ -36,6 +36,8 @@
 
 ### Fixes
 
+* [FIX][web] Development faucet funding preserves the full integer value of proof-of-work targets sent as JSON numbers ([#626](https://github.com/0xMiden/web-sdk/pull/626)).
+
 * [FIX][web] Safari and other AppleWebKit hosts no longer fail to load the WASM asset after a Vite or webpack production build. The classic worker receives the hashed WASM URL from the main thread (as a string because WebKit cannot structured-clone a `URL` object over `postMessage`) instead of resolving an unhashed path relative to the worker script ([#286](https://github.com/0xMiden/web-sdk/issues/286)).
 * [FIX][web] An SDK call made while a `MidenClient._withInnerWebClient(fn)` callback awaits now queues behind the callback instead of running inline and racing the wasm client. Only calls made through the `inner` handle `fn` receives run inline, so inside `fn` call the SDK through `inner`, not through another reference to the client, and await those calls one at a time. The raw-bound accessors (`lastAuthError()`, the `keystore` getter, and on mock clients `proveBlock()` and `serializeMock*()`) still never queue; a call through `inner` after `fn` settles queues like any other. ([#164](https://github.com/0xMiden/web-sdk/issues/164))
 * [FIX][web,para,turnkey] The `createParaMidenClient` and `createMidenTurnkeyClient` keystores reject `insertKey` instead of silently dropping the key, so `client.accounts.create()` with a generated key on those clients fails rather than tracking an account whose key exists nowhere; `newWallet`, `newFaucet` and `newAccountWithSecretKey` store the key before the account, so a refused key leaves no account behind ([#550](https://github.com/0xMiden/web-sdk/issues/550)).

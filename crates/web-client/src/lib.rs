@@ -1039,17 +1039,6 @@ mod post_submit_code_tests {
     }
 
     #[test]
-    fn indeterminate_batch_outcome_is_not_post_submit_and_has_its_own_code() {
-        // A real ProvenBatchSubmission needs a proven batch, so only the negative
-        // case is unit-testable here: other BatchBuilder errors stay unmapped.
-        assert_eq!(post_submit_code(&ClientError::BatchBuilder(BatchBuilderError::Empty)), None);
-        assert_eq!(
-            batch_outcome_unknown_code(&ClientError::BatchBuilder(BatchBuilderError::Empty)),
-            None
-        );
-    }
-
-    #[test]
     fn code_survives_being_wrapped() {
         assert_eq!(
             post_submit_code(&Wrapper(batch_apply_failed())),
@@ -1059,7 +1048,93 @@ mod post_submit_code_tests {
 
     #[test]
     fn other_batch_errors_carry_no_code() {
-        assert_eq!(post_submit_code(&ClientError::BatchBuilder(BatchBuilderError::Empty)), None);
+        let err = ClientError::BatchBuilder(BatchBuilderError::Empty);
+        assert_eq!(post_submit_code(&err), None);
+        assert_eq!(batch_outcome_unknown_code(&err), None);
+    }
+
+    #[cfg(feature = "nodejs")]
+    #[tokio::test]
+    async fn node_distinguishes_an_indeterminate_batch_submission() {
+        use std::path::PathBuf;
+
+        use miden_client::rpc::{GrpcError, RpcEndpoint, RpcError};
+
+        use crate::models::account_storage_mode::AccountStorageMode;
+        use crate::models::auth_scheme::AuthScheme;
+        use crate::models::note_type::NoteType;
+        use crate::platform::u64_to_js_u64;
+
+        struct TestStore(PathBuf);
+
+        impl Drop for TestStore {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let root =
+            std::env::temp_dir().join(format!("web-sdk-batch-{:032x}", rand::random::<u128>()));
+        std::fs::create_dir(&root).unwrap();
+        let store = TestStore(root);
+        let client = WebClient::new();
+        client
+            .create_mock_client(
+                store.0.join("store.sqlite3").into_os_string().into_string().unwrap(),
+                store.0.join("keys").into_os_string().into_string().unwrap(),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let storage = AccountStorageMode::private();
+        let auth = AuthScheme::AuthRpoFalcon512;
+        let wallet = client.new_wallet(&storage, auth, None, None).await.unwrap();
+        let faucet = client
+            .new_faucet(
+                &storage,
+                false,
+                "DAG".into(),
+                "DAG".into(),
+                8,
+                u64_to_js_u64(10_000_000),
+                auth,
+                None,
+            )
+            .await
+            .unwrap();
+        let request = client
+            .new_mint_transaction_request(
+                &wallet.id(),
+                &faucet.id(),
+                NoteType::Private,
+                u64_to_js_u64(1_000),
+            )
+            .await
+            .unwrap();
+
+        client.mock_rpc_api.lock().await.as_ref().unwrap().fail_next_call(
+            RpcEndpoint::SubmitProvenBatch,
+            RpcError::RequestError {
+                endpoint: RpcEndpoint::SubmitProvenBatch,
+                error_kind: GrpcError::Unavailable,
+                endpoint_error: None,
+                source: None,
+            },
+        );
+
+        let mut inner = client.get_mut_inner().await;
+        let mut batch = inner.as_mut().unwrap().new_transaction_batch();
+        Box::pin(batch.push(faucet.id().into(), (&request).into())).await.unwrap();
+        let err = Box::pin(batch.submit()).await.unwrap_err();
+
+        assert_eq!(post_submit_code(&err), None);
+        assert_eq!(batch_outcome_unknown_code(&err), Some(BATCH_SUBMISSION_OUTCOME_UNKNOWN));
+        let err = js_error_with_context(err, "failed to submit transaction batch");
+        assert!(err.reason.starts_with("BATCH_SUBMISSION_OUTCOME_UNKNOWN: failed to submit"));
+        assert_eq!(err.reason.matches(BATCH_SUBMISSION_OUTCOME_UNKNOWN).count(), 1);
     }
 
     #[cfg(feature = "nodejs")]

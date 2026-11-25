@@ -109,13 +109,8 @@ describe("AccountsResource.requestFundingNote / fundAccount", () => {
     },
     {
       match: (u) => u.includes("/pow"),
-      response: () => ({
-        ok: true,
-        json: async () => ({
-          challenge: "0102",
-          target: "18446744073709551615",
-        }),
-      }),
+      response: () =>
+        new Response('{"challenge":"0102","target":"18446744073709551615"}'),
     },
     {
       match: (u) => u.includes("/get_tokens"),
