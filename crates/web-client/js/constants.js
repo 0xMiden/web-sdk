@@ -1,6 +1,5 @@
 export const WorkerAction = Object.freeze({
   INIT: "init",
-  STORAGE_FAILURE: "storageFailure",
   INIT_MOCK: "initMock",
   INIT_THREAD_POOL: "initThreadPool",
   CALL_METHOD: "callMethod",

@@ -1,4 +1,3 @@
-export { NoteAcquisitionRetentionError } from "./noteAcquisition.js";
 /**
  * Node.js entry point for @miden-sdk/miden-sdk.
  *
@@ -238,9 +237,6 @@ export const GetProceduresResultItem = /* @__PURE__ */ _reexport(
   "GetProceduresResultItem"
 );
 export const InputNote = /* @__PURE__ */ _reexport("InputNote");
-export const InputNotePageResult = /* @__PURE__ */ _reexport(
-  "InputNotePageResult"
-);
 export const InputNoteRecord = /* @__PURE__ */ _reexport("InputNoteRecord");
 export const InputNoteState = /* @__PURE__ */ _reexport("InputNoteState");
 export const InputNotes = /* @__PURE__ */ _reexport("InputNotes");
