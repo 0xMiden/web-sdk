@@ -16,6 +16,7 @@ export function createFundingRuntime(deps) {
     proveTransactionWithFallback,
     transferNoteFile,
     fundingAmount = 1_000_000n,
+    retryDelayMs = 2_000,
   } = deps;
 
   const toAccountHex = (accountOrHex) =>
@@ -181,7 +182,9 @@ export function createFundingRuntime(deps) {
           if (submitted || attempt > 0) {
             throw err;
           }
-          await new Promise((resolve) => setTimeout(resolve, 2_000));
+          if (retryDelayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+          }
         }
       }
       throw lastError;
