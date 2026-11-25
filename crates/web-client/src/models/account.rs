@@ -5,6 +5,7 @@ use miden_client::account::{
     Account as NativeAccount,
     AccountComponentInterface,
     AccountComponentInterfaceExt,
+    AccountPatch as NativePatch,
     AccountProcedureRoot,
     StorageSlot,
     StorageSlotContent,
@@ -19,8 +20,10 @@ use miden_client::auth::{
 use miden_client::testing::standards::account_interface::get_public_keys_from_account;
 use miden_protocol::account::component::AUTH_SCRIPT_ATTRIBUTE;
 
+use crate::js_error_with_context;
 use crate::models::account_code::AccountCode;
 use crate::models::account_id::AccountId;
+use crate::models::account_patch::AccountPatch;
 use crate::models::account_storage::AccountStorage;
 use crate::models::asset_vault::AssetVault;
 use crate::models::felt::Felt;
@@ -139,6 +142,34 @@ impl Account {
                 .map(|root| Word::from(NativeWord::from(*root)))
                 .collect()
         })
+    }
+
+    /// Returns a copy of this account with `patch` applied, leaving this account unchanged.
+    ///
+    /// The patch sets the new absolute state (vault, storage, nonce and, if present, code), for
+    /// example the `accountPatch()` of an `ExecutedTransaction`, so an off-chain update can be
+    /// folded into a stored account without refetching it in full.
+    ///
+    /// Throws if the patch is for another account, if its nonce is not strictly greater than the
+    /// account's, or if its vault or storage changes do not apply to this account's state.
+    #[js_export(js_name = "applyPatch")]
+    pub fn apply_patch(&self, patch: &AccountPatch) -> Result<Account, JsErr> {
+        let patch: NativePatch = patch.into();
+        // Native `apply_patch` accepts an equal nonce, which would let a replayed patch pass.
+        if let Some(nonce) = patch.final_nonce()
+            && nonce.as_canonical_u64() <= self.0.nonce().as_canonical_u64()
+        {
+            return Err(from_str_err(&format!(
+                "failed to apply account patch: patch nonce {} is not strictly greater than account nonce {}",
+                nonce.as_canonical_u64(),
+                self.0.nonce().as_canonical_u64()
+            )));
+        }
+        let mut account = self.0.clone();
+        account
+            .apply_patch(&patch)
+            .map_err(|err| js_error_with_context(err, "failed to apply account patch"))?;
+        Ok(Account(account))
     }
 
     /// Serializes the account into bytes.

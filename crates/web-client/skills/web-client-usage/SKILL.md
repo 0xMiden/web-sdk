@@ -1420,6 +1420,11 @@ change most likely to pass unnoticed.
 replaced `accountDelta()` and return the absolute-valued `AccountPatch` /
 `AccountStoragePatch` / `AccountVaultPatch` models.
 
+To fold a patch into a copy of the account you already hold, call
+`account.applyPatch(patch)`. It returns a new `Account` and leaves the
+receiver unchanged; it throws for a patch of another account, a nonce that does
+not increase, or changes that do not apply to the account's state.
+
 ### Listing transactions
 
 ```typescript

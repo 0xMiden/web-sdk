@@ -1300,3 +1300,133 @@ test.describe("getAccountByKeyCommitment tests", () => {
 // GET_ACCOUNT_PROOF VAULT COMMITMENT TESTS
 // =======================================================================================================
 // Skipped: requires a running node and browser-specific helpers (createNewWallet, fundAccountFromFaucet)
+
+// APPLY_PATCH TESTS
+// =======================================================================================================
+
+// Each run() callback is serialized into the page, so it cannot reference anything
+// declared outside it: the mint setup is repeated inside every callback.
+test.describe("Account.applyPatch tests", () => {
+  test("applying a transaction's patch reproduces the post-transaction account", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+      const before = await client.getAccount(faucet.id());
+      const request = await client.newMintTransactionRequest(
+        wallet.id(),
+        faucet.id(),
+        sdk.NoteType.Public,
+        BigInt(7)
+      );
+      const executed = (
+        await client.executeTransaction(faucet.id(), request)
+      ).executedTransaction();
+      const patch = executed.accountPatch();
+      const updated = before.applyPatch(patch);
+      return {
+        updated: updated.to_commitment().toHex(),
+        expected: executed.finalAccountHeader().to_commitment().toHex(),
+        before: before.to_commitment().toHex(),
+        beforeNonce: before.nonce().toString(),
+        updatedNonce: updated.nonce().toString(),
+        patchNonce: patch.finalNonce().toString(),
+        // The receiver is not consumed by applyPatch and stays usable.
+        beforeAfter: before.to_commitment().toHex(),
+      };
+    });
+    expect(result.updated).toEqual(result.expected);
+    expect(result.updated).not.toEqual(result.before);
+    expect(result.beforeAfter).toEqual(result.before);
+    expect(result.updatedNonce).toEqual(result.patchNonce);
+    expect(result.updatedNonce).not.toEqual(result.beforeNonce);
+  });
+
+  test("rejects a patch for another account", async ({ run }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+      const before = await client.getAccount(faucet.id());
+      const request = await client.newMintTransactionRequest(
+        wallet.id(),
+        faucet.id(),
+        sdk.NoteType.Public,
+        BigInt(7)
+      );
+      const executed = (
+        await client.executeTransaction(faucet.id(), request)
+      ).executedTransaction();
+      const patch = executed.accountPatch();
+      try {
+        wallet.applyPatch(patch);
+        return { message: null };
+      } catch (e) {
+        return { message: String(e?.message ?? e) };
+      }
+    });
+    expect(result.message).toMatch(/patch is for account ID/);
+  });
+
+  test("rejects a patch whose nonce equals the account's", async ({ run }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+      const before = await client.getAccount(faucet.id());
+      const request = await client.newMintTransactionRequest(
+        wallet.id(),
+        faucet.id(),
+        sdk.NoteType.Public,
+        BigInt(7)
+      );
+      const executed = (
+        await client.executeTransaction(faucet.id(), request)
+      ).executedTransaction();
+      const patch = executed.accountPatch();
+      const updated = before.applyPatch(patch);
+      try {
+        updated.applyPatch(patch);
+        return { message: null };
+      } catch (e) {
+        return { message: String(e?.message ?? e) };
+      }
+    });
+    expect(result.message).toMatch(/not strictly greater than/);
+  });
+
+  test("rejects a patch whose nonce is below the account's", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+      const before = await client.getAccount(faucet.id());
+      const request = await client.newMintTransactionRequest(
+        wallet.id(),
+        faucet.id(),
+        sdk.NoteType.Public,
+        BigInt(7)
+      );
+      const executed = (
+        await client.executeTransaction(faucet.id(), request)
+      ).executedTransaction();
+      const patch = executed.accountPatch();
+      // Two real transactions move the faucet past the patch's nonce.
+      for (const amount of [3, 4]) {
+        const next = await client.newMintTransactionRequest(
+          wallet.id(),
+          faucet.id(),
+          sdk.NoteType.Public,
+          BigInt(amount)
+        );
+        await client.submitNewTransaction(faucet.id(), next);
+        await client.proveBlock();
+        await client.syncState();
+      }
+      const current = await client.getAccount(faucet.id());
+      try {
+        current.applyPatch(patch);
+        return { message: null };
+      } catch (e) {
+        return { message: String(e?.message ?? e) };
+      }
+    });
+    expect(result.message).toMatch(/not strictly greater than/);
+  });
+});
