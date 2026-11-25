@@ -239,6 +239,19 @@ lives every other open of its store throws. `terminate()` releases the store.
 client returns `undefined`. Build a standalone `RpcClient` against the same node
 with `new RpcClient(new Endpoint(client.endpoint()!))`.
 
+`await client.checkHealth()` reports the node's health without throwing:
+`{ reachable: true, version, chainTip, genesisCommitment?, blockProducer? }`,
+where `blockProducer` has `version`, `status`, `chainTip` and `mempoolStats`
+(`unbatchedTransactions`, `proposedBatches`, `provenBatches`, as numbers), or
+`{ reachable: false, error }` for an unreachable node or a mock client. It does
+not queue behind a sync. For a connection indicator use
+`const stop = client.monitorHealth({ intervalMs, onChange })` (`intervalMs` at most 2147483647): checks never
+overlap, `onChange` fires for the first result and then only when reachability
+or the block producer's `status` changes (not on every new chain tip), and
+`stop()` or `terminate()` ends it. `rpc.getStatus()` on a standalone
+`RpcClient` returns the raw `RpcStatusInfo` and rejects when the node is
+unreachable.
+
 `noteTransportMaxRetries` (an integer from 0 to 10, default 3) and
 `noteTransportRetryIntervalMs` (0 to 60000, default 250, doubling for each
 later retry) set how a private note send retries a transient transport failure
