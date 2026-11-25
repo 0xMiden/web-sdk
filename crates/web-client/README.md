@@ -1276,6 +1276,8 @@ await client.transactions.withdrawUsdcx({
 });
 ```
 
+`destinationDomain` must be an integer from 0 to 4294967295, inclusive.
+
 The lower-level builders are `Note.createXReserveBurnNote(...)` and `client.newXReserveBurnTransactionRequest(...)`, which take the recipient as a 32-byte `Uint8Array`.
 
 ### Network Notes
