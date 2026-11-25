@@ -3,8 +3,21 @@ import {
   resolveStorageMode,
   resolveAuthScheme,
   hashSeed,
+  isStandardPaymentNote,
   toAmount,
 } from "../utils.js";
+import {
+  classifyInputNoteState,
+  defaultFaucetUrl,
+  networkFromEndpoint,
+  normalizeFundingOptions,
+  requestNoteFromFaucet,
+  sleep,
+  throwIfAborted,
+  withinTimeout,
+  wrapAfterRequest,
+  fundingInvalid,
+} from "../funding.js";
 
 // Legacy numeric 0/1 and "NonFungibleFaucet" are still accepted; non-fungible
 // requests reach the Rust rejection.
@@ -399,5 +412,161 @@ export class AccountsResource {
       );
     }
     return await this.#inner.isInvitationCodeValid(invitationCode);
+  }
+
+  /**
+   * Request a public P2ID note of the chain's native fee asset from a
+   * development faucet. Does not consume the note or sign a transaction.
+   *
+   * Defaults to the public testnet / devnet faucet APIs when the client RPC
+   * endpoint names those networks; other networks require `faucetUrl`.
+   * The request is never retried: a timeout during minting can leave a note
+   * on the chain.
+   *
+   * @param {import("../types/api-types.js").AccountRef} account
+   * @param {import("../funding.js").FundingOptions} [options]
+   * @returns {Promise<{ noteId: string, transactionId: string, faucetId: string, amount: bigint }>}
+   */
+  async requestFundingNote(account, options = {}) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const accountId = resolveAccountRef(account, wasm);
+    const accountIdHex = accountId.toString();
+    const opts = normalizeFundingOptions(options);
+
+    return withinTimeout(
+      opts.timeoutMs,
+      "the faucet (minting may already have succeeded)",
+      async (signal) => {
+        await this.#client.syncChain();
+        const feeFaucetId = await this.#client.feeFaucetId();
+        const feeFaucetIdHex =
+          typeof feeFaucetId?.toString === "function"
+            ? feeFaucetId.toString()
+            : String(feeFaucetId);
+
+        const network =
+          opts.network ?? networkFromEndpoint(this.#client.endpoint());
+        const faucetUrl = opts.faucetUrl ?? defaultFaucetUrl(network);
+
+        return requestNoteFromFaucet({
+          faucetUrl,
+          accountIdHex,
+          feeFaucetIdHex,
+          network,
+          amount: opts.amount,
+          wasm,
+          fetch: opts.fetch,
+          signal,
+        });
+      }
+    );
+  }
+
+  /**
+   * Fund a tracked account from a development faucet: request a public P2ID
+   * note of the native fee asset, wait until it is committed locally, consume
+   * it, and wait for confirmation. A fresh wallet can pay its first fee from
+   * this note. After a failure that retains a note id, resume that note
+   * instead of requesting funds again.
+   *
+   * @param {import("../types/api-types.js").AccountRef} account
+   * @param {import("../funding.js").FundingOptions} [options]
+   * @returns {Promise<{ noteId: string, transactionId: string, balance: bigint }>}
+   */
+  async fundAccount(account, options = {}) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const accountId = resolveAccountRef(account, wasm);
+    const accountIdHex = accountId.toString();
+    const opts = normalizeFundingOptions(options);
+
+    // Reject untracked accounts before the faucet creates a note.
+    const tracked = await this.#inner.getAccount(accountId);
+    if (!tracked) {
+      throw fundingInvalid(
+        `account ${accountIdHex} is not tracked locally; create or import it before funding`
+      );
+    }
+    tracked.free?.();
+
+    const receipt = await this.requestFundingNote(accountIdHex, {
+      ...options,
+      // Keep normalized timers / amount; requestFundingNote re-normalizes.
+    });
+
+    let consumptionTxId = null;
+    try {
+      await withinTimeout(
+        opts.timeoutMs,
+        "the funding note",
+        async (signal) => {
+          for (;;) {
+            throwIfAborted(signal);
+            await this.#client.syncChain();
+            const record = await this.#client.notes.get(receipt.noteId);
+            if (record) {
+              let kind;
+              let standard = false;
+              try {
+                kind = classifyInputNoteState(
+                  record.state?.() ?? record.state,
+                  wasm
+                );
+                // Any other script can spend from the account when consumed.
+                standard =
+                  kind === "committed" && isStandardPaymentNote(record, wasm);
+              } finally {
+                record.free?.();
+              }
+              if (kind === "consumed" || kind === "processing") {
+                throw fundingInvalid(
+                  "funding note is already consumed or being processed"
+                );
+              }
+              if (kind === "invalid") {
+                throw fundingInvalid("funding note is invalid");
+              }
+              if (kind === "committed") {
+                if (!standard) {
+                  throw fundingInvalid(
+                    "funding note is not a standard payment note"
+                  );
+                }
+                return;
+              }
+            }
+            await sleep(opts.pollIntervalMs, signal);
+          }
+        }
+      );
+
+      const { txId } = await this.#client.transactions.consume({
+        account: accountIdHex,
+        notes: [receipt.noteId],
+      });
+      consumptionTxId =
+        typeof txId?.toHex === "function"
+          ? txId.toHex()
+          : typeof txId?.toString === "function"
+            ? txId.toString()
+            : String(txId);
+      // Confirm separately so a timeout still reports the submitted id.
+      await this.#client.transactions.waitFor(consumptionTxId, {
+        timeout: opts.timeoutMs,
+      });
+
+      const balance = await this.getBalance(accountIdHex, receipt.faucetId);
+      return {
+        noteId: receipt.noteId,
+        transactionId: consumptionTxId,
+        balance,
+      };
+    } catch (source) {
+      throw wrapAfterRequest(source, {
+        noteId: receipt.noteId,
+        transactionId: consumptionTxId,
+      });
+    }
   }
 }

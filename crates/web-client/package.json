@@ -61,6 +61,7 @@
     "js/standalone.js",
     "js/storageView.js",
     "js/utils.js",
+    "js/funding.js",
     "js/resources",
     "README.md",
     "AGENTS.md",

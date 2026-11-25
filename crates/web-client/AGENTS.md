@@ -62,6 +62,16 @@ It rejects with "the network's protocol configuration is not known yet" until
 the first sync stores the configuration; a mock client is seeded with its
 chain's.
 
+On testnet and devnet, `accounts.requestFundingNote(account, options?)` and
+`accounts.fundAccount(account, options?)` request the native fee asset from the
+public faucet. `requestFundingNote` returns the faucet receipt
+`{ noteId, transactionId, faucetId, amount }`; `fundAccount` also waits for the
+public P2ID note, consumes it, and returns `{ noteId, transactionId, balance }`.
+Defaults come from the RPC endpoint;
+other networks need `faucetUrl`. The mint request is never retried: after a
+failure that retains a `noteId`, resume that note instead of calling the faucet
+again. See `docs/external/src/web-client/library/funding.md`.
+
 State is split across resources rather than living on the client:
 `accounts`, `transactions`, `notes`, `tags`, `settings`, `keystore`, `compile`
 and `pswap`. Client-level methods cover the lifecycle around them - `sync`,
