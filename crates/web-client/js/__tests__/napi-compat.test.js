@@ -5,6 +5,7 @@ describe("Node optional RPC results", () => {
   it.each([
     ["getNullifierCommitHeight", [{}, 12], 0],
     ["getNoteScriptByRoot", [{}], { script: true }],
+    ["getTransactionLogs", [{}, {}], { logs: true }],
   ])("%s matches the browser absence contract", async (method, args, value) => {
     class RpcClient {
       result = null;

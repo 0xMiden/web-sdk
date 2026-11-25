@@ -11,6 +11,7 @@ use miden_client::transaction::{
     ExecutedTransaction,
     TransactionDetails,
     TransactionId,
+    TransactionLogs,
     TransactionRecord,
     TransactionScript,
     TransactionStatus,
@@ -36,13 +37,24 @@ use crate::promise::await_js;
 use crate::sync::JsAccountUpdate;
 
 mod js_bindings;
-use js_bindings::{idxdb_apply_transaction_batch, idxdb_get_transactions};
+use js_bindings::{
+    idxdb_apply_transaction_batch,
+    idxdb_get_transaction_logs,
+    idxdb_get_transactions,
+};
 
 mod models;
-use models::TransactionIdxdbObject;
+use models::{TransactionIdxdbObject, TransactionLogIdxdbObject};
 
 pub mod utils;
-use utils::{SerializedTransactionData, build_transaction_record, serialize_transaction_record};
+use utils::{
+    SerializedTransactionData,
+    SerializedTransactionLog,
+    build_transaction_record,
+    serialize_transaction_logs,
+    serialize_transaction_record,
+    transaction_logs_from_idxdb,
+};
 
 // BATCH PAYLOAD TYPES
 // ================================================================================================
@@ -116,6 +128,7 @@ struct BatchNoteTag {
 struct BatchUpdatePayload {
     initial_account_commitment: String,
     transaction_record: SerializedTransactionData,
+    transaction_logs: Vec<SerializedTransactionLog>,
     account_state: BatchAccountState,
     input_notes: Vec<SerializedInputNoteData>,
     output_notes: Vec<SerializedOutputNoteData>,
@@ -180,6 +193,20 @@ impl IdxdbStore {
             .collect();
 
         transaction_records
+    }
+
+    /// Retrieves the logs that a stored transaction emitted, in emission order.
+    ///
+    /// Returns `None` if the store does not hold the transaction.
+    pub async fn get_transaction_logs(
+        &self,
+        transaction_id: TransactionId,
+    ) -> Result<Option<TransactionLogs>, StoreError> {
+        let promise = idxdb_get_transaction_logs(self.db_id(), transaction_id.as_word().to_hex());
+        let rows: Option<Vec<TransactionLogIdxdbObject>> =
+            await_js(promise, "failed to get transaction logs").await?;
+
+        rows.map(transaction_logs_from_idxdb).transpose()
     }
 
     pub async fn apply_transaction(
@@ -330,6 +357,7 @@ impl IdxdbStore {
         let payload = BatchUpdatePayload {
             initial_account_commitment: executed_tx.initial_account().to_commitment().to_string(),
             transaction_record,
+            transaction_logs: serialize_transaction_logs(executed_tx.logs()),
             account_state,
             input_notes: Vec::new(),
             output_notes: Vec::new(),

@@ -49,7 +49,13 @@ use miden_client::store::{
     TransactionFilter,
 };
 use miden_client::sync::{NoteTagRecord, StateSyncUpdate};
-use miden_client::transaction::{BatchStoreUpdate, TransactionRecord, TransactionStoreUpdate};
+use miden_client::transaction::{
+    BatchStoreUpdate,
+    TransactionId,
+    TransactionLogs,
+    TransactionRecord,
+    TransactionStoreUpdate,
+};
 use miden_client::utils::RwLock;
 use miden_client::{Felt, Word};
 use miden_client_core::store::{
@@ -184,6 +190,13 @@ impl Store for IdxdbStore {
         transaction_filter: TransactionFilter,
     ) -> Result<Vec<TransactionRecord>, StoreError> {
         self.get_transactions(transaction_filter).await
+    }
+
+    async fn get_transaction_logs(
+        &self,
+        transaction_id: TransactionId,
+    ) -> Result<Option<TransactionLogs>, StoreError> {
+        self.get_transaction_logs(transaction_id).await
     }
 
     async fn apply_transaction(&self, tx_update: TransactionStoreUpdate) -> Result<(), StoreError> {

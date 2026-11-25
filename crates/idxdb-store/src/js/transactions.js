@@ -110,6 +110,59 @@ export async function upsertTransactionRecord(dbId, transactionId, details, bloc
     }
 }
 /**
+ * Writes the logs of a transaction, one row for each log, in emission order.
+ *
+ * The topic is stored as a base64 string, like the other indexed byte values of the store.
+ */
+export async function insertTransactionLogs(dbId, transactionId, logs, tx) {
+    try {
+        const db = getDatabase(dbId);
+        const rows = logs.map((log, logIndex) => ({
+            transactionId,
+            logIndex,
+            emitter: log.emitter,
+            topic: uint8ArrayToBase64(new Uint8Array(log.topic)),
+            content: new Uint8Array(log.content),
+        }));
+        await (tx || db).transactionLogs.bulkPut(rows);
+    }
+    catch (error) {
+        logWebStoreError(error, "Failed to insert transaction logs");
+        throw error;
+    }
+}
+/**
+ * Returns the logs that a stored transaction emitted, in emission order.
+ *
+ * Returns `undefined` if the store does not hold the transaction, and an empty array if the
+ * transaction emitted no logs.
+ */
+export async function getTransactionLogs(dbId, transactionId) {
+    try {
+        const db = getDatabase(dbId);
+        return await db.dexie.transaction("r", db.transactions, db.transactionLogs, async () => {
+            // A transaction without logs has no rows in `transactionLogs`, so `transactions` tells
+            // whether the store holds the transaction.
+            if ((await db.transactions.get(transactionId)) === undefined) {
+                return undefined;
+            }
+            // The primary key is `[transactionId+logIndex]`, so the rows come in emission order.
+            const rows = await db.transactionLogs
+                .where("[transactionId+logIndex]")
+                .between([transactionId, 0], [transactionId, Infinity], true, true)
+                .toArray();
+            return rows.map((row) => ({
+                emitter: row.emitter,
+                topic: row.topic,
+                content: uint8ArrayToBase64(row.content),
+            }));
+        });
+    }
+    catch (error) {
+        logWebStoreError(error, "Failed to get transaction logs");
+    }
+}
+/**
  * Applies a batch of transaction updates atomically inside a single Dexie transaction.
  *
  * All sub-operations that internally call `db.dexie.transaction()` are auto-joined by Dexie
@@ -121,6 +174,7 @@ export async function applyTransactionBatch(dbId, payloads) {
     await db.dexie.transaction("rw", [
         db.transactions,
         db.transactionScripts,
+        db.transactionLogs,
         db.latestAccountStorages,
         db.historicalAccountStorages,
         db.latestStorageMapEntries,
@@ -142,12 +196,13 @@ export async function applyTransactionBatch(dbId, payloads) {
             if (current?.accountCommitment !== payload.initialAccountCommitment) {
                 throw new Error(`transaction input account commitment does not match persisted state for ${accountId}`);
             }
-            // 1. Insert the transaction record (script first, then record)
+            // 1. Insert the transaction record (script first, then record), then its logs
             const rec = payload.transactionRecord;
             if (rec.scriptRoot && rec.txScript) {
                 await insertTransactionScript(dbId, rec.scriptRoot, rec.txScript);
             }
             await upsertTransactionRecord(dbId, rec.id, rec.details, rec.blockNum, rec.statusVariant, rec.status, rec.scriptRoot);
+            await insertTransactionLogs(dbId, rec.id, payload.transactionLogs);
             // 2. Apply account state (full or delta)
             if (acct.kind === "full") {
                 await applyFullAccountState(dbId, acct.account);

@@ -50,7 +50,7 @@ impl TransactionLog {
     }
 }
 
-/// Ordered collection of transaction logs committed by a transaction summary.
+/// The logs that a transaction emitted, in emission order.
 #[derive(Clone)]
 #[js_export]
 pub struct TransactionLogs(NativeTransactionLogs);

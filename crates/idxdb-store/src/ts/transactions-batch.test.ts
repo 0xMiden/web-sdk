@@ -40,6 +40,7 @@ function buildPayload(suffix: string) {
       statusVariant: 0,
       status: dummy,
     },
+    transactionLogs: [],
     accountState: {
       kind: "delta" as const,
       accountId: `0xacc-${suffix}`,

@@ -21,6 +21,7 @@ import type {
   ProvenTransaction,
   TransactionSummary,
   TransactionRecord,
+  TransactionLogs,
   InputNoteRecord,
   OutputNoteRecord,
   ConsumableNoteRecord,
@@ -1675,6 +1676,12 @@ export interface TransactionsResource {
    * {@link MidenClient.withFeeAwareAuth} does not declare the bound block, so
    * that check cannot read it: sync before previewing such a request.
    *
+   * A multisig summary also binds a max fee. The auth args of both methods set
+   * none, so the auth procedure estimates the fee on each execution, and the
+   * summary reproduces at a later tip only while that estimate, which depends
+   * on the base fee of the reference block, comes out the same. A multisig
+   * preview does not reach the fee payment, and its summary has no fee note.
+   *
    * @param options - Preview options discriminated by `operation` field.
    */
   preview(options: PreviewOptions): Promise<TransactionSummary>;
@@ -1891,6 +1898,26 @@ export interface TransactionsResource {
    * instead.
    */
   list(query?: TransactionQuery): Promise<TransactionRecord[]>;
+
+  /**
+   * Returns the logs that a tracked transaction emitted, in emission order.
+   *
+   * The store records the logs when the transaction is applied, so this reads the store and
+   * does not contact the node. The logs are available before the transaction is committed. The
+   * store also keeps the logs of a discarded transaction, which the network did not apply.
+   *
+   * Each {@link TransactionLog} has an `emitter()` (the account that emitted it, which may be a
+   * foreign account), a topic (`topicPrefix()` and `topicSuffix()`) and `content()` words.
+   *
+   * To read the logs of a transaction that this client does not track, use
+   * `RpcClient.getTransactionLogs(accountId, transactionId)`. The node returns the logs of a
+   * public account, and only their commitment for a private account.
+   *
+   * @param txId - The transaction ID, as a hex string or a `TransactionId`.
+   * @returns The logs, which are empty for a transaction that emitted none, or `null` if the
+   *   client does not track the transaction.
+   */
+  logs(txId: string | TransactionId): Promise<TransactionLogs | null>;
 
   /**
    * Poll until a transaction is confirmed on-chain. Throws on rejection
@@ -2526,8 +2553,11 @@ export declare class MidenClient {
    * the fee faucet among them, load at the tip: the request still executes
    * after the node has pruned the bound block's account state (about 50
    * blocks), and {@link TransactionsResource.preview} reproduces the
-   * proposal's summary at the tip. The builder also declares the bound block
-   * through `withBlockNumbers`, which only the height check below reads.
+   * proposal's summary at the tip while the fee estimate that the summary
+   * binds comes out the same: the auth args set no max fee, so the auth
+   * procedure estimates it on each execution. The builder also declares the
+   * bound block through `withBlockNumbers`, which only the height check below
+   * reads.
    * Each party's client must first have synced to at least that bound block,
    * the largest of `request.blockNumbers()` and by default the proposer's sync
    * height when it built the request; below it execution fails with

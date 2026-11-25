@@ -172,6 +172,7 @@ enum Table {
   UserSettings = "userSettings",
   PswapLineages = "pswapLineages",
   ChainAnchors = "chainAnchors",
+  TransactionLogs = "transactionLogs",
 }
 
 /** Scope of a row of the `settings` table, which version 14 removes. The upgrades before it read
@@ -281,6 +282,15 @@ export interface ITransaction {
 export interface ITransactionScript {
   scriptRoot: string;
   txScript?: Uint8Array;
+}
+
+/** A log that a transaction emitted. `logIndex` is the position of the log in emission order. */
+export interface ITransactionLog {
+  transactionId: string;
+  logIndex: number;
+  emitter: string;
+  topic: string;
+  content: Uint8Array;
 }
 
 export interface IInputNote {
@@ -624,6 +634,7 @@ declare module "dexie" {
     notesScripts: Table<INotesScript, string>;
     transactions: Table<ITransaction, string>;
     transactionScripts: Table<ITransactionScript, string>;
+    transactionLogs: Table<ITransactionLog, [string, number]>;
     tags: Table<ITag, number>;
     latestAccountHeaders: Table<IAccount, string>;
     historicalAccountHeaders: Table<IAccount, string>;
@@ -663,6 +674,7 @@ export type MidenDexie = Dexie & {
   addresses: Dexie.Table<IAddress, string>;
   transactions: Dexie.Table<ITransaction, string>;
   transactionScripts: Dexie.Table<ITransactionScript, string>;
+  transactionLogs: Dexie.Table<ITransactionLog, [string, number]>;
   inputNotes: Dexie.Table<IInputNote, string>;
   outputNotes: Dexie.Table<IOutputNote, string>;
   notesScripts: Dexie.Table<INotesScript, string>;
@@ -696,6 +708,7 @@ export class MidenDatabase {
   addresses: Dexie.Table<IAddress, string>;
   transactions: Dexie.Table<ITransaction, string>;
   transactionScripts: Dexie.Table<ITransactionScript, string>;
+  transactionLogs: Dexie.Table<ITransactionLog, [string, number]>;
   inputNotes: Dexie.Table<IInputNote, string>;
   outputNotes: Dexie.Table<IOutputNote, string>;
   notesScripts: Dexie.Table<INotesScript, string>;
@@ -972,6 +985,14 @@ export class MidenDatabase {
     // that no longer exist, and its block headers do not decode.
     this.dexie.version(17).stores({}).upgrade(clearStoreForProtocolV1);
 
+    // v18: the logs that each transaction emitted, one row for each log, as the SQLite
+    // `transaction_logs` table keeps them. The primary key orders the rows of a transaction by
+    // emission. A transaction that the store applied before this version has no rows, so its
+    // logs read as empty.
+    this.dexie.version(18).stores({
+      [Table.TransactionLogs]: indexes("[transactionId+logIndex]", "topic"),
+    });
+
     this.accountCodes = this.dexie.table<IAccountCode, string>(
       Table.AccountCode
     );
@@ -1017,6 +1038,9 @@ export class MidenDatabase {
     );
     this.transactionScripts = this.dexie.table<ITransactionScript, string>(
       Table.TransactionScripts
+    );
+    this.transactionLogs = this.dexie.table<ITransactionLog, [string, number]>(
+      Table.TransactionLogs
     );
     this.inputNotes = this.dexie.table<IInputNote, string>(Table.InputNotes);
     this.outputNotes = this.dexie.table<IOutputNote, string>(Table.OutputNotes);

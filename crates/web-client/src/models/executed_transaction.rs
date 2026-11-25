@@ -15,6 +15,7 @@ use super::output_note::OutputNote;
 use super::output_notes::OutputNotes;
 use super::transaction_args::TransactionArgs;
 use super::transaction_id::TransactionId;
+use super::transaction_logs::TransactionLogs;
 
 /// Describes the result of executing a transaction program for the Miden protocol.
 ///
@@ -116,6 +117,11 @@ impl ExecutedTransaction {
     #[js_export(js_name = "accountPatch")]
     pub fn account_patch(&self) -> AccountPatch {
         self.0.account_patch().into()
+    }
+
+    /// Returns the logs that the transaction emitted, in emission order.
+    pub fn logs(&self) -> TransactionLogs {
+        self.0.logs().clone().into()
     }
 
     // TODO: tx_inputs
