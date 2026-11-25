@@ -76,7 +76,16 @@ function createFakeSdk() {
     NoteArray,
     Note,
     NoteType: { Public: "Public" },
-    TransactionFilter: { uncommitted: () => "uncommitted" },
+    TransactionId: {
+      fromHex: (hex) => ({ toHex: () => hex }),
+    },
+    TransactionFilter: {
+      uncommitted: () => "uncommitted",
+      ids: (ids) => ({
+        kind: "ids",
+        ids: ids.map((id) => id.toHex()),
+      }),
+    },
     TransactionRequestBuilder,
   };
 }
@@ -136,9 +145,20 @@ describe("fee-funder-core", () => {
           }),
         };
       }),
-      getTransactions: vi.fn(async () =>
-        uncommittedIds.map((id) => ({ id: () => ({ toHex: () => id }) }))
-      ),
+      getTransactions: vi.fn(async (filter) => {
+        if (filter?.kind === "ids") {
+          return filter.ids.map((id) => ({
+            id: () => ({ toHex: () => id }),
+            transactionStatus: () => ({
+              isCommitted: () => !uncommittedIds.includes(id),
+              isDiscarded: () => false,
+            }),
+          }));
+        }
+        return uncommittedIds.map((id) => ({
+          id: () => ({ toHex: () => id }),
+        }));
+      }),
     };
 
     const balances = new Map([["0xfunded", 500n]]);
@@ -173,9 +193,20 @@ describe("fee-funder-core", () => {
           executedTransaction: () => ({ id: () => ({ toHex: () => txId }) }),
         };
       }),
-      getTransactions: vi.fn(async () =>
-        targetUncommitted.map((id) => ({ id: () => ({ toHex: () => id }) }))
-      ),
+      getTransactions: vi.fn(async (filter) => {
+        if (filter?.kind === "ids") {
+          return filter.ids.map((id) => ({
+            id: () => ({ toHex: () => id }),
+            transactionStatus: () => ({
+              isCommitted: () => !targetUncommitted.includes(id),
+              isDiscarded: () => false,
+            }),
+          }));
+        }
+        return targetUncommitted.map((id) => ({
+          id: () => ({ toHex: () => id }),
+        }));
+      }),
     };
 
     const funderState = {
@@ -210,5 +241,209 @@ describe("fee-funder-core", () => {
     ]);
     expect(execAttempts).toBe(2);
     expect(targetClient.newConsumeTransactionRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects when a submitted transaction is discarded instead of committed", async () => {
+    const sdk = createFakeSdk();
+    const funderClient = {
+      syncState: vi.fn(async () => {}),
+      feeFaucetId: vi.fn(async () => ({ toString: () => "0xfee" })),
+      executeTransaction: vi.fn(async () => ({ kind: "exec" })),
+      submitProvenTransaction: vi.fn(async () => 42),
+      applyTransaction: vi.fn(async () => ({
+        executedTransaction: () => ({
+          id: () => ({ toHex: () => "0xtx_discarded" }),
+        }),
+      })),
+      getTransactions: vi.fn(async (filter) => {
+        if (filter?.kind === "ids") {
+          return filter.ids.map((id) => ({
+            id: () => ({ toHex: () => id }),
+            transactionStatus: () => ({
+              isCommitted: () => false,
+              isDiscarded: () => id === "0xtx_discarded",
+            }),
+          }));
+        }
+        return [];
+      }),
+    };
+
+    const runtime = createFundingRuntime({
+      sdk,
+      getDefaultClient: () => ({}),
+      getFunderState: async () => ({
+        client: funderClient,
+        funderHex: "0xfunder",
+        feeFaucetHex: "0xfee",
+        queue: Promise.resolve(),
+      }),
+      proveTransactionWithFallback: async () => ({ proven: true }),
+      retryDelayMs: 0,
+    });
+
+    await expect(runtime.sendFundingNotes(["0xaaa"])).rejects.toThrow(
+      /discarded/i
+    );
+  });
+
+  it("submits all target consume transactions before polling commit once for all txIds", async () => {
+    const sdk = createFakeSdk();
+    const events = [];
+    const targetNotes = new Map();
+    const originalCreate = sdk.Note.createP2IDNote;
+    sdk.Note.createP2IDNote = (sender, target, assets, noteType) => {
+      const n = originalCreate(sender, target, assets, noteType);
+      targetNotes.set(n.id().toString(), n.targetHex);
+      return n;
+    };
+
+    const funderClient = {
+      syncState: vi.fn(async () => {}),
+      feeFaucetId: vi.fn(async () => ({ toString: () => "0xfee" })),
+      executeTransaction: vi.fn(async () => ({ kind: "funder-exec" })),
+      submitProvenTransaction: vi.fn(async () => 42),
+      applyTransaction: vi.fn(async () => ({
+        executedTransaction: () => ({
+          id: () => ({ toHex: () => "0xtx_funder" }),
+        }),
+      })),
+      getTransactions: vi.fn(async (filter) => {
+        if (filter?.kind === "ids") {
+          return filter.ids.map((id) => ({
+            id: () => ({ toHex: () => id }),
+            transactionStatus: () => ({
+              isCommitted: () => true,
+              isDiscarded: () => false,
+            }),
+          }));
+        }
+        return [];
+      }),
+    };
+
+    let consumeSeq = 0;
+    const targetClient = {
+      feeFaucetId: vi.fn(async () => ({ toString: () => "0xfee" })),
+      syncState: vi.fn(async () => {
+        events.push("target:sync");
+      }),
+      getAccount: vi.fn(async () => ({
+        vault: () => ({ getBalance: () => 0n }),
+      })),
+      getInputNote: vi.fn(async (noteId) => {
+        const target = targetNotes.get(noteId);
+        return target ? { toNote: () => ({ id: noteId, target }) } : null;
+      }),
+      newConsumeTransactionRequest: vi.fn(async (notes, accountId) => ({
+        notes,
+        target: accountId.hex,
+      })),
+      executeTransaction: vi.fn(async () => ({ kind: "consume-exec" })),
+      submitProvenTransaction: vi.fn(async () => 43),
+      applyTransaction: vi.fn(async (exec) => {
+        const txId = `0xtx_consume_${++consumeSeq}`;
+        events.push(`target:apply:${txId}`);
+        return {
+          exec,
+          executedTransaction: () => ({ id: () => ({ toHex: () => txId }) }),
+        };
+      }),
+      getTransactions: vi.fn(async (filter) => {
+        events.push(`target:getTx:${filter?.kind ?? filter}`);
+        if (filter?.kind === "ids") {
+          return filter.ids.map((id) => ({
+            id: () => ({ toHex: () => id }),
+            transactionStatus: () => ({
+              isCommitted: () => true,
+              isDiscarded: () => false,
+            }),
+          }));
+        }
+        return [];
+      }),
+    };
+
+    const runtime = createFundingRuntime({
+      sdk,
+      getDefaultClient: () => targetClient,
+      getFunderState: async () => ({
+        client: funderClient,
+        funderHex: "0xfunder",
+        feeFaucetHex: "0xfee",
+        queue: Promise.resolve(),
+      }),
+      proveTransactionWithFallback: async () => ({ proven: true }),
+      transferNoteFile: async () => false,
+      retryDelayMs: 0,
+    });
+
+    await runtime.fundAccounts(["0xnew1", "0xnew2"]);
+
+    expect(targetClient.getTransactions).toHaveBeenCalledTimes(1);
+    expect(targetClient.getTransactions.mock.calls[0][0]).toEqual({
+      kind: "ids",
+      ids: ["0xtx_consume_1", "0xtx_consume_2"],
+    });
+    expect(events).toEqual([
+      "target:sync",
+      "target:apply:0xtx_consume_1",
+      "target:sync",
+      "target:apply:0xtx_consume_2",
+      "target:sync",
+      "target:getTx:ids",
+    ]);
+  });
+
+  it("throws a timeout error naming pending txIds when a transaction never commits", async () => {
+    const sdk = createFakeSdk();
+    let now = 0;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => {
+      const value = now;
+      now += 65_000;
+      return value;
+    });
+
+    try {
+      const funderClient = {
+        syncState: vi.fn(async () => {}),
+        feeFaucetId: vi.fn(async () => ({ toString: () => "0xfee" })),
+        executeTransaction: vi.fn(async () => ({ kind: "exec" })),
+        submitProvenTransaction: vi.fn(async () => 42),
+        applyTransaction: vi.fn(async () => ({
+          executedTransaction: () => ({
+            id: () => ({ toHex: () => "0xtx_pending" }),
+          }),
+        })),
+        getTransactions: vi.fn(async (filter) =>
+          filter.ids.map((id) => ({
+            id: () => ({ toHex: () => id }),
+            transactionStatus: () => ({
+              isCommitted: () => false,
+              isDiscarded: () => false,
+            }),
+          }))
+        ),
+      };
+
+      const runtime = createFundingRuntime({
+        sdk,
+        getDefaultClient: () => ({}),
+        getFunderState: async () => ({
+          client: funderClient,
+          funderHex: "0xfunder",
+          feeFaucetHex: "0xfee",
+          queue: Promise.resolve(),
+        }),
+        proveTransactionWithFallback: async () => ({ proven: true }),
+        retryDelayMs: 0,
+      });
+
+      await expect(runtime.sendFundingNotes(["0xaaa"])).rejects.toThrow(
+        "Timeout waiting for transaction 0xtx_pending"
+      );
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 });

@@ -37,22 +37,39 @@ export function createFundingRuntime(deps) {
 
   const waitForCommitted = async (
     client,
-    txId,
+    txIds,
     maxWaitTime = 60_000,
     delayInterval = 500
   ) => {
+    const pending = new Set(Array.isArray(txIds) ? txIds : [txIds]);
+    if (pending.size === 0) {
+      return;
+    }
     const start = Date.now();
     while (true) {
       await client.syncState();
-      const uncommitted = await client.getTransactions(
-        sdk.TransactionFilter.uncommitted()
+      const records = await client.getTransactions(
+        sdk.TransactionFilter.ids(
+          Array.from(pending, (id) => sdk.TransactionId.fromHex(id))
+        )
       );
-      const pending = uncommitted.map((tx) => tx.id().toHex());
-      if (!pending.includes(txId)) {
+      const byId = new Map(records.map((tx) => [tx.id().toHex(), tx]));
+      for (const id of Array.from(pending)) {
+        const status = byId.get(id)?.transactionStatus?.();
+        if (status?.isDiscarded?.()) {
+          throw new Error(`Transaction ${id} was discarded`);
+        }
+        if (status?.isCommitted?.()) {
+          pending.delete(id);
+        }
+      }
+      if (pending.size === 0) {
         return;
       }
       if (Date.now() - start >= maxWaitTime) {
-        throw new Error(`Timeout waiting for transaction ${txId}`);
+        throw new Error(
+          `Timeout waiting for transaction ${Array.from(pending).join(", ")}`
+        );
       }
       await new Promise((resolve) => setTimeout(resolve, delayInterval));
     }
@@ -236,6 +253,7 @@ export function createFundingRuntime(deps) {
       return null;
     }
 
+    const consumeTxIds = [];
     for (const entry of sent.targetNotes) {
       const note = await resolveInputNote(
         client,
@@ -252,8 +270,9 @@ export function createFundingRuntime(deps) {
         consumeRequest,
         proverOverride
       );
-      await waitForCommitted(client, txId);
+      consumeTxIds.push(txId);
     }
+    await waitForCommitted(client, consumeTxIds);
 
     return sent;
   };
