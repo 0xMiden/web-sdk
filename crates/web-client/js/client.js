@@ -13,6 +13,9 @@ import {
 } from "./utils.js";
 import { validateCallbackTimeoutMs } from "./callbackBridge.js";
 
+// The longest delay setTimeout can hold; a larger one fires at once.
+const MAX_TIMER_MS = 2147483647;
+
 /**
  * MidenClient wraps the existing proxy-wrapped WebClient with a resource-based API.
  *
@@ -30,6 +33,9 @@ export class MidenClient {
   #terminated = false;
   #defaultProver = null;
   #isMock = false;
+  #healthRpc = null;
+  #healthRpcUsers = 0;
+  #healthMonitors = new Set();
 
   constructor(inner, getWasm, defaultProver) {
     this.#inner = inner;
@@ -474,6 +480,8 @@ export class MidenClient {
    */
   terminate() {
     this.#terminated = true;
+    for (const stop of this.#healthMonitors) stop();
+    this.#releaseHealthRpc();
     const defaultProver = this.#defaultProver;
     this.#defaultProver = null;
     try {
@@ -556,6 +564,133 @@ export class MidenClient {
   endpoint() {
     this.assertNotTerminated();
     return this.#inner.endpoint();
+  }
+
+  /**
+   * Asks the node for its status. Never rejects for a node problem: an
+   * unreachable node, a failed request or a mock client (which has no node)
+   * resolve to `{ reachable: false, error }`. Runs outside the client's call
+   * queue, so it answers while a sync is in flight.
+   *
+   * @returns {Promise<HealthStatus>} The node's health.
+   */
+  async checkHealth() {
+    this.assertNotTerminated();
+    return await this.#probeHealth();
+  }
+
+  /**
+   * Checks the node's health now and then every `intervalMs` after the
+   * previous check settles, and calls `onChange` with the first result and
+   * then whenever reachability or the block producer status changes.
+   * `terminate()` stops it too.
+   *
+   * @param {{ intervalMs: number, onChange: (status: HealthStatus) => void }} options
+   *   `intervalMs` is at most 2147483647, the longest delay a timer can hold.
+   * @returns {() => void} Stops the monitor.
+   */
+  monitorHealth({ intervalMs, onChange } = {}) {
+    this.assertNotTerminated();
+    if (
+      !(
+        Number.isFinite(intervalMs) &&
+        intervalMs > 0 &&
+        intervalMs <= MAX_TIMER_MS
+      )
+    ) {
+      throw new TypeError(
+        `monitorHealth: intervalMs must be a positive number no greater than ${MAX_TIMER_MS}`
+      );
+    }
+    if (typeof onChange !== "function") {
+      throw new TypeError("monitorHealth: onChange must be a function");
+    }
+    let stopped = false;
+    let timer;
+    let lastState;
+    const stop = () => {
+      stopped = true;
+      clearTimeout(timer);
+      this.#healthMonitors.delete(stop);
+    };
+    const tick = async () => {
+      const status = await this.#probeHealth();
+      if (stopped) return;
+      const state = status.reachable
+        ? `up:${status.blockProducer?.status ?? ""}`
+        : "down";
+      if (state !== lastState) {
+        lastState = state;
+        try {
+          onChange(status);
+        } catch (error) {
+          console.error("monitorHealth: onChange threw", error);
+        }
+      }
+      if (!stopped) timer = setTimeout(tick, intervalMs);
+    };
+    this.#healthMonitors.add(stop);
+    tick();
+    return stop;
+  }
+
+  // Frees the cached RPC client once no probe is using it.
+  #releaseHealthRpc() {
+    if (this.#healthRpcUsers > 0 || !this.#healthRpc) return;
+    this.#healthRpc.free?.();
+    this.#healthRpc = null;
+  }
+
+  async #probeHealth() {
+    let held = false;
+    try {
+      if (!this.#healthRpc) {
+        const endpoint = this.#inner.endpoint();
+        if (!endpoint) throw new Error("A mock client is connected to no node");
+        const wasm = await this.#getWasm();
+        if (this.#terminated) throw new Error("Client terminated");
+        this.#healthRpc ??= new wasm.RpcClient(new wasm.Endpoint(endpoint));
+      }
+      held = true;
+      this.#healthRpcUsers++;
+      const status = await this.#healthRpc.getStatus();
+      const producer = status.blockProducer;
+      const mempool = producer?.mempoolStats;
+      const genesis = status.genesisCommitment;
+      try {
+        return {
+          reachable: true,
+          version: status.version,
+          chainTip: status.chainTip,
+          ...(genesis && { genesisCommitment: genesis.toHex() }),
+          ...(producer && {
+            blockProducer: {
+              version: producer.version,
+              status: producer.status,
+              chainTip: producer.chainTip,
+              ...(mempool && {
+                mempoolStats: {
+                  unbatchedTransactions: Number(mempool.unbatchedTransactions),
+                  proposedBatches: Number(mempool.proposedBatches),
+                  provenBatches: Number(mempool.provenBatches),
+                },
+              }),
+            },
+          }),
+        };
+      } finally {
+        for (const wrapper of [mempool, genesis, producer, status]) {
+          wrapper?.free?.();
+        }
+      }
+    } catch (error) {
+      return { reachable: false, error: error?.message ?? String(error) };
+    } finally {
+      if (held) {
+        this.#healthRpcUsers--;
+        if (this.#terminated) this.#releaseHealthRpc();
+      }
+    }
   }
 
   /**
