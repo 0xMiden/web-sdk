@@ -43,6 +43,7 @@ export { useMultiSend } from "./hooks/useMultiSend";
 export { useBatch } from "./hooks/useBatch";
 export { useWaitForCommit } from "./hooks/useWaitForCommit";
 export { useWaitForNotes } from "./hooks/useWaitForNotes";
+export { useWaitForAccountUpdate } from "./hooks/useWaitForAccountUpdate";
 export { useMint } from "./hooks/useMint";
 export { useBridge } from "./hooks/useBridge";
 export { useWithdrawUsdcx } from "./hooks/useWithdrawUsdcx";
@@ -105,6 +106,8 @@ export type {
   BatchResult,
   WaitForCommitOptions,
   WaitForNotesOptions,
+  WaitForAccountUpdateOptions,
+  UseWaitForAccountUpdateOptions,
   MintOptions,
   BridgeOptions,
   WithdrawUsdcxOptions,
@@ -161,6 +164,7 @@ export type {
   Note,
   AccountStorageMode,
   PswapLineageRecord,
+  Word,
 } from "./types";
 
 // Default configuration values
@@ -212,6 +216,7 @@ export type { UseMultiSendResult } from "./hooks/useMultiSend";
 export type { UseBatchResult } from "./hooks/useBatch";
 export type { UseWaitForCommitResult } from "./hooks/useWaitForCommit";
 export type { UseWaitForNotesResult } from "./hooks/useWaitForNotes";
+export type { UseWaitForAccountUpdateResult } from "./hooks/useWaitForAccountUpdate";
 export type { UseMintResult } from "./hooks/useMint";
 export type { UseBridgeResult } from "./hooks/useBridge";
 export type { UseWithdrawUsdcxResult } from "./hooks/useWithdrawUsdcx";

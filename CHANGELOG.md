@@ -15,6 +15,7 @@
 
 * [FEATURE][web,react] `compile.component`, `compile.txScript` and `compile.noteScript` accept `{ package }` (a `Package` or its serialized `.masp` bytes) in place of `code`, so a compiled package becomes an `AccountComponent`, `TransactionScript` or `NoteScript` through `MidenClient`; a component built this way keeps the fixed metadata name `"custom"` that `AccountComponent.fromPackage` gives it. `AccountComponentCode.asPackage()` returns the compiled code as a `Package`. `accounts.create` is unchanged, since it already takes compiled components. `useCompile()` passes the same options through. Part of [#90](https://github.com/0xMiden/web-sdk/issues/90).
 * [FEATURE][web] Browser transaction assertion errors can include `error.masm` with the full-precision decimal `errorCode`, optional assertion text, and a source file and byte range when available. The diagnostic survives the Web Worker boundary ([#192](https://github.com/0xMiden/web-sdk/issues/192)).
+* [FEATURE][react] `useWaitForAccountUpdate(accountId?, options?)` subscribes to externally driven account-state updates (overall commitment or storage `slot` / `mapKey` past a baseline or initial polled snapshot), returning `{ waitForAccountUpdate, unsubscribe, account, isWaiting, error, reset }` with sequential `runExclusive` polling, `timeoutMs` rejection, reactive `enabled` mode, and clean unmount/unsubscribe timer cleanup ([#107](https://github.com/0xMiden/web-sdk/issues/107)).
 
 ### Fixes
 
