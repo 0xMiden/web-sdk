@@ -177,22 +177,23 @@ const WRITE_METHODS = new Set([
   "withFeeAwareAuth",
 ]);
 
-const READ_METHODS = new Set([
+// Safe local read methods backed by `read_client` (or cached read-only
+// metadata) on `WebClient`. They read committed store state without touching
+// `inner`, network RPC, or VM execution, so `createClientProxy` runs them
+// directly via `_runLocalRead` instead of queuing behind `_wasmCallChain`.
+const LOCAL_READ_METHODS = new Set([
   "accountReader",
   "createCodeBuilder",
   "exportAccountFile",
+  "exportNoteFile",
+  "feeFaucetId",
+  "getAccount",
   "getAccountAuthByPubKeyCommitment",
   "getAccountByKeyCommitment",
-  "exportNoteFile",
-  "exportStore",
-  "getAccount",
   "getAccountCode",
   "getAccountStorage",
   "getAccountVault",
   "getAccounts",
-  "getConsumableNotes",
-  "getNoteConsumability",
-  "getNoteConsumabilityForAccount",
   "getInputNote",
   "getInputNotes",
   "getOutputNote",
@@ -204,25 +205,69 @@ const READ_METHODS = new Set([
   "getSetting",
   "getSyncHeight",
   "getTransactions",
-  "isAccountAllowed",
-  "isInvitationCodeValid",
   "listSettingKeys",
   "listTags",
-  "executeProgram",
-  "feeFaucetId",
   "protocolConfig",
   "storeIdentifier",
   "trackedAccountWitnesses",
 ]);
 
+const READ_METHODS = new Set([
+  "executeProgram",
+  "exportStore",
+  "getConsumableNotes",
+  "getNoteConsumability",
+  "getNoteConsumabilityForAccount",
+  "isAccountAllowed",
+  "isInvitationCodeValid",
+]);
+
 const MOCK_STORE_NAME = "mock_client_db";
 
-// SYNC_METHODS is consumed by `createClientProxy`; WRITE_METHODS and
-// READ_METHODS exist solely for the CI lint check
+// SYNC_METHODS and LOCAL_READ_METHODS are consumed by `createClientProxy`;
+// WRITE_METHODS and READ_METHODS exist solely for the CI lint check
 // (scripts/check-method-classification.js); suppress unused-variable
 // warnings for those two.
 void WRITE_METHODS;
 void READ_METHODS;
+
+function wrapObservedCall(fn, opName, observeSensitive, gate) {
+  // Opt-in twice over: with no op name or nobody listening, `fn` runs
+  // directly and no timing work is done at all.
+  if (opName === undefined || !hasObserver()) {
+    return fn;
+  }
+  return async () => {
+    // The deadline already reported this call. The skipped turn still runs,
+    // with no clock and no second observation.
+    if (gate?.emitted) {
+      return fn();
+    }
+    const startedAt = performance.now();
+    try {
+      const value = await fn();
+      emitObservation({
+        op: opName,
+        outcome: "ok",
+        durationMs: performance.now() - startedAt,
+      });
+      return value;
+    } catch (error) {
+      // Built only when the channel is on, and left off the observation
+      // entirely otherwise — not as `undefined`, not as an empty object. A
+      // consumer branching on `"sensitive" in observation` has to be able to
+      // tell "not enabled" from "enabled but nothing to report".
+      const sensitive = observationSensitive(observeSensitive, error);
+      emitObservation({
+        op: opName,
+        outcome: "error",
+        durationMs: performance.now() - startedAt,
+        ...(sensitive !== undefined ? { sensitive } : {}),
+      });
+      throw error;
+    }
+  };
+}
 
 const buildTypedArraysExport = (exportObject) => {
   return Object.entries(exportObject).reduce(
@@ -396,11 +441,11 @@ function createClientProxy(instance) {
         const value = live[prop];
         if (typeof value === "function") {
           // SYNC_METHODS are safe to bind raw (synchronous in JS, or
-          // documented exceptions). Everything else holds the WASM
-          // client's internal RefCell across its awaits, so it MUST join
-          // `_serializeWasmCall` — an unserialized fallback overlapping
-          // any in-flight call panics with "RefCell already borrowed"
-          // and poisons the instance for every later call.
+          // documented exceptions). LOCAL_READ_METHODS read committed state via
+          // the read-only client handle without holding `inner`'s RefCell and
+          // run off `_wasmCallChain` via `_runLocalRead`. Everything else holds
+          // the WASM client's internal RefCell or serializes store mutations, so
+          // it MUST join `_serializeWasmCall`.
           if (typeof prop === "string" && SYNC_METHODS.has(prop)) {
             return (...args) => {
               const result = value.apply(live, args);
@@ -408,6 +453,15 @@ function createClientProxy(instance) {
                 target._trackRawWasmCall(result);
               }
               return result;
+            };
+          }
+          if (typeof prop === "string" && LOCAL_READ_METHODS.has(prop)) {
+            return (...args) => {
+              const call = () => value.apply(target.wasmWebClient, args);
+              if (typeof target._runLocalRead === "function") {
+                return target._runLocalRead(call, prop);
+              }
+              return target._serializeWasmCall(call, prop);
             };
           }
           return (...args) =>
@@ -859,45 +913,7 @@ class WebClient {
     if (this._terminated && this._withInnerLockDepth === 0) {
       return Promise.reject(new Error("WebClient terminated"));
     }
-    // Opt-in twice over: with no op name or nobody listening, `fn` is
-    // enqueued exactly as before and no timing work is done at all.
-    const observed = opName !== undefined && hasObserver();
-    const wrapped = observed
-      ? async () => {
-          // The deadline already reported this call. The skipped turn still
-          // runs, with no clock and no second observation.
-          if (gate?.emitted) {
-            return fn();
-          }
-          const startedAt = performance.now();
-          try {
-            const value = await fn();
-            emitObservation({
-              op: opName,
-              outcome: "ok",
-              durationMs: performance.now() - startedAt,
-            });
-            return value;
-          } catch (error) {
-            // Built only when the channel is on, and left off the
-            // observation entirely otherwise — not as `undefined`, not as an
-            // empty object. A consumer branching on
-            // `"sensitive" in observation` has to be able to tell "not
-            // enabled" from "enabled but nothing to report".
-            const sensitive = observationSensitive(
-              this._observeSensitive,
-              error
-            );
-            emitObservation({
-              op: opName,
-              outcome: "error",
-              durationMs: performance.now() - startedAt,
-              ...(sensitive !== undefined ? { sensitive } : {}),
-            });
-            throw error;
-          }
-        }
-      : fn;
+    const wrapped = wrapObservedCall(fn, opName, this._observeSensitive, gate);
 
     if (this._withInnerLockDepth > 0) {
       return Promise.resolve().then(wrapped);
@@ -905,6 +921,30 @@ class WebClient {
     this._queuedCalls += 1;
     const result = this._wasmCallChain.catch(() => {}).then(wrapped);
     this._wasmCallChain = result.catch(() => {});
+    return result;
+  }
+
+  /**
+   * Run a safe local read off `_wasmCallChain` so reads of committed state
+   * complete while sync or proving holds the serialized chain.
+   *
+   * Still enforces `terminate()` (allowing reads nested in an in-flight
+   * `_withInnerWebClient`), emits observability events under `opName`, and
+   * registers the returned promise with `_trackRawWasmCall` so `_freeWasmClient`
+   * waits for all in-flight reads to settle before freeing WASM memory.
+   *
+   * @param {() => Promise<any>} fn - The local read call.
+   * @param {string} [opName] - Operation name to observe this call under.
+   * @returns {Promise<any>} The result of fn.
+   * @private
+   */
+  _runLocalRead(fn, opName) {
+    if (this._terminated && this._withInnerLockDepth === 0) {
+      return Promise.reject(new Error("WebClient terminated"));
+    }
+    const wrapped = wrapObservedCall(fn, opName, this._observeSensitive);
+    const result = Promise.resolve().then(wrapped);
+    this._trackRawWasmCall?.(result);
     return result;
   }
 

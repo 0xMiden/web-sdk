@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { openDatabase, getDatabase } from "./schema.js";
 import {
   upsertInputNote,
@@ -1413,5 +1413,22 @@ describe("error paths: unregistered dbId re-throws", () => {
     await expect(
       upsertNoteScript(BAD_DB, "root", new Uint8Array([1]))
     ).rejects.toThrow();
+  });
+
+  it("reads notes and scripts in a single readonly transaction snapshot", async () => {
+    const dbId = await openTestDb();
+    await insertInputNoteWithScript(dbId, "note-a", "root-a", SCRIPT_A);
+
+    const db = getDatabase(dbId);
+    const txSpy = vi.spyOn(db.dexie, "transaction");
+
+    const inputs = await getInputNotes(dbId, new Uint8Array([]));
+    expect(inputs).toHaveLength(1);
+    expect(inputs![0].serializedNoteScript).toBe(SCRIPT_A_BASE64);
+    expect(txSpy).toHaveBeenCalledWith(
+      "r",
+      [db.inputNotes, db.notesScripts],
+      expect.any(Function)
+    );
   });
 });

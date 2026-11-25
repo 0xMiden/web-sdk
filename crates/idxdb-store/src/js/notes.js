@@ -3,13 +3,15 @@ import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
 export async function getOutputNotes(dbId, states) {
     try {
         const db = getDatabase(dbId);
-        let notes = states.length == 0
-            ? await db.outputNotes.toArray()
-            : await db.outputNotes
-                .where("stateDiscriminant")
-                .anyOf(states)
-                .toArray();
-        return await processOutputNotes(dbId, notes);
+        return await db.dexie.transaction("r", [db.outputNotes, db.notesScripts], async () => {
+            const notes = states.length == 0
+                ? await db.outputNotes.toArray()
+                : await db.outputNotes
+                    .where("stateDiscriminant")
+                    .anyOf(states)
+                    .toArray();
+            return await processOutputNotes(dbId, notes);
+        });
     }
     catch (err) {
         logWebStoreError(err, "Failed to get output notes");
@@ -18,17 +20,15 @@ export async function getOutputNotes(dbId, states) {
 export async function getInputNotes(dbId, states) {
     try {
         const db = getDatabase(dbId);
-        let notes;
-        if (states.length === 0) {
-            notes = await db.inputNotes.toArray();
-        }
-        else {
-            notes = await db.inputNotes
-                .where("stateDiscriminant")
-                .anyOf(states)
-                .toArray();
-        }
-        return await processInputNotes(dbId, notes);
+        return await db.dexie.transaction("r", [db.inputNotes, db.notesScripts], async () => {
+            const notes = states.length === 0
+                ? await db.inputNotes.toArray()
+                : await db.inputNotes
+                    .where("stateDiscriminant")
+                    .anyOf(states)
+                    .toArray();
+            return await processInputNotes(dbId, notes);
+        });
     }
     catch (err) {
         logWebStoreError(err, "Failed to get input notes");
@@ -37,8 +37,13 @@ export async function getInputNotes(dbId, states) {
 export async function getInputNotesFromIds(dbId, noteIds) {
     try {
         const db = getDatabase(dbId);
-        let notes = await db.inputNotes.where("noteId").anyOf(noteIds).toArray();
-        return await processInputNotes(dbId, notes);
+        return await db.dexie.transaction("r", [db.inputNotes, db.notesScripts], async () => {
+            const notes = await db.inputNotes
+                .where("noteId")
+                .anyOf(noteIds)
+                .toArray();
+            return await processInputNotes(dbId, notes);
+        });
     }
     catch (err) {
         logWebStoreError(err, "Failed to get input notes from IDs");
@@ -47,11 +52,13 @@ export async function getInputNotesFromIds(dbId, noteIds) {
 export async function getInputNotesFromNullifiers(dbId, nullifiers) {
     try {
         const db = getDatabase(dbId);
-        let notes = await db.inputNotes
-            .where("nullifier")
-            .anyOf(nullifiers)
-            .toArray();
-        return await processInputNotes(dbId, notes);
+        return await db.dexie.transaction("r", [db.inputNotes, db.notesScripts], async () => {
+            const notes = await db.inputNotes
+                .where("nullifier")
+                .anyOf(nullifiers)
+                .toArray();
+            return await processInputNotes(dbId, notes);
+        });
     }
     catch (err) {
         logWebStoreError(err, "Failed to get input notes from nullifiers");
@@ -60,11 +67,13 @@ export async function getInputNotesFromNullifiers(dbId, nullifiers) {
 export async function getOutputNotesFromNullifiers(dbId, nullifiers) {
     try {
         const db = getDatabase(dbId);
-        let notes = await db.outputNotes
-            .where("nullifier")
-            .anyOf(nullifiers)
-            .toArray();
-        return await processOutputNotes(dbId, notes);
+        return await db.dexie.transaction("r", [db.outputNotes, db.notesScripts], async () => {
+            const notes = await db.outputNotes
+                .where("nullifier")
+                .anyOf(nullifiers)
+                .toArray();
+            return await processOutputNotes(dbId, notes);
+        });
     }
     catch (err) {
         logWebStoreError(err, "Failed to get output notes from nullifiers");
@@ -73,11 +82,13 @@ export async function getOutputNotesFromNullifiers(dbId, nullifiers) {
 export async function getInputNotesFromDetailsCommitments(dbId, detailsCommitments) {
     try {
         const db = getDatabase(dbId);
-        let notes = await db.inputNotes
-            .where("detailsCommitment")
-            .anyOf(detailsCommitments)
-            .toArray();
-        return await processInputNotes(dbId, notes);
+        return await db.dexie.transaction("r", [db.inputNotes, db.notesScripts], async () => {
+            const notes = await db.inputNotes
+                .where("detailsCommitment")
+                .anyOf(detailsCommitments)
+                .toArray();
+            return await processInputNotes(dbId, notes);
+        });
     }
     catch (err) {
         logWebStoreError(err, "Failed to get input notes from details commitments");
@@ -86,11 +97,13 @@ export async function getInputNotesFromDetailsCommitments(dbId, detailsCommitmen
 export async function getInputNotesFromScriptRoots(dbId, scriptRoots) {
     try {
         const db = getDatabase(dbId);
-        let notes = await db.inputNotes
-            .where("scriptRoot")
-            .anyOf(scriptRoots)
-            .toArray();
-        return await processInputNotes(dbId, notes);
+        return await db.dexie.transaction("r", [db.inputNotes, db.notesScripts], async () => {
+            const notes = await db.inputNotes
+                .where("scriptRoot")
+                .anyOf(scriptRoots)
+                .toArray();
+            return await processInputNotes(dbId, notes);
+        });
     }
     catch (err) {
         logWebStoreError(err, "Failed to get input notes from script roots");
@@ -99,11 +112,13 @@ export async function getInputNotesFromScriptRoots(dbId, scriptRoots) {
 export async function getOutputNotesFromDetailsCommitments(dbId, detailsCommitments) {
     try {
         const db = getDatabase(dbId);
-        let notes = await db.outputNotes
-            .where("detailsCommitment")
-            .anyOf(detailsCommitments)
-            .toArray();
-        return await processOutputNotes(dbId, notes);
+        return await db.dexie.transaction("r", [db.outputNotes, db.notesScripts], async () => {
+            const notes = await db.outputNotes
+                .where("detailsCommitment")
+                .anyOf(detailsCommitments)
+                .toArray();
+            return await processOutputNotes(dbId, notes);
+        });
     }
     catch (err) {
         logWebStoreError(err, "Failed to get output notes from details commitments");
@@ -112,8 +127,13 @@ export async function getOutputNotesFromDetailsCommitments(dbId, detailsCommitme
 export async function getOutputNotesFromIds(dbId, noteIds) {
     try {
         const db = getDatabase(dbId);
-        let notes = await db.outputNotes.where("noteId").anyOf(noteIds).toArray();
-        return await processOutputNotes(dbId, notes);
+        return await db.dexie.transaction("r", [db.outputNotes, db.notesScripts], async () => {
+            const notes = await db.outputNotes
+                .where("noteId")
+                .anyOf(noteIds)
+                .toArray();
+            return await processOutputNotes(dbId, notes);
+        });
     }
     catch (err) {
         logWebStoreError(err, "Failed to get output notes from IDs");
@@ -203,33 +223,39 @@ export async function getInputNoteAfter(dbId, states, consumerAccountId, blockSt
         const hasCursor = cursorBlockHeight != null &&
             cursorTxOrder != null &&
             cursorDetailsCommitment != null;
-        // With a cursor, `blockStart` is left to the predicate below: the cursor is the tighter
-        // lower bound, and emitting both abandons the row-value seek.
-        const ordered = hasCursor
-            ? db.inputNotes
-                .where(INPUT_NOTE_CONSUMPTION_INDEX)
-                .above([cursorBlockHeight, cursorTxOrder, cursorDetailsCommitment])
-            : blockStart != null
+        return await db.dexie.transaction("r", [db.inputNotes, db.notesScripts], async () => {
+            // With a cursor, `blockStart` is left to the predicate below: the cursor is the tighter
+            // lower bound, and emitting both abandons the row-value seek.
+            const ordered = hasCursor
                 ? db.inputNotes
                     .where(INPUT_NOTE_CONSUMPTION_INDEX)
-                    .aboveOrEqual([blockStart])
-                : db.inputNotes.orderBy(INPUT_NOTE_CONSUMPTION_INDEX);
-        const note = await ordered
-            .filter((n) => {
-            if (states.length > 0 && !states.includes(n.stateDiscriminant))
-                return false;
-            if (n.consumerAccountId !== consumerAccountId)
-                return false;
-            if (blockStart != null && n.consumedBlockHeight < blockStart)
-                return false;
-            if (blockEnd != null && n.consumedBlockHeight > blockEnd)
-                return false;
-            return true;
-        })
-            .first();
-        if (note == null)
-            return [];
-        return await processInputNotes(dbId, [note]);
+                    .above([
+                    cursorBlockHeight,
+                    cursorTxOrder,
+                    cursorDetailsCommitment,
+                ])
+                : blockStart != null
+                    ? db.inputNotes
+                        .where(INPUT_NOTE_CONSUMPTION_INDEX)
+                        .aboveOrEqual([blockStart])
+                    : db.inputNotes.orderBy(INPUT_NOTE_CONSUMPTION_INDEX);
+            const note = await ordered
+                .filter((n) => {
+                if (states.length > 0 && !states.includes(n.stateDiscriminant))
+                    return false;
+                if (n.consumerAccountId !== consumerAccountId)
+                    return false;
+                if (blockStart != null && n.consumedBlockHeight < blockStart)
+                    return false;
+                if (blockEnd != null && n.consumedBlockHeight > blockEnd)
+                    return false;
+                return true;
+            })
+                .first();
+            if (note == null)
+                return [];
+            return await processInputNotes(dbId, [note]);
+        });
     }
     catch (err) {
         logWebStoreError(err, "Failed to get input note after cursor");

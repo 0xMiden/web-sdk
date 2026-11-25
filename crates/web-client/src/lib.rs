@@ -21,6 +21,7 @@ use js_export_macro::js_export;
 #[cfg(feature = "browser")]
 use js_sys::{Function, Reflect};
 use miden_client::account::AccountId as NativeAccountId;
+use miden_client::assembly::SourceManagerSync;
 use miden_client::builder::{ClientBuilder, DEFAULT_GRPC_TIMEOUT_MS};
 #[cfg(feature = "nodejs")]
 use miden_client::keystore::FilesystemKeyStore;
@@ -256,9 +257,16 @@ pub fn setup_logging(log_level: &str) {
 #[js_export]
 pub struct WebClient {
     inner: AsyncCell<Option<Client<ClientAuth>>>,
+    /// Read-only `Client` handle sharing `store`, `rpc_api`, `authenticator`, and
+    /// `note_transport_api` with `inner`. Stored outside `inner` so safe local reads can query
+    /// committed state concurrently while sync or proving holds `inner`.
+    read_client: std::sync::RwLock<Option<Arc<Client<ClientAuth>>>>,
+    /// Source manager cloned when building `CodeBuilder` instances. Stored outside `inner` so
+    /// `createCodeBuilder()` does not wait behind sync or proving.
+    source_manager: std::sync::RwLock<Option<Arc<dyn SourceManagerSync>>>,
     /// Fee faucet the caller declared at creation, or the mock chain's own. What `feeFaucetId()`
     /// reports until the first sync stores the protocol configuration the chain commits to.
-    fee_faucet: AsyncCell<Option<NativeAccountId>>,
+    fee_faucet: std::sync::RwLock<Option<NativeAccountId>>,
     mock_rpc_api: AsyncCell<Option<Arc<MockRpcApi>>>,
     mock_note_transport_api: AsyncCell<Option<Arc<MockNoteTransportApi>>>,
     /// Node endpoint the client was created against, kept outside `inner` so `endpoint()` can
@@ -271,7 +279,7 @@ pub struct WebClient {
 // functions run on worker threads. This is sound because the concrete types behind
 // trait objects (`SqliteStore`, `GrpcClient`, `FilesystemKeyStore`) are all Send + Sync
 // — only the `dyn Trait` bounds lack Send. All mutable state is behind `AsyncCell`
-// (tokio::sync::Mutex) or, for `endpoint`, a `std::sync::RwLock`, which serialize access.
+// (tokio::sync::Mutex) or `std::sync::RwLock`, which synchronize access.
 #[cfg(feature = "nodejs")]
 unsafe impl Send for WebClient {}
 #[cfg(feature = "nodejs")]
@@ -290,6 +298,11 @@ impl Drop for WebClient {
         if tokio::runtime::Handle::try_current().is_err() {
             let inner = std::mem::replace(&mut self.inner, AsyncCell::new(None));
             std::mem::forget(inner);
+            if let Ok(mut guard) = self.read_client.write()
+                && let Some(read_client) = guard.take()
+            {
+                std::mem::forget(read_client);
+            }
         }
     }
 }
@@ -310,7 +323,9 @@ impl WebClient {
 
         WebClient {
             inner: AsyncCell::new(None),
-            fee_faucet: AsyncCell::new(None),
+            read_client: std::sync::RwLock::new(None),
+            source_manager: std::sync::RwLock::new(None),
+            fee_faucet: std::sync::RwLock::new(None),
             mock_rpc_api: AsyncCell::new(None),
             mock_note_transport_api: AsyncCell::new(None),
             endpoint: std::sync::RwLock::new(None),
@@ -352,10 +367,10 @@ impl WebClient {
     }
 
     /// Returns the identifier of the underlying store (e.g. `IndexedDB` database name, file path).
+    #[allow(unknown_lints, clippy::unused_async, clippy::unused_async_trait_impl)]
     #[js_export(js_name = "storeIdentifier")]
     pub async fn store_identifier(&self) -> Result<String, JsErr> {
-        let guard = self.inner.lock().await;
-        let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let client = self.get_read_client()?;
         Ok(client.store_identifier().to_string())
     }
 
@@ -371,13 +386,18 @@ impl WebClient {
         self.endpoint.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
     }
 
+    #[allow(unknown_lints, clippy::unused_async, clippy::unused_async_trait_impl)]
     #[js_export(js_name = "createCodeBuilder")]
     pub async fn create_code_builder(&self) -> Result<CodeBuilder, JsErr> {
-        let guard = self.inner.lock().await;
-        let client = guard.as_ref().ok_or_else(|| {
-            from_str_err("client was not initialized before instancing CodeBuilder")
-        })?;
-        Ok(CodeBuilder::from_source_manager(client.code_builder().source_manager().clone()))
+        let source_manager = self
+            .source_manager
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| {
+                from_str_err("client was not initialized before instancing CodeBuilder")
+            })?;
+        Ok(CodeBuilder::from_source_manager(source_manager))
     }
 }
 
@@ -389,14 +409,44 @@ impl WebClient {
         self.inner.lock().await
     }
 
+    pub(crate) fn get_read_client(&self) -> Result<Arc<Client<ClientAuth>>, JsErr> {
+        self.read_client
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| from_str_err("Client not initialized"))
+    }
+
+    #[allow(unknown_lints, clippy::unused_async, clippy::unused_async_trait_impl)]
     pub(crate) async fn get_keystore(&self) -> Result<Arc<ClientAuth>, JsErr> {
-        let guard = self.inner.lock().await;
-        guard
-            .as_ref()
-            .and_then(|c| c.authenticator())
+        self.get_read_client()?
+            .authenticator()
             .cloned()
             .ok_or_else(|| from_str_err("Client not initialized"))
     }
+}
+
+async fn build_client(
+    rpc_client: Arc<dyn NodeRpcClient>,
+    store: Arc<dyn Store>,
+    keystore: Arc<ClientAuth>,
+    rng: StdRng,
+    note_transport_client: Option<Arc<dyn NoteTransportClient>>,
+) -> Result<Client<ClientAuth>, JsErr> {
+    let mut builder = ClientBuilder::new()
+        .rpc(rpc_client)
+        .rng(Box::new(rng))
+        .store(store)
+        .authenticator(keystore);
+
+    if let Some(transport) = note_transport_client {
+        builder = builder.note_transport(transport);
+    }
+
+    builder
+        .build()
+        .await
+        .map_err(|err| js_error_with_context(err, "Failed to create client"))
 }
 
 // Browser-specific client creation
@@ -408,10 +458,9 @@ impl WebClient {
     /// The returned object can be used from JavaScript as `client.keystore`.
     #[wasm_bindgen(getter)]
     pub fn keystore(&self) -> Result<keystore_api::WebKeystoreApi, JsValue> {
-        let guard = self.inner.borrow();
-        let ks = guard
-            .as_ref()
-            .and_then(|c| c.authenticator())
+        let client = self.get_read_client()?;
+        let ks = client
+            .authenticator()
             .cloned()
             .ok_or_else(|| JsValue::from_str("Client not initialized"))?;
         Ok(keystore_api::WebKeystoreApi::new(ks))
@@ -439,8 +488,7 @@ impl WebClient {
     /// ```
     #[wasm_bindgen(js_name = "lastAuthError")]
     pub fn last_auth_error(&self) -> JsValue {
-        let guard = self.inner.borrow();
-        match guard.as_ref().and_then(|c| c.authenticator()) {
+        match self.get_read_client().ok().and_then(|c| c.authenticator().cloned()) {
             Some(keystore) => keystore.last_auth_error(),
             None => JsValue::NULL,
         }
@@ -615,30 +663,41 @@ impl WebClient {
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
         fee_faucet: Option<NativeAccountId>,
     ) -> Result<(), JsValue> {
-        let mut builder = ClientBuilder::new()
-            .rpc(rpc_client)
-            .rng(Box::new(rng))
-            .store(store)
-            .authenticator(Arc::new(keystore));
-
-        if let Some(transport) = note_transport_client {
-            builder = builder.note_transport(transport);
-        }
-
-        let mut client = builder
-            .build()
-            .await
-            .map_err(|err| js_error_with_context(err, "Failed to create client"))?;
+        let keystore = Arc::new(keystore);
+        let mut client = build_client(
+            rpc_client.clone(),
+            store.clone(),
+            keystore.clone(),
+            rng,
+            note_transport_client.clone(),
+        )
+        .await?;
 
         client
             .ensure_genesis_in_place()
             .await
             .map_err(|err| js_error_with_context(err, "Failed to ensure genesis in place"))?;
 
+        let read_client = Arc::new(
+            build_client(
+                rpc_client,
+                store,
+                keystore,
+                StdRng::from_seed([0u8; 32]),
+                note_transport_client,
+            )
+            .await?,
+        );
+        let source_manager = client.code_builder().source_manager().clone();
+
         // Published together with `inner`, so a creation that fails leaves none of them set: the
         // accessors report the faucet and endpoint of a client that exists, or nothing.
-        *self.fee_faucet.lock().await = fee_faucet;
+        *self.fee_faucet.write().unwrap_or_else(std::sync::PoisonError::into_inner) = fee_faucet;
         *self.endpoint.write().unwrap_or_else(std::sync::PoisonError::into_inner) = endpoint;
+        *self.source_manager.write().unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some(source_manager);
+        *self.read_client.write().unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some(read_client);
         *self.inner.lock().await = Some(client);
 
         Ok(())
@@ -733,33 +792,45 @@ impl WebClient {
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
         fee_faucet: Option<NativeAccountId>,
     ) -> Result<(), JsErr> {
-        let client = maybe_wrap_send(async move {
-            let mut builder = ClientBuilder::new()
-                .rpc(rpc_client)
-                .rng(Box::new(rng))
-                .store(store)
-                .authenticator(Arc::new(keystore));
-
-            if let Some(transport) = note_transport_client {
-                builder = builder.note_transport(transport);
-            }
-
-            let mut client = builder
-                .build()
-                .await
-                .map_err(|err| js_error_with_context(err, "Failed to create client"))?;
+        let (client, read_client) = maybe_wrap_send(async move {
+            let keystore = Arc::new(keystore);
+            let mut client = build_client(
+                rpc_client.clone(),
+                store.clone(),
+                keystore.clone(),
+                rng,
+                note_transport_client.clone(),
+            )
+            .await?;
 
             client
                 .ensure_genesis_in_place()
                 .await
                 .map_err(|err| js_error_with_context(err, "Failed to ensure genesis in place"))?;
 
-            Ok::<_, JsErr>(client)
+            let read_client = Arc::new(
+                build_client(
+                    rpc_client,
+                    store,
+                    keystore,
+                    StdRng::from_seed([0u8; 32]),
+                    note_transport_client,
+                )
+                .await?,
+            );
+
+            Ok::<_, JsErr>((client, read_client))
         })
         .await?;
 
-        *self.fee_faucet.lock().await = fee_faucet;
+        let source_manager = client.code_builder().source_manager().clone();
+
+        *self.fee_faucet.write().unwrap_or_else(std::sync::PoisonError::into_inner) = fee_faucet;
         *self.endpoint.write().unwrap_or_else(std::sync::PoisonError::into_inner) = endpoint;
+        *self.source_manager.write().unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some(source_manager);
+        *self.read_client.write().unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some(read_client);
         *self.inner.lock().await = Some(client);
 
         Ok(())
@@ -1157,5 +1228,92 @@ mod post_submit_code_tests {
             "failed to submit transaction batch",
         );
         assert!(!err.reason.contains(APPLY_AFTER_SUBMIT_FAILED));
+    }
+}
+
+#[cfg(all(test, feature = "nodejs"))]
+mod concurrent_local_reads_tests {
+    use std::path::PathBuf;
+
+    use crate::WebClient;
+    use crate::models::account_storage_mode::AccountStorageMode;
+    use crate::models::auth_scheme::AuthScheme;
+    use crate::models::note_filter::{NoteFilter, NoteFilterTypes};
+    use crate::models::transaction_filter::TransactionFilter;
+
+    struct TempDir(PathBuf);
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn node_local_reads_complete_while_inner_is_exclusively_locked() {
+        let root = std::env::temp_dir()
+            .join(format!("web-sdk-concurrent-reads-{:032x}", rand::random::<u128>()));
+        std::fs::create_dir(&root).unwrap();
+        let _dir = TempDir(root.clone());
+
+        let client = WebClient::new();
+        client
+            .create_mock_client(
+                root.join("store.sqlite3").into_os_string().into_string().unwrap(),
+                root.join("keys").into_os_string().into_string().unwrap(),
+                Some(vec![7u8; 32]),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let storage = AccountStorageMode::private();
+        let auth = AuthScheme::AuthRpoFalcon512;
+        let wallet = client.new_wallet(&storage, auth, None, Some(true)).await.unwrap();
+        client.set_setting("theme".to_string(), b"dark".to_vec()).await.unwrap();
+
+        // Hold the exclusive `inner` lock, simulating an in-flight sync or proof.
+        let mut inner_guard = client.get_mut_inner().await;
+
+        let accounts = client.get_accounts().await.unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].id().to_string(), wallet.id().to_string());
+
+        assert!(client.get_account(&wallet.id()).await.unwrap().is_some());
+        let _vault = client.get_account_vault(&wallet.id()).await.unwrap();
+        let _storage = client.get_account_storage(&wallet.id()).await.unwrap();
+        assert!(client.get_account_code(&wallet.id()).await.unwrap().is_some());
+        let reader = client.account_reader(&wallet.id()).await.unwrap();
+        assert_eq!(reader.nonce().await.unwrap().to_string(), "0");
+        assert_eq!(client.get_sync_height().await.unwrap(), 0);
+        assert_eq!(client.get_setting("theme".to_string()).await.unwrap(), Some(b"dark".to_vec()));
+        assert_eq!(client.list_setting_keys().await.unwrap(), vec!["theme".to_string()]);
+        let _tags = client.list_tags().await.unwrap();
+        let _input_notes = client
+            .get_input_notes(NoteFilter::new(NoteFilterTypes::All, None, None))
+            .await
+            .unwrap();
+        let _output_notes = client
+            .get_output_notes(NoteFilter::new(NoteFilterTypes::All, None, None))
+            .await
+            .unwrap();
+        let _txs = client.get_transactions(TransactionFilter::all()).await.unwrap();
+        let _lineages = client.get_pswap_lineages().await.unwrap();
+        let _faucet = client.fee_faucet_id().await.unwrap();
+        let _protocol = client.protocol_config().await.unwrap();
+        let _store_id = client.store_identifier().await.unwrap();
+        let _builder = client.create_code_builder().await.unwrap();
+
+        // Apply a new committed setting via `inner` and release it.
+        inner_guard
+            .as_mut()
+            .unwrap()
+            .set_setting("theme".to_string(), b"light".to_vec())
+            .await
+            .unwrap();
+        drop(inner_guard);
+
+        assert_eq!(client.get_setting("theme".to_string()).await.unwrap(), Some(b"light".to_vec()));
     }
 }

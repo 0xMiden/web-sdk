@@ -379,4 +379,27 @@ describe("transactions", () => {
       expect.arrayContaining(["multi-1", "multi-2", "multi-3"])
     );
   });
+
+  it("reads transactions and scripts in a single readonly transaction snapshot", async () => {
+    const dbId = await openTestDb();
+    await upsertTransactionRecord(
+      dbId,
+      "tx-snap",
+      new Uint8Array([1]),
+      1,
+      0,
+      new Uint8Array([0])
+    );
+
+    const db = getDatabase(dbId);
+    const txSpy = vi.spyOn(db.dexie, "transaction");
+
+    const results = await getTransactions(dbId, "All");
+    expect(results).toHaveLength(1);
+    expect(txSpy).toHaveBeenCalledWith(
+      "r",
+      [db.transactions, db.transactionScripts],
+      expect.any(Function)
+    );
+  });
 });
