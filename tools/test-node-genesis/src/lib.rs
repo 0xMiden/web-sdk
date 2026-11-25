@@ -253,17 +253,17 @@ struct AssetEntry {
 // GENESIS ACCOUNTS
 // ================================================================================================
 
-/// Builds a public singlesig fungible faucet, with the secret key that signs for it.
-fn generate_faucet(
+/// Builds a public singlesig fungible faucet for a fixed seed and signing key.
+fn build_user_faucet(
+    init_seed: [u8; 32],
+    secret: &AuthSecretKey,
     symbol: &str,
     decimals: u8,
     max_supply: u64,
-) -> anyhow::Result<(Account, AuthSecretKey)> {
-    let mut rng = ChaCha20Rng::from_seed(random());
-    let secret = AuthSecretKey::new_falcon512_poseidon2_with_rng(&mut rng);
-
-    let symbol = TokenSymbol::try_from(symbol).expect("faucet symbol should be valid");
-    let name = TokenName::new(&symbol.to_string()).expect("token symbol is a valid token name");
+) -> anyhow::Result<Account> {
+    let symbol = TokenSymbol::try_from(symbol).context("faucet symbol should be valid")?;
+    let name =
+        TokenName::new(&symbol.to_string()).context("token symbol should be a valid token name")?;
     let faucet = FungibleFaucet::builder()
         .name(name)
         .symbol(symbol)
@@ -271,7 +271,7 @@ fn generate_faucet(
         .max_supply(AssetAmount::new(max_supply)?)
         .build()?;
     let account = create_singlesig_user_fungible_faucet(
-        rng.random(),
+        init_seed,
         faucet,
         AuthSingleSig::new(Approver::new(
             secret.public_key().to_commitment(),
@@ -281,11 +281,24 @@ fn generate_faucet(
         AccountType::Public,
     )?;
 
+    Ok(account)
+}
+
+/// Builds a public singlesig fungible faucet, with the secret key that signs for it.
+fn generate_faucet(
+    symbol: &str,
+    decimals: u8,
+    max_supply: u64,
+) -> anyhow::Result<(Account, AuthSecretKey)> {
+    let mut rng = ChaCha20Rng::from_seed(random());
+    let secret = AuthSecretKey::new_falcon512_poseidon2_with_rng(&mut rng);
+    let account = build_user_faucet(rng.random(), &secret, symbol, decimals, max_supply)?;
+
     Ok((account, secret))
 }
 
 /// Builds a public basic wallet, with the key that signs for it.
-fn generate_wallet() -> anyhow::Result<(Account, AuthSecretKey)> {
+pub(crate) fn generate_wallet() -> anyhow::Result<(Account, AuthSecretKey)> {
     let mut rng = ChaCha20Rng::from_seed(random());
     let secret = AuthSecretKey::new_falcon512_poseidon2_with_rng(&mut rng);
     let approver =
@@ -404,30 +417,14 @@ fn create_single_test_faucet(index: u128, secret: &AuthSecretKey) -> anyhow::Res
         .try_into()
         .expect("concatenating two 16-byte arrays yields exactly 32 bytes");
 
-    let auth_component = AuthSingleSig::new(Approver::new(
-        secret.public_key().to_commitment(),
-        AuthScheme::Falcon512Poseidon2,
-    ));
+    let mut faucet =
+        build_user_faucet(init_seed, secret, "TKN", FAUCET_DECIMALS, u64::from(FAUCET_MAX_SUPPLY))?;
 
-    let symbol = TokenSymbol::new("TKN")?;
-    let name = TokenName::new(&symbol.to_string()).expect("token symbol is a valid token name");
-    let faucet_component = FungibleFaucet::builder()
-        .name(name)
-        .symbol(symbol)
-        .decimals(FAUCET_DECIMALS)
-        .max_supply(AssetAmount::new(u64::from(FAUCET_MAX_SUPPLY)).unwrap())
-        .build()?;
-    let faucet = create_singlesig_user_fungible_faucet(
-        init_seed,
-        faucet_component,
-        auth_component,
-        allow_all_policy_manager(),
-        AccountType::Public,
-    )?;
-
-    // Set nonce to ONE to indicate the account is deployed (see generate_genesis_account)
-    let (id, vault, storage, code, ..) = faucet.into_parts();
-    Ok(Account::new_unchecked(id, vault, storage, code, ONE, None))
+    // Set nonce to ONE to indicate the account is deployed (see into_genesis_account).
+    faucet
+        .set_nonce(ONE)
+        .context("failed to mark test faucet as deployed at genesis")?;
+    Ok(faucet)
 }
 
 /// Creates a test account holding assets from all provided faucets. The account also includes a

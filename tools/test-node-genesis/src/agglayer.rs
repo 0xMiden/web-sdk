@@ -7,24 +7,14 @@ use ::rand::{RngExt, random};
 use anyhow::{Context, Result};
 use miden_agglayer::{AggLayerBridge, AggLayerFaucet, BridgeRoles};
 use miden_objects::account_file::AccountFile;
-use miden_protocol::account::auth::{AuthScheme, AuthSecretKey};
-use miden_protocol::account::{
-    Account,
-    AccountBuilder,
-    AccountComponent,
-    AccountComponentMetadata,
-    AccountType,
-};
 use miden_protocol::asset::{Asset, AssetAmount};
 use miden_protocol::note::NoteScriptRoot;
 use miden_protocol::{Felt, Word};
-use miden_standards::account::auth::{Approver, AuthSingleSig};
 use miden_standards::account::fees::BasicConstantFeePolicy;
-use miden_standards::account::wallets::BasicWallet;
 use rand_chacha::ChaCha20Rng;
 use rand_chacha::rand_core::SeedableRng;
 
-use crate::into_genesis_account;
+use crate::{generate_wallet, into_genesis_account};
 
 /// The `AggLayer` network ID assigned to the Miden chain.
 ///
@@ -61,15 +51,13 @@ pub fn create_agglayer_genesis_accounts(fee_balance: Asset) -> Result<AgglayerGe
     let mut rng = ChaCha20Rng::from_seed(random());
 
     // 1. Create Bridge Admin
-    let admin_secret = AuthSecretKey::new_falcon512_poseidon2_with_rng(&mut rng);
-    let admin_account = build_wallet_account(&mut rng, &admin_secret)
-        .context("failed to create bridge admin account")?;
+    let (admin_account, admin_secret) =
+        generate_wallet().context("failed to create bridge admin account")?;
     let admin_account = into_genesis_account(admin_account, fee_balance)?;
 
     // 2. Create GER Manager
-    let ger_secret = AuthSecretKey::new_falcon512_poseidon2_with_rng(&mut rng);
-    let ger_account = build_wallet_account(&mut rng, &ger_secret)
-        .context("failed to create GER manager account")?;
+    let (ger_account, ger_secret) =
+        generate_wallet().context("failed to create GER manager account")?;
     let ger_account = into_genesis_account(ger_account, fee_balance)?;
 
     // 3. Create and deploy the Bridge account (unconfigured; configured at test time).
@@ -126,40 +114,16 @@ pub fn create_agglayer_genesis_accounts(fee_balance: Asset) -> Result<AgglayerGe
     ])
 }
 
-/// Builds a fee policy charging nothing for every note the account accepts, denominated in
-/// `fee_faucet_id`.
+/// Builds a fee policy charging nothing for every note the account accepts.
 ///
-/// `fee_faucet_id` must be the faucet the chain charges fees in, as named by the genesis header's
-/// fee parameters. A network account settles its fee against the faucet its own policy names, so a
-/// policy pointing anywhere else leaves the ntx-builder unable to execute the account's
-/// transactions at all, and its notes sit unconsumed.
+/// The network account's `fee_faucet_id` (passed to `account_builder`) must name the chain's
+/// native fee faucet from the genesis header's fee parameters. A network account settles its fee
+/// against the faucet its own policy names, so a policy pointing anywhere else leaves the
+/// ntx-builder unable to execute the account's transactions at all, and its notes sit unconsumed.
 ///
 /// Every allowlisted script needs an entry, including a zero one: a script root missing from the
 /// schedule aborts fee estimation rather than defaulting to free.
 fn zero_fee_policy(allowed_notes: BTreeSet<NoteScriptRoot>) -> BasicConstantFeePolicy {
     BasicConstantFeePolicy::new()
         .with_fees(allowed_notes.into_iter().map(|root| (root, AssetAmount::ZERO)))
-}
-
-fn build_wallet_account(rng: &mut ChaCha20Rng, secret: &AuthSecretKey) -> Result<Account> {
-    let seed: [u8; 32] = rng.random();
-
-    let acc_component = AccountComponent::new(
-        BasicWallet::code().as_package().clone(),
-        vec![],
-        AccountComponentMetadata::new("miden::testing::basic_wallet"),
-    )
-    .context("failed to create wallet component")?;
-
-    let account = AccountBuilder::new(seed)
-        .with_component(AuthSingleSig::new(Approver::new(
-            secret.public_key().to_commitment(),
-            AuthScheme::Falcon512Poseidon2,
-        )))
-        .with_component(acc_component)
-        .account_type(AccountType::Public)
-        .build()
-        .context("failed to build wallet account")?;
-
-    Ok(account)
 }
