@@ -5,6 +5,12 @@
 ### Enhancements
 
 * [FEATURE][web] `client.chain` reads chain data from the node without the local store: `getBlockHeader(blockNum?)`, `getBlockHeaderWithProof(blockNum)` (the header and its `MmrProof`), `getNullifierCommitHeights(nullifiers, { blockFrom })` (a `Map` from each nullifier, as passed, to its commit height or `null`; hex of any case matches) and `syncNullifiers(prefixes, blockFrom, blockTo)`. The standalone `RpcClient` gains `getBlockHeaderWithProof(blockNum)`, which returns the `MmrProof` that `getBlockHeaderByNumber` drops, and `getNullifierCommitHeights(nullifiers, blockFrom)`, the multi-nullifier form of `getNullifierCommitHeight`; both are additive on the browser and Node.js entries. Part of [#86](https://github.com/0xMiden/web-sdk/issues/86).
+* [FEATURE][web] `AccountStorage.getMapEntriesPage(slotName, offset, limit)` (also on `account.storage()`) returns at most `limit` entries of a storage map from `offset`, in the order `getMapEntries` returns, so a large map can be read in bounded pages instead of copied into JS whole on every call; `getMapEntries` is unchanged ([#97](https://github.com/0xMiden/web-sdk/issues/97)).
+* [FEATURE][web] `Account.applyPatch(patch)` returns a copy of the account with an `AccountPatch` applied, for example `ExecutedTransaction.accountPatch()`, so an off-chain update can be folded into a stored account without refetching it. It throws for a patch of another account, a nonce that does not increase, or changes that do not apply. Converting a relative `AccountDelta` into a patch is not part of this ([#439](https://github.com/0xMiden/web-sdk/issues/439), [#637](https://github.com/0xMiden/web-sdk/pull/637)).
+
+### Fixes
+
+* [FIX][web] Development faucet funding preserves the full integer value of proof-of-work targets sent as JSON numbers ([#626](https://github.com/0xMiden/web-sdk/pull/626)).
 
 ## 0.18.1 (2026-11-25)
 

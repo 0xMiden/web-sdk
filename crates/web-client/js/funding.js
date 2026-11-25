@@ -173,11 +173,10 @@ export function sleep(ms, signal) {
  */
 export async function solvePow(challengeHex, target, signal) {
   const challenge = String(challengeHex).replace(/^0x/i, "");
-  // JSON.parse rounds a u64 target near u64::MAX up to 2 ** 64 or beyond.
-  const targetValue =
-    typeof target === "number" && target >= 2 ** 64
-      ? 0xffff_ffff_ffff_ffffn
-      : toU64(target, "PoW target");
+  if (typeof target === "number" && !Number.isSafeInteger(target)) {
+    throw fundingInvalid("PoW target must be a safe integer or decimal string");
+  }
+  const targetValue = toU64(target, "PoW target");
   if (
     targetValue === 0n ||
     challenge.length === 0 ||
@@ -260,7 +259,12 @@ export async function requestNoteFromFaucet({
   // Faucet wire names are snake_case.
   powUrl.searchParams.set("account_id", accountIdHex);
   powUrl.searchParams.set("amount", resolvedAmount.toString());
-  const challengeBody = await getJson(fetchFn, powUrl, signal);
+  const challengeBody = await getJson(
+    fetchFn,
+    powUrl,
+    signal,
+    parsePowResponse
+  );
   if (
     challengeBody == null ||
     typeof challengeBody.challenge !== "string" ||
@@ -472,7 +476,20 @@ function joinUrl(base, path) {
   return new URL(path, base);
 }
 
-async function getJson(fetchFn, url, signal) {
+function parsePowResponse(text) {
+  // Match full JSON strings so a quoted field value cannot be mistaken for a key.
+  const largeIntegerField =
+    /("(?:[^"\\]|\\.)*")(?:(\s*:\s*)([1-9]\d{15,})(?=\s*[,}]))?/g;
+  return JSON.parse(
+    text.replace(largeIntegerField, (field, key, separator, digits) =>
+      digits && JSON.parse(key) === "target"
+        ? `${key}${separator}"${digits}"`
+        : field
+    )
+  );
+}
+
+async function getJson(fetchFn, url, signal, parse) {
   if (typeof fetchFn !== "function") {
     throw fundingInvalid("fetch is not available in this environment");
   }
@@ -502,7 +519,7 @@ async function getJson(fetchFn, url, signal) {
     throw fundingHttp(response.status, body.slice(0, 200));
   }
   try {
-    return await response.json();
+    return parse ? parse(await response.text()) : await response.json();
   } catch {
     throw fundingInvalid("faucet returned non-JSON response");
   }

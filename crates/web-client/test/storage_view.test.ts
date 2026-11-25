@@ -135,6 +135,92 @@ test.describe("StorageView", () => {
     expect(result.bigint).toBe("0");
   });
 
+  test("getMapEntriesPage() pages through a large map and matches getMapEntries()", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk, helpers }) => {
+      const SLOT_NAME = "test::paged";
+      const VALUE_SLOT_NAME = "test::paged_value";
+      const TOTAL = 1100;
+      const LIMIT = 256;
+      const code = `
+        use miden::protocol::active_account
+        use miden::core::word
+        use miden::core::sys
+
+        const MAP_SLOT = word("${SLOT_NAME}")
+
+        @account_procedure
+        pub proc get_balance
+          push.MAP_SLOT[0..2] exec.active_account::get_map_item
+          exec.sys::truncate_stack
+        end
+      `;
+
+      const map = new sdk.StorageMap();
+      for (let i = 1; i <= TOTAL; i++) {
+        map.insert(
+          new sdk.Word(sdk.u64Array([i, 0, 0, 1])),
+          new sdk.Word(sdk.u64Array([0, 0, 0, i]))
+        );
+      }
+
+      const client = await helpers.createMidenMockClient();
+      const component = await client.compile.component({
+        code,
+        slots: [
+          sdk.StorageSlot.map(SLOT_NAME, map),
+          sdk.StorageSlot.emptyValue(VALUE_SLOT_NAME),
+        ],
+      });
+
+      const seed = new Uint8Array(32);
+      seed.fill(0x32);
+      const auth = sdk.AuthSecretKey.rpoFalconWithRNG(seed);
+      const account = await client.accounts.create({
+        type: "ImmutableContract",
+        storage: "public",
+        seed,
+        auth,
+        components: [component],
+      });
+
+      const storage = account.storage();
+      const all = storage.getMapEntries(SLOT_NAME);
+      const paged = [];
+      const pageSizes = [];
+      for (let offset = 0; ; offset += LIMIT) {
+        const page = storage.getMapEntriesPage(SLOT_NAME, offset, LIMIT);
+        pageSizes.push(page.length);
+        paged.push(...page);
+        if (page.length < LIMIT) break;
+      }
+
+      const key = (e) => `${e.root}:${e.key}:${e.value}`;
+      return {
+        total: all.length,
+        pagedKeys: paged.map(key),
+        allKeys: all.map(key),
+        pageSizes,
+        pastEnd: storage.getMapEntriesPage(SLOT_NAME, TOTAL, LIMIT).length,
+        zeroLimit: storage.getMapEntriesPage(SLOT_NAME, 0, 0).length,
+        nonMap: storage.getMapEntriesPage(VALUE_SLOT_NAME, 0, LIMIT),
+        missing: storage.getMapEntriesPage("test::missing", 0, LIMIT),
+        rawPage: account.storage().raw.getMapEntriesPage(SLOT_NAME, 0, 3)
+          .length,
+      };
+    });
+
+    expect(result.total).toBe(1100);
+    expect(result.pagedKeys).toEqual(result.allKeys);
+    expect(result.pageSizes).toEqual([256, 256, 256, 256, 76]);
+    expect(result.pastEnd).toBe(0);
+    expect(result.zeroLimit).toBe(0);
+    expect(result.nonMap).toBeUndefined();
+    expect(result.missing).toBeUndefined();
+    expect(result.rawPage).toBe(3);
+  });
+
   test("getCommitment() returns the raw commitment hash", async ({ run }) => {
     const result = await run(async ({ sdk, helpers }) => {
       const SLOT_NAME = "test::value";
