@@ -35,7 +35,7 @@ const serializeUnknown = (value) => {
 const provenBatchSubmissions = new Map();
 let nextProvenBatchSubmissionId = 1;
 
-const stashProvenBatchSubmission = (error) => {
+const stashProvenBatchSubmission = (error, reuseId) => {
   if (
     !error ||
     error.code !== "BATCH_SUBMISSION_OUTCOME_UNKNOWN" ||
@@ -43,7 +43,10 @@ const stashProvenBatchSubmission = (error) => {
   ) {
     return error;
   }
-  const submissionId = String(nextProvenBatchSubmissionId++);
+  // A repeated indeterminate retry replaces its own entry, so one batch holds
+  // one handle, and the superseded handle is released.
+  const submissionId = reuseId ?? String(nextProvenBatchSubmissionId++);
+  provenBatchSubmissions.get(submissionId)?.free?.();
   provenBatchSubmissions.set(submissionId, error.submission);
   error.submissionId = submissionId;
   if (
@@ -363,9 +366,17 @@ const methodHandlers = {
     try {
       const blockNumber = await wasmWebClient.retryProvenBatch(submission);
       provenBatchSubmissions.delete(String(submissionId));
+      submission.free?.();
       return blockNumber;
     } catch (error) {
-      throw stashProvenBatchSubmission(error);
+      const authError = wasmWebClient.lastAuthError();
+      if (typeof error === "string") {
+        throw appendAuthError(error, authError);
+      }
+      if (error instanceof Error) {
+        error.message = appendAuthError(error.message, authError);
+      }
+      throw stashProvenBatchSubmission(error, String(submissionId));
     }
   },
   [MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER]: async (args) => {

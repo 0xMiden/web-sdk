@@ -1908,6 +1908,9 @@ export interface TransactionsResource {
    * `submission.transactionIds()`). A retry the node rejects as a conflict
    * usually means the original attempt landed; sync and inspect those ids.
    *
+   * Browser builds only: the Node.js build reports the code but cannot attach
+   * the submission, so it cannot retry yet.
+   *
    * Accepting an externally proved transaction as a batch member
    * (`push_proven_transaction`) needs a rust-sdk release that exposes it on
    * the pinned client and is tracked as a follow-up on #571.

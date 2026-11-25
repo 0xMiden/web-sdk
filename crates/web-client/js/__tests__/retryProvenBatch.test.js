@@ -55,8 +55,8 @@ afterEach(() => {
 });
 
 describe("retryProvenBatch (#571)", () => {
-  it("posts submissionId to the worker and does not re-prove", async () => {
-    const { client, worker } = createWorkerClient();
+  it("forwards only the submissionId to the worker method", async () => {
+    const { client } = createWorkerClient();
     const call = vi.spyOn(client, "callMethodWithWorker").mockResolvedValue(42);
 
     await expect(client.retryProvenBatch({ submissionId: "3" })).resolves.toBe(
@@ -64,11 +64,6 @@ describe("retryProvenBatch (#571)", () => {
     );
 
     expect(call).toHaveBeenCalledWith(MethodName.RETRY_PROVEN_BATCH, "3");
-    expect(
-      worker.posted.some(
-        (msg) => msg.methodName === MethodName.RETRY_PROVEN_BATCH
-      )
-    ).toBe(false);
   });
 
   it("rejects under a worker when submissionId is missing", async () => {

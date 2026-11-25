@@ -1154,9 +1154,9 @@ impl WebClient {
 /// Maps a batch submit/retry failure to a JS error. An indeterminate outcome
 /// attaches a [`ProvenBatchSubmission`] (browser) so callers can
 /// `retryProvenBatch` without re-proving. Node.js prefixes the stable code in
-/// the message; the submission handle is not attachable across napi, so Node
-/// callers that need retry should prefer the browser path or a follow-up that
-/// stashes the submission on the client.
+/// the message; the submission handle is not attachable across napi, so
+/// `retryProvenBatch` is usable from the browser build only (Node.js callers
+/// see the code but cannot retry yet).
 fn js_batch_submit_error(err: ClientError, context: &str) -> JsErr {
     #[cfg(feature = "browser")]
     {

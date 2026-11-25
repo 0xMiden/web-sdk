@@ -1040,12 +1040,9 @@ mod post_submit_code_tests {
 
     #[test]
     fn indeterminate_batch_outcome_is_not_post_submit_and_has_its_own_code() {
-        // Constructing a real ProvenBatchSubmission needs a proven batch; the
-        // code mapper only matches the variant discriminant, so Empty proves
-        // BatchBuilder errors that are not post-submit stay unmapped there.
+        // A real ProvenBatchSubmission needs a proven batch, so only the negative
+        // case is unit-testable here: other BatchBuilder errors stay unmapped.
         assert_eq!(post_submit_code(&ClientError::BatchBuilder(BatchBuilderError::Empty)), None);
-        // batch_outcome_unknown_code is covered when a submission is available;
-        // Empty must not claim the unknown-outcome code.
         assert_eq!(
             batch_outcome_unknown_code(&ClientError::BatchBuilder(BatchBuilderError::Empty)),
             None
