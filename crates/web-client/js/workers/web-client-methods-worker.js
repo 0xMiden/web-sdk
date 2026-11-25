@@ -1,3 +1,5 @@
+import { createAcquisitionChannel } from "../noteAcquisition.js";
+import { indexedDbArgs } from "../indexeddb.js";
 import loadWasm from "../../dist/wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "../constants.js";
 import { appendAuthError, createCallbackForwarder } from "../callbackBridge.js";
@@ -89,6 +91,20 @@ const serializeError = (error) => {
 
 // Global state variables.
 let wasmWebClient = null;
+let wasmIndexedDb;
+let acquisitionLimits;
+let acquisitionOperation;
+const acquisitionChannel = createAcquisitionChannel((message) =>
+  self.postMessage(message)
+);
+async function installAcquisition() {
+  if (acquisitionLimits)
+    await wasmWebClient.installNoteAcquisitionGate(
+      (candidate) =>
+        acquisitionChannel.request(candidate, acquisitionOperation),
+      acquisitionLimits
+    );
+}
 let wasmSeed = null; // Seed for the WASM WebClient, if needed.
 // IndexedDB name the mock client opened. SYNC/SUBMIT mock paths recreate the
 // wasm client and must reopen the same store as INIT_MOCK.
@@ -105,7 +121,8 @@ const createMockClientOn = async (
     seed,
     serializedMockChain,
     serializedMockNoteTransportNode,
-    wasmMockStoreName
+    wasmMockStoreName,
+    ...indexedDbArgs(wasmIndexedDb)
   );
 let messageQueue = []; // Queue for sequential processing.
 let processing = false; // Flag to ensure one message is processed at a time.
@@ -383,6 +400,7 @@ methodHandlers[MethodName.SYNC_STATE_MOCK] = async (args) => {
     serializedMockChain,
     serializedMockNoteTransportNode
   );
+  await installAcquisition();
 
   return await methodHandlers[MethodName.SYNC_STATE]();
 };
@@ -399,6 +417,7 @@ methodHandlers[MethodName.SYNC_CHAIN_MOCK] = async (args) => {
     serializedMockChain,
     serializedMockNoteTransportNode
   );
+  await installAcquisition();
 
   return await methodHandlers[MethodName.SYNC_CHAIN]();
 };
@@ -415,6 +434,7 @@ methodHandlers[MethodName.SYNC_NOTE_TRANSPORT_MOCK] = async (args) => {
     serializedMockChain,
     serializedMockNoteTransportNode
   );
+  await installAcquisition();
 
   return await methodHandlers[MethodName.SYNC_NOTE_TRANSPORT]();
 };
@@ -435,6 +455,7 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_MOCK] = async (args) => {
     serializedMockChain,
     serializedMockNoteTransportNode
   );
+  await installAcquisition();
 
   const result = await methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION](args);
 
@@ -471,6 +492,7 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK] = async (
     serializedMockChain,
     serializedMockNoteTransportNode
   );
+  await installAcquisition();
 
   const result =
     await methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER](args);
@@ -493,6 +515,17 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK] = async (
 /**
  * Process a single message event.
  */
+function storageOptions(policy) {
+  if (policy === undefined) return undefined;
+  return {
+    durability: policy.durability,
+    onFailure: policy.notify
+      ? (failure) =>
+          self.postMessage({ action: WorkerAction.STORAGE_FAILURE, failure })
+      : undefined,
+  };
+}
+
 async function processMessage(event) {
   const { action, args, methodName, requestId } = event.data;
   try {
@@ -511,8 +544,13 @@ async function processMessage(event) {
         noteTransportMaxRetries,
         noteTransportRetryIntervalMs,
         initCallbackTimeoutMs,
+        storagePolicy,
+        limits,
       ] = args;
       callbackTimeoutMs = initCallbackTimeoutMs;
+      acquisitionLimits = limits;
+      const indexedDb = storageOptions(storagePolicy);
+      wasmIndexedDb = indexedDb;
       const wasm = await getWasmOrThrow();
 
       if (logLevel) {
@@ -550,7 +588,8 @@ async function processMessage(event) {
           hasInsertKeyCb ? callbackProxies.insertKey : undefined,
           hasSignCb ? callbackProxies.sign : undefined,
           noteTransportMaxRetries,
-          noteTransportRetryIntervalMs
+          noteTransportRetryIntervalMs,
+          ...indexedDbArgs(indexedDb)
         );
       } else {
         await wasmWebClient.createClient(
@@ -560,10 +599,12 @@ async function processMessage(event) {
           storeName,
           feeFaucetId,
           noteTransportMaxRetries,
-          noteTransportRetryIntervalMs
+          noteTransportRetryIntervalMs,
+          ...indexedDbArgs(indexedDb)
         );
       }
 
+      await installAcquisition();
       wasmSeed = seed;
       ready = true;
       self.postMessage({ ready: true });
@@ -576,7 +617,12 @@ async function processMessage(event) {
         serializedMockChain,
         serializedMockNoteTransportNode,
         storeName,
+        storagePolicy,
+        limits,
       ] = args;
+      acquisitionLimits = limits;
+      const indexedDb = storageOptions(storagePolicy);
+      wasmIndexedDb = indexedDb;
       const wasm = await getWasmOrThrow();
 
       if (logLevel) {
@@ -606,6 +652,7 @@ async function processMessage(event) {
           : undefined
       );
 
+      await installAcquisition();
       wasmSeed = seed;
       ready = true;
       self.postMessage({ ready: true });
@@ -622,7 +669,13 @@ async function processMessage(event) {
       if (!handler) {
         throw new Error(`Unsupported method: ${methodName}`);
       }
-      const result = await handler(args);
+      acquisitionOperation = requestId;
+      let result;
+      try {
+        result = await handler(args);
+      } finally {
+        acquisitionOperation = undefined;
+      }
       self.postMessage({ requestId, result, methodName });
       return;
     } else {
@@ -656,6 +709,7 @@ async function processQueue() {
 
 // Enqueue incoming messages and process them sequentially.
 self.onmessage = (event) => {
+  if (acquisitionChannel.receive(event.data)) return;
   if (callbackForwarder.handleReply(event.data)) {
     return;
   }

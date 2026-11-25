@@ -1,5 +1,5 @@
 use js_export_macro::js_export;
-use miden_client::note::NoteScriptRoot;
+use miden_client::note::{NoteDetailsCommitment, NoteScriptRoot};
 use miden_client::store::NoteFilter as NativeNoteFilter;
 
 use super::note_id::NoteId;
@@ -15,18 +15,25 @@ pub struct NoteFilter {
     note_type: NoteFilterTypes,
     note_ids: Option<Vec<NoteId>>,
     script_roots: Option<Vec<Word>>,
+    details_commitments: Option<Vec<Word>>,
 }
 
 #[js_export]
 impl NoteFilter {
-    /// Creates a new filter for the given type and optional note IDs or script roots.
+    /// Creates a filter with the matching IDs, script roots or details commitments.
     #[js_export(constructor)]
     pub fn new(
         note_type: NoteFilterTypes,
         note_ids: Option<Vec<NoteId>>,
         script_roots: Option<Vec<Word>>,
+        details_commitments: Option<Vec<Word>>,
     ) -> NoteFilter {
-        NoteFilter { note_type, note_ids, script_roots }
+        NoteFilter {
+            note_type,
+            note_ids,
+            script_roots,
+            details_commitments,
+        }
     }
 }
 
@@ -43,6 +50,7 @@ pub enum NoteFilterTypes {
     Nullifiers,
     Unverified,
     ScriptRoots,
+    DetailsCommitments,
 }
 
 // CONVERSIONS
@@ -97,6 +105,17 @@ impl TryFrom<&NoteFilter> for NativeNoteFilter {
                     script_roots
                         .iter()
                         .map(|script_root| NoteScriptRoot::from_raw(script_root.into()))
+                        .collect(),
+                )
+            },
+            NoteFilterTypes::DetailsCommitments => {
+                let commitments = filter.details_commitments.as_ref().ok_or_else(|| {
+                    from_str_err("Details commitments required for DetailsCommitments filter")
+                })?;
+                NativeNoteFilter::DetailsCommitments(
+                    commitments
+                        .iter()
+                        .map(|word| NoteDetailsCommitment::from_raw(word.into()))
                         .collect(),
                 )
             },

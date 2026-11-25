@@ -34,6 +34,7 @@ use js_bindings::{
     idxdb_get_input_notes_from_ids,
     idxdb_get_input_notes_from_nullifiers,
     idxdb_get_input_notes_from_script_roots,
+    idxdb_get_input_notes_page,
     idxdb_get_note_script,
     idxdb_get_output_notes,
     idxdb_get_output_notes_from_details_commitments,
@@ -43,7 +44,12 @@ use js_bindings::{
 };
 
 mod models;
-use models::{InputNoteIdxdbObject, NoteScriptIdxdbObject, OutputNoteIdxdbObject};
+use models::{
+    InputNoteIdxdbObject,
+    InputNotePageIdxdbObject,
+    NoteScriptIdxdbObject,
+    OutputNoteIdxdbObject,
+};
 
 pub(crate) mod utils;
 use utils::{
@@ -52,6 +58,53 @@ use utils::{
     parse_output_note_idxdb_object,
     upsert_input_note_tx,
 };
+
+/// A bounded input-note scan, with a cursor independent of optional note IDs.
+pub struct InputNotePage {
+    pub notes: Vec<InputNoteRecord>,
+    pub next_cursor: Option<String>,
+    pub exhausted: bool,
+}
+
+/// Reads from an already-open database without acquiring another store holder.
+///
+/// The limit bounds raw rows before state selection. At most one further key is
+/// inspected for exhaustion; separate pages do not form a snapshot.
+pub async fn get_input_notes_page_by_db_id(
+    db_id: &str,
+    states: Vec<u8>,
+    after_details_commitment: Option<String>,
+    limit: u32,
+) -> Result<InputNotePage, StoreError> {
+    if !(1..=256).contains(&limit) {
+        return Err(StoreError::QueryError(
+            "Input note page limit must be between 1 and 256".into(),
+        ));
+    }
+    if states.iter().any(|state| *state > InputNoteState::STATE_CONSUMED_EXTERNAL) {
+        return Err(StoreError::QueryError("Invalid input note page state".into()));
+    }
+    if let Some(cursor) = &after_details_commitment {
+        let word = Word::try_from(cursor.clone()).map_err(StoreError::WordError)?;
+        if word.to_hex() != *cursor {
+            return Err(StoreError::QueryError("Input note page cursor must be canonical".into()));
+        }
+    }
+    let page: InputNotePageIdxdbObject = await_js(
+        idxdb_get_input_notes_page(db_id, states, after_details_commitment, limit),
+        "failed to get input note page",
+    )
+    .await?;
+    Ok(InputNotePage {
+        notes: page
+            .notes
+            .into_iter()
+            .map(parse_input_note_idxdb_object)
+            .collect::<Result<_, _>>()?,
+        next_cursor: page.next_cursor,
+        exhausted: page.exhausted,
+    })
+}
 
 impl IdxdbStore {
     pub(crate) async fn get_input_notes(

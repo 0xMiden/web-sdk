@@ -14,6 +14,14 @@ extern "C" {
     #[wasm_bindgen(js_name = getInputNotes)]
     pub fn idxdb_get_input_notes(db_id: &str, states: Vec<u8>) -> js_sys::Promise;
 
+    #[wasm_bindgen(js_name = getInputNotesPage)]
+    pub fn idxdb_get_input_notes_page(
+        db_id: &str,
+        states: Vec<u8>,
+        after_details_commitment: Option<String>,
+        limit: u32,
+    ) -> js_sys::Promise;
+
     #[wasm_bindgen(js_name = getInputNotesFromIds)]
     pub fn idxdb_get_input_notes_from_ids(db_id: &str, note_ids: Vec<String>) -> js_sys::Promise;
 
