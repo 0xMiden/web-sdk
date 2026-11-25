@@ -5,6 +5,7 @@ use miden_client::account::{
     Account as NativeAccount,
     AccountComponentInterface,
     AccountComponentInterfaceExt,
+    AccountPatch as NativePatch,
     AccountProcedureRoot,
     StorageSlot,
     StorageSlotContent,
@@ -149,13 +150,24 @@ impl Account {
     /// example the `accountPatch()` of an `ExecutedTransaction`, so an off-chain update can be
     /// folded into a stored account without refetching it in full.
     ///
-    /// Throws if the patch is for another account, if its nonce does not increase the account's
-    /// nonce, or if its vault or storage changes do not apply to this account's state.
+    /// Throws if the patch is for another account, if its nonce is not strictly greater than the
+    /// account's, or if its vault or storage changes do not apply to this account's state.
     #[js_export(js_name = "applyPatch")]
     pub fn apply_patch(&self, patch: &AccountPatch) -> Result<Account, JsErr> {
+        let patch: NativePatch = patch.into();
+        // Native `apply_patch` accepts an equal nonce, which would let a replayed patch pass.
+        if let Some(nonce) = patch.final_nonce()
+            && nonce.as_canonical_u64() <= self.0.nonce().as_canonical_u64()
+        {
+            return Err(from_str_err(&format!(
+                "failed to apply account patch: patch nonce {} is not strictly greater than account nonce {}",
+                nonce.as_canonical_u64(),
+                self.0.nonce().as_canonical_u64()
+            )));
+        }
         let mut account = self.0.clone();
         account
-            .apply_patch(&patch.into())
+            .apply_patch(&patch)
             .map_err(|err| js_error_with_context(err, "failed to apply account patch"))?;
         Ok(Account(account))
     }
