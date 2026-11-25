@@ -242,6 +242,43 @@ describe("protocolConfig documentation", () => {
   );
 });
 
+// `client.chain` reads block headers, so every guide that tells a `MidenClient`
+// holder to reach for the standalone `RpcClient` for them also names it.
+const CHAIN_DOCS = [
+  "packages/react-sdk/AGENTS.md",
+  "packages/react-sdk/skills/react-sdk-patterns/SKILL.md",
+  "crates/web-client/skills/frontend-source-guide/SKILL.md",
+  "crates/web-client/skills/chain-anchored-execution/SKILL.md",
+  "crates/web-client/README.md",
+  "docs/external/src/web-client/library/transactions.md",
+];
+
+describe("client.chain documentation", () => {
+  it.each(CHAIN_DOCS)("%s names client.chain.getBlockHeader", (file) => {
+    expect(readFileSync(new URL(file, REPO_ROOT), "utf8")).toContain(
+      "client.chain.getBlockHeader"
+    );
+  });
+
+  it("the source guide lists chain among the resources", () => {
+    expect(
+      readFileSync(
+        new URL(
+          "crates/web-client/skills/frontend-source-guide/SKILL.md",
+          REPO_ROOT
+        ),
+        "utf8"
+      )
+    ).toContain("`tags`, `chain`, `settings`");
+  });
+
+  it("the React guide no longer says block headers are not on the client", () => {
+    expect(
+      readFileSync(new URL("packages/react-sdk/AGENTS.md", REPO_ROOT), "utf8")
+    ).not.toContain("Block headers in particular are not");
+  });
+});
+
 // The web submit paths submit exactly the request they are given, so the
 // registration contract of the new request builders is stated where a caller
 // reads it: on the Rust doc comments that become the JSDoc and on every page.
