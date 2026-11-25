@@ -2425,28 +2425,15 @@ export declare class MidenClient {
   /** Returns the current sync height. */
   getSyncHeight(): Promise<number>;
   /**
-   * Resolves once every serialized WASM call that was already on the
-   * internal call chain when `waitForIdle()` was called (execute, submit,
-   * apply, account creation, and in-thread prove/sync), and every
-   * worker-bound sync or prove already in flight, has settled. Use this
-   * from callers that need to perform a non-WASM-side action (e.g. clearing
-   * an in-memory auth key on wallet lock) after the kernel finishes, so
-   * its auth callback doesn't race with the key being cleared. Does NOT
-   * wait for calls enqueued after `waitForIdle()` returns.
+   * Waits for the ordered WASM calls and concurrent sync-height reads already
+   * in flight when called. Calls made later are outside this wait.
    *
-   * With a live Web Worker (the default when `Worker` is available), sync
-   * and prove keep the main-realm call chain free for their round trip, so
-   * a local read such as `getSyncHeight()` or `accounts.getBalance(...)`
-   * can complete while they are pending and still sees a consistent
-   * committed store view. Store-mutating calls (import, execute, submit,
-   * apply, account creation) stay serialized. Without a worker, local reads
-   * still queue behind in-thread sync and prove.
+   * Use this before clearing app-side state, such as an in-memory auth key,
+   * that a pending operation may still need.
    *
-   * A call that takes the store lock, a Web Lock shared by every client on
-   * the same store, still excludes other store writers; the
-   * `frontend-pitfalls` skill shipped with this package lists those calls.
-   *
-   * Returns immediately if nothing was in flight.
+   * During sync or proof work on a live Web Worker, `getSyncHeight()` can
+   * return the committed height if no later ordered call is already queued.
+   * Balance and note screening calls remain on the ordered chain.
    */
   waitForIdle(): Promise<void>;
   /**
