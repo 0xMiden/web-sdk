@@ -192,4 +192,86 @@ describe("MidenClient.monitorHealth", () => {
       client.monitorHealth({ intervalMs: 1000, onChange() {} })
     ).toThrow("Client terminated");
   });
+
+  it("rejects an intervalMs above 2147483647", () => {
+    const { client } = makeClient();
+    const stop = client.monitorHealth({
+      intervalMs: 2147483647,
+      onChange() {},
+    });
+    stop();
+    expect(() =>
+      client.monitorHealth({ intervalMs: 2147483648, onChange() {} })
+    ).toThrow(/no greater than 2147483647/);
+  });
+});
+
+describe("health wasm release", () => {
+  const freeable = () => ({ free: vi.fn() });
+
+  it("frees the status wrappers after a check and the client on terminate()", async () => {
+    const { client, rpc } = makeClient();
+    rpc.free = vi.fn();
+    const full = status();
+    const wrappers = {
+      status: freeable(),
+      genesis: freeable(),
+      producer: freeable(),
+      mempool: freeable(),
+    };
+    Object.assign(full, wrappers.status);
+    Object.assign(full.genesisCommitment, wrappers.genesis);
+    Object.assign(full.blockProducer, wrappers.producer);
+    Object.assign(full.blockProducer.mempoolStats, wrappers.mempool);
+    rpc.getStatus.mockResolvedValue(full);
+
+    await client.checkHealth();
+    for (const w of Object.values(wrappers)) {
+      expect(w.free).toHaveBeenCalledTimes(1);
+    }
+    expect(rpc.free).not.toHaveBeenCalled();
+
+    client.terminate();
+    expect(rpc.free).toHaveBeenCalledTimes(1);
+  });
+
+  it("frees the client once an in-flight check settles after terminate()", async () => {
+    const { client, rpc } = makeClient();
+    rpc.free = vi.fn();
+    let answer;
+    rpc.getStatus.mockImplementation(
+      () => new Promise((resolve) => (answer = resolve))
+    );
+    const pending = client.checkHealth();
+    await vi.waitFor(() => expect(rpc.getStatus).toHaveBeenCalled());
+    client.terminate();
+    expect(rpc.free).not.toHaveBeenCalled();
+    answer(status());
+    await pending;
+    expect(rpc.free).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not build a client when terminate() wins during wasm start-up", async () => {
+    const { rpc, wasm } = makeClient();
+    let ready;
+    const inner = {
+      endpoint: () => "https://rpc.devnet.miden.io",
+      terminate: vi.fn(),
+    };
+    const client = new MidenClient(
+      inner,
+      () => new Promise((resolve) => (ready = () => resolve(wasm))),
+      null
+    );
+    const pending = client.checkHealth();
+    await vi.waitFor(() => expect(ready).toBeTypeOf("function"));
+    client.terminate();
+    ready();
+    await expect(pending).resolves.toEqual({
+      reachable: false,
+      error: "Client terminated",
+    });
+    expect(wasm.RpcClient).not.toHaveBeenCalled();
+    expect(rpc.getStatus).not.toHaveBeenCalled();
+  });
 });
