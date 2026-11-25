@@ -1,4 +1,5 @@
 use js_export_macro::js_export;
+use miden_client::ClientError;
 use miden_client::account::{AccountFile as NativeAccountFile, AccountId as NativeAccountId};
 use miden_client::keystore::Keystore;
 use miden_client::note::NoteFile as NativeNoteFile;
@@ -23,20 +24,38 @@ impl WebClient {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
         let account_data: NativeAccountFile = account_file.into();
-        let account_id = account_data.account().id().to_string();
         let (account, auth_secret_keys) = account_data.into_parts();
+        let account_id = account.id();
 
-        client
-            .add_account(&account.clone(), false)
+        if account.is_new() && account.seed().is_none() {
+            return Err(js_error_with_context(
+                ClientError::AddNewAccountWithoutSeed,
+                "failed to import account",
+            ));
+        }
+        if client
+            .get_account_header(account_id)
             .await
-            .map_err(|err| js_error_with_context(err, "failed to import account"))?;
+            .map_err(|err| js_error_with_context(err, "failed to import account"))?
+            .is_some()
+        {
+            return Err(js_error_with_context(
+                ClientError::AccountAlreadyTracked(account_id),
+                "failed to import account",
+            ));
+        }
 
         for key in &auth_secret_keys {
             keystore
-                .add_key(key, account.id())
+                .add_key(key, account_id)
                 .await
                 .map_err(|err| from_str_err(&err.to_string()))?;
         }
+
+        client
+            .add_account(&account, false)
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to import account"))?;
 
         Ok(format!("Imported account with ID: {account_id}"))
     }
