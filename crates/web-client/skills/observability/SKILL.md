@@ -80,7 +80,7 @@ Five categories emit nothing, and each has bitten someone:
   `lastAuthError`, `proveBlock`, `serializeMockChain`,
   `serializeMockNoteTransportNode`, `usesMockChain`. They bypass the serialization wrapper entirely, which is
   where observation happens.
-- **Node reads through the cached RPC client.** `client.chain.*`, `checkHealth()` and
+- **Reads through the cached RPC client.** `client.chain.*`, `checkHealth()` and
   `monitorHealth()` call a standalone `RpcClient`, not the observed inner client, so
   they never reach an observer.
 - **Client construction.** `create`, `ready()` and the factories emit nothing.
