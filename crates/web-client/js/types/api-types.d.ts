@@ -1130,6 +1130,18 @@ export interface ExecuteOptions extends TransactionOptions {
   )[];
 }
 
+/** Additional details on a browser transaction error caused by a MASM assertion. */
+export interface MasmExecutionDiagnostic {
+  /** The unsigned field element in decimal, preserving its full precision. */
+  errorCode: string;
+  /** Assertion text, when available from the VM. */
+  assertionMessage?: string;
+  /** Source file URI, present together with a valid span. */
+  file?: string;
+  /** Byte offsets in the source file, with an inclusive start and exclusive end. */
+  span?: { start: number; end: number };
+}
+
 export interface ExecuteProgramOptions {
   /** Account to execute the program against. */
   account: AccountRef;
@@ -1702,6 +1714,7 @@ export interface TransactionsResource {
    * (see {@link MasmErrorCode}).
    *
    * @param options - Execute options including the account, compiled script, and foreign accounts.
+   * @throws A browser MASM assertion may expose a {@link MasmExecutionDiagnostic} as `error.masm`.
    */
   execute(options: ExecuteOptions): Promise<TransactionSubmitResult>;
 

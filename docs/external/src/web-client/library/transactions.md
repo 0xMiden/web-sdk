@@ -165,6 +165,10 @@ Two failure modes worth handling after a batch submit:
 
 Accepting a transaction proved by another participant as a batch member needs a rust-sdk release that exposes `push_proven_transaction` on the pinned client; that half of [#571](https://github.com/0xMiden/web-sdk/issues/571) is a follow-up.
 
+## MASM assertion diagnostics
+
+Browser transaction errors can include a `masm` diagnostic when the VM reports a failed assertion. The diagnostic contains the full-precision decimal `errorCode` string. When available, it also gives the `assertionMessage` and a source `file` URI with a byte `span` (`start` inclusive, `end` exclusive). The same fields are available in-thread and through the Web Worker. Production builds can strip assertion text and source locations from protocol and standard scripts. Node.js keeps its existing error message.
+
 ## Manual Transaction Lifecycle
 
 `client.transactions.submit(account, request)` runs the full pipeline — execute, prove, submit, apply — in one call. When you need to drive the stages yourself (benchmarking each step or handling errors per stage), `executeRequest` returns a staged handle you advance one step at a time. Each stage returns the handle for the next, carrying its own context so you never re-thread the result or block number:

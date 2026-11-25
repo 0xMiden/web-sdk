@@ -733,6 +733,10 @@ export class TransactionsResource {
       : await this.#inner.executeForSummary(accountId, request);
   }
 
+  /**
+   * Execute a custom transaction script. Browser VM assertions can expose
+   * optional MASM diagnostics as `error.masm`.
+   */
   async execute(opts) {
     rejectUnexpectedAnchor(opts, "execute", "executeRequest() or submit()");
     this.#client.assertNotTerminated();

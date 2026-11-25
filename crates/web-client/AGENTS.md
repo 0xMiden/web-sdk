@@ -134,6 +134,11 @@ serialization requirements.
 
 ## Rules that are easy to get wrong
 
+When a browser transaction fails on a VM assertion, inspect the optional
+`error.masm` before matching message text. Its `errorCode` is a decimal string.
+Assertion text and source locations can be absent, including after production
+debug info stripping.
+
 **Invitation checks do not reserve codes.** Use
 `client.accounts.isInvitationCodeValid(code)` to check whether a non-empty
 code can register an account. It returns `false` for unknown or used codes,

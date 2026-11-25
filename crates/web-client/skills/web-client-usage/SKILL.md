@@ -911,6 +911,11 @@ builder - do not reach for one.
 The transactions API is option-bag-based and accepts any account ref
 (`Account`, `AccountHeader`, hex string, `AccountId`).
 
+Browser transaction assertion errors can carry `error.masm` with a decimal
+`errorCode` string, optional `assertionMessage`, and an optional source `file`
+URI with `span: { start, end }` byte offsets. Worker errors carry the same fields.
+Handle missing fields because production builds can strip text and locations.
+
 ### Send
 
 ```typescript

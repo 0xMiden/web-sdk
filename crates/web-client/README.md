@@ -981,6 +981,10 @@ Two failure modes worth handling after a batch submit:
 1. The node can accept a batch and the local store update still fail (`code: "ApplyTransactionAfterSubmitFailed"`, or a message containing `batch was accepted at block N but building store updates failed` / `applying to the store failed`). Do not submit again; sync instead.
 2. The submission can come back without a definite outcome (`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` with `submission` in-thread or `submissionId` under a Web Worker, plus `transactionIds`). Resend with `client.transactions.retryProvenBatch(error.submission ?? { submissionId: error.submissionId })` without calling `batch` / `submitBatch` again. After a successful retry, confirm with `waitFor` / `list` for those ids. A conflict on retry usually means the original attempt landed, but a rejected retry records nothing locally and a sync does not insert the missing records, so look the ids up on the node, not in the local store. Browser builds only: Node.js errors prefix the message with the code and carry no submission handle or `transactionIds`.
 
+### MASM assertion diagnostics
+
+When browser transaction execution fails on a VM assertion, the error can carry a `masm` diagnostic alongside its existing message. The diagnostic includes `errorCode` as a decimal string and may include `assertionMessage` and a source `file` URI with a byte `span` (`start` inclusive, `end` exclusive). This works in-thread and through the Web Worker. Production builds can strip assertion text and source locations from protocol and standard scripts. Node.js keeps its existing error message.
+
 ### Manual Transaction Lifecycle
 
 `client.transactions.submit(account, request)` runs execute → prove → submit → apply in one call. To drive the stages yourself — benchmarking each step or handling errors per stage — `executeRequest` returns a staged handle you advance one step at a time. Each stage carries its own context, so you never re-thread the result or block number:
