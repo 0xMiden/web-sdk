@@ -215,6 +215,9 @@ const READ_METHODS = new Set([
   "trackedAccountWitnesses",
 ]);
 
+// Only reads with an independently verified committed snapshot may pass a worker turn.
+const LOCAL_SNAPSHOT_READS = new Set(["getSyncHeight"]);
+
 const MOCK_STORE_NAME = "mock_client_db";
 
 // SYNC_METHODS is consumed by `createClientProxy`; WRITE_METHODS and
@@ -440,7 +443,9 @@ function createClientProxy(instance) {
           return (...args) =>
             receiver._serializeWasmCall(
               () => value.apply(target.wasmWebClient, args),
-              prop
+              prop,
+              undefined,
+              { localRead: LOCAL_SNAPSHOT_READS.has(prop) }
             );
         }
         return value;
@@ -808,10 +813,13 @@ class WebClient {
     // would panic with "recursive use of an object detected" due to
     // wasm-bindgen's internal RefCell.
     this._wasmCallChain = Promise.resolve();
+    this._orderedCalls = 0;
+    this._workerOnlyTurn = null;
+    this._localReadTail = Promise.resolve();
+    this._activeLocalReads = new Set();
     // This client's in-flight coalesced syncs; see `_withStoreLock`.
     this._syncRuns = new Map();
-    // Top-level calls queued on `_wasmCallChain` so far. A coalesced sync run
-    // is joinable only until it moves; see `_withStoreLock`.
+    // A coalesced sync run stops accepting joiners when another call is made.
     this._queuedCalls = 0;
 
     // The high-fidelity channel is decided here and nowhere else. Writing it
@@ -832,13 +840,8 @@ class WebClient {
    * Serialize a WASM call that requires exclusive (&mut self) access.
    * Concurrent calls are queued and executed one at a time.
    *
-   * Wraps both the direct (in-thread) path and the worker-dispatched path.
-   * On the worker path this is redundant with the worker's own message queue
-   * for ordering, but it is not free: the callback resolves only when the
-   * worker posts its response, so the chain slot is held for the entire
-   * round trip and later calls queue behind it. On the direct path it is
-   * load-bearing — without it, concurrent main-thread callers would panic
-   * with "recursive use of an object detected" (wasm-bindgen's RefCell).
+   * Orders both direct and worker calls. A snapshot-safe local read may pass
+   * an active worker-only turn if no later ordered call is already queued.
    *
    * Re-entrancy: a call made through the trusted handle an in-flight
    * `_withInnerWebClient(fn)` passes `fn` (see `createTrustedHandle`) runs
@@ -865,9 +868,10 @@ class WebClient {
    * @param {{ emitted: boolean }} [gate] - Set when a store-locked deadline
    *   already emitted this call's observation, so this turn does not emit
    *   again. Other callers omit it.
+   * @param {{ workerOnly?: boolean, localRead?: boolean }} [options]
    * @returns {Promise<any>} The result of fn.
    */
-  _serializeWasmCall(fn, opName, gate) {
+  _serializeWasmCall(fn, opName, gate, { workerOnly, localRead } = {}) {
     // A call through an in-flight `_withInnerWebClient` handle still runs
     // inline: it belongs to work that was already queued when terminate() ran.
     const trusted = this[TRUSTED_CALLS] === true;
@@ -918,9 +922,53 @@ class WebClient {
       return Promise.resolve().then(wrapped);
     }
     this._queuedCalls += 1;
-    const result = this._wasmCallChain.catch(() => {}).then(wrapped);
+    if (
+      localRead &&
+      this.worker &&
+      !this._workerFailure &&
+      this.wasmWebClient &&
+      this._workerOnlyTurn?.orderedSeq === this._orderedCalls
+    ) {
+      return this._runLocalRead(wrapped);
+    }
+
+    const orderedSeq = (this._orderedCalls ?? 0) + 1;
+    this._orderedCalls = orderedSeq;
+    const result = this._wasmCallChain
+      .catch(() => {})
+      .then(async () => {
+        if (
+          workerOnly &&
+          this.worker &&
+          !this._workerFailure &&
+          !this._terminated
+        ) {
+          this._workerOnlyTurn = { orderedSeq };
+          try {
+            return await wrapped();
+          } finally {
+            this._workerOnlyTurn = null;
+          }
+        }
+        if (this._activeLocalReads?.size) {
+          await Promise.allSettled(this._activeLocalReads);
+        }
+        return wrapped();
+      });
     this._wasmCallChain = result.catch(() => {});
     return result;
+  }
+
+  /**
+   * A main-realm WASM borrow must exclude both other reads and ordered calls.
+   * @private
+   */
+  _runLocalRead(fn) {
+    const reads = this._activeLocalReads;
+    const read = this._localReadTail.then(fn).finally(() => reads.delete(read));
+    reads.add(read);
+    this._localReadTail = read.catch(() => {});
+    return read;
   }
 
   /**
@@ -997,16 +1045,19 @@ class WebClient {
    * @param {() => Promise<any>} fn - The WASM work.
    * @param {string} [opName] - Operation name, as for `_serializeWasmCall`.
    * @param {string} [syncMethod] - The sync method to coalesce under.
+   * @param {{ workerOnly?: boolean }} [options] - A worker-only body can
+   *   allow eligible local reads during its ordered turn.
    * @returns {Promise<any>} The result of fn.
    * @private
    */
-  _withStoreLock(fn, opName, syncMethod) {
+  _withStoreLock(fn, opName, syncMethod, options) {
     // `_serializeWasmCall` rejects too, but a joiner never reaches it.
     // The terminated check arms nothing.
     if (this._terminated && this[TRUSTED_CALLS] !== true) {
       return Promise.reject(new Error("WebClient terminated"));
     }
     const dbId = this._storeLockId();
+    const workerOnly = options?.workerOnly === true && !!this.worker;
     // Both branches call `run`: a store-locked call without `syncMethod`
     // (importNoteFile, fetchPrivateNotes) or nested in `_withInnerWebClient`,
     // and `coalesceRun`'s start for a sync. A joiner shares that promise and
@@ -1060,7 +1111,8 @@ class WebClient {
           return runUnderLock(dbId, fn, remaining);
         },
         opName,
-        gate
+        gate,
+        { workerOnly }
       );
       chain.then(
         (value) => {
@@ -1087,26 +1139,14 @@ class WebClient {
   }
 
   /**
-   * Returns a promise that resolves once every serialized WASM call that
-   * was already on `_wasmCallChain` when `waitForIdle()` was called has
-   * settled. Use this from callers that need to perform a non-WASM-side
-   * action (e.g. clear an in-memory auth key) AFTER any in-flight
-   * execute / submit / sync has completed, so the WASM kernel's auth
-   * callback doesn't race with the key being cleared.
-   *
-   * Does NOT wait for calls enqueued after `waitForIdle()` returns —
-   * this is intentional, so a caller can drain and then proceed without
-   * being blocked indefinitely by a concurrent workload.
-   *
-   * A call that takes the store lock is on the chain from the moment it is
-   * made, like every other serialized call; see `_withStoreLock`.
-   *
+   * Waits for the ordered calls and concurrent reads already queued.
    * @returns {Promise<void>}
    */
   async waitForIdle() {
-    // Chain on `_wasmCallChain`; by the time this resolves, any in-flight
-    // serialized call has settled. Catch so the chain state doesn't leak.
-    await this._wasmCallChain.catch(() => {});
+    await Promise.allSettled([
+      this._wasmCallChain,
+      ...(this._activeLocalReads ?? []),
+    ]);
   }
 
   // TODO: This will soon conflict with some changes in main.
@@ -1909,7 +1949,7 @@ class WebClient {
   }
 
   async proveTransaction(transactionResult, prover) {
-    return this._serializeWasmCall(async () => {
+    const run = async () => {
       try {
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
@@ -1936,7 +1976,15 @@ class WebClient {
         console.error("INDEX.JS: Error in proveTransaction:", error);
         throw error;
       }
-    }, MethodName.PROVE_TRANSACTION);
+    };
+    return this._serializeWasmCall(
+      run,
+      MethodName.PROVE_TRANSACTION,
+      undefined,
+      {
+        workerOnly: !!this.worker,
+      }
+    );
   }
 
   async applyTransaction(transactionResult, submissionHeight) {
@@ -1986,6 +2034,7 @@ class WebClient {
     try {
       // A call joins this client's pending run of this sync only while no
       // other call has been queued on the client since; see `_withStoreLock`.
+      // A worker-only sync still takes its ordered slot before the store lock.
       return await this._withStoreLock(
         async () => {
           if (!this.worker) {
@@ -2000,7 +2049,8 @@ class WebClient {
           );
         },
         methodId,
-        methodId
+        methodId,
+        { workerOnly: true }
       );
     } catch (error) {
       console.error("INDEX.JS: Error in syncState:", error);
@@ -2027,7 +2077,8 @@ class WebClient {
           }
         },
         methodId,
-        methodId
+        methodId,
+        { workerOnly: true }
       );
     } catch (error) {
       console.error("INDEX.JS: Error in syncNoteTransport:", error);
@@ -2058,7 +2109,8 @@ class WebClient {
           );
         },
         methodId,
-        methodId
+        methodId,
+        { workerOnly: true }
       );
     } catch (error) {
       console.error("INDEX.JS: Error in syncChain:", error);
@@ -2162,14 +2214,16 @@ class WebClient {
   }
 
   /**
-   * Runs `step` once every serialized call already on `_wasmCallChain` has
-   * settled, so a wasm client is never freed under a call still using it.
-   * `step` is not counted in `_queuedCalls`, so it ends no sync run's joining
-   * window: a sync called after terminate() is refused by `_withStoreLock`.
+   * Runs teardown after the ordered chain and any admitted reads settle.
    * @private
    */
   _afterQueuedWasmCalls(step) {
-    this._wasmCallChain = this._wasmCallChain.then(step).catch(() => {});
+    this._wasmCallChain = this._wasmCallChain
+      .then(async () => {
+        await Promise.allSettled(this._activeLocalReads ?? []);
+        await step();
+      })
+      .catch(() => {});
   }
 
   /**
