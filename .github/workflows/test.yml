@@ -93,6 +93,7 @@ jobs:
               - 'crates/web-client/rollup.config.js'
               - 'crates/web-client/scripts/wasm-opt-with-masp-strip.sh'
               - 'crates/web-client/scripts/verify-release-mt.mjs'
+              - 'crates/web-client/scripts/verify-sqlite-store.mjs'
               - 'patches/**'
               - 'rust-toolchain.toml'
               - 'scripts/install-binaryen.sh'
@@ -384,6 +385,11 @@ jobs:
         run: pnpm --filter @miden-sdk/miden-sdk run test:install:ci
       - name: Smoke-test the optimized MT artifact
         run: pnpm --filter @miden-sdk/miden-sdk exec node scripts/verify-release-mt.mjs
+      - name: Smoke-test the SQLite store in the optimized MT artifact
+        # The store keeps its files in OPFS through synchronous access
+        # handles, which only a dedicated worker of a real browser has, so
+        # this is the one place it runs end to end.
+        run: pnpm --filter @miden-sdk/miden-sdk exec node scripts/verify-sqlite-store.mjs
       - name: Show sccache stats
         if: always()
         run: sccache --show-stats || true
@@ -1131,6 +1137,8 @@ jobs:
         run: pnpm --filter @miden-sdk/miden-sdk run check:node-reexports
       - name: Run native RPC contract tests
         run: make test-web-client-rpc RUST_TEST_PROFILE=release
+      - name: Run native tests of the browser keystore's SQLite database
+        run: make test-web-client-sqlite-keystore RUST_TEST_PROFILE=release
       - name: Install Playwright (chromium not required, but install pulls deps)
         run: pnpm --filter @miden-sdk/miden-sdk run test:install:ci
       - name: Run nodejs Playwright project
