@@ -1126,6 +1126,33 @@ export class TransactionsResource {
   }
 
   /**
+   * Resubmits an already-proven batch after an indeterminate admission response.
+   *
+   * When `batch` / `submitBatch` fails with
+   * `code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`, the node may or may not have
+   * accepted the batch and nothing was recorded locally. Pass
+   * `error.submission` (in-thread) or `{ submissionId: error.submissionId }`
+   * (worker) to resend the same proven bytes without re-proving. Do not call
+   * `batch` / `submitBatch` again for that attempt: a new prove changes
+   * identities.
+   *
+   * After a successful retry, confirm with {@link waitFor} / `list` for the
+   * transaction ids on the error (`error.transactionIds` or
+   * `submission.transactionIds()`). A retry the node rejects as a conflict
+   * usually means the original attempt landed; sync and inspect those ids.
+   *
+   * @param {object|string} submission - ProvenBatchSubmission, worker
+   *   `submissionId`, or `{ submissionId }` from the unknown-outcome error.
+   * @returns {Promise<{ blockNumber: number }>} The node's chain tip on
+   *   acceptance.
+   */
+  async retryProvenBatch(submission) {
+    this.#client.assertNotTerminated();
+    const blockNumber = await this.#inner.retryProvenBatch(submission);
+    return { blockNumber };
+  }
+
+  /**
    * Lists transactions, optionally narrowed by status or by id.
    *
    * Omitting `query`, or passing a shape this method does not recognise, returns every stored

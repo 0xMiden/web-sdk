@@ -46,6 +46,7 @@ use crate::models::foreign_account::ForeignAccount;
 use crate::models::miden_arrays::{FeltArray, ForeignAccountArray, NoteScriptArray};
 use crate::models::note::{Note, xreserve_burn_items};
 use crate::models::note_script::NoteScript;
+use crate::models::proven_batch_submission::ProvenBatchSubmission;
 use crate::models::proven_transaction::ProvenTransaction;
 use crate::models::provers::TransactionProver;
 use crate::models::transaction_id::TransactionId;
@@ -64,6 +65,8 @@ use crate::platform::{
     maybe_wrap_send,
 };
 use crate::{WebClient, js_error_with_context, js_post_submit_error};
+#[cfg(feature = "browser")]
+use miden_client::transaction::BatchBuilderError;
 
 #[js_export]
 impl WebClient {
@@ -586,7 +589,7 @@ impl WebClient {
             .await
             .map(|block_number| block_number.as_u32())
             .map_err(|err| {
-                let js_error = js_error_with_context(err, "failed to submit transaction batch");
+                let js_error = js_batch_submit_error(err, "failed to submit transaction batch");
                 #[cfg(feature = "browser")]
                 append_get_key_detail(
                     &js_error,
@@ -594,6 +597,25 @@ impl WebClient {
                 );
                 js_error
             })
+    }
+
+    /// Resubmits an already-proven batch after an indeterminate admission response.
+    ///
+    /// Pass the `ProvenBatchSubmission` from a batch submit failure with
+    /// `code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`. The batch is resent without
+    /// executing or proving again. Returns the node's chain tip on acceptance.
+    #[js_export(js_name = "retryProvenBatch")]
+    pub async fn retry_proven_batch(
+        &self,
+        submission: &ProvenBatchSubmission,
+    ) -> Result<u32, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+
+        maybe_wrap_send(Box::pin(client.retry_proven_batch(submission.native())))
+            .await
+            .map(|block_number| block_number.as_u32())
+            .map_err(|err| js_batch_submit_error(err, "failed to retry proven batch"))
     }
 
     /// Executes a transaction specified by the request against the specified account but does not
@@ -1126,6 +1148,54 @@ impl WebClient {
         };
         let auth_args = multisig_auth_args(client, overrides).await?;
         Ok(native_request.with_auth_args(&auth_args).into())
+    }
+}
+
+/// Maps a batch submit/retry failure to a JS error. An indeterminate outcome
+/// attaches a [`ProvenBatchSubmission`] (browser) so callers can
+/// `retryProvenBatch` without re-proving. Node.js prefixes the stable code in
+/// the message; the submission handle is not attachable across napi, so Node
+/// callers that need retry should prefer the browser path or a follow-up that
+/// stashes the submission on the client.
+fn js_batch_submit_error(err: ClientError, context: &str) -> JsErr {
+    #[cfg(feature = "browser")]
+    {
+        let submission = match &err {
+            ClientError::BatchBuilder(BatchBuilderError::BatchSubmissionOutcomeUnknown {
+                submission,
+                ..
+            }) => Some(submission.as_ref().clone()),
+            _ => None,
+        };
+        let js_error = js_error_with_context(err, context);
+        if let Some(native) = submission {
+            let wrapped = ProvenBatchSubmission::from_native(native);
+            let ids: Vec<String> = wrapped
+                .transaction_ids()
+                .into_iter()
+                .map(|id| id.to_hex())
+                .collect();
+            let ids_js = js_sys::Array::new();
+            for id in ids {
+                ids_js.push(&JsValue::from_str(&id));
+            }
+            let _ = Reflect::set(
+                &js_error,
+                &JsValue::from_str("submission"),
+                &JsValue::from(wrapped),
+            );
+            let _ = Reflect::set(
+                &js_error,
+                &JsValue::from_str("transactionIds"),
+                &ids_js.into(),
+            );
+        }
+        return js_error;
+    }
+
+    #[cfg(feature = "nodejs")]
+    {
+        js_error_with_context(err, context)
     }
 }
 

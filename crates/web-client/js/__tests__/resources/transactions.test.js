@@ -2208,6 +2208,37 @@ describe("TransactionsResource", () => {
       expect(update).toBe("storeUpdate");
     });
 
+    it("retryProvenBatch resends a submission without calling submitNewTransactionBatch", async () => {
+      const submission = {
+        transactionCount: () => 2,
+        transactionIds: () => [
+          { toHex: () => "0xaaa" },
+          { toHex: () => "0xbbb" },
+        ],
+      };
+      const { resource, inner } = makeResource({
+        retryProvenBatch: vi.fn().mockResolvedValue(88),
+        submitNewTransactionBatch: vi.fn(),
+        proveTransaction: vi.fn(),
+      });
+      const result = await resource.retryProvenBatch(submission);
+      expect(result).toEqual({ blockNumber: 88 });
+      expect(inner.retryProvenBatch).toHaveBeenCalledTimes(1);
+      expect(inner.retryProvenBatch).toHaveBeenCalledWith(submission);
+      expect(inner.submitNewTransactionBatch).not.toHaveBeenCalled();
+      expect(inner.proveTransaction).not.toHaveBeenCalled();
+    });
+
+    it("retryProvenBatch accepts a worker submissionId handle", async () => {
+      const { resource, inner } = makeResource({
+        retryProvenBatch: vi.fn().mockResolvedValue(91),
+      });
+      await resource.retryProvenBatch({ submissionId: "7" });
+      expect(inner.retryProvenBatch).toHaveBeenCalledWith({
+        submissionId: "7",
+      });
+    });
+
     it("the staged chain drives the same pipeline submit() runs, one liveness check per stage", async () => {
       const { resource, inner, client } = makeResource({
         submitProvenTransaction: vi.fn().mockResolvedValue(77),

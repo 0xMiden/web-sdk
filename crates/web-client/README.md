@@ -952,7 +952,10 @@ await client.sync();
 const txs = await client.transactions.list();
 ```
 
-One more failure mode worth handling: the node can accept a batch and the local store update still fail, which surfaces as a rejected promise whose message contains `batch was accepted at block N but building store updates failed` (or `applying to the store failed`). The node has taken the batch in that case, so retrying would submit it twice; sync instead.
+Two failure modes worth handling after a batch submit:
+
+1. The node can accept a batch and the local store update still fail (`code: "ApplyTransactionAfterSubmitFailed"`, or a message containing `batch was accepted at block N but building store updates failed` / `applying to the store failed`). Do not submit again; sync instead.
+2. The submission can come back without a definite outcome (`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` with `submission` in-thread or `submissionId` under a Web Worker, plus `transactionIds`). Resend with `client.transactions.retryProvenBatch(error.submission ?? { submissionId: error.submissionId })` without calling `batch` / `submitBatch` again. After a successful retry, confirm with `waitFor` / `list` for those ids. A conflict on retry usually means the original attempt landed; sync and inspect the ids.
 
 ### Manual Transaction Lifecycle
 

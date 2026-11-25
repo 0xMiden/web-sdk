@@ -53,6 +53,7 @@ export {
   P2ideNote,
   ProposedBatch,
   ProvenBatch,
+  ProvenBatchSubmission,
   ProvenTransaction,
   ProtocolConfig,
   PswapLineageRecord,

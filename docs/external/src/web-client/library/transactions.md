@@ -158,7 +158,12 @@ await client.sync();
 const txs = await client.transactions.list();
 ```
 
-One failure mode worth handling: the node can accept a batch and the local store update still fail, which surfaces as a rejected promise whose message contains `batch was accepted at block N but building store updates failed` (or `applying to the store failed`). The node has taken the batch in that case, so retrying would submit it twice; sync instead.
+Two failure modes worth handling after a batch submit:
+
+1. The node can accept a batch and the local store update still fail, which surfaces as `code: "ApplyTransactionAfterSubmitFailed"` (or a message containing `batch was accepted at block N but building store updates failed` / `applying to the store failed`). The node has taken the batch in that case, so do not submit it again; sync instead.
+2. The submission can come back without a definite outcome (`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`). Nothing was recorded locally, and the node may or may not have accepted the batch. The error carries `submission` (in-thread) or `submissionId` (Web Worker) plus `transactionIds`. Resend with `client.transactions.retryProvenBatch(error.submission ?? { submissionId: error.submissionId })` without calling `batch` / `submitBatch` again (a new prove changes identities). After a successful retry, confirm with `waitFor` / `list` for those ids. A retry the node rejects as a conflict usually means the original attempt landed; sync and inspect the ids.
+
+Accepting a transaction proved by another participant as a batch member needs a rust-sdk release that exposes `push_proven_transaction` on the pinned client; that half of [#571](https://github.com/0xMiden/web-sdk/issues/571) is a follow-up.
 
 ## Manual Transaction Lifecycle
 
