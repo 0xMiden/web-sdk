@@ -275,7 +275,13 @@ test.describe("compile.component({ package })", () => {
       package: sdk.Package.deserialize(noteBytes),
     });
     expect(noteFromBytes.root().toHex()).toBe(noteFromPackage.root().toHex());
-    expect(noteFromBytes.root().toHex()).not.toBe(txFromBytes.root().toHex());
+    // The same sources compile to the same script roots.
+    const txSourceScript = await client.compile.txScript({ code: txSource });
+    const noteSourceScript = await client.compile.noteScript({
+      code: RECEIVE_NOTE_SCRIPT,
+    });
+    expect(txFromBytes.root().toHex()).toBe(txSourceScript.root().toHex());
+    expect(noteFromBytes.root().toHex()).toBe(noteSourceScript.root().toHex());
   });
 
   test("a package without the script attribute is rejected by txScript and noteScript", async ({
