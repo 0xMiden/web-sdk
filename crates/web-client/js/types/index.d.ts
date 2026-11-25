@@ -168,6 +168,18 @@ export declare class StorageView {
   ): Array<{ key: string; value: string }> | undefined;
 
   /**
+   * Get at most `limit` key-value pairs from a StorageMap slot, starting at
+   * position `offset` in the order `getMapEntries` returns. Only the requested
+   * page is copied into JS; a page shorter than `limit` is the last one.
+   * Returns `undefined` if the slot isn't a map or doesn't exist.
+   */
+  getMapEntriesPage(
+    slotName: string,
+    offset: number,
+    limit: number
+  ): Array<{ root: string; key: string; value: string }> | undefined;
+
+  /**
    * Returns the commitment root of a storage slot.
    * For Value slots: the stored Word. For StorageMap slots: the Merkle root hash.
    * Useful for proofs, state comparison, and syncing.
