@@ -37,16 +37,40 @@ async function openTestDb(version: string = CLIENT_VERSION): Promise<string> {
   return name;
 }
 
-// A client-scope stamp row as an export writes it.
+// Bytes as an export writes them.
+function exportedBytes(bytes: Uint8Array) {
+  return { __type: "Uint8Array", data: uint8ArrayToBase64(bytes) };
+}
+
+// The stamp row of `clientConfig` as an export writes it.
 function stampRow(version: string) {
   return {
-    scope: SETTING_SCOPE_CLIENT,
     key: CLIENT_VERSION_SETTING_KEY,
-    value: {
-      __type: "Uint8Array",
-      data: uint8ArrayToBase64(new TextEncoder().encode(version)),
-    },
+    value: exportedBytes(new TextEncoder().encode(version)),
   };
+}
+
+// A dump as a store before schema version 13 exported it: the settings are rows of one
+// `settings` table, the sync height is one `blockchainCheckpoint` row, and the tables that
+// replaced them are absent.
+async function legacyDump(
+  settings: unknown[],
+  checkpoint = { blockNum: 0, peaks: new Uint8Array() }
+): Promise<string> {
+  const dump = JSON.parse(await exportStore(await openTestDb()));
+  delete dump.clientConfig;
+  delete dump.userSettings;
+  delete dump.pswapLineages;
+  delete dump.chainAnchors;
+  dump.settings = settings;
+  dump.blockchainCheckpoint = [
+    {
+      id: 1,
+      blockNum: checkpoint.blockNum,
+      partialBlockchainPeaks: exportedBytes(checkpoint.peaks),
+    },
+  ];
+  return JSON.stringify(dump);
 }
 
 // ================================================================================================
@@ -240,63 +264,85 @@ describe("forceImportStore", () => {
     expect(codesAfter.map((c) => c.root)).not.toContain("root-b-old");
   });
 
-  it("does not restore the client-scope note transport outbox from an older export", async () => {
-    const dbIdA = await openTestDb();
-    const dbA = getDatabase(dbIdA);
-    await dbA.settings.bulkPut([
-      {
-        scope: SETTING_SCOPE_CLIENT,
-        key: "note_transport_outbox",
-        value: new Uint8Array([1]),
-      },
-      {
-        scope: SETTING_SCOPE_USER,
-        key: "note_transport_outbox",
-        value: new Uint8Array([2]),
-      },
+  it("splits the settings table of a dump taken before schema version 13", async () => {
+    const row = (scope: number, key: string, byte: number) => ({
+      scope,
+      key,
+      value: exportedBytes(new Uint8Array([byte])),
+    });
+    const jsonStr = await legacyDump([
+      { scope: SETTING_SCOPE_CLIENT, ...stampRow("0.17.1") },
+      row(SETTING_SCOPE_CLIENT, "protocol_config:0x01", 1),
+      row(SETTING_SCOPE_CLIENT, "note_transport_outbox", 2),
+      row(SETTING_SCOPE_CLIENT, "rpc_limits", 3),
+      row(SETTING_SCOPE_USER, "note_transport_outbox", 4),
+      row(SETTING_SCOPE_USER, "rpc_limits", 5),
     ]);
-    const jsonStr = await exportStore(dbIdA);
 
     const dbIdB = await openTestDb();
     await forceImportStore(dbIdB, jsonStr);
 
     const dbB = getDatabase(dbIdB);
     expect(
-      await dbB.settings.get([SETTING_SCOPE_CLIENT, "note_transport_outbox"])
-    ).toBe(undefined);
+      (await dbB.userSettings.toArray()).sort((a, b) =>
+        a.key.localeCompare(b.key)
+      )
+    ).toEqual([
+      { key: "note_transport_outbox", value: new Uint8Array([4]) },
+      { key: "rpc_limits", value: new Uint8Array([5]) },
+    ]);
+    // Of the client rows, only the protocol configuration and the stamp are kept, and the
+    // stamp is the running client's.
     expect(
-      (await dbB.settings.get([SETTING_SCOPE_USER, "note_transport_outbox"]))!
-        .value
-    ).toEqual(new Uint8Array([2]));
+      (await dbB.clientConfig.toArray()).sort((a, b) =>
+        a.key.localeCompare(b.key)
+      )
+    ).toEqual([
+      {
+        key: CLIENT_VERSION_SETTING_KEY,
+        value: new TextEncoder().encode(CLIENT_VERSION),
+      },
+      { key: "protocol_config:0x01", value: new Uint8Array([1]) },
+    ]);
   });
 
-  it("does not restore the client-scope RPC limits from an export", async () => {
-    const dbIdA = await openTestDb();
-    await getDatabase(dbIdA).settings.bulkPut([
-      {
-        scope: SETTING_SCOPE_CLIENT,
-        key: "rpc_limits",
-        value: new Uint8Array([1]),
-      },
-      {
-        scope: SETTING_SCOPE_USER,
-        key: "rpc_limits",
-        value: new Uint8Array([2]),
-      },
-    ]);
-    const jsonStr = await exportStore(dbIdA);
-
-    const dbIdB = await openTestDb();
-    await forceImportStore(dbIdB, jsonStr);
-
-    const dbB = getDatabase(dbIdB);
-    expect(await dbB.settings.get([SETTING_SCOPE_CLIENT, "rpc_limits"])).toBe(
-      undefined
+  it("turns the checkpoint of a dump taken before schema version 15 into chain anchors", async () => {
+    const peaks = new Uint8Array([1, 2, 3]);
+    const jsonStr = await legacyDump(
+      [{ scope: SETTING_SCOPE_CLIENT, ...stampRow(CLIENT_VERSION) }],
+      { blockNum: 42, peaks }
     );
-    expect(
-      (await dbB.settings.get([SETTING_SCOPE_USER, "rpc_limits"]))!.value
-    ).toEqual(new Uint8Array([2]));
+
+    const dbIdB = await openTestDb();
+    await forceImportStore(dbIdB, jsonStr);
+
+    expect(await getDatabase(dbIdB).chainAnchors.toArray()).toEqual([
+      { blockNum: 0, peaks: new Uint8Array() },
+      { blockNum: 42, peaks },
+    ]);
   });
+
+  it.each([
+    ["stamped below the baseline", "0.16.2", /older than 0\.17\.0/],
+    ["with no stamp", null, /no client version stamp/],
+  ])(
+    "refuses a dump taken before schema version 13 %s",
+    async (_, stamp, reason) => {
+      const jsonStr = await legacyDump(
+        stamp === null
+          ? []
+          : [{ scope: SETTING_SCOPE_CLIENT, ...stampRow(stamp) }]
+      );
+      const target = await openTestDb();
+      await getDatabase(target).userSettings.put({
+        key: "kept",
+        value: new Uint8Array([9]),
+      });
+
+      await expect(forceImportStore(target, jsonStr)).rejects.toThrow(reason);
+      expect(await getDatabase(target).userSettings.get("kept")).toBeDefined();
+    }
+  );
 
   it("handles double-serialized JSON (string payload)", async () => {
     const dbIdA = await openTestDb();
@@ -323,7 +369,7 @@ describe("forceImportStore", () => {
     // the real (observed) behavior of the source rather than its intent comment.
     const dbId = await openTestDb();
     const payload = JSON.stringify({
-      settings: [stampRow(CLIENT_VERSION)],
+      clientConfig: [stampRow(CLIENT_VERSION)],
       unknownTable: [{ id: 1, value: "x" }],
     });
     await expect(forceImportStore(dbId, payload)).rejects.toThrow(
@@ -354,7 +400,7 @@ describe("forceImportStore", () => {
     });
 
     const payload = JSON.stringify({
-      settings: [stampRow(CLIENT_VERSION)],
+      clientConfig: [stampRow(CLIENT_VERSION)],
       unknownTable: [{ id: 1 }],
     });
 
@@ -412,15 +458,11 @@ describe("forceImportStore refuses a dump the store could not have kept", () => 
       state: new Uint8Array([4]),
     });
     const dump = JSON.parse(await exportStore(source));
-    dump.settings = dump.settings.filter(
-      (row: { scope: number; key: string }) =>
-        !(
-          row.scope === SETTING_SCOPE_CLIENT &&
-          row.key === CLIENT_VERSION_SETTING_KEY
-        )
+    dump.clientConfig = dump.clientConfig.filter(
+      (row: { key: string }) => row.key !== CLIENT_VERSION_SETTING_KEY
     );
     if (stamp !== null) {
-      dump.settings.push(stampRow(stamp));
+      dump.clientConfig.push(stampRow(stamp));
     }
     return JSON.stringify(dump);
   }
@@ -428,14 +470,13 @@ describe("forceImportStore refuses a dump the store could not have kept", () => 
   // The target keeps its own rows and does not gain the dump's.
   async function expectUntouched(dbId: string) {
     const db = getDatabase(dbId);
-    expect(await db.settings.get([SETTING_SCOPE_USER, "kept"])).toBeDefined();
+    expect(await db.userSettings.get("kept")).toBeDefined();
     expect(await db.inputNotes.get("dumped")).toBeUndefined();
   }
 
   async function targetWithRow(): Promise<string> {
     const dbId = await openTestDb();
-    await getDatabase(dbId).settings.put({
-      scope: SETTING_SCOPE_USER,
+    await getDatabase(dbId).userSettings.put({
       key: "kept",
       value: new Uint8Array([9]),
     });
@@ -464,10 +505,9 @@ describe("forceImportStore refuses a dump the store could not have kept", () => 
   });
 
   async function stampOf(dbId: string): Promise<string | undefined> {
-    const row = await getDatabase(dbId).settings.get([
-      SETTING_SCOPE_CLIENT,
-      CLIENT_VERSION_SETTING_KEY,
-    ]);
+    const row = await getDatabase(dbId).clientConfig.get(
+      CLIENT_VERSION_SETTING_KEY
+    );
     return row ? new TextDecoder().decode(row.value) : undefined;
   }
 
@@ -481,8 +521,7 @@ describe("forceImportStore refuses a dump the store could not have kept", () => 
 
   it("compares with the running client when another client left its stamp", async () => {
     const target = await targetWithRow();
-    await getDatabase(target).settings.put({
-      scope: SETTING_SCOPE_CLIENT,
+    await getDatabase(target).clientConfig.put({
       key: CLIENT_VERSION_SETTING_KEY,
       value: new TextEncoder().encode("0.17.1"),
     });

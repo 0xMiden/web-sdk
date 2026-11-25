@@ -15,7 +15,6 @@ use miden_client::note::{
     Nullifier,
 };
 use miden_client::store::{InputNoteRecord, InputNoteState, OutputNoteRecord, StoreError};
-use miden_client::utils::{Deserializable, Serializable};
 use miden_client_proto::{
     decode_output_note_state_without_script,
     decode_unchecked,
@@ -27,6 +26,7 @@ use wasm_bindgen::prelude::wasm_bindgen;
 
 use super::js_bindings::{idxdb_upsert_input_note, idxdb_upsert_note_script};
 use super::{InputNoteIdxdbObject, OutputNoteIdxdbObject};
+use crate::bytes::{FromStoreBytes, ToStoreBytes};
 use crate::note::models::NoteScriptIdxdbObject;
 use crate::promise::await_js_value;
 
@@ -111,7 +111,7 @@ pub(crate) fn serialize_input_note(note: &InputNoteRecord) -> SerializedInputNot
     let attachments = encode(note.attachments());
 
     let details = note.details();
-    let serial_number = details.serial_num().to_bytes();
+    let serial_number = details.serial_num().to_store_bytes();
     let inputs = encode(details.storage());
     let nullifier = note
         .metadata()
@@ -251,7 +251,7 @@ pub fn parse_input_note_idxdb_object(
 
     let assets: NoteAssets = decode_unchecked(&assets)?;
 
-    let serial_number = Word::read_from_bytes(&serial_number)?;
+    let serial_number = Word::from_store_bytes(&serial_number)?;
     let script: NoteScript = decode_unchecked(&serialized_note_script)?;
     let inputs: NoteStorage = decode_unchecked(&inputs)?;
     let recipient = NoteRecipient::new(serial_number, script, inputs);

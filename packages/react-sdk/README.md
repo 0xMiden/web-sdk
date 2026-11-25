@@ -161,12 +161,6 @@ function App() {
         // network inferred from rpcUrl; a custom URL naming no network is mainnet.
         // network: 'mainnet',
 
-        // Optional: the faucet the chain mints its fee asset from, bech32 or hex.
-        // The client receives the chain's protocol configuration, which names the
-        // fee asset, from the node when it syncs; this only sets what
-        // `client.feeFaucetId()` reports before that first sync.
-        feeFaucetId: FEE_FAUCET,
-
         // Auto-sync interval in milliseconds (default: 15000)
         // Set to 0 to disable auto-sync
         autoSyncInterval: 15000,

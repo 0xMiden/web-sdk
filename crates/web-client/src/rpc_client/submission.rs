@@ -196,10 +196,7 @@ impl RpcClient {
             &transaction_inputs.0,
         )
         .map_err(|err| js_error_with_context(err, "failed to seal transaction inputs"))?;
-        self.inner
-            .set_genesis_commitment(encryption_key.1)
-            .await
-            .map_err(|err| js_error_with_context(err, "failed to configure RPC genesis"))?;
+        self.configure_genesis(encryption_key.1).await?;
         self.inner
             .submit_proven_transaction(&proven, sealed)
             .await
@@ -249,10 +246,7 @@ impl RpcClient {
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(|err| js_error_with_context(err, "failed to seal batch transaction inputs"))?;
-        self.inner
-            .set_genesis_commitment(encryption_key.1)
-            .await
-            .map_err(|err| js_error_with_context(err, "failed to configure RPC genesis"))?;
+        self.configure_genesis(encryption_key.1).await?;
         self.inner
             .submit_proven_batch(&proven, &proposed_batch.0, sealed)
             .await
@@ -435,10 +429,7 @@ mod tests {
         )
         .unwrap();
         let transport = Arc::new(MockRpcApi::new(chain));
-        let rpc = RpcClient {
-            inner: transport.clone(),
-            endpoint: String::new(),
-        };
+        let rpc = RpcClient::from_transport(transport.clone(), String::new());
         (rpc, transport, ProposedBatch(proposal), ProvenBatch(proven), inputs)
     }
 

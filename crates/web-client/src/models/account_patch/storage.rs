@@ -6,11 +6,12 @@ use miden_client::account::{
     StorageSlotName,
     StorageValuePatch as NativeStorageValuePatch,
 };
+use miden_objects::proto;
 use miden_protocol::account::StoragePatchOperation as NativeStoragePatchOperation;
 
 use crate::models::word::Word;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::utils::{decode_message, encode_message};
 
 /// Absolute updates to named account storage slots.
 #[derive(Clone)]
@@ -19,14 +20,16 @@ pub struct AccountStoragePatch(NativeAccountStoragePatch);
 
 #[js_export]
 impl AccountStoragePatch {
-    /// Serializes the storage patch into bytes.
+    /// Serializes the storage patch into the bytes of its `miden-objects` protobuf message.
     pub fn serialize(&self) -> JsBytes {
-        serialize_to_bytes(&self.0)
+        encode_message(&proto::account::AccountStoragePatch::from(&self.0))
     }
 
-    /// Deserializes a storage patch from bytes.
+    /// Deserializes a storage patch from the bytes that [`Self::serialize`] returns.
+    ///
+    /// Bytes that an earlier SDK version wrote with the Winterfell encoding do not decode.
     pub fn deserialize(bytes: JsBytes) -> Result<AccountStoragePatch, JsErr> {
-        deserialize_from_bytes::<NativeAccountStoragePatch>(&bytes).map(Self)
+        decode_message::<proto::account::AccountStoragePatch>(&bytes).map(Self)
     }
 
     /// Returns true if no storage slots are changed.

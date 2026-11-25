@@ -16,7 +16,7 @@ use crate::models::note::Note;
 use crate::models::note_script::NoteScript;
 use crate::models::word::Word;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::utils::{decode_proto, encode_proto};
 
 pub mod note_and_args;
 pub mod note_details_and_tag;
@@ -38,20 +38,20 @@ pub struct TransactionRequest(NativeTransactionRequest);
 impl TransactionRequest {
     /// Serializes the transaction request into bytes.
     pub fn serialize(&self) -> JsBytes {
-        serialize_to_bytes(&self.0)
+        encode_proto(&self.0)
     }
 
     /// Deserializes a transaction request from bytes.
     pub fn deserialize(bytes: JsBytes) -> Result<TransactionRequest, JsErr> {
-        deserialize_from_bytes::<NativeTransactionRequest>(&bytes).map(TransactionRequest)
+        decode_proto::<NativeTransactionRequest>(&bytes).map(TransactionRequest)
     }
 
     /// Returns whether `other` has the same fields as this request.
     ///
-    /// This compares the request's structure, not its serialized bytes. A `MerkleStore` serializes
-    /// the entries beyond its empty-subtree defaults in hash-map order, so two requests with every
-    /// field equal can serialize differently, for example after a `deserialize`. Use this to check
-    /// that a request kept its fields through a copy or a transport.
+    /// This compares the request's structure, not its serialized bytes. Bytes that list the same
+    /// fields or Merkle store nodes in another order decode to an equal request, so two requests
+    /// with every field equal can differ in bytes. Use this to check that a request kept its
+    /// fields through a copy or a transport.
     pub fn equals(&self, other: &TransactionRequest) -> bool {
         self.0 == other.0
     }

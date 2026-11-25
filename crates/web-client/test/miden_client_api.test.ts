@@ -1675,11 +1675,11 @@ nodeTest.describe("MidenClient API - Integration", () => {
     }
   );
 
-  // The client gets the chain's protocol configuration from the node when it
-  // syncs, so a client created without `feeFaucetId` executes like any other
-  // and reports the chain's own faucet once synced.
+  // Creating the client stores the genesis block and the protocol
+  // configuration it commits to, so a client created without `feeFaucetId`
+  // reports the chain's own faucet before its first sync and after it.
   nodeTest(
-    "a client without a fee faucet syncs the protocol configuration and reports the chain's faucet",
+    "a client without a fee faucet reports the chain's faucet before and after syncing",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
         const client = await window.MidenClient.create({
@@ -1687,12 +1687,7 @@ nodeTest.describe("MidenClient API - Integration", () => {
           storeName: "miden_client_api_synced_fee_faucet_test",
         });
 
-        let beforeSync = null;
-        try {
-          await client.feeFaucetId();
-        } catch (err) {
-          beforeSync = String(err?.message ?? err);
-        }
+        const beforeSync = (await client.feeFaucetId()).toString();
 
         await client.sync();
 
@@ -1711,32 +1706,22 @@ nodeTest.describe("MidenClient API - Integration", () => {
         };
       });
 
-      // Before the first sync nothing names the faucet, and the error says what
-      // to do about it.
-      expect(result.beforeSync).toContain("feeFaucetId");
+      expect(result.beforeSync).toBe(result.configured);
       expect(result.reported).toBe(result.configured);
     }
   );
 
-  // The read follows the network the client talks to: nothing before the first
-  // sync, then the configuration that node's blocks commit to.
+  // The read follows the network the client talks to: creation stores the
+  // genesis block and the configuration it commits to, and each sync stores the
+  // configuration of the blocks it reaches.
   nodeTest(
-    "protocolConfig rejects before the first sync and reports the node's fee faucet after it",
+    "protocolConfig reports the node's fee faucet from creation and after a sync",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
         const client = await window.MidenClient.create({
           rpcUrl: window.rpcUrl,
           storeName: "miden_client_api_protocol_config_test",
         });
-
-        let beforeSync = null;
-        try {
-          await client.protocolConfig();
-        } catch (err) {
-          beforeSync = String(err?.message ?? err);
-        }
-
-        await client.sync();
 
         const canonical = (id) => {
           try {
@@ -1746,18 +1731,22 @@ nodeTest.describe("MidenClient API - Integration", () => {
           }
         };
 
-        const config = await client.protocolConfig();
+        const beforeSync = (await client.protocolConfig())
+          .feeFaucetId()
+          .toString();
+        await client.sync();
+        const afterSync = (await client.protocolConfig())
+          .feeFaucetId()
+          .toString();
         return {
-          beforeSync,
           configured: canonical(window.feeFaucetId),
-          reported: config.feeFaucetId().toString(),
+          beforeSync,
+          afterSync,
         };
       });
 
-      expect(result.beforeSync).toContain(
-        "the network's protocol configuration is not known yet"
-      );
-      expect(result.reported).toBe(result.configured);
+      expect(result.beforeSync).toBe(result.configured);
+      expect(result.afterSync).toBe(result.configured);
     }
   );
 

@@ -2,6 +2,10 @@ import Dexie from "dexie";
 import * as semver from "semver";
 import { logWebStoreError } from "./utils.js";
 export const CLIENT_VERSION_SETTING_KEY = "clientVersion";
+/** Prefix of the `clientConfig` key of a protocol configuration. */
+export const PROTOCOL_CONFIG_KEY_PREFIX = "protocol_config:";
+/** Mirrors `PswapLineageState::Active`, originally defined in miden-client. */
+export const PSWAP_STATE_ACTIVE = 0;
 /**
  * The threshold of the v8 cutover: a store stamped below it, a prerelease of it included, or not
  * stamped at all holds data from networks that no longer exist, so that upgrade clears it once.
@@ -128,27 +132,69 @@ var Table;
     Table["ForeignAccountCode"] = "foreignAccountCode";
     Table["Settings"] = "settings";
     Table["AccountWitnesses"] = "accountWitnesses";
+    Table["ClientConfig"] = "clientConfig";
+    Table["UserSettings"] = "userSettings";
+    Table["PswapLineages"] = "pswapLineages";
+    Table["ChainAnchors"] = "chainAnchors";
 })(Table || (Table = {}));
-/** Mirrors `SettingScope`, whose discriminants are part of a store's schema. */
+/** Scope of a row of the `settings` table, which version 14 removes. The versions before it read
+ *  it, and so does the import of a dump that still has the table. */
 export const SETTING_SCOPE_CLIENT = 0;
 export const SETTING_SCOPE_USER = 1;
 function indexes(...items) {
     return items.join(",");
 }
-// This store is the client, so its own bookkeeping belongs to the `Client` scope, which the
+// The client version is client bookkeeping, so it lives in `clientConfig`, which the
 // user-facing settings API never reaches.
-export async function readClientVersion(settings) {
-    const record = await settings.get([
-        SETTING_SCOPE_CLIENT,
-        CLIENT_VERSION_SETTING_KEY,
-    ]);
+export async function readClientVersion(clientConfig) {
+    const record = await clientConfig.get(CLIENT_VERSION_SETTING_KEY);
     return record ? textDecoder.decode(record.value) : null;
 }
-// What a store holds before its first sync: the chain checkpoint at the genesis block.
+/**
+ * Splits the rows of the `settings` table, which version 14 removes, into the rows of the tables
+ * that replace it. The user rows go to `userSettings`. Of the client rows, only the client
+ * version and the protocol configurations go to `clientConfig`.
+ */
+export function splitLegacySettings(rows) {
+    const keyValue = ({ key, value }) => ({ key, value });
+    return {
+        userSettings: rows
+            .filter((row) => row.scope === SETTING_SCOPE_USER)
+            .map(keyValue),
+        clientConfig: rows
+            .filter((row) => row.scope === SETTING_SCOPE_CLIENT &&
+            (row.key === CLIENT_VERSION_SETTING_KEY ||
+                row.key.startsWith(PROTOCOL_CONFIG_KEY_PREFIX)))
+            .map(keyValue),
+    };
+}
+// What a store held before its first sync while `blockchainCheckpoint` existed: the chain
+// checkpoint at the genesis block. Every cutover so far runs before version 15, which moves the
+// row to `chainAnchors`.
 function seedFreshStore(tx) {
     return tx
         .table(Table.BlockchainCheckpoint)
         .put({ id: 1, blockNum: 0, partialBlockchainPeaks: new Uint8Array() });
+}
+/**
+ * The rows of `chainAnchors` for a store whose `blockchainCheckpoint` table, which version 16
+ * removes, held `checkpoint`: the genesis anchor and the anchor of the checkpoint.
+ */
+export function anchorsFromCheckpoint(checkpoint) {
+    const anchors = [{ blockNum: 0, peaks: new Uint8Array() }];
+    if (checkpoint) {
+        const anchor = {
+            blockNum: checkpoint.blockNum,
+            peaks: checkpoint.partialBlockchainPeaks,
+        };
+        if (anchor.blockNum === 0) {
+            anchors[0] = anchor;
+        }
+        else {
+            anchors.push(anchor);
+        }
+    }
+    return anchors;
 }
 // The upgrade of a cutover version. A store stamped below `threshold` (a prerelease of it
 // included) or not stamped has every table cleared and is seeded as a fresh store; a stamp that
@@ -157,7 +203,11 @@ function seedFreshStore(tx) {
 // meanwhile waits and then finds it upgraded. A fresh database runs no upgrade callbacks.
 function clearStoreStampedBelow(threshold) {
     return async (tx) => {
-        const stamp = await readClientVersion(tx.table(Table.Settings));
+        // Every cutover so far runs before version 13, while the stamp is a client row of `settings`.
+        const record = await tx
+            .table(Table.Settings)
+            .get([SETTING_SCOPE_CLIENT, CLIENT_VERSION_SETTING_KEY]);
+        const stamp = record ? textDecoder.decode(record.value) : null;
         if (stamp !== null &&
             !(semver.valid(stamp) && semver.lt(stamp, threshold))) {
             return;
@@ -233,13 +283,15 @@ export class MidenDatabase {
     inputNotes;
     outputNotes;
     notesScripts;
-    blockchainCheckpoint;
+    chainAnchors;
     blockHeaders;
     partialBlockchainNodes;
     tags;
     foreignAccountCode;
-    settings;
     accountWitnesses;
+    clientConfig;
+    userSettings;
+    pswapLineages;
     constructor(network) {
         this.dexie = new Dexie(network);
         // --- Schema versioning ---
@@ -390,6 +442,41 @@ export class MidenDatabase {
             [Table.ForeignAccountCode]: indexes("accountId", "codeRoot"),
             [Table.Tags]: indexes("id++", "tag", "sourceNoteId", "sourceAccountId", "[tag+sourceNoteId+sourceAccountId]"),
         });
+        // v13 (first miden-client after 0.18): split `settings`, as SQLite migration 5 does. The user
+        // rows move to `userSettings`. Of the client rows, the protocol configurations and the client
+        // version move to `clientConfig`. The client fetches or rebuilds the other client rows again.
+        // The PSWAP rows are dropped, as SQLite migration 4 drops them. PSWAP lineages get a store of
+        // their own.
+        this.dexie
+            .version(13)
+            .stores({
+            [Table.ClientConfig]: indexes("key"),
+            [Table.UserSettings]: indexes("key"),
+            [Table.PswapLineages]: indexes("orderId", "creatorAccountId", "[state+currentTipNoteId]"),
+        })
+            .upgrade(async (tx) => {
+            const rows = (await tx.table(Table.Settings).toArray());
+            const { userSettings, clientConfig } = splitLegacySettings(rows);
+            await tx.userSettings.bulkPut(userSettings);
+            await tx.clientConfig.bulkPut(clientConfig);
+        });
+        // v14: drop `settings`, after v13 copied the rows that it keeps.
+        this.dexie.version(14).stores({ [Table.Settings]: null });
+        // v15: keep the chain MMR peaks of every sync height, as the SQLite
+        // `chain_anchors` table does. `blockchainCheckpoint` held one row with the peaks at the
+        // current sync height. That row moves to `chainAnchors`, keyed by block number, next to the
+        // genesis row that every store has. The sync height is the highest block number in the table.
+        this.dexie
+            .version(15)
+            .stores({ [Table.ChainAnchors]: indexes("blockNum") })
+            .upgrade(async (tx) => {
+            const checkpoint = (await tx
+                .table(Table.BlockchainCheckpoint)
+                .get(1));
+            await tx.chainAnchors.bulkPut(anchorsFromCheckpoint(checkpoint));
+        });
+        // v16: drop `blockchainCheckpoint`, after v15 moved its row.
+        this.dexie.version(16).stores({ [Table.BlockchainCheckpoint]: null });
         this.accountCodes = this.dexie.table(Table.AccountCode);
         this.latestAccountStorages = this.dexie.table(Table.LatestAccountStorage);
         this.historicalAccountStorages = this.dexie.table(Table.HistoricalAccountStorage);
@@ -407,16 +494,19 @@ export class MidenDatabase {
         this.inputNotes = this.dexie.table(Table.InputNotes);
         this.outputNotes = this.dexie.table(Table.OutputNotes);
         this.notesScripts = this.dexie.table(Table.NotesScripts);
-        this.blockchainCheckpoint = this.dexie.table(Table.BlockchainCheckpoint);
+        this.chainAnchors = this.dexie.table(Table.ChainAnchors);
         this.blockHeaders = this.dexie.table(Table.BlockHeaders);
         this.partialBlockchainNodes = this.dexie.table(Table.PartialBlockchainNodes);
         this.tags = this.dexie.table(Table.Tags);
         this.foreignAccountCode = this.dexie.table(Table.ForeignAccountCode);
-        this.settings = this.dexie.table(Table.Settings);
         this.accountWitnesses = this.dexie.table(Table.AccountWitnesses);
+        this.clientConfig = this.dexie.table(Table.ClientConfig);
+        this.userSettings = this.dexie.table(Table.UserSettings);
+        this.pswapLineages = this.dexie.table(Table.PswapLineages);
         this.dexie.on("populate", (tx) => {
-            seedFreshStore(tx)
-                /* v8 ignore next 2 — populate blockchainCheckpoint failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
+            tx.chainAnchors
+                .put({ blockNum: 0, peaks: new Uint8Array() })
+                /* v8 ignore next 2: populate chainAnchors failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
                 .catch((err) => logWebStoreError(err, "Failed to populate DB"));
         });
         // `open` refuses a newer store before Dexie touches it where `indexedDB.databases()` exists.
@@ -480,13 +570,12 @@ export class MidenDatabase {
             console.warn("openDatabase called without a client version; not stamping the store.");
             return;
         }
-        if ((await readClientVersion(this.settings)) !== clientVersion) {
+        if ((await readClientVersion(this.clientConfig)) !== clientVersion) {
             await this.persistClientVersion(clientVersion);
         }
     }
     async persistClientVersion(clientVersion) {
-        await this.settings.put({
-            scope: SETTING_SCOPE_CLIENT,
+        await this.clientConfig.put({
             key: CLIENT_VERSION_SETTING_KEY,
             value: textEncoder.encode(clientVersion),
         });

@@ -7,7 +7,7 @@ use super::word::Word;
 /// The rarely changing parameters of a network, such as the asset fees are paid in.
 ///
 /// Block headers carry only its commitment; the client fetches the configuration itself from the
-/// node when it syncs.
+/// node, for the genesis block when it is created and for later blocks when it syncs.
 #[derive(Clone)]
 #[js_export]
 pub struct ProtocolConfig(NativeProtocolConfig);

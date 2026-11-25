@@ -2388,18 +2388,19 @@ dependencies = [
 
 [[package]]
 name = "miden-client"
-version = "0.18.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bb62bb18bf29c59d23c4ecd54e8ab6b336379f2bf1e01bb39a429b52a078a8b"
+version = "0.18.0"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=37444d5b6389ba8dd62564b0e501529a24f78a21#37444d5b6389ba8dd62564b0e501529a24f78a21"
 dependencies = [
  "anyhow",
  "async-trait",
- "chrono",
  "futures",
  "getrandom 0.3.4",
  "gloo-timers",
  "miden-agglayer",
  "miden-assembly-syntax",
+ "miden-client-core",
+ "miden-client-grpc",
+ "miden-client-proto",
  "miden-node-proto-build",
  "miden-objects",
  "miden-processor",
@@ -2429,12 +2430,45 @@ dependencies = [
 ]
 
 [[package]]
-name = "miden-client-proto"
-version = "0.18.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77f8b0f4a79a41288678a1ac04fa9758213c0778925c53dbbf0b3b1dd8bd1404"
+name = "miden-client-core"
+version = "0.18.0"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=37444d5b6389ba8dd62564b0e501529a24f78a21#37444d5b6389ba8dd62564b0e501529a24f78a21"
 dependencies = [
- "miden-client",
+ "async-trait",
+ "chrono",
+ "miden-objects",
+ "miden-protocol",
+ "miden-standards",
+ "thiserror",
+]
+
+[[package]]
+name = "miden-client-grpc"
+version = "0.18.0"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=37444d5b6389ba8dd62564b0e501529a24f78a21#37444d5b6389ba8dd62564b0e501529a24f78a21"
+dependencies = [
+ "async-trait",
+ "gloo-timers",
+ "miden-client-core",
+ "miden-node-proto-build",
+ "miden-objects",
+ "miden-protocol",
+ "miette",
+ "prost",
+ "tokio",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
+ "tonic-web-wasm-client",
+ "tracing",
+]
+
+[[package]]
+name = "miden-client-proto"
+version = "0.18.0"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=37444d5b6389ba8dd62564b0e501529a24f78a21#37444d5b6389ba8dd62564b0e501529a24f78a21"
+dependencies = [
+ "miden-client-core",
  "miden-objects",
  "miden-protocol",
  "prost",
@@ -2445,16 +2479,15 @@ dependencies = [
 
 [[package]]
 name = "miden-client-sqlite-store"
-version = "0.18.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f06053d311d54d950857ed5af75d3cf17105cbf4aa1393f8a566407f9077a600"
+version = "0.18.0"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=37444d5b6389ba8dd62564b0e501529a24f78a21#37444d5b6389ba8dd62564b0e501529a24f78a21"
 dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
  "deadpool",
  "deadpool-sync",
- "miden-client",
+ "miden-client-core",
  "miden-client-proto",
  "miden-protocol",
  "rusqlite",
@@ -2476,6 +2509,8 @@ dependencies = [
  "js-export-macro",
  "js-sys",
  "miden-client",
+ "miden-client-core",
+ "miden-client-proto",
  "miden-client-sqlite-store",
  "miden-idxdb-store",
  "miden-objects",
@@ -2484,6 +2519,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "prost",
  "rand 0.10.2",
  "rayon",
  "serde",
@@ -2670,7 +2706,9 @@ dependencies = [
  "base64",
  "chrono",
  "miden-client",
+ "miden-client-core",
  "miden-client-proto",
+ "miden-protocol",
  "miette",
  "serde",
  "serde-wasm-bindgen",
@@ -2775,6 +2813,7 @@ name = "miden-mobile-prover"
 version = "0.18.0"
 dependencies = [
  "miden-client",
+ "miden-protocol",
 ]
 
 [[package]]

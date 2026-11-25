@@ -87,7 +87,7 @@ async fn registration_sends_genesis_without_a_store_or_prior_submission() {
 async fn registration_preserves_an_already_configured_genesis() {
     let (rpc, mut requests, server) = registration_server(vec![]).await;
     let genesis = miden_client::Word::from([11_u32; 4]);
-    rpc.inner.set_genesis_commitment(genesis).await.unwrap();
+    rpc.configure_genesis(genesis).await.unwrap();
     let account = AccountId::from_hex("0xc6da5c4573a3731151114a1aa8fe8e".into()).unwrap();
     rpc.register_account(&account, "invitation-code".into()).await.unwrap();
     server.abort();

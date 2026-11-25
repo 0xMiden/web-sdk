@@ -28,7 +28,7 @@ use miden_client::note_transport::NoteTransportClient;
 use miden_client::note_transport::grpc::GrpcNoteTransportClient;
 #[cfg(feature = "browser")]
 use miden_client::rpc::RpcError;
-use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, VerifyingRpcClient};
+use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient};
 use miden_client::store::Store;
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::MockNoteTransportApi;
@@ -262,8 +262,8 @@ pub struct WebClient {
     inner: AsyncCell<Option<Client<ClientAuth>>>,
     #[cfg(feature = "browser")]
     sync_height_store: std::cell::RefCell<Option<Arc<dyn Store>>>,
-    /// Fee faucet the caller declared at creation, or the mock chain's own. What `feeFaucetId()`
-    /// reports until the first sync stores the protocol configuration the chain commits to.
+    /// Fee faucet the caller declared at creation, or the mock chain's own. `feeFaucetId()`
+    /// reports it only when the store has no protocol configuration for the sync height.
     fee_faucet: AsyncCell<Option<NativeAccountId>>,
     mock_rpc_api: AsyncCell<Option<Arc<MockRpcApi>>>,
     mock_note_transport_api: AsyncCell<Option<Arc<MockNoteTransportApi>>>,
@@ -329,10 +329,11 @@ impl WebClient {
     ///
     /// Before 0.17 any block header carried it, so a consumer could discover the chain's native
     /// asset by reading one. The header no longer does: the fee asset lives in the protocol
-    /// configuration, which the client receives from the node when it syncs. After the first sync
-    /// this reports the faucet named by the configuration the block at the sync height commits
-    /// to. Before it, this falls back to the `feeFaucetId` the client was created with, or, for a
-    /// mock client, the one the mock chain itself commits to, and fails when neither is set.
+    /// configuration. Creating the client stores the configuration the genesis block commits to,
+    /// and syncs store the one later blocks commit to, so this reports the faucet named by the
+    /// configuration the block at the sync height commits to. Only when the store has no
+    /// configuration for that block does this fall back to the `feeFaucetId` the client was
+    /// created with, or, for a mock client, the mock chain's own, and fail when neither is set.
     #[js_export(js_name = "feeFaucetId")]
     pub async fn fee_faucet_id(&self) -> Result<models::account_id::AccountId, JsErr> {
         self.known_fee_faucet_id().await?.ok_or_else(|| {
@@ -346,8 +347,10 @@ impl WebClient {
     /// Returns the protocol configuration of the connected network: its fee asset and the
     /// commitment that block headers carry for it.
     ///
-    /// The client receives the configuration from the node when it syncs, so this rejects until
-    /// the first sync has stored it. Mock clients are seeded with their chain's configuration.
+    /// Creating the client stores the configuration the genesis block commits to, and syncs store
+    /// the one later blocks commit to, so this reports the configuration of the block at the sync
+    /// height from creation on. It rejects only when the store has no configuration for that
+    /// block.
     #[js_export(js_name = "protocolConfig")]
     pub async fn protocol_config(&self) -> Result<models::protocol_config::ProtocolConfig, JsErr> {
         let config = self.synced_protocol_config().await?;
@@ -466,9 +469,9 @@ impl WebClient {
     /// * `store_name`: Optional name for the web store. If `None`, the store name defaults to
     ///   `MidenClientDB_{network_id}`, where `network_id` is derived from the `node_url`.
     ///   Explicitly setting this allows for creating multiple isolated clients.
-    /// * `fee_faucet_id`: Optional fee faucet of the chain, as a bech32 address or a hex account
-    ///   ID. Only what `feeFaucetId()` reports before the first sync delivers the protocol
-    ///   configuration from the node; execution does not need it.
+    /// * `fee_faucet_id`: Deprecated. Optional fee faucet of the chain, as a bech32 address or a
+    ///   hex account ID. Creating the client stores the chain's protocol configuration, which names
+    ///   the fee faucet, so `feeFaucetId()` reports the chain's own and execution does not need it.
     /// * `note_transport_max_retries`: Optional retries of a private note send after a transient
     ///   transport failure. `None` keeps the transport's default.
     /// * `note_transport_retry_interval_ms`: Optional delay before the first such retry, doubling
@@ -487,8 +490,7 @@ impl WebClient {
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_endpoint(node_url)?;
 
-        let web_rpc_client =
-            Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
+        let web_rpc_client = Arc::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS));
 
         let note_transport_client = node_note_transport_url.map(|url| {
             build_note_transport_client(
@@ -542,9 +544,9 @@ impl WebClient {
     /// * `store_name`: Optional name for the web store. If `None`, the store name defaults to
     ///   `MidenClientDB_{network_id}`, where `network_id` is derived from the `node_url`.
     ///   Explicitly setting this allows for creating multiple isolated clients.
-    /// * `fee_faucet_id`: Optional fee faucet of the chain, as a bech32 address or a hex account
-    ///   ID. Only what `feeFaucetId()` reports before the first sync delivers the protocol
-    ///   configuration from the node; execution does not need it.
+    /// * `fee_faucet_id`: Deprecated. Optional fee faucet of the chain, as a bech32 address or a
+    ///   hex account ID. Creating the client stores the chain's protocol configuration, which names
+    ///   the fee faucet, so `feeFaucetId()` reports the chain's own and execution does not need it.
     /// * `get_key_cb`: Callback to retrieve the secret key bytes for a given public key.
     /// * `insert_key_cb`: Callback to persist a secret key.
     /// * `sign_cb`: Callback to produce serialized signature bytes for the provided inputs.
@@ -569,8 +571,7 @@ impl WebClient {
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_endpoint(node_url)?;
 
-        let web_rpc_client =
-            Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
+        let web_rpc_client = Arc::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS));
 
         let note_transport_client = node_note_transport_url.map(|url| {
             build_note_transport_client(
@@ -673,9 +674,9 @@ impl WebClient {
     ///   reproducible too. Any other length is rejected.
     /// * `db_path`: Path to the SQLite database file.
     /// * `keystore_path`: Path to the directory for storing keys.
-    /// * `fee_faucet_id`: Optional fee faucet of the chain, as a bech32 address or a hex account
-    ///   ID. Only what `feeFaucetId()` reports before the first sync delivers the protocol
-    ///   configuration from the node; execution does not need it.
+    /// * `fee_faucet_id`: Deprecated. Optional fee faucet of the chain, as a bech32 address or a
+    ///   hex account ID. Creating the client stores the chain's protocol configuration, which names
+    ///   the fee faucet, so `feeFaucetId()` reports the chain's own and execution does not need it.
     /// * `note_transport_max_retries`: Optional retries of a private note send after a transient
     ///   transport failure. `None` keeps the transport's default.
     /// * `note_transport_retry_interval_ms`: Optional delay before the first such retry, doubling
@@ -697,8 +698,7 @@ impl WebClient {
             Endpoint::try_from(url.as_str()).map_err(|_| from_str_err("Invalid node URL"))
         })?;
 
-        let rpc_client =
-            Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
+        let rpc_client = Arc::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS));
 
         let note_transport_client = node_note_transport_url.map(|url| {
             build_note_transport_client(
@@ -1078,7 +1078,12 @@ fn registration_code(err: &RpcError) -> Option<&'static str> {
 mod post_submit_code_tests {
     use miden_client::block::BlockNumber;
     use miden_client::store::StoreError;
-    use miden_client::transaction::{BatchBuilderError, TransactionStoreUpdateError};
+    use miden_client::transaction::{
+        BatchBuilderError,
+        BatchStoreUpdate,
+        TransactionStoreUpdateError,
+    };
+    use miden_client_core::store::NoteUpdates;
 
     use super::*;
 
@@ -1093,6 +1098,12 @@ mod post_submit_code_tests {
     fn batch_apply_failed() -> ClientError {
         ClientError::BatchBuilder(BatchBuilderError::BatchSubmittedButApplyFailed {
             block_num: BlockNumber::from(7u32),
+            pending_update: Box::new(BatchStoreUpdate::new(
+                Vec::new(),
+                BlockNumber::from(7u32),
+                NoteUpdates::default(),
+                Vec::new(),
+            )),
             source: store_error(),
         })
     }
@@ -1198,9 +1209,12 @@ mod post_submit_code_tests {
         );
 
         let mut inner = client.get_mut_inner().await;
-        let mut batch = inner.as_mut().unwrap().new_transaction_batch();
-        Box::pin(batch.push(faucet.id().into(), (&request).into())).await.unwrap();
-        let err = Box::pin(batch.submit()).await.unwrap_err();
+        let native = inner.as_mut().unwrap();
+        let mut batch = native.new_transaction_batch();
+        Box::pin(native.push_to_batch(&mut batch, faucet.id().into(), (&request).into()))
+            .await
+            .unwrap();
+        let err = Box::pin(native.submit_transaction_batch(batch)).await.unwrap_err();
 
         assert_eq!(post_submit_code(&err), None);
         assert_eq!(batch_outcome_unknown_code(&err), Some(BATCH_SUBMISSION_OUTCOME_UNKNOWN));

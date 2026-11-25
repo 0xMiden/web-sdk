@@ -13,7 +13,7 @@ import {
 } from "./schema.js";
 import { uniqueDbName } from "./test-utils.js";
 
-// The schema the version chain reaches at v6 and keeps through v8.
+// The schema the version chain reaches at v6 and keeps through v9.
 const V6_STORES: Record<string, string> = {
   ...V1_STORES,
   inputNotes:
@@ -272,20 +272,8 @@ describe("MidenDatabase migrations", () => {
       settings: (settings) => settings.toArray(),
     });
     expect(seen.settings).toEqual([]);
-
-    // The same name in each scope is now a separate row.
-    await mdb.settings.bulkPut([
-      {
-        scope: SETTING_SCOPE_CLIENT,
-        key: "shared",
-        value: new Uint8Array([1]),
-      },
-      { scope: SETTING_SCOPE_USER, key: "shared", value: new Uint8Array([2]) },
-    ]);
-    const clientRow = await mdb.settings.get([SETTING_SCOPE_CLIENT, "shared"]);
-    expect(clientRow!.value).toEqual(new Uint8Array([1]));
-    const userRow = await mdb.settings.get([SETTING_SCOPE_USER, "shared"]);
-    expect(userRow!.value).toEqual(new Uint8Array([2]));
+    expect(await mdb.userSettings.count()).toBe(0);
+    expect(await mdb.clientConfig.count()).toBe(0);
   });
 
   // v6: account witness registry. A null witness is a registered account the sync has not
@@ -341,19 +329,13 @@ describe("MidenDatabase migrations", () => {
     const mdb = trackMidenDb(new MidenDatabase(name));
     expect(await mdb.open("0.17.2")).toBe(true);
 
-    expect(await mdb.settings.get([SETTING_SCOPE_CLIENT, outboxKey])).toBe(
-      undefined
-    );
-    expect(
-      (await mdb.settings.get([SETTING_SCOPE_USER, outboxKey]))!.value
-    ).toEqual(new Uint8Array([2]));
-    expect(
-      (await mdb.settings.get([
-        SETTING_SCOPE_CLIENT,
-        "note_transport_cursors",
-      ]))!.value
-    ).toEqual(new Uint8Array([3]));
-    expect(await mdb.settings.count()).toBe(3);
+    // The v13 split then keeps the user row and, of the client rows, only the stamp.
+    expect(await mdb.userSettings.toArray()).toEqual([
+      { key: outboxKey, value: new Uint8Array([2]) },
+    ]);
+    expect(await mdb.clientConfig.toCollection().primaryKeys()).toEqual([
+      CLIENT_VERSION_SETTING_KEY,
+    ]);
   });
 
   it("v9 migration deletes only the client-scope RPC limits row of a 0.17 store", async () => {
@@ -382,14 +364,118 @@ describe("MidenDatabase migrations", () => {
     const mdb = trackMidenDb(new MidenDatabase(name));
     expect(await mdb.open("0.18.0")).toBe(true);
 
-    expect(await mdb.settings.get([SETTING_SCOPE_CLIENT, limitsKey])).toBe(
-      undefined
-    );
-    expect(
-      (await mdb.settings.get([SETTING_SCOPE_USER, limitsKey]))!.value
-    ).toEqual(new Uint8Array([2]));
+    // The v13 split then keeps the user row and, of the client rows, only the stamp.
+    expect(await mdb.userSettings.toArray()).toEqual([
+      { key: limitsKey, value: new Uint8Array([2]) },
+    ]);
+    expect(await mdb.clientConfig.toCollection().primaryKeys()).toEqual([
+      CLIENT_VERSION_SETTING_KEY,
+    ]);
     expect(await mdb.accountAuths.toArray()).toEqual([AUTH_SENTINEL]);
-    expect(await mdb.settings.count()).toBe(2);
+  });
+
+  // v13/v14: `settings` splits into `userSettings` and `clientConfig`, as SQLite migration 5
+  // does, and is then dropped.
+  it("v13/v14 migration splits settings and keeps only the rows it needs", async () => {
+    const name = uniqueDbName();
+
+    const dbV9 = trackDb(new Dexie(name));
+    dbV9.version(9).stores(V6_STORES);
+    await dbV9.open();
+    const value = (byte: number) => new Uint8Array([byte]);
+    await dbV9.table("settings").bulkPut([
+      {
+        scope: SETTING_SCOPE_CLIENT,
+        key: CLIENT_VERSION_SETTING_KEY,
+        value: new TextEncoder().encode("0.18.0"),
+      },
+      {
+        scope: SETTING_SCOPE_CLIENT,
+        key: "protocol_config:0x01",
+        value: value(1),
+      },
+      { scope: SETTING_SCOPE_CLIENT, key: "rpc_limits", value: value(2) },
+      { scope: SETTING_SCOPE_CLIENT, key: "pswap/order/01", value: value(3) },
+      { scope: SETTING_SCOPE_USER, key: "rpc_limits", value: value(4) },
+    ]);
+    dbV9.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.18.0")).toBe(true);
+
+    expect(await mdb.userSettings.toArray()).toEqual([
+      { key: "rpc_limits", value: value(4) },
+    ]);
+    expect(
+      (await mdb.clientConfig.toCollection().primaryKeys()).sort()
+    ).toEqual([CLIENT_VERSION_SETTING_KEY, "protocol_config:0x01"]);
+    expect((await mdb.clientConfig.get("protocol_config:0x01"))!.value).toEqual(
+      value(1)
+    );
+    expect(mdb.dexie.tables.map((table) => table.name)).not.toContain(
+      "settings"
+    );
+  });
+
+  // v15/v16: the peaks of every sync height live in `chainAnchors`, keyed by block number. The
+  // `blockchainCheckpoint` row moves there next to the genesis anchor, then the table is dropped.
+  // The fixtures are stamped at or above MIGRATION_BASELINE, so the v8 cutover keeps their rows.
+  async function v9StoreWithCheckpoint(
+    checkpoint: { blockNum: number; partialBlockchainPeaks: Uint8Array } | null
+  ): Promise<string> {
+    const name = uniqueDbName();
+    const dbV9 = trackDb(new Dexie(name));
+    dbV9.version(9).stores(V6_STORES);
+    await dbV9.open();
+    await dbV9.table("settings").put(legacyStampRow("0.18.0"));
+    if (checkpoint) {
+      await dbV9.table("blockchainCheckpoint").put({ id: 1, ...checkpoint });
+    }
+    dbV9.close();
+    return name;
+  }
+
+  it("v15/v16 migration moves the blockchain checkpoint into chainAnchors", async () => {
+    const peaks = new Uint8Array([1, 2, 3]);
+    const name = await v9StoreWithCheckpoint({
+      blockNum: 42,
+      partialBlockchainPeaks: peaks,
+    });
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.18.0")).toBe(true);
+
+    expect(await mdb.chainAnchors.toArray()).toEqual([
+      { blockNum: 0, peaks: new Uint8Array() },
+      { blockNum: 42, peaks },
+    ]);
+    expect(mdb.dexie.tables.map((table) => table.name)).not.toContain(
+      "blockchainCheckpoint"
+    );
+  });
+
+  it("v15 migration keeps one genesis anchor when the checkpoint is at block 0", async () => {
+    const peaks = new Uint8Array([9]);
+    const name = await v9StoreWithCheckpoint({
+      blockNum: 0,
+      partialBlockchainPeaks: peaks,
+    });
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.18.0")).toBe(true);
+
+    expect(await mdb.chainAnchors.toArray()).toEqual([{ blockNum: 0, peaks }]);
+  });
+
+  it("v15 migration seeds the genesis anchor when there is no checkpoint row", async () => {
+    const name = await v9StoreWithCheckpoint(null);
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.18.0")).toBe(true);
+
+    expect(await mdb.chainAnchors.toArray()).toEqual([
+      { blockNum: 0, peaks: new Uint8Array() },
+    ]);
   });
 
   // v10 (#525): prune note-source tags once the note is no longer inclusion-pending (a note that
@@ -602,10 +688,7 @@ describe("openDatabase", () => {
     await openDatabase(name, "1.0.0");
     const db = getDatabase(name);
     openMidenDbs.push(db);
-    const record = await db.settings.get([
-      SETTING_SCOPE_CLIENT,
-      CLIENT_VERSION_SETTING_KEY,
-    ]);
+    const record = await db.clientConfig.get(CLIENT_VERSION_SETTING_KEY);
     expect(record).toBeDefined();
     expect(new TextDecoder().decode(record!.value)).toBe("1.0.0");
   });
@@ -720,8 +803,7 @@ describe("ensureClientVersion: same version already stored", () => {
     openMidenDbs.push(db1);
 
     // Insert a sentinel row that should survive if the DB is NOT nuked
-    await db1.settings.put({
-      scope: SETTING_SCOPE_USER,
+    await db1.userSettings.put({
       key: "sentinel",
       value: new TextEncoder().encode("alive"),
     });
@@ -734,7 +816,7 @@ describe("ensureClientVersion: same version already stored", () => {
     expect(success).toBe(true);
 
     // Sentinel must still be there
-    const sentinel = await mdb2.settings.get([SETTING_SCOPE_USER, "sentinel"]);
+    const sentinel = await mdb2.userSettings.get("sentinel");
     expect(sentinel).toBeDefined();
     expect(new TextDecoder().decode(sentinel!.value)).toBe("alive");
   });
@@ -749,8 +831,7 @@ describe("ensureClientVersion: same major.minor, new patch", () => {
     await openDatabase(name, "1.2.0");
     const db1 = getDatabase(name);
     openMidenDbs.push(db1);
-    await db1.settings.put({
-      scope: SETTING_SCOPE_USER,
+    await db1.userSettings.put({
       key: "sentinel",
       value: new TextEncoder().encode("safe"),
     });
@@ -762,14 +843,13 @@ describe("ensureClientVersion: same major.minor, new patch", () => {
     expect(success).toBe(true);
 
     // Sentinel must survive (no nuke)
-    const sentinel = await mdb2.settings.get([SETTING_SCOPE_USER, "sentinel"]);
+    const sentinel = await mdb2.userSettings.get("sentinel");
     expect(sentinel).toBeDefined();
 
     // Version must be updated
-    const versionRecord = await mdb2.settings.get([
-      SETTING_SCOPE_CLIENT,
-      CLIENT_VERSION_SETTING_KEY,
-    ]);
+    const versionRecord = await mdb2.clientConfig.get(
+      CLIENT_VERSION_SETTING_KEY
+    );
     expect(new TextDecoder().decode(versionRecord!.value)).toBe("1.2.5");
   });
 });
@@ -778,24 +858,23 @@ const AUTH_SENTINEL = {
   pubKeyCommitmentHex: "0xkey",
   secretKeyHex: "0xsecret",
 };
-const USER_SENTINEL = {
-  scope: SETTING_SCOPE_USER,
-  key: "sentinel",
-  value: new Uint8Array([1]),
-};
-// The checkpoint the populate hook seeds a fresh store with.
-const FRESH_CHECKPOINT = {
-  id: 1,
-  blockNum: 0,
-  partialBlockchainPeaks: new Uint8Array(),
-};
+const USER_SENTINEL = { key: "sentinel", value: new Uint8Array([1]) };
+// The user setting as a row of the `settings` table, which version 14 removes.
+const LEGACY_USER_SENTINEL = { scope: SETTING_SCOPE_USER, ...USER_SENTINEL };
+// The anchor a fresh store holds: the populate hook seeds it, and the v15 upgrade derives it from
+// the checkpoint a cutover seeds.
+const GENESIS_ANCHOR = { blockNum: 0, peaks: new Uint8Array() };
 
 function stampRow(version: string) {
   return {
-    scope: SETTING_SCOPE_CLIENT,
     key: CLIENT_VERSION_SETTING_KEY,
     value: new TextEncoder().encode(version),
   };
+}
+
+// The stamp as a row of the `settings` table, which version 14 removes.
+function legacyStampRow(version: string) {
+  return { scope: SETTING_SCOPE_CLIENT, ...stampRow(version) };
 }
 
 // Creates a store stamped with `version` that holds a key and a user setting.
@@ -804,7 +883,7 @@ async function stampedStore(version: string): Promise<string> {
   const mdb = trackMidenDb(new MidenDatabase(name));
   expect(await mdb.open(version)).toBe(true);
   await mdb.accountAuths.put(AUTH_SENTINEL);
-  await mdb.settings.put(USER_SENTINEL);
+  await mdb.userSettings.put(USER_SENTINEL);
   mdb.dexie.close();
   return name;
 }
@@ -817,7 +896,7 @@ async function v7Store(version: string | null): Promise<string> {
   db.version(7).stores(V6_STORES);
   await db.open();
   await db.table("accountAuth").put(AUTH_SENTINEL);
-  await db.table("settings").put(USER_SENTINEL);
+  await db.table("settings").put(LEGACY_USER_SENTINEL);
   await db.table("tags").put({ tag: "dGFnMQ==", sourceAccountId: "0xacc" });
   await db.table("blockchainCheckpoint").put({
     id: 1,
@@ -825,7 +904,7 @@ async function v7Store(version: string | null): Promise<string> {
     partialBlockchainPeaks: new Uint8Array([7]),
   });
   if (version !== null) {
-    await db.table("settings").put(stampRow(version));
+    await db.table("settings").put(legacyStampRow(version));
   }
   db.close();
   return name;
@@ -838,30 +917,25 @@ async function reopen(name: string, version: string): Promise<MidenDatabase> {
 }
 
 async function storedVersion(mdb: MidenDatabase): Promise<string | undefined> {
-  const record = await mdb.settings.get([
-    SETTING_SCOPE_CLIENT,
-    CLIENT_VERSION_SETTING_KEY,
-  ]);
+  const record = await mdb.clientConfig.get(CLIENT_VERSION_SETTING_KEY);
   return record && new TextDecoder().decode(record.value);
 }
 
 async function expectKept(mdb: MidenDatabase, version: string) {
   expect(await mdb.accountAuths.toArray()).toEqual([AUTH_SENTINEL]);
-  expect(await mdb.settings.get([SETTING_SCOPE_USER, "sentinel"])).toEqual(
-    USER_SENTINEL
-  );
+  expect(await mdb.userSettings.get("sentinel")).toEqual(USER_SENTINEL);
   expect(await storedVersion(mdb)).toBe(version);
 }
 
 // Every table is empty but for what a fresh store holds and the running version's stamp.
 async function expectCleared(mdb: MidenDatabase, version: string) {
   for (const table of mdb.dexie.tables) {
-    if (table.name !== "blockchainCheckpoint" && table.name !== "settings") {
+    if (table.name !== "chainAnchors" && table.name !== "clientConfig") {
       expect(await table.count(), table.name).toBe(0);
     }
   }
-  expect(await mdb.blockchainCheckpoint.toArray()).toEqual([FRESH_CHECKPOINT]);
-  expect(await mdb.settings.toArray()).toEqual([stampRow(version)]);
+  expect(await mdb.chainAnchors.toArray()).toEqual([GENESIS_ANCHOR]);
+  expect(await mdb.clientConfig.toArray()).toEqual([stampRow(version)]);
 }
 
 // The notices a clear of the store logs.
@@ -888,7 +962,7 @@ describe("the v8 cutover", () => {
       expect(clearNotices(warn, name)).toBe(1);
 
       await cleared.accountAuths.put(AUTH_SENTINEL);
-      await cleared.settings.put(USER_SENTINEL);
+      await cleared.userSettings.put(USER_SENTINEL);
       cleared.dexie.close();
       await expectKept(await reopen(name, "0.17.5"), "0.17.5");
       expect(clearNotices(warn, name)).toBe(1);
@@ -929,7 +1003,9 @@ describe("the v8 cutover", () => {
     const kept = await reopen(name, running);
     await expectKept(kept, running);
     expect(await kept.tags.count()).toBe(1);
-    expect((await kept.blockchainCheckpoint.get(1))!.blockNum).toBe(42);
+    expect((await kept.chainAnchors.get(42))!.peaks).toEqual(
+      new Uint8Array([7])
+    );
     expect(clearNotices(warn, name)).toBe(0);
   });
 
@@ -940,9 +1016,7 @@ describe("the v8 cutover", () => {
 
     const mdb = await reopen(name, "0.17.4");
     expect(deleteSpy).not.toHaveBeenCalled();
-    expect(await mdb.blockchainCheckpoint.toArray()).toEqual([
-      FRESH_CHECKPOINT,
-    ]);
+    expect(await mdb.chainAnchors.toArray()).toEqual([GENESIS_ANCHOR]);
     expect(await storedVersion(mdb)).toBe("0.17.4");
     expect(clearNotices(warn, name)).toBe(0);
   });
@@ -991,7 +1065,7 @@ describe("ensureClientVersion: a store that ran the cutover is kept", () => {
     const name = await stampedStore("0.17.4");
     const older = trackMidenDb(new MidenDatabase(name));
     await older.dexie.open();
-    await older.settings.put(stampRow("0.16.2"));
+    await older.clientConfig.put(stampRow("0.16.2"));
     older.dexie.close();
     const warn = vi.spyOn(console, "warn");
 
@@ -1004,7 +1078,7 @@ describe("ensureClientVersion: a store that ran the cutover is kept", () => {
     const unstamped = trackMidenDb(new MidenDatabase(name));
     await unstamped.dexie.open();
     await unstamped.accountAuths.put(AUTH_SENTINEL);
-    await unstamped.settings.put(USER_SENTINEL);
+    await unstamped.userSettings.put(USER_SENTINEL);
     unstamped.dexie.close();
 
     await expectKept(await reopen(name, "0.17.4"), "0.17.4");
@@ -1135,15 +1209,15 @@ describe("a store written by a newer client", () => {
 
   it("is not confused with a store Dexie patched at this client's own version", async () => {
     const name = uniqueDbName();
+    const { verno } = new MidenDatabase(uniqueDbName()).dexie;
     const patched = trackDb(new Dexie(name));
-    patched.version(10).stores({ ...V6_STORES, accountWitnesses: null });
+    patched.version(verno).stores({ ...V6_STORES, accountWitnesses: null });
     await patched.open();
     patched.close();
 
-    // The missing table makes Dexie patch the store to native version 91.
+    // The missing tables make Dexie patch the store, which adds one to the native version.
     expect(await reopen(name, "0.17.4")).toBeDefined();
-    // Reopening runs the v12 upgrade, which replaces the patched native version.
-    expect(await nativeVersion(name)).toBe(120);
+    expect(await nativeVersion(name)).toBe(verno * 10 + 1);
   });
 
   it("refuses it when a newer client upgrades the store under an open connection", async () => {

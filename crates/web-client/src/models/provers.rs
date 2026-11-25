@@ -12,7 +12,7 @@ use miden_client::transaction::{
 #[cfg(feature = "browser")]
 use miden_client::transaction::{ProvenTransaction, TransactionInputs, TransactionProverError};
 #[cfg(feature = "browser")]
-use miden_client::utils::{Deserializable, Serializable};
+use miden_protocol::utils::serde::{Deserializable, Serializable};
 #[cfg(feature = "browser")]
 use wasm_bindgen::prelude::*;
 #[cfg(feature = "browser")]

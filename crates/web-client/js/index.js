@@ -558,10 +558,9 @@ class WebClient {
    *   the process-wide observation sink; `observeSensitive` decides, for this
    *   client and for its whole lifetime, whether observations carry the
    *   high-fidelity `sensitive` channel. Both are construction-only.
-   * @param {string | undefined} [feeFaucetId] - Faucet of the chain's fee asset,
-   *   as a bech32 address or a hex account ID. Optional: the client receives the
-   *   protocol configuration, which names the fee asset, from the node when it
-   *   syncs, so this only sets what `feeFaucetId()` reports before the first sync.
+   * @param {string | undefined} [feeFaucetId] - Deprecated. Faucet of the chain's
+   *   fee asset, as a bech32 address or a hex account ID. Not needed: creating the
+   *   client stores the protocol configuration, which names the fee asset.
    * @param {number | undefined} [noteTransportMaxRetries] - Retries of a private
    *   note send after a transient transport failure, an integer from 0 to 10.
    *   Defaults to 3. `0` bounds a send to one attempt, which suits a
@@ -1230,10 +1229,9 @@ class WebClient {
    * @returns {Promise<WebClient>} The fully initialized WebClient.
    * @param {{observer?: (observation: object) => void, observeSensitive?: boolean}} [observability]
    *   - Observability fields of `ClientOptions`; see the constructor.
-   * @param {string | undefined} feeFaucetId - Fee faucet of the chain, as a bech32 address or a
-   *   hex account ID. Optional: the client receives the protocol configuration, which names the
-   *   fee asset, from the node when it syncs, so this only sets what `feeFaucetId()` reports
-   *   before the first sync.
+   * @param {string | undefined} feeFaucetId - Deprecated. Fee faucet of the chain, as a bech32
+   *   address or a hex account ID. Not needed: creating the client stores the protocol
+   *   configuration, which names the fee asset.
    * @param {number | undefined} [noteTransportMaxRetries] - Retries of a private note send
    *   after a transient transport failure; see the constructor.
    * @param {number | undefined} [noteTransportRetryIntervalMs] - Delay before the first such

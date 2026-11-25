@@ -4,6 +4,11 @@ import { logWebStoreError } from "./utils.js";
 
 export const CLIENT_VERSION_SETTING_KEY = "clientVersion";
 
+/** Prefix of the `clientConfig` key of a protocol configuration. */
+export const PROTOCOL_CONFIG_KEY_PREFIX = "protocol_config:";
+
+/** Mirrors `PswapLineageState::Active`, originally defined in miden-client. */
+export const PSWAP_STATE_ACTIVE = 0;
 /**
  * The threshold of the v8 cutover: a store stamped below it, a prerelease of it included, or not
  * stamped at all holds data from networks that no longer exist, so that upgrade clears it once.
@@ -157,9 +162,14 @@ enum Table {
   ForeignAccountCode = "foreignAccountCode",
   Settings = "settings",
   AccountWitnesses = "accountWitnesses",
+  ClientConfig = "clientConfig",
+  UserSettings = "userSettings",
+  PswapLineages = "pswapLineages",
+  ChainAnchors = "chainAnchors",
 }
 
-/** Mirrors `SettingScope`, whose discriminants are part of a store's schema. */
+/** Scope of a row of the `settings` table, which version 14 removes. The versions before it read
+ *  it, and so does the import of a dump that still has the table. */
 export const SETTING_SCOPE_CLIENT = 0;
 export const SETTING_SCOPE_USER = 1;
 
@@ -303,10 +313,19 @@ export interface INotesScript {
   serializedNoteScript: Uint8Array;
 }
 
+// Row of the `blockchainCheckpoint` table that v16 drops. The v15 upgrade reads it to seed
+// `chainAnchors`, and so does the import of a dump that still has the table.
 export interface IBlockchainCheckpoint {
   id: number;
   blockNum: number;
   partialBlockchainPeaks: Uint8Array;
+}
+
+// The chain MMR peaks committed by the header of a block that a state sync reached. The row with
+// the highest `blockNum` is the current sync height.
+export interface IChainAnchor {
+  blockNum: number;
+  peaks: Uint8Array;
 }
 
 export interface IBlockHeader {
@@ -339,6 +358,21 @@ export interface ISetting {
   value: Uint8Array;
 }
 
+/** A value of the client or of the user, stored under a key. */
+export interface IKeyValue {
+  key: string;
+  value: Uint8Array;
+}
+
+/** A PSWAP lineage. The other fields repeat the record fields that the queries filter on. */
+export interface IPswapLineage {
+  orderId: string;
+  creatorAccountId: string;
+  currentTipNoteId: string;
+  state: number;
+  record: Uint8Array;
+}
+
 // `witness` stays null until the first sync refreshes it.
 export interface IAccountWitness {
   accountId: string;
@@ -367,23 +401,69 @@ function indexes(...items: string[]): string {
   return items.join(",");
 }
 
-// This store is the client, so its own bookkeeping belongs to the `Client` scope, which the
+// The client version is client bookkeeping, so it lives in `clientConfig`, which the
 // user-facing settings API never reaches.
 export async function readClientVersion(
-  settings: Dexie.Table<ISetting, [number, string]>
+  clientConfig: Dexie.Table<IKeyValue, string>
 ): Promise<string | null> {
-  const record = await settings.get([
-    SETTING_SCOPE_CLIENT,
-    CLIENT_VERSION_SETTING_KEY,
-  ]);
+  const record = await clientConfig.get(CLIENT_VERSION_SETTING_KEY);
   return record ? textDecoder.decode(record.value) : null;
 }
 
-// What a store holds before its first sync: the chain checkpoint at the genesis block.
+/**
+ * Splits the rows of the `settings` table, which version 14 removes, into the rows of the tables
+ * that replace it. The user rows go to `userSettings`. Of the client rows, only the client
+ * version and the protocol configurations go to `clientConfig`.
+ */
+export function splitLegacySettings(rows: ISetting[]): {
+  userSettings: IKeyValue[];
+  clientConfig: IKeyValue[];
+} {
+  const keyValue = ({ key, value }: ISetting): IKeyValue => ({ key, value });
+  return {
+    userSettings: rows
+      .filter((row) => row.scope === SETTING_SCOPE_USER)
+      .map(keyValue),
+    clientConfig: rows
+      .filter(
+        (row) =>
+          row.scope === SETTING_SCOPE_CLIENT &&
+          (row.key === CLIENT_VERSION_SETTING_KEY ||
+            row.key.startsWith(PROTOCOL_CONFIG_KEY_PREFIX))
+      )
+      .map(keyValue),
+  };
+}
+
+// What a store held before its first sync while `blockchainCheckpoint` existed: the chain
+// checkpoint at the genesis block. Every cutover so far runs before version 15, which moves the
+// row to `chainAnchors`.
 function seedFreshStore(tx: Transaction): Promise<unknown> {
   return tx
     .table<IBlockchainCheckpoint, number>(Table.BlockchainCheckpoint)
     .put({ id: 1, blockNum: 0, partialBlockchainPeaks: new Uint8Array() });
+}
+
+/**
+ * The rows of `chainAnchors` for a store whose `blockchainCheckpoint` table, which version 16
+ * removes, held `checkpoint`: the genesis anchor and the anchor of the checkpoint.
+ */
+export function anchorsFromCheckpoint(
+  checkpoint: IBlockchainCheckpoint | undefined
+): IChainAnchor[] {
+  const anchors: IChainAnchor[] = [{ blockNum: 0, peaks: new Uint8Array() }];
+  if (checkpoint) {
+    const anchor = {
+      blockNum: checkpoint.blockNum,
+      peaks: checkpoint.partialBlockchainPeaks,
+    };
+    if (anchor.blockNum === 0) {
+      anchors[0] = anchor;
+    } else {
+      anchors.push(anchor);
+    }
+  }
+  return anchors;
 }
 
 // The upgrade of a cutover version. A store stamped below `threshold` (a prerelease of it
@@ -393,9 +473,11 @@ function seedFreshStore(tx: Transaction): Promise<unknown> {
 // meanwhile waits and then finds it upgraded. A fresh database runs no upgrade callbacks.
 function clearStoreStampedBelow(threshold: string) {
   return async (tx: Transaction): Promise<void> => {
-    const stamp = await readClientVersion(
-      tx.table<ISetting, [number, string]>(Table.Settings)
-    );
+    // Every cutover so far runs before version 13, while the stamp is a client row of `settings`.
+    const record = await tx
+      .table<ISetting, [number, string]>(Table.Settings)
+      .get([SETTING_SCOPE_CLIENT, CLIENT_VERSION_SETTING_KEY]);
+    const stamp = record ? textDecoder.decode(record.value) : null;
     if (
       stamp !== null &&
       !(semver.valid(stamp) && semver.lt(stamp, threshold))
@@ -524,12 +606,14 @@ declare module "dexie" {
     accountAuths: Table<IAccountAuth, string>;
     accountKeyMappings: Table<IAccountKeyMapping, string>;
     addresses: Table<IAddress, string>;
-    blockchainCheckpoint: Table<IBlockchainCheckpoint, number>;
+    chainAnchors: Table<IChainAnchor, number>;
     blockHeaders: Table<IBlockHeader, number>;
     partialBlockchainNodes: Table<IPartialBlockchainNode, number>;
     foreignAccountCode: Table<IForeignAccountCode, string>;
-    settings: Table<ISetting, [number, string]>;
     accountWitnesses: Table<IAccountWitness, string>;
+    clientConfig: Table<IKeyValue, string>;
+    userSettings: Table<IKeyValue, string>;
+    pswapLineages: Table<IPswapLineage, string>;
   }
 }
 
@@ -551,13 +635,15 @@ export type MidenDexie = Dexie & {
   inputNotes: Dexie.Table<IInputNote, string>;
   outputNotes: Dexie.Table<IOutputNote, string>;
   notesScripts: Dexie.Table<INotesScript, string>;
-  blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
+  chainAnchors: Dexie.Table<IChainAnchor, number>;
   blockHeaders: Dexie.Table<IBlockHeader, number>;
   partialBlockchainNodes: Dexie.Table<IPartialBlockchainNode, number>;
   tags: Dexie.Table<ITag, number>;
   foreignAccountCode: Dexie.Table<IForeignAccountCode, string>;
-  settings: Dexie.Table<ISetting, [number, string]>;
   accountWitnesses: Dexie.Table<IAccountWitness, string>;
+  clientConfig: Dexie.Table<IKeyValue, string>;
+  userSettings: Dexie.Table<IKeyValue, string>;
+  pswapLineages: Dexie.Table<IPswapLineage, string>;
 };
 
 export class MidenDatabase {
@@ -582,13 +668,15 @@ export class MidenDatabase {
   inputNotes: Dexie.Table<IInputNote, string>;
   outputNotes: Dexie.Table<IOutputNote, string>;
   notesScripts: Dexie.Table<INotesScript, string>;
-  blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
+  chainAnchors: Dexie.Table<IChainAnchor, number>;
   blockHeaders: Dexie.Table<IBlockHeader, number>;
   partialBlockchainNodes: Dexie.Table<IPartialBlockchainNode, number>;
   tags: Dexie.Table<ITag, number>;
   foreignAccountCode: Dexie.Table<IForeignAccountCode, string>;
-  settings: Dexie.Table<ISetting, [number, string]>;
   accountWitnesses: Dexie.Table<IAccountWitness, string>;
+  clientConfig: Dexie.Table<IKeyValue, string>;
+  userSettings: Dexie.Table<IKeyValue, string>;
+  pswapLineages: Dexie.Table<IPswapLineage, string>;
 
   constructor(network: string) {
     this.dexie = new Dexie(network) as MidenDexie;
@@ -806,6 +894,49 @@ export class MidenDatabase {
       ),
     });
 
+    // v13 (first miden-client after 0.18): split `settings`, as SQLite migration 5 does. The user
+    // rows move to `userSettings`. Of the client rows, the protocol configurations and the client
+    // version move to `clientConfig`. The client fetches or rebuilds the other client rows again.
+    // The PSWAP rows are dropped, as SQLite migration 4 drops them. PSWAP lineages get a store of
+    // their own.
+    this.dexie
+      .version(13)
+      .stores({
+        [Table.ClientConfig]: indexes("key"),
+        [Table.UserSettings]: indexes("key"),
+        [Table.PswapLineages]: indexes(
+          "orderId",
+          "creatorAccountId",
+          "[state+currentTipNoteId]"
+        ),
+      })
+      .upgrade(async (tx) => {
+        const rows = (await tx.table(Table.Settings).toArray()) as ISetting[];
+        const { userSettings, clientConfig } = splitLegacySettings(rows);
+        await tx.userSettings.bulkPut(userSettings);
+        await tx.clientConfig.bulkPut(clientConfig);
+      });
+
+    // v14: drop `settings`, after v13 copied the rows that it keeps.
+    this.dexie.version(14).stores({ [Table.Settings]: null });
+
+    // v15: keep the chain MMR peaks of every sync height, as the SQLite
+    // `chain_anchors` table does. `blockchainCheckpoint` held one row with the peaks at the
+    // current sync height. That row moves to `chainAnchors`, keyed by block number, next to the
+    // genesis row that every store has. The sync height is the highest block number in the table.
+    this.dexie
+      .version(15)
+      .stores({ [Table.ChainAnchors]: indexes("blockNum") })
+      .upgrade(async (tx) => {
+        const checkpoint = (await tx
+          .table(Table.BlockchainCheckpoint)
+          .get(1)) as IBlockchainCheckpoint | undefined;
+        await tx.chainAnchors.bulkPut(anchorsFromCheckpoint(checkpoint));
+      });
+
+    // v16: drop `blockchainCheckpoint`, after v15 moved its row.
+    this.dexie.version(16).stores({ [Table.BlockchainCheckpoint]: null });
+
     this.accountCodes = this.dexie.table<IAccountCode, string>(
       Table.AccountCode
     );
@@ -857,8 +988,8 @@ export class MidenDatabase {
     this.notesScripts = this.dexie.table<INotesScript, string>(
       Table.NotesScripts
     );
-    this.blockchainCheckpoint = this.dexie.table<IBlockchainCheckpoint, number>(
-      Table.BlockchainCheckpoint
+    this.chainAnchors = this.dexie.table<IChainAnchor, number>(
+      Table.ChainAnchors
     );
     this.blockHeaders = this.dexie.table<IBlockHeader, number>(
       Table.BlockHeaders
@@ -871,16 +1002,19 @@ export class MidenDatabase {
     this.foreignAccountCode = this.dexie.table<IForeignAccountCode, string>(
       Table.ForeignAccountCode
     );
-    this.settings = this.dexie.table<ISetting, [number, string]>(
-      Table.Settings
-    );
     this.accountWitnesses = this.dexie.table<IAccountWitness, string>(
       Table.AccountWitnesses
     );
+    this.clientConfig = this.dexie.table<IKeyValue, string>(Table.ClientConfig);
+    this.userSettings = this.dexie.table<IKeyValue, string>(Table.UserSettings);
+    this.pswapLineages = this.dexie.table<IPswapLineage, string>(
+      Table.PswapLineages
+    );
 
     this.dexie.on("populate", (tx) => {
-      seedFreshStore(tx)
-        /* v8 ignore next 2 — populate blockchainCheckpoint failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
+      tx.chainAnchors
+        .put({ blockNum: 0, peaks: new Uint8Array() })
+        /* v8 ignore next 2: populate chainAnchors failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
         .catch((err: unknown) =>
           logWebStoreError(err, "Failed to populate DB")
         );
@@ -956,14 +1090,13 @@ export class MidenDatabase {
       );
       return;
     }
-    if ((await readClientVersion(this.settings)) !== clientVersion) {
+    if ((await readClientVersion(this.clientConfig)) !== clientVersion) {
       await this.persistClientVersion(clientVersion);
     }
   }
 
   async persistClientVersion(clientVersion: string): Promise<void> {
-    await this.settings.put({
-      scope: SETTING_SCOPE_CLIENT,
+    await this.clientConfig.put({
       key: CLIENT_VERSION_SETTING_KEY,
       value: textEncoder.encode(clientVersion),
     });

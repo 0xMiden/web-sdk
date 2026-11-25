@@ -14,7 +14,6 @@ use miden_client::note::{
     P2idNote,
     P2ideNote,
 };
-use miden_client::rng::draw_word;
 use miden_client::usdcx::note::xreserve_burn::XReserveBurnNote;
 use miden_client::usdcx::xreserve::encoding::{
     CircleDomain,
@@ -22,7 +21,9 @@ use miden_client::usdcx::xreserve::encoding::{
     XReserveBurnItems,
 };
 use miden_client::{Felt as NativeFelt, Word as NativeWord};
+use miden_objects::proto;
 use miden_protocol::crypto::rand::RandomCoin;
+use rand::RngExt;
 
 use super::NoteType;
 use super::account_id::AccountId;
@@ -38,7 +39,7 @@ use super::note_script::NoteScript;
 use super::word::Word;
 use crate::js_error_with_context;
 use crate::platform::{JsBytes, JsErr, from_str_err, js_u64_to_u64};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::utils::{decode_message, encode_message};
 
 /// A note bundles public metadata with private details: assets, script, inputs, and a serial number
 /// grouped into a recipient. The public identifier (`NoteId`) commits to those
@@ -71,14 +72,16 @@ impl Note {
         Note(NativeNote::new(note_assets.into(), partial, note_recipient.into()))
     }
 
-    /// Serializes the note into bytes.
+    /// Serializes the note into the bytes of its `miden-objects` protobuf message.
     pub fn serialize(&self) -> JsBytes {
-        serialize_to_bytes(&self.0)
+        encode_message(&proto::note::Note::from(&self.0))
     }
 
-    /// Deserializes a note from its byte representation.
+    /// Deserializes a note from the bytes that [`Self::serialize`] returns.
+    ///
+    /// Bytes that an earlier SDK version wrote with the Winterfell encoding do not decode.
     pub fn deserialize(bytes: JsBytes) -> Result<Note, JsErr> {
-        deserialize_from_bytes::<NativeNote>(&bytes).map(Note)
+        decode_message::<proto::note::Note>(&bytes).map(Note)
     }
 
     /// Returns the unique identifier of the note.
@@ -154,7 +157,7 @@ impl Note {
             .assets(native_assets)
             .note_type(note_type.into())
             .attachment(native_attachment)
-            .serial_number(draw_word(&mut rand::rng()))
+            .serial_number(rand::rng().random::<NativeWord>())
             .build()
             .map_err(|err| js_error_with_context(err, "create p2id note"))?
             .into();
@@ -186,7 +189,7 @@ impl Note {
             .attachment(native_attachment)
             .maybe_reclaim_height(reclaim_height.map(NativeBlockNumber::from))
             .maybe_timelock_height(timelock_height.map(NativeBlockNumber::from))
-            .serial_number(draw_word(&mut rand::rng()))
+            .serial_number(rand::rng().random::<NativeWord>())
             .build()
             .map_err(|err| js_error_with_context(err, "create p2ide note"))?
             .into();
@@ -231,7 +234,7 @@ impl Note {
             .asset(native_asset)
             .maybe_reclaimer(reclaimer.map(Into::into))
             .maybe_reclaim_height(reclaim_height.map(NativeBlockNumber::from))
-            .serial_number(draw_word(&mut rand::rng()))
+            .serial_number(rand::rng().random::<NativeWord>())
             .build()
             .map_err(|err| js_error_with_context(err, "create fee sponsorship note"))?
             .into();

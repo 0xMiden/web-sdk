@@ -316,10 +316,10 @@ export interface ClientOptions {
   /**
    * Faucet of the chain's fee asset, as a bech32 address or a hex account ID.
    *
-   * Optional. Miden 0.17 moved the fee asset out of the block header and into the protocol
-   * configuration, which the client receives from the node when it syncs, so execution does not
-   * need this. It only sets what `client.feeFaucetId()` reports before the first sync; after it,
-   * the accessor reads the configuration the chain commits to.
+   * @deprecated Not needed. Miden 0.17 moved the fee asset out of the block header and into the
+   * protocol configuration, and creating the client stores the configuration the chain commits
+   * to, so `client.feeFaucetId()` reports the chain's own faucet and execution does not need
+   * this. The option is still accepted.
    */
   feeFaucetId?: string;
   /**
@@ -1487,6 +1487,11 @@ export interface AccountsResource {
    * note tag. Sync keeps the account's commitment, nonce and storage current,
    * but notes addressed to it are not pulled.
    *
+   * The account is fetched at the client's sync height, so call `sync()` after
+   * the account is created and before watching it. A client that has never
+   * synced asks for the account at the genesis block, whose state the node has
+   * usually pruned.
+   *
    * @param accountId - The public account to watch.
    */
   importWatched(accountId: AccountRef): Promise<Account>;
@@ -2391,9 +2396,8 @@ export declare class MidenClient {
   /**
    * Creates and initializes a new MidenClient.
    *
-   * {@link ClientOptions.feeFaucetId} is optional: the client receives the
-   * chain's protocol configuration, which names the fee asset, from the node
-   * when it syncs.
+   * {@link ClientOptions.feeFaucetId} is not needed: creating the client stores
+   * the chain's protocol configuration, which names the fee asset.
    */
   static create(options?: ClientOptions): Promise<MidenClient>;
   /**
@@ -2481,11 +2485,10 @@ export declare class MidenClient {
    * Returns the faucet of the chain's fee asset.
    *
    * Replaces `BlockHeader.feeFaucetId()`: since 0.17 the fee asset lives in the
-   * protocol configuration rather than the block header. The client receives that
-   * configuration from the node when it syncs, so after the first sync this reports
-   * the faucet named by the configuration the block at the sync height commits to.
-   * Before it, this falls back to the `feeFaucetId` option, or, for a mock client,
-   * the mock chain's own, and rejects when neither is set.
+   * protocol configuration rather than the block header. Creating the client stores
+   * the configuration the genesis block commits to, and syncs store the one later
+   * blocks commit to, so this reports the faucet named by the configuration the
+   * block at the sync height commits to, from creation on.
    */
   feeFaucetId(): Promise<AccountId>;
 
@@ -2493,10 +2496,10 @@ export declare class MidenClient {
    * Returns the protocol configuration of the connected network, including its
    * fee asset, so a dApp need not hardcode it per network.
    *
-   * The client receives the configuration from the node when it syncs, so this
-   * rejects until the first sync has stored it. Mock clients are seeded with
-   * their chain's configuration. {@link ProtocolConfig.feeFaucetId} agrees with
-   * {@link MidenClient.feeFaucetId} once synced.
+   * Creating the client stores the configuration the genesis block commits to,
+   * and syncs store the one later blocks commit to, so this reports the
+   * configuration of the block at the sync height from creation on.
+   * {@link ProtocolConfig.feeFaucetId} agrees with {@link MidenClient.feeFaucetId}.
    */
   protocolConfig(): Promise<ProtocolConfig>;
 

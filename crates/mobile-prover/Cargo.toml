@@ -19,6 +19,9 @@ crate-type = ["cdylib", "staticlib"]
 # proving on real native threads, the actual point of this crate: full MT
 # prove without wasm-bindgen-rayon (which is broken on iOS WKWebView).
 miden-client = { default-features = false, features = ["concurrent", "std"], workspace = true }
+# Byte encoding of `TransactionInputs` and `ProvenTransaction` at the C ABI. `miden-client` does not
+# re-export the serde traits.
+miden-protocol = { workspace = true }
 
 # Profile settings are inherited from the workspace root. We don't redefine
 # them here because cargo emits a warning ("profiles for the non root package
