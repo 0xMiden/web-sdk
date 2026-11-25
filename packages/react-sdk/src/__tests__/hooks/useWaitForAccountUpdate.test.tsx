@@ -2096,5 +2096,55 @@ describe("useWaitForAccountUpdate", () => {
         fromHexSpy.mockRestore();
       }
     });
+
+    it("frees fetched Account handle if snapshot inspection or Bech32 conversion throws", async () => {
+      const snapshotThrowAcc = createMockAccount({
+        // eslint-disable-next-line camelcase
+        to_commitment: vi.fn(() => {
+          throw new Error("snapshot boom");
+        }),
+      } as never);
+      const storeThrowAcc = createAccountWithCommitment("0xchanged");
+      const mockClient = createMockWebClient({
+        syncState: vi.fn().mockResolvedValue({}),
+        getAccount: vi
+          .fn()
+          .mockResolvedValueOnce(snapshotThrowAcc)
+          .mockResolvedValueOnce(storeThrowAcc),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      useMidenStore.getState().setClient(mockClient as never);
+
+      const { result } = renderHook(() => useWaitForAccountUpdate());
+      await act(async () => {
+        await expect(
+          result.current.waitForAccountUpdate("0xacc", { timeoutMs: 200 })
+        ).rejects.toThrow("snapshot boom");
+      });
+      expect(snapshotThrowAcc.free).toHaveBeenCalledTimes(1);
+
+      const origSetAccountDetails = useMidenStore.getState().setAccountDetails;
+      useMidenStore.setState({
+        setAccountDetails: () => {
+          throw new Error("store boom");
+        },
+      });
+      try {
+        const { result: storeHook } = renderHook(() =>
+          useWaitForAccountUpdate()
+        );
+        await act(async () => {
+          await expect(
+            storeHook.current.waitForAccountUpdate("0xacc", {
+              baselineCommitment: "0xold",
+              timeoutMs: 200,
+            })
+          ).rejects.toThrow("store boom");
+        });
+        expect(storeThrowAcc.free).toHaveBeenCalledTimes(1);
+      } finally {
+        useMidenStore.setState({ setAccountDetails: origSetAccountDetails });
+      }
+    });
   });
 });

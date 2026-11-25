@@ -405,27 +405,32 @@ export function useWaitForAccountUpdate(
               }
 
               if (fetched) {
-                const snapshot = readAccountSnapshot(
-                  fetched,
-                  resolved.slot,
-                  mapKeyWord,
-                  numericBaseline
-                );
-                if (baseline === undefined) {
-                  baseline = snapshot;
-                  safeFree(fetched);
-                } else if (snapshot !== baseline) {
-                  ensureAccountBech32(fetched);
-                  setAccountDetails(requiredAccountIdStr, fetched);
-                  if (isActive()) {
-                    setAccount(fetched);
-                    setError(null);
-                    setIsWaiting(false);
+                let transferred = false;
+                try {
+                  const snapshot = readAccountSnapshot(
+                    fetched,
+                    resolved.slot,
+                    mapKeyWord,
+                    numericBaseline
+                  );
+                  if (baseline === undefined) {
+                    baseline = snapshot;
+                  } else if (snapshot !== baseline) {
+                    ensureAccountBech32(fetched);
+                    setAccountDetails(requiredAccountIdStr, fetched);
+                    if (isActive()) {
+                      setAccount(fetched);
+                      setError(null);
+                      setIsWaiting(false);
+                    }
+                    transferred = true;
+                    finishResolve(fetched);
+                    return;
                   }
-                  finishResolve(fetched);
-                  return;
-                } else {
-                  safeFree(fetched);
+                } finally {
+                  if (!transferred) {
+                    safeFree(fetched);
+                  }
                 }
               }
 
