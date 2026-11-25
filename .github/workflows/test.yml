@@ -1164,6 +1164,7 @@ jobs:
           - ci-shard-2-sync-and-state
           - ci-shard-3-accounts-and-keys
           - ci-shard-4-compile-and-misc
+          - ci-shard-account-allowlist
         # Keep the full WebKit suite off the critical path of ordinary PRs.
         include: >-
           ${{ fromJSON((github.event_name == 'push' || needs.changes.outputs.release_wasm == 'true')
@@ -1219,10 +1220,10 @@ jobs:
         working-directory: miden-client
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/genesis-target
-          # The web-sdk integration tests create accounts without funding them
-          # with the native fee asset, so run the node fee-free. Remove once the
-          # tests draw fee balances from the genesis funder wallets.
-          MIDEN_VERIFICATION_BASE_FEE: "0"
+          # The enforcing node funds test accounts from its fee-charging genesis.
+          # The ordinary shards still create accounts without a fee balance.
+          MIDEN_ACCOUNT_ALLOWLIST: ${{ matrix.project == 'ci-shard-account-allowlist' && '1' || '0' }}
+          MIDEN_VERIFICATION_BASE_FEE: ${{ matrix.project == 'ci-shard-account-allowlist' && '500' || '0' }}
         run: |
           ../scripts/patch-linked-test-node.sh ./scripts/start-test-node.sh
           ./scripts/start-test-node.sh --background
