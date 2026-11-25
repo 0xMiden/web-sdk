@@ -5,9 +5,9 @@ use alloc::vec::Vec;
 use miden_client::Word;
 use miden_client::account::{Account, AccountHeader, AccountId, AccountPatch};
 use miden_client::crypto::{Forest, MmrPeaks};
-use miden_client::note::{BlockNumber, NoteDetailsCommitment, NoteTag, NoteUpdateTracker};
-use miden_client::protocol_config::{ProtocolConfig, protocol_config_setting_key};
-use miden_client::store::{SettingScope, StoreError};
+use miden_client::note::{BlockNumber, NoteDetailsCommitment, NoteTag};
+use miden_client::protocol_config::ProtocolConfig;
+use miden_client::store::StoreError;
 use miden_client::sync::{
     AccountUpdates,
     NoteTagRecord,
@@ -17,7 +17,7 @@ use miden_client::sync::{
     StateSyncUpdate,
     TransactionUpdateTracker,
 };
-use miden_client::utils::{Deserializable, Serializable};
+use miden_client_core::store::NoteUpdates;
 use miden_client_proto::{decode_mmr_peaks, encode, encode_mmr_peaks};
 
 use super::IdxdbStore;
@@ -33,6 +33,7 @@ use super::note::utils::{
     serialize_output_note,
 };
 use super::transaction::utils::serialize_transaction_record;
+use crate::bytes::{FromStoreBytes, ToStoreBytes};
 use crate::promise::{await_js, await_js_value};
 
 mod js_bindings;
@@ -42,9 +43,11 @@ use js_bindings::{
     JsStateSyncUpdate,
     idxdb_add_note_tag,
     idxdb_apply_state_sync,
+    idxdb_get_blockchain_peaks_by_block_num,
     idxdb_get_current_blockchain_peaks,
     idxdb_get_note_tags,
     idxdb_get_sync_height,
+    idxdb_prune_chain_anchors,
     idxdb_remove_note_tag,
 };
 
@@ -88,7 +91,7 @@ impl IdxdbStore {
                     };
 
                 Ok(NoteTagRecord {
-                    tag: NoteTag::read_from_bytes(&t.tag)?,
+                    tag: NoteTag::from_store_bytes(&t.tag)?,
                     source,
                 })
             })
@@ -110,14 +113,26 @@ impl IdxdbStore {
         let peaks_idxdb: PartialBlockchainPeaksIdxdbObject =
             await_js(promise, "failed to get current blockchain peaks").await?;
 
-        if peaks_idxdb.peaks.is_empty() {
-            return Ok(MmrPeaks::new(Forest::empty(), Vec::new())?);
-        }
+        parse_blockchain_peaks(&peaks_idxdb)
+    }
 
-        let forest = Forest::new(
-            usize::try_from(peaks_idxdb.block_num).expect("u32 block_num should fit in usize"),
-        )?;
-        Ok(decode_mmr_peaks(forest, &peaks_idxdb.peaks)?)
+    pub(crate) async fn get_blockchain_peaks_by_block_num(
+        &self,
+        block_num: BlockNumber,
+    ) -> Result<Option<MmrPeaks>, StoreError> {
+        let promise = idxdb_get_blockchain_peaks_by_block_num(self.db_id(), block_num.as_u32());
+        let peaks_idxdb: Option<PartialBlockchainPeaksIdxdbObject> =
+            await_js(promise, "failed to get blockchain peaks by block number").await?;
+
+        peaks_idxdb.as_ref().map(parse_blockchain_peaks).transpose()
+    }
+
+    pub(crate) async fn prune_chain_anchors(
+        &self,
+        up_to_block: BlockNumber,
+    ) -> Result<usize, StoreError> {
+        let promise = idxdb_prune_chain_anchors(self.db_id(), up_to_block.as_u32());
+        await_js(promise, "failed to prune chain anchors").await
     }
 
     pub(super) async fn add_note_tag(&self, tag: NoteTagRecord) -> Result<bool, StoreError> {
@@ -130,7 +145,7 @@ impl IdxdbStore {
 
         let promise = idxdb_add_note_tag(
             self.db_id(),
-            tag.tag.to_bytes(),
+            tag.tag.to_store_bytes(),
             source_note_id,
             source_account_id,
             source_subscription_key,
@@ -146,7 +161,7 @@ impl IdxdbStore {
 
         let promise = idxdb_remove_note_tag(
             self.db_id(),
-            tag.tag.to_bytes(),
+            tag.tag.to_store_bytes(),
             source_note_id,
             source_account_id,
             source_subscription_key,
@@ -328,12 +343,7 @@ impl IdxdbStore {
         protocol_config: Option<ProtocolConfig>,
     ) -> Result<(), StoreError> {
         if let Some(config) = protocol_config {
-            self.set_setting(
-                SettingScope::Client,
-                protocol_config_setting_key(config.to_commitment()),
-                config.to_bytes(),
-            )
-            .await?;
+            self.insert_protocol_config(&config).await?;
         }
         Ok(())
     }
@@ -349,18 +359,21 @@ impl IdxdbStore {
 /// expected -> consumed during catch-up without a committed sync update, which left shared
 /// pair-tag rows forever (#525).
 fn serialize_note_updates(
-    note_updates: &NoteUpdateTracker,
+    note_updates: &NoteUpdates,
 ) -> (Vec<SerializedInputNoteData>, Vec<SerializedOutputNoteData>, Vec<String>) {
     let serialized_input_notes = note_updates
-        .updated_input_notes()
+        .input_notes()
+        .iter()
         .map(|note| serialize_input_note(note.inner()))
         .collect();
     let serialized_output_notes = note_updates
-        .updated_output_notes()
+        .output_notes()
+        .iter()
         .map(|note| serialize_output_note(note.inner()))
         .collect();
     let committed_note_tag_sources = note_updates
-        .updated_input_notes()
+        .input_notes()
+        .iter()
         .filter(|update| !update.inner().is_inclusion_pending())
         .map(|update| update.inner().details_commitment().to_hex())
         .collect();
@@ -409,6 +422,23 @@ fn split_public_account_updates(
         }
     }
     Ok((full_accounts, patch_updates))
+}
+
+/// Decodes the peaks of a `chainAnchors` row. The genesis row holds no peak bytes, which decode
+/// as an MMR without peaks.
+fn parse_blockchain_peaks(
+    peaks_idxdb: &PartialBlockchainPeaksIdxdbObject,
+) -> Result<MmrPeaks, StoreError> {
+    if peaks_idxdb.peaks.is_empty() {
+        return Ok(MmrPeaks::new(Forest::empty(), Vec::new())?);
+    }
+
+    let forest_size =
+        usize::try_from(peaks_idxdb.block_num).expect("u32 block_num should fit in usize");
+    let forest = Forest::new(forest_size).map_err(|err| {
+        StoreError::ParsingError(format!("invalid forest size {forest_size}: {err}"))
+    })?;
+    Ok(decode_mmr_peaks(forest, &peaks_idxdb.peaks)?)
 }
 
 /// Encodes a [`NoteTagSource`] into the three optional hex-string columns the

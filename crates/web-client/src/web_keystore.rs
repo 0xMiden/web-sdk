@@ -14,8 +14,9 @@ use miden_client::auth::{
     TransactionAuthenticator,
 };
 use miden_client::keystore::{KeyStoreError, Keystore};
-use miden_client::utils::{RwLock, Serializable};
+use miden_client::utils::RwLock;
 use miden_client::{AuthenticationError, Word as NativeWord};
+use miden_protocol::utils::serde::Serializable;
 use rand::{Rng, TryCryptoRng, TryRng};
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::js_sys::Function;

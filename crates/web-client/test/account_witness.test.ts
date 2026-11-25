@@ -96,6 +96,9 @@ test.describe("watch-only import", () => {
       const integration = await helpers.createIntegrationClient();
       if (!integration) return { skip: true };
       const { client } = integration;
+      // The import reads the account at the client's sync height, which must
+      // be past the genesis block.
+      await client.syncState();
       const faucetId = await client.feeFaucetId();
       const id = sdk.AccountId.fromHex(faucetId.toString());
       const before = (await client.listTags()).length;

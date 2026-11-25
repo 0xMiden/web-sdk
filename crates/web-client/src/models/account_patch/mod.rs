@@ -1,10 +1,11 @@
 use js_export_macro::js_export;
 use miden_client::account::AccountPatch as NativeAccountPatch;
+use miden_objects::proto;
 
 use crate::models::account_id::AccountId;
 use crate::models::felt::Felt;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::utils::{decode_message, encode_message};
 
 pub mod storage;
 pub mod vault;
@@ -19,14 +20,16 @@ pub struct AccountPatch(NativeAccountPatch);
 
 #[js_export]
 impl AccountPatch {
-    /// Serializes the account patch into bytes.
+    /// Serializes the account patch into the bytes of its `miden-objects` protobuf message.
     pub fn serialize(&self) -> JsBytes {
-        serialize_to_bytes(&self.0)
+        encode_message(&proto::account::AccountPatch::from(&self.0))
     }
 
-    /// Deserializes an account patch from bytes.
+    /// Deserializes an account patch from the bytes that [`Self::serialize`] returns.
+    ///
+    /// Bytes that an earlier SDK version wrote with the Winterfell encoding do not decode.
     pub fn deserialize(bytes: JsBytes) -> Result<AccountPatch, JsErr> {
-        deserialize_from_bytes::<NativeAccountPatch>(&bytes).map(AccountPatch)
+        decode_message::<proto::account::AccountPatch>(&bytes).map(AccountPatch)
     }
 
     /// Returns the affected account ID.

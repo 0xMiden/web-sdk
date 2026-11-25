@@ -571,21 +571,24 @@ impl WebClient {
         for item in &items {
             let native_account_id: NativeAccountId = item.account_id().into();
             let native_req: NativeTransactionRequest = item.request().into();
-            maybe_wrap_send(Box::pin(builder.push(native_account_id, native_req)))
-                .await
-                .map_err(|err| {
-                    let js_error =
-                        js_error_with_context(err, "failed to push transaction to batch");
-                    #[cfg(feature = "browser")]
-                    append_get_key_detail(
-                        &js_error,
-                        keystore.as_ref().and_then(|keystore| keystore.last_get_key_error()),
-                    );
-                    js_error
-                })?;
+            maybe_wrap_send(Box::pin(client.push_to_batch(
+                &mut builder,
+                native_account_id,
+                native_req,
+            )))
+            .await
+            .map_err(|err| {
+                let js_error = js_error_with_context(err, "failed to push transaction to batch");
+                #[cfg(feature = "browser")]
+                append_get_key_detail(
+                    &js_error,
+                    keystore.as_ref().and_then(|keystore| keystore.last_get_key_error()),
+                );
+                js_error
+            })?;
         }
 
-        maybe_wrap_send(Box::pin(builder.submit()))
+        maybe_wrap_send(Box::pin(client.submit_transaction_batch(builder)))
             .await
             .map(|block_number| block_number.as_u32())
             .map_err(|err| {

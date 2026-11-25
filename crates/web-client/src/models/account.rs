@@ -1,6 +1,15 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
-use miden_client::account::component::{AuthNetworkAccount, AuthTxFeeCollector, NetworkAccount};
+use miden_client::account::standards::auth::{
+    AuthGuardedMultisig,
+    AuthMultisig,
+    AuthMultisigSmart,
+    AuthNetworkAccount,
+    AuthSingleSig,
+    AuthTxFeeCollector,
+    NetworkAccount,
+    NoAuth,
+};
 use miden_client::account::{
     Account as NativeAccount,
     AccountComponentInterface,
@@ -9,14 +18,8 @@ use miden_client::account::{
     StorageSlot,
     StorageSlotContent,
 };
-use miden_client::auth::{
-    AuthGuardedMultisig,
-    AuthMultisig,
-    AuthMultisigSmart,
-    AuthSingleSig,
-    NoAuth,
-};
 use miden_client::testing::standards::account_interface::get_public_keys_from_account;
+use miden_objects::proto;
 use miden_protocol::account::component::AUTH_SCRIPT_ATTRIBUTE;
 
 use crate::models::account_code::AccountCode;
@@ -26,7 +29,7 @@ use crate::models::asset_vault::AssetVault;
 use crate::models::felt::Felt;
 use crate::models::word::Word;
 use crate::platform::{JsBytes, JsErr, from_str_err};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::utils::{decode_message, encode_message};
 
 /// An account which can store assets and define rules for manipulating them.
 ///
@@ -141,14 +144,16 @@ impl Account {
         })
     }
 
-    /// Serializes the account into bytes.
+    /// Serializes the account into the bytes of its `miden-objects` protobuf message.
     pub fn serialize(&self) -> JsBytes {
-        serialize_to_bytes(&self.0)
+        encode_message(&proto::account::Account::from(&self.0))
     }
 
-    /// Restores an account from its serialized bytes.
+    /// Restores an account from the bytes that [`Self::serialize`] returns.
+    ///
+    /// Bytes that an earlier SDK version wrote with the Winterfell encoding do not decode.
     pub fn deserialize(bytes: JsBytes) -> Result<Account, JsErr> {
-        deserialize_from_bytes::<NativeAccount>(&bytes).map(Account)
+        decode_message::<proto::account::Account>(&bytes).map(Account)
     }
 
     /// Returns the public key commitments derived from the account's authentication scheme.

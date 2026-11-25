@@ -1,6 +1,7 @@
 use js_export_macro::js_export;
+use miden_client::Word as NativeWord;
 use miden_client::auth::{PublicKey as NativePublicKey, Signature as NativeSignature};
-use miden_client::{Deserializable, Word as NativeWord};
+use miden_protocol::utils::serde::Deserializable;
 
 use crate::js_error_with_context;
 use crate::models::signature::Signature;

@@ -1,12 +1,13 @@
 use js_export_macro::js_export;
 use miden_client::PrettyPrint;
 use miden_client::note::{NoteScript as NativeNoteScript, StandardNote};
+use miden_objects::proto;
 
 use super::word::Word;
 use crate::js_error_with_context;
 use crate::models::package::Package;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::utils::{decode_message, encode_message};
 
 /// An executable program of a note.
 ///
@@ -25,14 +26,16 @@ impl NoteScript {
         self.0.to_pretty_string()
     }
 
-    /// Serializes the script into bytes.
+    /// Serializes the script into the bytes of its `miden-objects` protobuf message.
     pub fn serialize(&self) -> JsBytes {
-        serialize_to_bytes(&self.0)
+        encode_message(&proto::note::NoteScript::from(&self.0))
     }
 
-    /// Deserializes a script from bytes.
+    /// Deserializes a script from the bytes that [`Self::serialize`] returns.
+    ///
+    /// Bytes that an earlier SDK version wrote with the Winterfell encoding do not decode.
     pub fn deserialize(bytes: JsBytes) -> Result<NoteScript, JsErr> {
-        deserialize_from_bytes::<NativeNoteScript>(&bytes).map(NoteScript)
+        decode_message::<proto::note::NoteScript>(&bytes).map(NoteScript)
     }
 
     /// Returns the well-known P2ID script.

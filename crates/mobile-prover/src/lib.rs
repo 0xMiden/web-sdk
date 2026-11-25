@@ -22,7 +22,7 @@
 //! native binary together with every SDK protocol bump.
 
 use miden_client::transaction::{LocalTransactionProver, ProvenTransaction, TransactionInputs};
-use miden_client::utils::{Deserializable, Serializable};
+use miden_protocol::utils::serde::{Deserializable, Serializable};
 
 /// Status codes returned by [`miden_prove_transaction`].
 #[repr(i32)]

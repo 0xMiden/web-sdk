@@ -217,10 +217,10 @@ export async function pruneIrrelevantBlocks(
     const db = getDatabase(dbId);
     const numericNodeIds = nodeIdsToRemove.map(Number);
 
-    const syncHeight = await db.blockchainCheckpoint.get(1);
+    const syncHeight = await db.chainAnchors.orderBy("blockNum").last();
     if (syncHeight == undefined) {
       throw Error(
-        "SyncHeight is undefined -- is the blockchain_checkpoint table empty?"
+        "SyncHeight is undefined -- is the chainAnchors table empty?"
       );
     }
 

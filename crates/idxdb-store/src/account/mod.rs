@@ -31,16 +31,15 @@ use miden_client::asset::{
     StorageSlotHeader,
 };
 use miden_client::crypto::MerkleError;
-use miden_client::store::{
+use miden_client::store::{AccountStatus, StoreError};
+use miden_client::{AccountError, Felt, Word};
+use miden_client_core::store::{
     AccountRecord,
     AccountRecordData,
-    AccountStatus,
     AccountStorageFilter,
     AccountUpdate,
     ClientAccountType,
-    StoreError,
 };
-use miden_client::{AccountError, Felt, Word};
 use miden_client_proto::{decode_unchecked, encode};
 
 use super::IdxdbStore;

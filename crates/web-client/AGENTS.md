@@ -48,19 +48,16 @@ await client.sync();
 backs tests with an in-memory chain and no network (pass a distinct `storeName`
 when running multiple same-origin browser mocks, as omitting it shares `mock_client_db`).
 
-`feeFaucetId` is optional. Since 0.17 the chain's fee asset lives in the
-protocol configuration, which the client receives from the node when it syncs,
-so execution never needs the option: it only sets what `client.feeFaucetId()`
-reports before the first sync. Before that sync, a client created without it
-rejects `feeFaucetId()` and asks you to sync first; a mock client reports its
-mock chain's own faucet.
+`feeFaucetId` is deprecated and not needed. Since 0.17 the chain's fee asset
+lives in the protocol configuration, and creating the client stores the
+configuration the chain commits to, so `client.feeFaucetId()` reports the
+chain's own faucet from the start.
 
 `client.protocolConfig()` returns that configuration as a `ProtocolConfig`: its
-`feeFaucetId()` is the faucet `client.feeFaucetId()` reports after a sync, and
-its `commitment()` is what block headers carry as `protocolConfigCommitment()`.
-It rejects with "the network's protocol configuration is not known yet" until
-the first sync stores the configuration; a mock client is seeded with its
-chain's.
+`feeFaucetId()` is the faucet `client.feeFaucetId()` reports, and its
+`commitment()` is what block headers carry as `protocolConfigCommitment()`.
+Creating the client stores the configuration the genesis block commits to, and
+syncs store the one later blocks commit to, so it resolves from creation on.
 
 On testnet and devnet, `accounts.requestFundingNote(account, options?)` and
 `accounts.fundAccount(account, options?)` request the native fee asset from the

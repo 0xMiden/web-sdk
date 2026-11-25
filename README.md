@@ -52,12 +52,12 @@ import { MidenClient } from "@miden-sdk/miden-sdk";
 
 const client = await MidenClient.create({
   endpoint: "https://rpc.testnet.miden.xyz",
-  // Optional: the faucet the chain mints its fee asset from, bech32 or hex.
-  // The client receives the chain's protocol configuration, which names the
-  // fee asset, from the node when it syncs (`client.protocolConfig()` reads
-  // it); this only sets what `client.feeFaucetId()` reports before that sync.
-  feeFaucetId: FEE_FAUCET,
 });
+
+// Creating the client stores the chain's protocol configuration, which names
+// the fee asset, so no `feeFaucetId` option is needed.
+const config = await client.protocolConfig();
+console.log("Fee faucet:", config.feeFaucetId().toString());
 
 const account = await client.accounts.create({ storage: "public" });
 console.log("New account:", account.id().toBech32());
@@ -379,7 +379,7 @@ Two long-lived branches:
 - **`main`** — released to npm under the `latest` tag. Stable.
 - **`next`** — pre-release integration. Released to npm under the `next` tag when a PR carries the `patch release` label.
 
-The publish workflow gates the optimized WASM artifacts at 25 MiB for ST and 35 MiB for MT. These variant-specific limits reject both an optimizer failure and a skipped MASP debug strip before the package reaches npm.
+The publish workflow gates the optimized WASM artifacts at 25 MiB for ST and 36 MiB for MT. These variant-specific limits reject both an optimizer failure and a skipped MASP debug strip before the package reaches npm.
 
 ---
 

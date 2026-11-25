@@ -22,6 +22,11 @@ impl WebClient {
     ///
     /// Sync keeps the account's commitment, nonce and storage current but pulls none of the
     /// notes addressed to it.
+    ///
+    /// The account is fetched at the client's sync height and checked against the block header the
+    /// client synced, so sync after the account is created and before importing it. A client
+    /// that has never synced asks for the account at the genesis block, whose state the node has
+    /// usually pruned.
     #[js_export(js_name = "importWatchedAccountById")]
     pub async fn import_watched_account_by_id(&self, account_id: &AccountId) -> Result<(), JsErr> {
         let mut guard = self.get_mut_inner().await;
@@ -232,6 +237,8 @@ impl WebClient {
         Ok(())
     }
 
+    /// Removes `address` from the account `account_id`. Does nothing if the account does not have
+    /// the address.
     #[js_export(js_name = "removeAccountAddress")]
     pub async fn remove_account_address(
         &self,
@@ -250,7 +257,7 @@ impl WebClient {
             return Ok(());
         }
         client
-            .remove_address(native_address, account_id.into())
+            .remove_address(native_address)
             .await
             .map_err(|err| js_error_with_context(err, "failed to remove address from account"))?;
         Ok(())

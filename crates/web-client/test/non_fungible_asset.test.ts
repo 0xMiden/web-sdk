@@ -92,52 +92,125 @@ test.describe("non-fungible asset vault entries", () => {
         sdk.AccountStorageMode.private(),
         sdk.AuthScheme.AuthRpoFalcon512
       );
-      const serialized = account.serialize();
-      // Account bytes start with a version byte, a 15-byte ID, and a variable-length vault count.
-      // An empty vault count is one byte (1). Three assets use one byte (7).
-      const accountPrefix = serialized.slice(0, 16);
-      const issuerBytes = serialized.slice(1, 16);
+      const serialized = Uint8Array.from(account.serialize());
+      // Protobuf wire helpers, enough to rewrite the fields of a miden-objects message.
+      const readVarint = (bytes, pos) => {
+        let value = 0n;
+        let shift = 0n;
+        for (;;) {
+          const byte = bytes[pos++];
+          value |= BigInt(byte & 0x7f) << shift;
+          if ((byte & 0x80) === 0) return [value, pos];
+          shift += 7n;
+        }
+      };
+      const varint = (value) => {
+        const out = [];
+        let rest = BigInt(value);
+        do {
+          let byte = Number(rest & 0x7fn);
+          rest >>= 7n;
+          if (rest > 0n) byte |= 0x80;
+          out.push(byte);
+        } while (rest > 0n);
+        return out;
+      };
+      // Splits a message into its fields. `payload` is the field's bytes without the tag and
+      // the length, `raw` is the field as encoded.
+      const fields = (bytes) => {
+        const out = [];
+        let pos = 0;
+        while (pos < bytes.length) {
+          const start = pos;
+          const [tag, afterTag] = readVarint(bytes, pos);
+          const num = Number(tag >> 3n);
+          const wire = Number(tag & 7n);
+          let payloadStart = afterTag;
+          let end = afterTag;
+          if (wire === 0) {
+            end = readVarint(bytes, afterTag)[1];
+          } else if (wire === 1) {
+            end = afterTag + 8;
+          } else if (wire === 2) {
+            const [length, afterLength] = readVarint(bytes, afterTag);
+            payloadStart = afterLength;
+            end = afterLength + Number(length);
+          } else if (wire === 5) {
+            end = afterTag + 4;
+          } else {
+            throw new Error(`unsupported wire type ${wire}`);
+          }
+          out.push({
+            num,
+            payload: bytes.slice(payloadStart, end),
+            raw: bytes.slice(start, end),
+          });
+          pos = end;
+        }
+        return out;
+      };
+      const concat = (parts) =>
+        Uint8Array.from(parts.flatMap((part) => Array.from(part)));
+      const lengthDelimited = (num, payload) =>
+        concat([varint((num << 3) | 2), varint(payload.length), payload]);
+
+      // Field numbers of the miden-objects messages: Account { 2 account_id, 6 vault },
+      // AssetVault { 1 assets }, Asset { 1 asset_id, 2 value }, AssetId { 1 version,
+      // 2 faucet_id, 3 fungible, 4 non_fungible }, AssetClass { 1 suffix, 2 prefix },
+      // Word { 1 encoded } and Felt { 1 value, a fixed64 }. The issuer is the account itself.
+      const accountFields = fields(serialized);
+      const emptyVault =
+        (accountFields.find((field) => field.num === 6)?.payload.length ??
+          0) === 0;
+      const issuer = accountFields.find((field) => field.num === 2).payload;
       const values = [
         new sdk.Word(sdk.u64Array([11n, 22n, 9007199254740993n, 44n])),
         new sdk.Word(sdk.u64Array([55n, 66n, 77n, 88n])),
       ];
-      // Each 0.17 asset starts with its ID version, composition, and 15-byte issuer ID.
-      // Non-fungible IDs also serialize their two-limb class before the value word.
-      const assetVersion = 1;
+      const felt = (num, limb) => {
+        const bytes = new Uint8Array(9);
+        bytes[0] = 0x09;
+        new DataView(bytes.buffer).setBigUint64(1, limb, true);
+        return lengthDelimited(num, bytes);
+      };
+      const word = (num, value) =>
+        lengthDelimited(num, lengthDelimited(1, value.serialize()));
+      const assetId = (composition) =>
+        lengthDelimited(
+          1,
+          concat([
+            Uint8Array.from([0x08, 0x01]),
+            lengthDelimited(2, issuer),
+            composition,
+          ])
+        );
+      const asset = (id, value) =>
+        lengthDelimited(1, concat([id, word(2, value)]));
       const fungibleValue = new sdk.Word(sdk.u64Array([10n, 0n, 0n, 0n]));
-      const fungibleBytes = [
-        assetVersion,
-        1,
-        ...issuerBytes,
-        ...fungibleValue.serialize(),
-      ];
-      const nonFungibleBytes = values.flatMap((value) => {
-        const serializedValue = value.serialize();
-        return [
-          assetVersion,
-          0,
-          ...issuerBytes,
-          ...serializedValue.slice(0, 16),
-          ...serializedValue,
-        ];
+      const fungible = asset(
+        assetId(lengthDelimited(3, new Uint8Array())),
+        fungibleValue
+      );
+      // The class of a non-fungible asset is the first two limbs of its value word.
+      const nonFungibles = values.map((value) => {
+        const limbs = value.toU64s();
+        const assetClass = lengthDelimited(
+          4,
+          concat([felt(1, limbs[0]), felt(2, limbs[1])])
+        );
+        return asset(assetId(assetClass), value);
       });
+      const withVault = (assets) =>
+        concat([
+          ...accountFields
+            .filter((field) => field.num !== 6)
+            .map((field) => field.raw),
+          lengthDelimited(6, concat(assets)),
+        ]);
       const restored = sdk.Account.deserialize(
-        new Uint8Array([
-          ...accountPrefix,
-          7,
-          ...fungibleBytes,
-          ...nonFungibleBytes,
-          ...serialized.slice(17),
-        ])
+        withVault([fungible, ...nonFungibles])
       );
-      const fungibleOnly = sdk.Account.deserialize(
-        new Uint8Array([
-          ...accountPrefix,
-          3,
-          ...fungibleBytes,
-          ...serialized.slice(17),
-        ])
-      );
+      const fungibleOnly = sdk.Account.deserialize(withVault([fungible]));
       const vault = restored.vault();
       const actual = vault.nonFungibleAssets().map((asset) => ({
         issuer: asset.faucetId().toString(),
@@ -161,7 +234,7 @@ test.describe("non-fungible asset vault entries", () => {
         };
       });
       return {
-        emptyCount: serialized[16],
+        emptyVault,
         actual,
         expected,
         fungibleCount: vault.fungibleAssets().length,
@@ -173,7 +246,7 @@ test.describe("non-fungible asset vault entries", () => {
           .sort(),
       };
     });
-    expect(result.emptyCount).toBe(1);
+    expect(result.emptyVault).toBe(true);
     expect(result.actual).toHaveLength(2);
     expect(result.actual).toEqual(expect.arrayContaining(result.expected));
     expect(result.fungibleCount).toBe(1);

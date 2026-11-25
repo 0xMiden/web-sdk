@@ -1,22 +1,44 @@
-import { getDatabase } from "./schema.js";
+import type { Table } from "dexie";
+import { getDatabase, type IKeyValue } from "./schema.js";
 import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
 
-export async function getSetting(dbId: string, scope: number, key: string) {
-  try {
-    const db = getDatabase(dbId);
-    const matchingRecord = await db.settings.get([scope, key]);
+// The user settings live in `userSettings` and the data of the client lives in `clientConfig`.
+// Both are key-value stores with the same operations.
 
-    if (!matchingRecord) {
-      console.log("No setting record found for given key.");
-      return null;
+async function getValue(table: Table<IKeyValue, string>, key: string) {
+  const matchingRecord = await table.get(key);
+  if (!matchingRecord) {
+    return null;
+  }
+  return {
+    key: matchingRecord.key,
+    value: uint8ArrayToBase64(matchingRecord.value),
+  };
+}
+
+// Reports whether the key was present, which the `Store` trait requires of `remove_setting`.
+// `Table.delete()` resolves to nothing whether or not a row matched, so the answer comes from a
+// read inside the same transaction.
+async function removeValue(
+  dbId: string,
+  table: Table<IKeyValue, string>,
+  key: string
+): Promise<boolean> {
+  return await getDatabase(dbId).dexie.transaction("rw", table, async () => {
+    const present = (await table.get(key)) !== undefined;
+    if (present) {
+      await table.delete(key);
     }
+    return present;
+  });
+}
 
-    const valueBase64 = uint8ArrayToBase64(matchingRecord.value);
+// USER SETTINGS
+// ================================================================================================
 
-    return {
-      key: matchingRecord.key,
-      value: valueBase64,
-    };
+export async function getSetting(dbId: string, key: string) {
+  try {
+    return await getValue(getDatabase(dbId).userSettings, key);
   } catch (error) {
     logWebStoreError(error, `Error while fetching setting key: ${key}`);
   }
@@ -24,38 +46,22 @@ export async function getSetting(dbId: string, scope: number, key: string) {
 
 export async function insertSetting(
   dbId: string,
-  scope: number,
   key: string,
   value: Uint8Array
 ): Promise<void> {
   try {
-    const db = getDatabase(dbId);
-    await db.settings.put({ scope, key, value });
+    await getDatabase(dbId).userSettings.put({ key, value });
   } catch (error) {
-    logWebStoreError(
-      error,
-      `Error inserting setting with key: ${key} and value(base64): ${uint8ArrayToBase64(value)}`
-    );
+    logWebStoreError(error, `Error inserting setting with key: ${key}`);
   }
 }
 
-// Reports whether the key was present, which the `Store` trait requires of
-// `remove_setting`. `Table.delete()` resolves to nothing whether or not a row
-// matched, so the answer comes from a read inside the same transaction.
 export async function removeSetting(
   dbId: string,
-  scope: number,
   key: string
 ): Promise<boolean> {
   try {
-    const db = getDatabase(dbId);
-    return await db.dexie.transaction("rw", db.settings, async () => {
-      const present = (await db.settings.get([scope, key])) !== undefined;
-      if (present) {
-        await db.settings.delete([scope, key]);
-      }
-      return present;
-    });
+    return await removeValue(dbId, getDatabase(dbId).userSettings, key);
   } catch (error) {
     logWebStoreError(error, `Error deleting setting with key: ${key}`);
     // Unreachable: logWebStoreError rethrows. Present so the compiler can see
@@ -64,50 +70,47 @@ export async function removeSetting(
   }
 }
 
-export async function listSettingKeys(dbId: string, scope: number) {
+export async function listSettingKeys(dbId: string) {
   try {
-    const db = getDatabase(dbId);
-    const keys = await db.settings.where("scope").equals(scope).primaryKeys();
-    return keys.map(([, key]) => key);
+    return await getDatabase(dbId).userSettings.toCollection().primaryKeys();
   } catch (error) {
     logWebStoreError(error, `Error listing setting keys`);
   }
 }
 
-interface SettingMutation {
-  kind: string;
-  key: string;
-  value?: Uint8Array;
+// CLIENT CONFIG
+// ================================================================================================
+
+export async function getClientConfig(dbId: string, key: string) {
+  try {
+    return await getValue(getDatabase(dbId).clientConfig, key);
+  } catch (error) {
+    logWebStoreError(error, `Error while fetching client config key: ${key}`);
+  }
 }
 
-export async function applySettingsMutations(
+export async function insertClientConfig(
   dbId: string,
-  scope: number,
-  mutations: SettingMutation[]
+  key: string,
+  value: Uint8Array
 ): Promise<void> {
   try {
-    const db = getDatabase(dbId);
-    await db.dexie.transaction("rw", db.settings, async () => {
-      for (const mutation of mutations) {
-        if (mutation.kind === "set") {
-          if (mutation.value === undefined) {
-            throw new Error(
-              `Setting mutation "set" for key ${mutation.key} is missing a value`
-            );
-          }
-          await db.settings.put({
-            scope,
-            key: mutation.key,
-            value: mutation.value,
-          });
-        } else if (mutation.kind === "remove") {
-          await db.settings.delete([scope, mutation.key]);
-        } else {
-          throw new Error(`Unknown setting mutation kind: ${mutation.kind}`);
-        }
-      }
-    });
+    await getDatabase(dbId).clientConfig.put({ key, value });
   } catch (error) {
-    logWebStoreError(error, "Error applying settings mutations");
+    logWebStoreError(error, `Error inserting client config with key: ${key}`);
+  }
+}
+
+export async function removeClientConfig(
+  dbId: string,
+  key: string
+): Promise<boolean> {
+  try {
+    return await removeValue(dbId, getDatabase(dbId).clientConfig, key);
+  } catch (error) {
+    logWebStoreError(error, `Error deleting client config with key: ${key}`);
+    // Unreachable: logWebStoreError rethrows. Present so the compiler can see
+    // that no path returns undefined.
+    throw error;
   }
 }

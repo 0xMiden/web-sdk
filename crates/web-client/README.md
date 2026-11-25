@@ -268,17 +268,16 @@ const felt = new Felt(42n); // sync
 const client = await MidenClient.createTestnet();
 ```
 
-`feeFaucetId` is optional. Since 0.17 the chain's fee asset lives in the
-protocol configuration, which the client receives from the node when it syncs,
-so execution never needs the option: it only sets what `client.feeFaucetId()`
-reports before the first sync. Snippets below leave it out.
+`feeFaucetId` is deprecated and not needed. Since 0.17 the chain's fee asset
+lives in the protocol configuration, and creating the client stores the
+configuration the chain commits to, so `client.feeFaucetId()` reports the
+chain's own faucet from the start. Snippets below leave it out.
 
 `client.protocolConfig()` returns that configuration as a `ProtocolConfig`: its
-`feeFaucetId()` is the faucet `client.feeFaucetId()` reports after a sync, and
-its `commitment()` is what block headers carry as `protocolConfigCommitment()`.
-It rejects with "the network's protocol configuration is not known yet" until
-the first sync stores the configuration; a mock client is seeded with its
-chain's.
+`feeFaucetId()` is the faucet `client.feeFaucetId()` reports, and its
+`commitment()` is what block headers carry as `protocolConfigCommitment()`.
+Creating the client stores the configuration the genesis block commits to, and
+syncs store the one later blocks commit to, so it resolves from creation on.
 
 `noteTransportMaxRetries` (0 to 10, default 3) and
 `noteTransportRetryIntervalMs` (0 to 60000, default 250), with a total computed

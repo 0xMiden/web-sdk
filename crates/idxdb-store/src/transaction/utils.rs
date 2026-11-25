@@ -11,12 +11,12 @@ use miden_client::transaction::{
     TransactionScript,
     TransactionStatus,
 };
-use miden_client::utils::Serializable;
 use miden_client_proto::encode;
 use serde::Serialize;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use super::js_bindings::{idxdb_insert_transaction_script, idxdb_upsert_transaction_record};
+use crate::bytes::ToStoreBytes;
 use crate::promise::await_ok;
 
 // TYPES
@@ -99,7 +99,8 @@ pub(crate) fn serialize_transaction_record(
 ) -> SerializedTransactionData {
     let transaction_id: String = transaction_record.id.as_word().to_hex();
 
-    let script_root = transaction_record.script.as_ref().map(|script| script.root().to_bytes());
+    let script_root =
+        transaction_record.script.as_ref().map(|script| script.root().to_store_bytes());
     let tx_script = transaction_record.script.as_ref().map(encode::<TransactionScript>);
 
     SerializedTransactionData {
