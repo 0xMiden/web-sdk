@@ -98,8 +98,10 @@ which one you are relying on tells you what a second browser tab can still do to
 
 1. **In-process call chain.** The `WebClient` proxy queues WASM calls on a per-instance
    promise chain (`_serializeWasmCall`), including methods it does not wrap explicitly.
-   The raw-bound `SYNC_METHODS` are the only exceptions. This is what stops
-   "recursive use of an object detected".
+   Raw-bound `SYNC_METHODS` run outside the chain. During a worker-only sync or prove
+   turn, `getSyncHeight()` can read committed state when no later ordered call is
+   queued. Those height reads serialize with each other and settle before any
+   ordered call borrows the main-realm client.
 2. **Web Locks.** Every call that writes the chain MMR or its tracked block headers holds
    one per-database Web Lock, **across tabs** and clients: the syncs (`syncState`,
    `syncChain`, `syncNoteTransport`), `importNoteFile` (`notes.import`),
@@ -115,12 +117,13 @@ which one you are relying on tells you what a second browser tab can still do to
    `inconsistent partial mmr: missing sibling for tracked leaf`.
    The lock is per store opened: a client that omits `storeName` opens
    `MidenClientDB_<network id>` for its node URL and takes the same lock as one that names
-   that store, and clients on different default stores do not block each other. Such a
-   call takes its place on the layer 1 chain when it is made and requests the lock
-   when its turn comes (chain, then lock), so call order, `waitForIdle()` and
-   `terminate()` treat it like any other call. While it waits for another client's lock,
-   later calls on its own client wait behind it. Such a call waits at most 10 minutes
-   from when it is made, then rejects with `Timed out after <ms> ms waiting for the sync lock of <store>`
+   that store, and clients on different default stores do not block each other. Store
+   writers take an ordered slot when called and request the store lock on that turn.
+   Later writes wait behind it even while the earlier writer waits on another client's
+   lock. A worker sync still holds its ordered slot while eligible height reads run.
+   `waitForIdle()` and `terminate()` drain ordered calls and admitted height reads.
+   A lock request waits at most 10 minutes from when its call is made, then rejects with
+   `Timed out after <ms> ms waiting for the sync lock of <store>`
    and its work never runs. A call of a sync joins its client's
    pending run of the *same* sync only while no other call has been queued on that client
    since the run; after one has, it starts a run of its own behind that call, so it never

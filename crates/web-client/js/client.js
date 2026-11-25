@@ -410,25 +410,16 @@ export class MidenClient {
   }
 
   /**
-   * Resolves once every serialized WASM call that was already on the
-   * internal `_serializeWasmCall` chain when `waitForIdle()` was called
-   * (execute, submit, prove, apply, sync, or account creation) has
-   * settled. Use this from callers that need to perform a non-WASM-side
-   * action — e.g. clearing an in-memory auth key on wallet lock — after
-   * the kernel finishes, so its auth callback doesn't race with the key
-   * being cleared.
+   * Waits for the ordered WASM calls and concurrent sync-height reads already
+   * in flight when called. Calls made later are outside this wait.
    *
-   * Does NOT wait for calls enqueued after `waitForIdle()` returns —
-   * intentional, so a caller can drain and proceed without being blocked
-   * indefinitely by concurrent workload.
+   * Use this before clearing app-side state, such as an in-memory auth key,
+   * that a pending operation may still need.
    *
-   * A call that takes the store lock is on the chain from the moment it is
-   * made, like every other call; see `WebClient._withStoreLock`.
-   *
-   * Safe to call at any time; returns immediately if nothing was in
-   * flight.
-   *
-   * @returns {Promise<void>}
+   * During sync or proof work on a live Web Worker, `getSyncHeight()` can
+   * return the committed height if no later ordered call is already queued.
+   * Note screening and account reader acquisition stay ordered. The
+   * balance lookup on an acquired reader runs outside the idle wait.
    */
   async waitForIdle() {
     this.assertNotTerminated();
