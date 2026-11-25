@@ -1473,14 +1473,16 @@ test.describe("note filters", () => {
         scriptRoots: () => new sdk.NoteFilter(sdk.NoteFilterTypes.ScriptRoots),
       };
 
-      // The browser build rejects with a bare string, the Node.js build with
-      // an Error.
+      // Both browser and Node.js builds reject with an Error instance.
       const rejectionOf = async (call) => {
         try {
           await call();
-          return "";
+          return { isError: false, message: "" };
         } catch (err) {
-          return String(err?.message ?? err);
+          return {
+            isError: err instanceof Error,
+            message: String(err?.message ?? err),
+          };
         }
       };
 
@@ -1543,10 +1545,19 @@ test.describe("note filters", () => {
 
     for (const method of ["getInputNotes", "getOutputNotes"]) {
       const errors = result.errors[method];
-      expect(errors.list).toContain("Note IDs required for List filter");
-      expect(errors.unique).toContain("Note ID required for Unique filter");
-      expect(errors.uniqueTwo).toContain("Only one Note ID can be provided");
-      expect(errors.scriptRoots).toContain(
+      for (const key of ["list", "unique", "uniqueTwo", "scriptRoots"]) {
+        expect(errors[key].isError).toBe(true);
+      }
+      expect(errors.list.message).toContain(
+        "Note IDs required for List filter"
+      );
+      expect(errors.unique.message).toContain(
+        "Note ID required for Unique filter"
+      );
+      expect(errors.uniqueTwo.message).toContain(
+        "Only one Note ID can be provided"
+      );
+      expect(errors.scriptRoots.message).toContain(
         "Script roots required for ScriptRoots filter"
       );
       expect(result.complete[method]).toEqual({

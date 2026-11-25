@@ -76,13 +76,16 @@ test.describe("mint transaction tests", () => {
         .executedTransaction()
         .inputNotes();
 
-      // The browser build throws a bare string, the Node.js build an Error.
+      // Both browser and Node.js builds throw an Error instance.
       const errorOf = (call) => {
         try {
           call();
-          return "";
+          return { isError: false, message: "" };
         } catch (err) {
-          return String(err?.message ?? err);
+          return {
+            isError: err instanceof Error,
+            message: String(err?.message ?? err),
+          };
         }
       };
 
@@ -101,14 +104,26 @@ test.describe("mint transaction tests", () => {
 
     expect(result.outputNoteId).toBe(result.createdNoteId);
     expect(result.inputNoteId).toBe(result.createdNoteId);
-    expect(result.outputError).toContain("OutputNotes index out of bounds");
-    expect(result.outputError).toContain(`index ${result.outputCount}`);
-    expect(result.inputError).toContain("InputNotes index out of bounds");
-    expect(result.inputError).toContain(`index ${result.inputCount}`);
-    expect(result.outputError256).toContain("OutputNotes index out of bounds");
-    expect(result.outputError256).toContain("index 256");
-    expect(result.inputError256).toContain("InputNotes index out of bounds");
-    expect(result.inputError256).toContain("index 256");
+    expect(result.outputError.isError).toBe(true);
+    expect(result.outputError.message).toContain(
+      "OutputNotes index out of bounds"
+    );
+    expect(result.outputError.message).toContain(`index ${result.outputCount}`);
+    expect(result.inputError.isError).toBe(true);
+    expect(result.inputError.message).toContain(
+      "InputNotes index out of bounds"
+    );
+    expect(result.inputError.message).toContain(`index ${result.inputCount}`);
+    expect(result.outputError256.isError).toBe(true);
+    expect(result.outputError256.message).toContain(
+      "OutputNotes index out of bounds"
+    );
+    expect(result.outputError256.message).toContain("index 256");
+    expect(result.inputError256.isError).toBe(true);
+    expect(result.inputError256.message).toContain(
+      "InputNotes index out of bounds"
+    );
+    expect(result.inputError256.message).toContain("index 256");
   });
 });
 
