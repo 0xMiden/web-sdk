@@ -16,6 +16,10 @@ export interface UseExportStoreResult {
 /**
  * Hook to export the IndexedDB store for backup/restore.
  *
+ * @deprecated Keep a separate store per signer (an external signer sets its `storeName`), or export
+ * only the state you need through the typed APIs (`useExportNote`,
+ * `useMidenClient().accounts.export`).
+ *
  * @example
  * ```tsx
  * function BackupButton() {
