@@ -600,6 +600,7 @@ A contract also needs a raw 32-byte `seed` and `auth`. `auth` is an
 anyone can call and that stores no key. Omitting `auth` is rejected and does
 not default to NoAuth. `"none"` is only valid on a contract; wallet and faucet
 `auth` stays `AuthScheme.Falcon` or `AuthScheme.ECDSA`.
+
 A component, transaction script or note script can also come from a compiled
 package (`.masp`) instead of MASM source: pass `package` (a `Package` or its
 serialized bytes) in place of `code`, for example
@@ -610,6 +611,7 @@ serialized bytes) in place of `code`, for example
 you build. A component built from a package always gets the fixed metadata name
 `"custom"`, whatever name the package declares, and `supportAllTypes` still
 defaults to `true`. The `Package` you pass stays usable afterward.
+
 The legacy selectors `0`, `1` and `"NonFungibleFaucet"` are still read as
 faucet types (non-fungible faucets are not supported yet and are rejected);
 `0` and `1` are also `AccountType.Private` / `AccountType.Public`, so never pass

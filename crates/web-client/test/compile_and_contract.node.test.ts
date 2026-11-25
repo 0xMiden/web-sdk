@@ -237,6 +237,61 @@ test.describe("compile.component({ package })", () => {
     expect(account.id().toString()).toBeDefined();
   });
 
+  test("txScript and noteScript build from a package, as Package or bytes", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const txSource = `
+      use miden::core::sys
+      @transaction_script
+      pub proc main
+        exec.sys::truncate_stack
+      end
+    `;
+    const [txBytes, noteBytes] = await client._withInnerWebClient(
+      async (inner) => {
+        const builder = await inner.createCodeBuilder();
+        return [
+          builder.buildLibrary("pkg::tx", txSource).asPackage().serialize(),
+          builder
+            .buildLibrary("pkg::note", RECEIVE_NOTE_SCRIPT)
+            .asPackage()
+            .serialize(),
+        ];
+      }
+    );
+
+    const txFromBytes = await client.compile.txScript({ package: txBytes });
+    const txFromPackage = await client.compile.txScript({
+      package: sdk.Package.deserialize(txBytes),
+    });
+    expect(txFromBytes.root().toHex()).toBe(txFromPackage.root().toHex());
+
+    const noteFromBytes = await client.compile.noteScript({
+      package: noteBytes,
+    });
+    const noteFromPackage = await client.compile.noteScript({
+      package: sdk.Package.deserialize(noteBytes),
+    });
+    expect(noteFromBytes.root().toHex()).toBe(noteFromPackage.root().toHex());
+    expect(noteFromBytes.root().toHex()).not.toBe(txFromBytes.root().toHex());
+  });
+
+  test("a package without the script attribute is rejected by txScript and noteScript", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const bytes = await packageBytes(sdk, client);
+    await expect(client.compile.txScript({ package: bytes })).rejects.toThrow();
+    await expect(
+      client.compile.noteScript({ package: bytes })
+    ).rejects.toThrow();
+  });
+
   test("rejects source and package together", async ({ sdk }) => {
     const MidenClient = await createMidenClient(sdk);
     test.skip(!MidenClient, "requires napi binary (Node.js only)");
