@@ -1466,7 +1466,6 @@ await client.notes.list(); // all input notes
 await client.notes.list({ status: "committed" }); // "consumed" | "committed" | "expected" | "processing" | "unverified"
 await client.notes.list({ scriptRoots: [noteScript.root()] }); // hex strings or Word instances
 await client.notes.list({ nullifiers: [record.nullifier()] }); // hex strings or Word instances; nullifier() is undefined for a partial note, so guard it
-await client.notes.list({ status: "committed", limit: 50, after: cursor }); // one page
 await client.notes.get(noteId); // single record
 await client.notes.listSent(); // output notes
 await client.notes.listAvailable({ account: wallet }); // payments the account can consume now
@@ -1484,12 +1483,6 @@ instance is required.
 `{ scriptRoots }` narrows at the store level, without loading and screening
 unrelated notes. It is a received-note filter: `listSent` returns an empty list
 for it.
-
-`limit` and `after` bound a note list to one page in ascending key order,
-strictly above `after`. Input notes are keyed by
-`record.detailsCommitment().toHex()`, output notes (`listSent`) by
-`record.id().toString()`; pass the last note's key as `after` to read the next
-page.
 
 ### Private-note transport
 

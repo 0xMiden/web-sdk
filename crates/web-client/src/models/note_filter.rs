@@ -14,8 +14,6 @@ pub struct NoteFilter {
     note_ids: Option<Vec<NoteId>>,
     script_roots: Option<Vec<Word>>,
     nullifiers: Option<Vec<Word>>,
-    after: Option<String>,
-    limit: Option<u32>,
 }
 
 #[js_export]
@@ -33,28 +31,7 @@ impl NoteFilter {
             note_ids,
             script_roots,
             nullifiers,
-            after: None,
-            limit: None,
         }
-    }
-
-    /// Returns this filter bounded to a page: at most `limit` notes, ordered by their key and
-    /// strictly above the `after` cursor.
-    ///
-    /// Input notes are keyed by details commitment (hex of `detailsCommitment()`), output notes
-    /// by note ID (`id().toString()`). Pass the key of the last note of a page to read the next.
-    pub fn page(&self, after: Option<String>, limit: Option<u32>) -> NoteFilter {
-        NoteFilter { after, limit, ..self.clone() }
-    }
-}
-
-impl NoteFilter {
-    /// Cuts `records` to this filter's page, or returns them untouched when it has none.
-    pub(crate) fn bound<T>(&self, records: Vec<T>, key: impl Fn(&T) -> String) -> Vec<T> {
-        if self.after.is_none() && self.limit.is_none() {
-            return records;
-        }
-        crate::bounded::page_after(records, key, self.after.as_ref(), self.limit)
     }
 }
 

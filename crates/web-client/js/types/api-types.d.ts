@@ -1258,21 +1258,8 @@ export type TransactionQuery =
 // Note types
 // ════════════════════════════════════════════════════════════════
 
-/**
- * Bounds a note query to one page. Input notes are keyed by details commitment
- * (`record.detailsCommitment().toHex()`), output notes by note ID
- * (`record.id().toString()`). A page holds at most `limit` notes in ascending
- * key order, strictly above `after`; pass the last note's key to read the next
- * page. The store still reads every match, but only the page reaches
- * JavaScript. A query without either field returns every match.
- */
-export interface NoteQueryPage {
-  limit?: number;
-  after?: string;
-}
-
 /** Discriminated union for note queries. */
-export type NoteQuery = (
+export type NoteQuery =
   | {
       status:
         | "consumed"
@@ -1294,10 +1281,7 @@ export type NoteQuery = (
    * `InputNoteRecord.nullifier()`). Notes match regardless of their state, and
    * a nullifier no stored note has matches nothing.
    */
-  | { nullifiers: (string | Word)[] }
-  | NoteQueryPage
-) &
-  NoteQueryPage;
+  | { nullifiers: (string | Word)[] };
 
 /** Options for standalone note creation utilities. */
 export interface NoteOptions {
@@ -2053,11 +2037,10 @@ export interface PswapResource {
 export interface NotesResource {
   /**
    * List received (input) notes, optionally filtered by status, IDs, note
-   * script roots or nullifiers, and optionally bounded to one page with `limit`
-   * and `after`.
+   * script roots or nullifiers.
    *
    * @param query - Optional filter by note status, note IDs, script roots or
-   * nullifiers, with an optional page.
+   * nullifiers.
    */
   list(query?: NoteQuery): Promise<InputNoteRecord[]>;
   /**
@@ -2068,13 +2051,11 @@ export interface NotesResource {
   get(noteId: NoteInput): Promise<InputNoteRecord | null>;
 
   /**
-   * List sent (output) notes, optionally filtered by status, IDs or nullifiers,
-   * and optionally bounded to one page keyed by note ID. A script root query
-   * returns an empty list, since script roots are only tracked for received
-   * notes.
+   * List sent (output) notes, optionally filtered by status, IDs or nullifiers.
+   * A script root query returns an empty list, since script roots are only
+   * tracked for received notes.
    *
-   * @param query - Optional filter by note status, note IDs or nullifiers, with
-   * an optional page.
+   * @param query - Optional filter by note status, note IDs or nullifiers.
    */
   listSent(query?: NoteQuery): Promise<OutputNoteRecord[]>;
 
