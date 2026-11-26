@@ -79,6 +79,82 @@ test.describe("mock chain tests", () => {
     expect(result.finalBalance).toEqual("1000");
   });
 
+  test("note reads page by details commitment and match caller-supplied nullifiers", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk }) => {
+      await client.syncState();
+      const wallet = await client.newWallet(
+        sdk.AccountStorageMode.private(),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const faucet = await client.newFaucet(
+        sdk.AccountStorageMode.private(),
+        false,
+        "DAG",
+        "DAG",
+        8,
+        sdk.u64(10000000),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      for (let i = 0; i < 7; i++) {
+        const request = await client.newMintTransactionRequest(
+          wallet.id(),
+          faucet.id(),
+          sdk.NoteType.Public,
+          sdk.u64(1000 + i)
+        );
+        await client.submitNewTransaction(faucet.id(), request);
+      }
+      await client.proveBlock();
+      await client.syncState();
+
+      const key = (note) => note.detailsCommitment().toHex();
+      const all = await client.getInputNotes(
+        new sdk.NoteFilter(sdk.NoteFilterTypes.All)
+      );
+      const pages = [];
+      let after;
+      for (;;) {
+        const page = await client.getInputNotes(
+          new sdk.NoteFilter(sdk.NoteFilterTypes.All).page(after, 3)
+        );
+        if (page.length === 0) break;
+        pages.push(page.map(key));
+        after = key(page[page.length - 1]);
+      }
+
+      const byNullifier = (hex) =>
+        client.getInputNotes(
+          new sdk.NoteFilter(
+            sdk.NoteFilterTypes.Nullifiers,
+            undefined,
+            undefined,
+            [sdk.Word.fromHex(hex)]
+          )
+        );
+      const stored = all[0];
+      const matching = await byNullifier(stored.nullifier());
+      const nonmatching = await byNullifier("0x" + "11".repeat(32));
+
+      return {
+        total: all.length,
+        pages,
+        matching: matching.map(key),
+        expected: key(stored),
+        nonmatching: nonmatching.length,
+      };
+    });
+
+    expect(result.total).toBe(7);
+    expect(result.pages.map((page) => page.length)).toEqual([3, 3, 1]);
+    const flat = result.pages.flat();
+    expect(new Set(flat).size).toBe(7);
+    expect(flat).toEqual([...flat].sort());
+    expect(result.matching).toEqual([result.expected]);
+    expect(result.nonmatching).toBe(0);
+  });
+
   test("transaction query bounds by account, status and limit, newest first", async ({
     run,
   }) => {
