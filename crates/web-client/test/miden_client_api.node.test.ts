@@ -95,7 +95,7 @@ test.describe("MidenClient API - Mock Chain", () => {
       await open("target", chain);
 
       const exported = await client.exportAccountFile(wallet.id());
-      expect(exported.authSecretKeyCount()).toBe(1);
+      expect(exported.authSecretKeyCount()).toBe(1n);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
