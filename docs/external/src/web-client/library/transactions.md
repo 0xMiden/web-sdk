@@ -311,7 +311,7 @@ await client.transactions.withdrawUsdcx({
 });
 ```
 
-`destinationRecipient` is a `0x`-prefixed 64-digit hex string, validated before any WASM call. An EVM address is left-padded with zeros to 32 bytes. The lower-level builders are `Note.createXReserveBurnNote(...)` and `client.newXReserveBurnTransactionRequest(...)`, which take the recipient as a 32-byte `Uint8Array`.
+`destinationDomain` must be an integer from 0 to 4294967295, inclusive. `destinationRecipient` is a `0x`-prefixed 64-digit hex string, validated before any WASM call. An EVM address is left-padded with zeros to 32 bytes. The lower-level builders are `Note.createXReserveBurnNote(...)` and `client.newXReserveBurnTransactionRequest(...)`, which take the recipient as a 32-byte `Uint8Array`.
 
 ## Paying Transaction Fees
 
