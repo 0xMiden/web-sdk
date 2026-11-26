@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../Cargo.toml", () => ({}));
@@ -124,5 +125,34 @@ describe("retryProvenBatch (#571)", () => {
 
     await expect(client.retryProvenBatch(submission)).resolves.toBe(17);
     expect(wasmClient.retryProvenBatch).toHaveBeenCalledWith(submission);
+  });
+
+  it("documents Node.js BATCH_SUBMISSION_OUTCOME_UNKNOWN and browser in-thread handles consistently", () => {
+    const normalize = (text) => text.replace(/\s+/g, " ");
+    const agentsMd = normalize(
+      readFileSync(new URL("../../AGENTS.md", import.meta.url), "utf8")
+    );
+    expect(agentsMd).not.toContain(
+      "Browser builds only: Node.js errors only prefix the message with the code."
+    );
+    expect(agentsMd).toContain(
+      "`ApplyTransactionAfterSubmitFailed` fields are browser builds only: Node.js errors only prefix the message with the code."
+    );
+    expect(agentsMd).toMatch(
+      /BATCH_SUBMISSION_OUTCOME_UNKNOWN[\s\S]*Node\.js[\s\S]*submission/
+    );
+
+    const indexJs = readFileSync(
+      new URL("../index.js", import.meta.url),
+      "utf8"
+    );
+    expect(
+      indexJs.includes('`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` (in-thread)')
+    ).toBe(false);
+    expect(
+      indexJs.includes(
+        '`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` (browser in-thread)'
+      )
+    ).toBe(true);
   });
 });
