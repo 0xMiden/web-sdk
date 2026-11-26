@@ -46,6 +46,31 @@ To consume a note running another script, such as a PSWAP order you mean to
 fill, pass it by name to `transactions.consume({ account, notes })` or use
 `transactions.pswapConsume`.
 
+## Querying and paging notes
+
+`notes.list` and `notes.listSent` take a `status`, `ids`, `scriptRoots` or
+`nullifiers` filter. `limit` and `after` bound the result to one page, in
+ascending key order and strictly above `after`. Input notes are keyed by
+`record.detailsCommitment().toHex()`, output notes by `record.id().toString()`.
+The store still reads every match, so a page bounds what reaches JavaScript,
+not the read.
+
+```typescript
+const page = await client.notes.list({ status: "committed", limit: 50 });
+const last = page.at(-1);
+const next = last
+  ? await client.notes.list({
+      status: "committed",
+      limit: 50,
+      after: last.detailsCommitment().toHex(),
+    })
+  : [];
+
+// A partial note has no nullifier yet, so skip those.
+const nullifiers = page.map((note) => note.nullifier()).filter(Boolean);
+const spent = await client.notes.list({ nullifiers });
+```
+
 ## Reading why a note is not ready
 
 `listConsumable` keeps each record's `noteConsumability()`, which holds one

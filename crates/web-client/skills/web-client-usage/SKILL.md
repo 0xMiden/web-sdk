@@ -1465,7 +1465,7 @@ call runs this same loop.
 await client.notes.list(); // all input notes
 await client.notes.list({ status: "committed" }); // "consumed" | "committed" | "expected" | "processing" | "unverified"
 await client.notes.list({ scriptRoots: [noteScript.root()] }); // hex strings or Word instances
-await client.notes.list({ nullifiers: [record.nullifier()] }); // hex strings or Word instances
+await client.notes.list({ nullifiers: [record.nullifier()] }); // hex strings or Word instances; nullifier() is undefined for a partial note, so guard it
 await client.notes.list({ status: "committed", limit: 50, after: cursor }); // one page
 await client.notes.get(noteId); // single record
 await client.notes.listSent(); // output notes
