@@ -36,6 +36,7 @@ import type {
   StorageSlot,
   AccountComponent,
   Library,
+  Package,
   AuthSecretKey,
   AccountStorageRequirements,
   TransactionScript,
@@ -565,6 +566,41 @@ export interface ContractCreateOptions {
   components: AccountComponent[];
   /** Storage mode. Defaults to "public" for contracts. */
   storage?: StorageMode;
+}
+
+/** Options for {@link ContractsResource.deploy}. */
+export interface DeployContractOptions {
+  /** Pre-compiled components, as for `accounts.create`. Required. */
+  components: AccountComponent[];
+  /** Raw 32-byte seed. Defaults to 32 random bytes. */
+  seed?: Uint8Array;
+  /**
+   * Auth secret key, or `"none"` for a NoAuth contract. Defaults to a freshly
+   * generated Falcon key, stored with the account.
+   */
+  auth?: AuthSecretKey | "none";
+  /** Storage mode. Defaults to "public", as `accounts.create` does for contracts. */
+  storage?: StorageMode;
+}
+
+/** The account {@link ContractsResource.deploy} created and the inputs it used. */
+export interface DeployedContract {
+  account: Account;
+  seed: Uint8Array;
+  auth: AuthSecretKey | "none";
+}
+
+export interface ContractsResource {
+  /**
+   * Create a contract from compiled components, generating the `seed` and
+   * `auth` that are omitted. It is `accounts.create` for a contract and shares
+   * its validation, so `components` must include a non-auth procedure. The
+   * account is tracked locally; it reaches the chain with its first
+   * transaction.
+   *
+   * @throws TypeError if `components` is missing, instead of creating a wallet.
+   */
+  deploy(options: DeployContractOptions): Promise<DeployedContract>;
 }
 
 /**
@@ -1662,6 +1698,9 @@ export interface TransactionsResource {
   /**
    * Execute a custom transaction script with optional foreign account references.
    *
+   * A script that fails in the VM rejects with `code: "TRANSACTION_EXECUTION_FAILED"`
+   * (see {@link MasmErrorCode}).
+   *
    * @param options - Execute options including the account, compiled script, and foreign accounts.
    */
   execute(options: ExecuteOptions): Promise<TransactionSubmitResult>;
@@ -2158,9 +2197,11 @@ export interface NotesResource {
 // Compiler types
 // ════════════════════════════════════════════════════════════════
 
-export interface CompileComponentOptions {
+export interface CompileComponentSourceOptions {
   /** MASM source code for the component. */
   code: string;
+  /** Source and package inputs are exclusive. */
+  package?: never;
   /**
    * Module path used to derive procedure identities. Use the same namespace when
    * linking this component into transaction scripts.
@@ -2186,6 +2227,30 @@ export interface CompileComponentOptions {
    */
   libraries?: Pick<CompileTxScriptLibrary, "namespace" | "code">[];
 }
+
+/** Builds a component from a compiled package (`.masp`) instead of source. */
+export interface CompileComponentPackageOptions {
+  /**
+   * A compiled package, as a `Package` or its serialized bytes, built through
+   * `AccountComponent.fromPackage`: the component gets the fixed metadata name
+   * `"custom"`.
+   */
+  package: Package | Uint8Array;
+  code?: never;
+  /** Source-only: a package carries its own code. */
+  namespace?: never;
+  /** Source-only: a package carries its own code. */
+  libraries?: never;
+  /** Initial storage slots for the component. */
+  slots?: StorageSlot[];
+  /** Same meaning as for source. Default: true. */
+  supportAllTypes?: boolean;
+}
+
+/** Exactly one of `code` and `package`. */
+export type CompileComponentOptions =
+  | CompileComponentSourceOptions
+  | CompileComponentPackageOptions;
 
 export interface CompileTxScriptLibrary {
   /** MASM namespace for the library (e.g. "counter::module"). */
@@ -2224,19 +2289,67 @@ export type CompileScriptLibrary =
   | CompileAccountComponentLibrary
   | Library;
 
-export interface CompileTxScriptOptions {
+export interface CompileTxScriptSourceOptions {
   /** MASM source code for the transaction script. */
   code: string;
+  /** Source and package inputs are exclusive. */
+  package?: never;
   /** Component libraries to link. */
   libraries?: CompileScriptLibrary[];
 }
 
-export interface CompileNoteScriptOptions {
+/** Builds the transaction script from a compiled package instead of source. */
+export interface CompileTxScriptPackageOptions {
+  /**
+   * A compiled package of the matching kind, as a `Package` or its serialized
+   * bytes.
+   */
+  package: Package | Uint8Array;
+  code?: never;
+  /** Source-only: a package carries its own code. */
+  libraries?: never;
+}
+
+/** Exactly one of `code` and `package`. */
+export type CompileTxScriptOptions =
+  | CompileTxScriptSourceOptions
+  | CompileTxScriptPackageOptions;
+
+export interface CompileNoteScriptSourceOptions {
   /** MASM source code for the note script. */
   code: string;
+  /** Source and package inputs are exclusive. */
+  package?: never;
   /** Component libraries to link. */
   libraries?: CompileScriptLibrary[];
 }
+
+/** Builds the note script from a compiled package instead of source. */
+export interface CompileNoteScriptPackageOptions {
+  /**
+   * A compiled package of the matching kind, as a `Package` or its serialized
+   * bytes.
+   */
+  package: Package | Uint8Array;
+  code?: never;
+  /** Source-only: a package carries its own code. */
+  libraries?: never;
+}
+
+/** Exactly one of `code` and `package`. */
+export type CompileNoteScriptOptions =
+  | CompileNoteScriptSourceOptions
+  | CompileNoteScriptPackageOptions;
+
+/**
+ * Stable `code` of the errors MASM failures raise (a message prefix on Node.js, where the
+ * binding cannot attach a property): `MASM_COMPILE_FAILED` when source does not assemble or
+ * link, `TRANSACTION_EXECUTION_FAILED` when a transaction program fails in the VM, for example
+ * a failing `assert`. The message carries the compiler or VM diagnostic.
+ */
+export type MasmErrorCode =
+  | "MASM_COMPILE_FAILED"
+  | "TRANSACTION_EXECUTION_FAILED";
 
 export declare class CompilerResource {
   /**
@@ -2259,7 +2372,7 @@ export declare class CompilerResource {
   );
 
   /**
-   * Compile MASM source into an AccountComponent.
+   * Compile MASM source, or build from a compiled package, into an AccountComponent.
    *
    * Only exports marked `@account_procedure` or `@auth_script` become component
    * procedures. A component with none logs a `[miden-sdk]` console warning and
@@ -2480,6 +2593,7 @@ export declare class MidenClient {
   readonly compile: CompilerResource;
   readonly keystore: KeystoreResource;
   readonly pswap: PswapResource;
+  readonly contracts: ContractsResource;
 
   /** Syncs the client: fetches private notes from the Note Transport Layer, then syncs on-chain state. Fails fast on either. */
   sync(): Promise<SyncSummary>;

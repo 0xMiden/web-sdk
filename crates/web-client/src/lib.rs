@@ -33,7 +33,7 @@ use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, VerifyingRpcClient}
 use miden_client::store::Store;
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::MockNoteTransportApi;
-use miden_client::transaction::BatchBuilderError;
+use miden_client::transaction::{BatchBuilderError, TransactionExecutorError};
 use miden_client::{Client, ClientError, ErrorHint};
 use models::code_builder::CodeBuilder;
 #[cfg(feature = "nodejs")]
@@ -919,6 +919,16 @@ where
     build_js_error(err, context, Some(APPLY_AFTER_SUBMIT_FAILED))
 }
 
+/// Like [`js_error_with_context`], for a MASM assembly or linking failure: the error always
+/// carries [`MASM_COMPILE_FAILED`], because the compiler's own error type carries no `ClientError`
+/// variant to map from.
+pub(crate) fn js_compile_error<T>(err: T, context: &str) -> JsErr
+where
+    T: Error + 'static,
+{
+    build_js_error(err, context, Some(MASM_COMPILE_FAILED))
+}
+
 fn build_js_error<T>(err: T, context: &str, forced_code: Option<&'static str>) -> JsErr
 where
     T: Error + 'static,
@@ -952,6 +962,7 @@ where
         match forced_code
             .or_else(|| post_submit_code(&err))
             .or_else(|| batch_outcome_unknown_code(&err))
+            .or_else(|| execution_failed_code(&err))
         {
             Some(code) => napi::Error::from_reason(format!("{code}: {message}")),
             None => napi::Error::from_reason(message),
@@ -1019,6 +1030,28 @@ fn batch_outcome_unknown_code(err: &(dyn Error + 'static)) -> Option<&'static st
     err.source().and_then(batch_outcome_unknown_code)
 }
 
+/// Code for MASM that failed to assemble or link, raised with [`js_compile_error`] and
+/// `from_str_err_with_code`. Browser callers read it as `error.code`, Node.js callers as a message
+/// prefix.
+pub(crate) const MASM_COMPILE_FAILED: &str = "MASM_COMPILE_FAILED";
+
+/// Code for a transaction whose program failed in the VM, for example a failing `assert`. The
+/// message carries the VM diagnostic. Wider cause and span detail is tracked in #192.
+pub(crate) const TRANSACTION_EXECUTION_FAILED: &str = "TRANSACTION_EXECUTION_FAILED";
+
+/// [`TRANSACTION_EXECUTION_FAILED`] for a failed transaction program. `Unauthorized` is the
+/// signing flow rather than a failure, so it keeps no code.
+fn execution_failed_code(err: &(dyn Error + 'static)) -> Option<&'static str> {
+    if let Some(ClientError::TransactionExecutorError(
+        TransactionExecutorError::TransactionProgramExecutionFailed(_),
+    )) = err.downcast_ref::<ClientError>()
+    {
+        return Some(TRANSACTION_EXECUTION_FAILED);
+    }
+
+    err.source().and_then(execution_failed_code)
+}
+
 /// Maps the typed [`ClientError`] variants that JS callers need to distinguish
 /// to stable string codes (exposed as the `code` property on the thrown JS
 /// error). Only the variants consumers branch on are mapped; everything else
@@ -1029,6 +1062,9 @@ fn code_from_error(err: &(dyn Error + 'static)) -> Option<&'static str> {
         return Some(code);
     }
     if let Some(code) = batch_outcome_unknown_code(err) {
+        return Some(code);
+    }
+    if let Some(code) = execution_failed_code(err) {
         return Some(code);
     }
 
@@ -1206,6 +1242,17 @@ mod post_submit_code_tests {
         let err = js_error_with_context(err, "failed to submit transaction batch");
         assert!(err.reason.starts_with("BATCH_SUBMISSION_OUTCOME_UNKNOWN: failed to submit"));
         assert_eq!(err.reason.matches(BATCH_SUBMISSION_OUTCOME_UNKNOWN).count(), 1);
+    }
+
+    #[cfg(feature = "nodejs")]
+    #[test]
+    fn node_prefixes_the_compile_code_once() {
+        let err = js_compile_error(store_error(), "failed to compile transaction script");
+        assert!(
+            err.reason
+                .starts_with("MASM_COMPILE_FAILED: failed to compile transaction script")
+        );
+        assert_eq!(err.reason.matches(MASM_COMPILE_FAILED).count(), 1);
     }
 
     #[cfg(feature = "nodejs")]

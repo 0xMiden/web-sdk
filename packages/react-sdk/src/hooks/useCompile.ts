@@ -11,11 +11,11 @@ import type {
 import { useMiden } from "../context/MidenProvider";
 
 export interface UseCompileResult {
-  /** Compile MASM source into an AccountComponent. */
+  /** Compile MASM source, or build from a compiled `package`, into an AccountComponent. */
   component: (options: CompileComponentOptions) => Promise<AccountComponent>;
-  /** Compile MASM source into a TransactionScript. */
+  /** Compile MASM source, or build from a compiled `package`, into a TransactionScript. */
   txScript: (options: CompileTxScriptOptions) => Promise<TransactionScript>;
-  /** Compile MASM source into a NoteScript. */
+  /** Compile MASM source, or build from a compiled `package`, into a NoteScript. */
   noteScript: (options: CompileNoteScriptOptions) => Promise<NoteScript>;
   /** Whether the underlying client is ready to compile. */
   isReady: boolean;
