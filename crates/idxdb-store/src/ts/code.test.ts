@@ -3,6 +3,7 @@ import { openDatabase, getDatabase } from "./schema.js";
 import {
   getForestsWithDebugInfo,
   getProcedure,
+  getProcedureCount,
   getProcedureRoots,
   insertProcedures,
   insertProceduresWithDebugInfo,
@@ -140,6 +141,7 @@ describe("code registry", () => {
   it("returns every registered procedure root once", async () => {
     const dbId = await openTestDb();
     expect(await getProcedureRoots(dbId)).toEqual([]);
+    expect(await getProcedureCount(dbId)).toBe(0);
 
     await insertProceduresWithDebugInfo(dbId, [
       forest("0xf1", ["0xa", "0xb"], 1),
@@ -151,6 +153,7 @@ describe("code registry", () => {
       "0xb",
       "0xc",
     ]);
+    expect(await getProcedureCount(dbId)).toBe(3);
   });
 
   it("adds forests without debug info and keeps a stored forest", async () => {
@@ -281,6 +284,7 @@ describe("code registry", () => {
     ).rejects.toThrow();
     await expect(getProcedure("missing-db", "0xa")).rejects.toThrow();
     await expect(getProcedureRoots("missing-db")).rejects.toThrow();
+    await expect(getProcedureCount("missing-db")).rejects.toThrow();
     await expect(insertProcedures("missing-db", [])).rejects.toThrow();
   });
 });

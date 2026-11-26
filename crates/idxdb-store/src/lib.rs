@@ -68,7 +68,7 @@ use miden_client_core::store::{
 };
 use miden_processor::LoadedMastForest;
 use miden_protocol::MastForest;
-use miden_protocol::block::code_tree::{CodeTreeRoot, CodeWitness};
+use miden_protocol::block::code_tree::{CodeTree, CodeTreeRoot, CodeWitness};
 use miden_protocol::code::ProcedureRoot;
 use miden_protocol::vm::Package;
 use serde::de::Error;
@@ -123,6 +123,8 @@ extern "C" {
 pub struct IdxdbStore {
     database_id: String,
     smt_forest: RwLock<AccountForest>,
+    /// The code tree, built from the code registry on the first read. See [`code`].
+    code_tree: RwLock<Option<Arc<CodeTree>>>,
 }
 
 impl IdxdbStore {
@@ -138,6 +140,7 @@ impl IdxdbStore {
         Ok(IdxdbStore {
             database_id: database_name,
             smt_forest: RwLock::new(smt_forest),
+            code_tree: RwLock::new(None),
         })
     }
 

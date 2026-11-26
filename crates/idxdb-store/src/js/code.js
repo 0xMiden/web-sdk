@@ -10,6 +10,15 @@ export async function getForestsWithDebugInfo(dbId, commitments) {
         logWebStoreError(error, "Error while fetching code registry forests");
     }
 }
+/** Returns the number of procedure roots in the code registry. */
+export async function getProcedureCount(dbId) {
+    try {
+        return await getDatabase(dbId).codeProcedures.count();
+    }
+    catch (error) {
+        logWebStoreError(error, "Error while counting code registry procedures");
+    }
+}
 /** Returns the procedure roots of the code registry, which are the leaves of the code tree. */
 export async function getProcedureRoots(dbId) {
     try {
