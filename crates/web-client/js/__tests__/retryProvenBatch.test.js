@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../Cargo.toml", () => ({}));
@@ -124,5 +125,83 @@ describe("retryProvenBatch (#571)", () => {
 
     await expect(client.retryProvenBatch(submission)).resolves.toBe(17);
     expect(wasmClient.retryProvenBatch).toHaveBeenCalledWith(submission);
+  });
+
+  it("documents Node.js BATCH_SUBMISSION_OUTCOME_UNKNOWN and browser in-thread handles consistently", () => {
+    const normalize = (text) => text.replace(/\s+/g, " ");
+    const agentsMd = normalize(
+      readFileSync(new URL("../../AGENTS.md", import.meta.url), "utf8")
+    );
+    expect(agentsMd).not.toContain(
+      "Browser builds only: Node.js errors only prefix the message with the code."
+    );
+    expect(agentsMd).toContain(
+      "`ApplyTransactionAfterSubmitFailed` fields are browser builds only: Node.js errors only prefix the message with the code."
+    );
+    expect(agentsMd).toMatch(
+      /BATCH_SUBMISSION_OUTCOME_UNKNOWN[\s\S]*Node\.js[\s\S]*submission/
+    );
+
+    const indexJs = readFileSync(
+      new URL("../index.js", import.meta.url),
+      "utf8"
+    );
+    expect(
+      indexJs.includes('`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` (in-thread)')
+    ).toBe(false);
+    expect(
+      indexJs.includes(
+        '`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` (browser in-thread)'
+      )
+    ).toBe(true);
+  });
+
+  it("keeps one accurate #571 entry in CHANGELOG.md Unreleased Enhancements", () => {
+    const changelog = readFileSync(
+      new URL("../../../../CHANGELOG.md", import.meta.url),
+      "utf8"
+    );
+    const unreleased = changelog.split(/^## /m)[1] ?? "";
+    const issue571Lines = unreleased
+      .split("\n")
+      .filter((line) => line.includes("web-sdk/issues/571"));
+    expect(issue571Lines).toHaveLength(1);
+    expect(issue571Lines[0]).toContain("browser in-thread and Node.js");
+    expect(issue571Lines[0]).toContain("submissionId");
+    expect(issue571Lines[0]).toContain("transactionIds");
+    expect(issue571Lines[0]).not.toMatch(
+      /Node\.js `transactions\.retryProvenBatch\(submission\)` now surfaces/
+    );
+  });
+
+  it("reads batch getKey detail under the single push_and_submit_batch lock", () => {
+    const newTransactionsRs = readFileSync(
+      new URL("../../src/new_transactions.rs", import.meta.url),
+      "utf8"
+    );
+    const sliceBetween = (start, end) => {
+      const from = newTransactionsRs.indexOf(start);
+      const to = newTransactionsRs.indexOf(end, from);
+      expect(from, start).toBeGreaterThanOrEqual(0);
+      expect(to, end).toBeGreaterThan(from);
+      return newTransactionsRs.slice(from, to);
+    };
+
+    const submitBatchFn = sliceBetween(
+      "pub async fn submit_new_transaction_batch(",
+      "pub async fn retry_proven_batch("
+    );
+    expect(submitBatchFn).not.toMatch(/last_get_key_error/);
+
+    const pushAndSubmitFn = sliceBetween(
+      "async fn push_and_submit_batch(",
+      "async fn resubmit_proven_batch("
+    );
+    const afterSubmit = pushAndSubmitFn.slice(
+      pushAndSubmitFn.indexOf("builder.submit()")
+    );
+    expect(afterSubmit).toMatch(/keystore\.last_get_key_error\(\)/);
+
+    expect(newTransactionsRs).not.toMatch(/async fn last_get_key_error\b/);
   });
 });
