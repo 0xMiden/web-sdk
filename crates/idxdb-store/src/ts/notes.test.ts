@@ -1438,6 +1438,14 @@ describe("error paths: unregistered dbId re-throws", () => {
 
     const db = getDatabase(dbId);
     const txSpy = vi.spyOn(db.dexie, "transaction");
+    const scriptTableRead = db.notesScripts.bulkGet.bind(db.notesScripts);
+    const scriptReadInsideTransaction: boolean[] = [];
+    vi.spyOn(db.notesScripts, "bulkGet").mockImplementation(((
+      ...args: Parameters<typeof scriptTableRead>
+    ) => {
+      scriptReadInsideTransaction.push(Dexie.currentTransaction != null);
+      return scriptTableRead(...args);
+    }) as typeof scriptTableRead);
 
     const inputs = await getInputNotes(dbId, new Uint8Array([]));
     expect(inputs).toHaveLength(1);
@@ -1447,6 +1455,8 @@ describe("error paths: unregistered dbId re-throws", () => {
       [db.inputNotes, db.notesScripts],
       expect.any(Function)
     );
+    // The script lookup must run while the readonly transaction is active.
+    expect(scriptReadInsideTransaction).toEqual([true]);
   });
 
   it("converts notes to base64 after the readonly transaction closes", async () => {
