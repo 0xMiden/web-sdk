@@ -70,9 +70,9 @@ impl IdxdbStore {
     /// Adds the MAST forests of the packages and their debug info to the code registry.
     ///
     /// A package whose forest already has debug info in the registry is skipped, and so is a
-    /// package without debug info or without procedures. The packages to skip are found with a
-    /// read, so the debug info is decoded and the forests are serialized only for the packages that
-    /// the registry is missing.
+    /// package without procedures. A package without debug info is added without debug info. The
+    /// packages to skip are found with a read, so the debug info is decoded and the forests are
+    /// serialized only for the packages that the registry is missing.
     pub(crate) async fn insert_procedures_with_debug_info(
         &self,
         packages: Vec<Arc<Package>>,
@@ -102,18 +102,13 @@ impl IdxdbStore {
             }
             let debug_info =
                 package.debug_info().map_err(|err| StoreError::ParsingError(err.to_string()))?;
-            if let Some(debug_info) = debug_info {
-                missing_forests.push(Arc::clone(mast));
-                missing.push(CodeForestIdxdbInput {
-                    commitment,
-                    mast: mast.to_bytes(),
-                    debug_info: Some(debug_info.to_bytes()),
-                    procedure_roots: mast
-                        .local_procedure_digests()
-                        .map(|root| root.to_hex())
-                        .collect(),
-                });
-            }
+            missing_forests.push(Arc::clone(mast));
+            missing.push(CodeForestIdxdbInput {
+                commitment,
+                mast: mast.to_bytes(),
+                debug_info: debug_info.map(|debug_info| debug_info.to_bytes()),
+                procedure_roots: mast.local_procedure_digests().map(|root| root.to_hex()).collect(),
+            });
         }
         if missing.is_empty() {
             return Ok(());

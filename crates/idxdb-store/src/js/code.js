@@ -32,8 +32,9 @@ export async function getProcedureRoots(dbId) {
  * Adds the forests, their debug info and their procedure roots to the code registry, in one
  * transaction.
  *
- * A forest that already has debug info is skipped. A procedure root that is already registered
- * keeps the forest that it was first registered with.
+ * A forest that already has debug info is skipped, and a forest without debug info is added
+ * without it. A procedure root that is already registered keeps the forest that it was first
+ * registered with.
  */
 export async function insertProceduresWithDebugInfo(dbId, forests) {
     try {

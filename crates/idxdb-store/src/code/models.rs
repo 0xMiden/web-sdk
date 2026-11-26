@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::{base64_to_vec_u8_optional, base64_to_vec_u8_required};
 
 /// A MAST forest to add to the code registry, as `insertProcedures` and
-/// `insertProceduresWithDebugInfo` receive it. `debug_info` is `None` for `insertProcedures`.
+/// `insertProceduresWithDebugInfo` receive it. `debug_info` is `None` for `insertProcedures`, and
+/// for a package without debug info.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodeForestIdxdbInput {

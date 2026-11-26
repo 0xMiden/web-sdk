@@ -1,16 +1,15 @@
 import { getDatabase, type MidenDatabase } from "./schema.js";
 import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
 
-/** A MAST forest to add to the code registry, with its procedure roots. */
-export interface ProcedureForestInput {
+/**
+ * A MAST forest to add to the code registry, with its procedure roots and its debug info if any.
+ * `insertProcedures` ignores the debug info.
+ */
+export interface CodeForestInput {
   commitment: string;
   mast: Uint8Array;
+  debugInfo?: Uint8Array;
   procedureRoots: string[];
-}
-
-/** A MAST forest to add to the code registry, with its debug info and procedure roots. */
-export interface CodeForestInput extends ProcedureForestInput {
-  debugInfo: Uint8Array;
 }
 
 /** Returns the commitments, among the given ones, of the forests that have debug info. */
@@ -52,8 +51,9 @@ export async function getProcedureRoots(dbId: string) {
  * Adds the forests, their debug info and their procedure roots to the code registry, in one
  * transaction.
  *
- * A forest that already has debug info is skipped. A procedure root that is already registered
- * keeps the forest that it was first registered with.
+ * A forest that already has debug info is skipped, and a forest without debug info is added
+ * without it. A procedure root that is already registered keeps the forest that it was first
+ * registered with.
  */
 export async function insertProceduresWithDebugInfo(
   dbId: string,
@@ -94,7 +94,7 @@ export async function insertProceduresWithDebugInfo(
  */
 export async function insertProcedures(
   dbId: string,
-  forests: ProcedureForestInput[]
+  forests: CodeForestInput[]
 ): Promise<void> {
   try {
     const db = getDatabase(dbId);
@@ -126,7 +126,7 @@ export async function insertProcedures(
  */
 async function registerProcedureRoots(
   db: MidenDatabase,
-  forest: ProcedureForestInput
+  forest: CodeForestInput
 ) {
   // A forest can list the same procedure root more than once.
   const procedureRoots = [...new Set(forest.procedureRoots)];

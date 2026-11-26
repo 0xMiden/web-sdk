@@ -25,7 +25,9 @@ test.describe("code registry", () => {
       };
 
       const afterFirstBuild = await counts();
-      await helpers.createFreshMockClient();
+      // Without a name, `createFreshMockClient` builds on a new database, so it is passed the
+      // fixture's store to build a second client on it.
+      await helpers.createFreshMockClient("mock_client_db");
       const afterSecondBuild = await counts();
       return { afterFirstBuild, afterSecondBuild };
     });

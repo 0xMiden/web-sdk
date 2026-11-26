@@ -120,6 +120,24 @@ describe("code registry", () => {
     );
   });
 
+  it("adds a forest without debug info", async () => {
+    const dbId = await openTestDb();
+
+    await insertProceduresWithDebugInfo(dbId, [
+      {
+        commitment: "0xf1",
+        mast: new Uint8Array([1]),
+        procedureRoots: ["0xa"],
+      },
+    ]);
+
+    expect(await getProcedure(dbId, "0xa")).toEqual({
+      mast: uint8ArrayToBase64(new Uint8Array([1])),
+    });
+    expect(await getForestsWithDebugInfo(dbId, ["0xf1"])).toEqual([]);
+    expect(await getProcedureRoots(dbId)).toEqual(["0xa"]);
+  });
+
   it("adds debug info to a forest stored without it", async () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
