@@ -606,7 +606,7 @@ Notes on anchors:
 
 Two stable codes tell a failing script from other errors, so a contract developer can branch on them instead of matching message text:
 
-- `code: "MASM_COMPILE_FAILED"`: MASM source does not assemble or link. Raised by `client.compile.component`, `txScript` and `noteScript`.
+- `code: "MASM_COMPILE_FAILED"`: MASM source does not assemble or link. Raised by `client.compile.component`, `txScript` and `noteScript`. In the browser, an inline `{ namespace, code }` library that fails to build (`buildLibrary`) rejects with a bare string that has no `code`.
 - `code: "TRANSACTION_EXECUTION_FAILED"`: the transaction program failed in the VM, for example a failing `assert`. The message carries the VM diagnostic.
 
 ```js

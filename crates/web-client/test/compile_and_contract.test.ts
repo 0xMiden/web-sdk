@@ -1080,38 +1080,41 @@ test.describe("MASM error codes", () => {
     expect(result.code).toBe("MASM_COMPILE_FAILED");
   });
 
-  test("an inline txScript library that fails to build carries MASM_COMPILE_FAILED as an Error", async ({
+  test("a library that fails to build rejects with a bare string", async ({
     page,
   }) => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.createMock();
-      try {
-        await client.compile.txScript({
-          code: `
-            @transaction_script
-            pub proc main
-              push.1 drop
-            end
-          `,
-          libraries: [
-            {
-              namespace: "external_contract::broken",
-              code: "pub proc broken not_an_instruction end",
-            },
-          ],
-        });
-        return null;
-      } catch (e: any) {
-        return {
-          isError: e instanceof Error,
-          code: e.code ?? null,
-        };
+      const script = `
+        @transaction_script
+        pub proc main
+          push.1 drop
+        end
+      `;
+      // One source fails to parse and one fails to assemble: the two ways a build fails.
+      const sources = [
+        "pub proc broken not_an_instruction end",
+        "pub proc broken exec.::missing::module::procedure end",
+      ];
+      const thrown = [];
+      for (const code of sources) {
+        try {
+          await client.compile.txScript({
+            code: script,
+            libraries: [{ namespace: "external_contract::broken", code }],
+          });
+          thrown.push(null);
+        } catch (e: any) {
+          thrown.push({ type: typeof e, code: e?.code ?? null });
+        }
       }
+      return thrown;
     });
 
-    expect(result).not.toBeNull();
-    expect(result.isError).toBe(true);
-    expect(result.code).toBe("MASM_COMPILE_FAILED");
+    expect(result).toEqual([
+      { type: "string", code: null },
+      { type: "string", code: null },
+    ]);
   });
 
   test("an invalid module path is a validation error without a MASM code", async ({

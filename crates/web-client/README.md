@@ -1165,6 +1165,9 @@ MASM that does not assemble or link rejects with `code: "MASM_COMPILE_FAILED"`, 
 transaction program that fails in the VM (for example a failing `assert`) rejects with
 `code: "TRANSACTION_EXECUTION_FAILED"`. The message carries the compiler or VM diagnostic.
 Node.js errors prefix the message with `"<CODE>: "` instead of setting `code`.
+In the browser, a library that fails to build (`buildLibrary`, including an inline
+`{ namespace, code }` library of `compile.txScript` or `compile.noteScript`) rejects with a bare
+string that has no `code`.
 
 ```ts
 try {
