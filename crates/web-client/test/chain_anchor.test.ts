@@ -529,8 +529,8 @@ test.describe("chain anchor", () => {
   test("a multisig proposal reproduces its summary on a node after the bound block leaves the history window", async ({
     run,
   }) => {
-    // ~51 blocks (up to 10s interval on slow browsers like WebKit), plus setup.
-    test.setTimeout(900_000);
+    // ~51 blocks (up to 15s interval on slow browsers like WebKit), plus setup.
+    test.setTimeout(1_200_000);
     const result = await run(async ({ sdk, helpers }) => {
       const integration = await helpers.createIntegrationClient();
       if (!integration) return { skip: true };
@@ -584,7 +584,7 @@ test.describe("chain anchor", () => {
 
       // One block past the node's 50-block account history.
       const target = boundBlock + 51;
-      const deadline = Date.now() + 720_000;
+      const deadline = Date.now() + 960_000;
       let tip = boundBlock;
       while (tip < target) {
         if (Date.now() > deadline) {
