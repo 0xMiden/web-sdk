@@ -1152,6 +1152,57 @@ describe("pruneAccountHistory", () => {
       ).toBe(true);
     }
   });
+
+  it("reads a long history in bounded pages", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    const header = (id: string, n: number) => ({
+      id,
+      replacedAtNonce: String(n),
+      codeRoot: CODE_ROOT,
+      storageRoot: STORAGE_ROOT,
+      vaultRoot: VAULT_ROOT,
+      nonce: String(n - 1),
+      committed: false,
+      accountSeed: undefined,
+      accountCommitment: `0x${id}-${n}`,
+      locked: false,
+    });
+    const rows = Array.from({ length: 600 }, (_, i) => header(ACC, i + 1));
+    rows.push(header("0xother", 1));
+    await db.historicalAccountHeaders.bulkPut(rows);
+
+    const collection = db.historicalAccountHeaders.toCollection();
+    const proto = Object.getPrototypeOf(collection);
+    const original = proto.toArray;
+    const sizes: number[] = [];
+    proto.toArray = function (this: unknown, ...args: unknown[]) {
+      const promise = original.apply(this, args);
+      promise.then((result: unknown) => {
+        if (Array.isArray(result)) sizes.push(result.length);
+      });
+      return promise;
+    };
+    let deleted: number;
+    try {
+      deleted = await pruneAccountHistory(dbId, ACC, "450");
+    } finally {
+      proto.toArray = original;
+    }
+
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(256);
+    expect(deleted).toBeGreaterThanOrEqual(450);
+    const left = await db.historicalAccountHeaders
+      .where("id")
+      .equals(ACC)
+      .toArray();
+    expect(
+      left.map((h) => Number(h.replacedAtNonce)).sort((a, b) => a - b)
+    ).toEqual(Array.from({ length: 150 }, (_, i) => i + 451));
+    expect(
+      await db.historicalAccountHeaders.where("id").equals("0xother").count()
+    ).toBe(1);
+  });
 });
 
 // ============================================================
