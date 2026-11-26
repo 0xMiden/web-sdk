@@ -27,6 +27,7 @@ function makeWasm(overrides = {}) {
     Unverified: "Unverified",
     List: "List",
     ScriptRoots: "ScriptRoots",
+    Nullifiers: "Nullifiers",
   };
   const filterInstance = { type: "filter" };
   return {
@@ -155,14 +156,30 @@ describe("NotesResource", () => {
     it("builds NoteFilter with script roots when query.scriptRoots provided", async () => {
       inner.getInputNotes.mockResolvedValue([]);
       const resource = makeResource();
-      const wordRoot = { word: true };
+      const wordRoot = { toHex: () => "0xdef" };
       await resource.list({ scriptRoots: ["0xabc", wordRoot] });
-      expect(wasm.Word.fromHex).toHaveBeenCalledTimes(1);
+      expect(wasm.Word.fromHex).toHaveBeenCalledTimes(2);
       expect(wasm.Word.fromHex).toHaveBeenCalledWith("0xabc");
+      expect(wasm.Word.fromHex).toHaveBeenCalledWith("0xdef");
       expect(wasm.NoteFilter).toHaveBeenCalledWith("ScriptRoots", undefined, [
         { hex: "0xabc" },
-        wordRoot,
+        { hex: "0xdef" },
       ]);
+    });
+
+    it("builds NoteFilter with nullifiers when query.nullifiers provided", async () => {
+      inner.getInputNotes.mockResolvedValue([]);
+      const resource = makeResource();
+      const wordNullifier = { toHex: () => "0xdef" };
+      await resource.list({ nullifiers: ["0xabc", wordNullifier] });
+      expect(wasm.Word.fromHex).toHaveBeenCalledWith("0xabc");
+      expect(wasm.Word.fromHex).toHaveBeenCalledWith("0xdef");
+      expect(wasm.NoteFilter).toHaveBeenCalledWith(
+        "Nullifiers",
+        undefined,
+        undefined,
+        [{ hex: "0xabc" }, { hex: "0xdef" }]
+      );
     });
 
     it("falls back to All when empty query object", async () => {

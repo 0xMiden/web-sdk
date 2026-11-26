@@ -425,6 +425,17 @@ const NOTE_TRANSPORT_DEFAULT_MAX_RETRIES = 3;
 const NOTE_TRANSPORT_DEFAULT_RETRY_INTERVAL_MS = 250;
 
 /**
+ * Whether `limit` is a usable bound for a list query: a positive integer that
+ * survives wasm-bindgen's `>>> 0` conversion to `u32` unchanged.
+ *
+ * @param {unknown} limit
+ * @returns {boolean}
+ */
+export function isQueryLimit(limit) {
+  return Number.isInteger(limit) && limit >= 1 && limit <= 0xffffffff;
+}
+
+/**
  * Validates the note transport send-retry options before any worker or WASM
  * call sees them. Validation lives here because wasm-bindgen converts a JS
  * number to `u32` with `>>> 0` (so `-1` silently becomes `4294967295`), while

@@ -1,5 +1,6 @@
 import {
   isConsumableNow,
+  isQueryLimit,
   isStandardPaymentNote,
   resolveAccountRef,
   resolveNoteType,
@@ -1209,11 +1210,18 @@ export class TransactionsResource {
    * unfiltered query would hand a stale caller a superset of what it asked for, so it throws
    * instead. Read `TransactionRecord.expirationBlockNum()` and compare it yourself.
    *
-   * @param {object} [query] - `{ status: "uncommitted" }` or `{ ids: [...] }`.
+   * A query with an `account`, a `limit`, or a `status` of `"pending"`, `"committed"` or
+   * `"discarded"` returns the matching transactions newest first, at most `limit` of them,
+   * and only those reach JavaScript. `status: "uncommitted"` with a `limit` reads as
+   * `"pending"`. It cannot be combined with `ids`.
+   *
+   * @param {object} [query] - `{ status: "uncommitted" }`, `{ ids: [...] }` or
+   * `{ account?, status?, limit? }`.
    * @returns {Promise<TransactionRecord[]>}
    * @throws {Error} If `query` carries a defined `expiredBefore` and neither
    * `status: "uncommitted"` nor `ids` — the two shapes that outranked the expiry filter
-   * before it was removed, and still do.
+   * before it was removed, and still do. A bounded query (`account`, `limit` or a
+   * `pending`, `committed` or `discarded` status) throws the same way.
    */
   async list(query) {
     this.#client.assertNotTerminated();
@@ -1222,6 +1230,11 @@ export class TransactionsResource {
     let filter;
     if (!query) {
       filter = wasm.TransactionFilter.all();
+    } else if (isBoundedTransactionQuery(query)) {
+      if (query.expiredBefore !== undefined && query.status !== "uncommitted") {
+        throw new Error(EXPIRED_BEFORE_REMOVED);
+      }
+      filter = buildTransactionQuery(query, wasm);
     } else if (query.status === "uncommitted") {
       filter = wasm.TransactionFilter.uncommitted();
     } else if (query.ids) {
@@ -1235,10 +1248,7 @@ export class TransactionsResource {
       // always did, and an undefined value still means "no filter" rather than an error.
       // The unknown-shape fallback below is `all()`, so without this branch a stale caller
       // would silently receive every transaction instead of the subset it asked for.
-      throw new Error(
-        "The { expiredBefore } transaction query was removed. Transaction expiry is decided " +
-          "during state sync; read expiry from the transaction record instead."
-      );
+      throw new Error(EXPIRED_BEFORE_REMOVED);
     } else {
       filter = wasm.TransactionFilter.all();
     }
@@ -1760,4 +1770,39 @@ class TransactionSubmission {
   async waitForConfirmation(opts) {
     return await this.#resource.waitFor(this.#result.id().toHex(), opts);
   }
+}
+
+const TRANSACTION_STATUSES = ["pending", "committed", "discarded"];
+
+const EXPIRED_BEFORE_REMOVED =
+  "The { expiredBefore } transaction query was removed. Transaction expiry is decided " +
+  "during state sync; read expiry from the transaction record instead.";
+
+function isBoundedTransactionQuery(query) {
+  return (
+    query.account !== undefined ||
+    query.limit !== undefined ||
+    TRANSACTION_STATUSES.includes(query.status)
+  );
+}
+
+function buildTransactionQuery(query, wasm) {
+  if (query.ids) {
+    throw new Error(
+      "Transaction query ids cannot be combined with account, status or limit"
+    );
+  }
+  const { limit } = query;
+  if (limit !== undefined && !isQueryLimit(limit)) {
+    throw new Error("Transaction query limit must be a positive integer");
+  }
+  const status = query.status === "uncommitted" ? "pending" : query.status;
+  if (status !== undefined && !TRANSACTION_STATUSES.includes(status)) {
+    throw new Error(`Unknown transaction status: ${status}`);
+  }
+  const account =
+    query.account === undefined
+      ? undefined
+      : resolveAccountRef(query.account, wasm).toString();
+  return wasm.TransactionFilter.query(account, status, limit);
 }

@@ -57,6 +57,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use wasm_bindgen::prelude::*;
 
 pub mod account;
+mod bounded;
 pub mod export;
 pub mod helpers;
 pub mod import;
@@ -1508,11 +1509,11 @@ mod concurrent_local_reads_tests {
         assert_eq!(client.list_setting_keys().await.unwrap(), vec!["theme".to_string()]);
         let _tags = client.list_tags().await.unwrap();
         let _input_notes = client
-            .get_input_notes(NoteFilter::new(NoteFilterTypes::All, None, None))
+            .get_input_notes(NoteFilter::new(NoteFilterTypes::All, None, None, None))
             .await
             .unwrap();
         let _output_notes = client
-            .get_output_notes(NoteFilter::new(NoteFilterTypes::All, None, None))
+            .get_output_notes(NoteFilter::new(NoteFilterTypes::All, None, None, None))
             .await
             .unwrap();
         let _txs = client.get_transactions(TransactionFilter::all()).await.unwrap();

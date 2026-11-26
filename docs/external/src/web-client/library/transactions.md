@@ -63,6 +63,13 @@ try {
 
     // Get specific transactions by ID
     const specific = await client.transactions.list({ ids: [txId1, txId2] });
+
+    // Newest first, and only the first 20 reach JavaScript
+    const recent = await client.transactions.list({
+        account: walletId,
+        status: "committed", // "pending" | "committed" | "discarded"
+        limit: 20,
+    });
 } catch (error) {
     console.error("Failed to filter transactions:", error.message);
 }
