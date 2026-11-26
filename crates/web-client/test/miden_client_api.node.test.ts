@@ -1,6 +1,8 @@
 // @ts-nocheck
-import { test, expect } from "./test-setup";
+import { test, expect, loadNodeSdk, wrapNodeClient } from "./test-setup";
 import { createMidenClient, parseNetworkId } from "./test-helpers";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "path";
 
 test.describe("Node SDK deserialization", () => {
@@ -63,6 +65,42 @@ test("native account visibility selects the builder's account type", async ({
 });
 
 test.describe("MidenClient API - Mock Chain", () => {
+  test("an imported account key survives reopening the native store", async ({
+    sdk,
+  }) => {
+    const { WebClient } = loadNodeSdk();
+    const rawClient = new WebClient();
+    const client = wrapNodeClient(rawClient);
+    const dir = await mkdtemp(path.join(tmpdir(), "miden-import-reopen-"));
+    const open = (name, chain = null) =>
+      rawClient.createMockClient(
+        path.join(dir, `${name}.db`),
+        path.join(dir, `${name}-keystore`),
+        null,
+        chain,
+        null
+      );
+
+    try {
+      await open("source");
+      const wallet = await client.newWallet(
+        sdk.AccountStorageMode.private(),
+        "ecdsa"
+      );
+      const bytes = (await client.exportAccountFile(wallet.id())).serialize();
+      const chain = Array.from(await rawClient.serializeMockChain());
+
+      await open("target", chain);
+      await client.importAccountFile(sdk.AccountFile.deserialize(bytes));
+      await open("target", chain);
+
+      const exported = await client.exportAccountFile(wallet.id());
+      expect(exported.authSecretKeyCount()).toBe(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("endpoint: a mock client reports none, an RpcClient its own", async ({
     sdk,
   }) => {

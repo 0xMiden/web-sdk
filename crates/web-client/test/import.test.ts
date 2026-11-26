@@ -156,6 +156,115 @@ test("account file import resumes after saving only one of two keys", async ({
   expect(result.writeAttempts).toEqual([1, 2]);
 });
 
+test("account file import restores an external key dropped after its association was saved", async ({
+  run,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name === "nodejs" || !isLocalhost(),
+    "requires browser keystore callbacks and a local test node"
+  );
+
+  const results = await run(async ({ client, sdk }) => {
+    const wallet = await client.newWallet(
+      sdk.AccountStorageMode.private(),
+      sdk.AuthScheme.AuthRpoFalcon512
+    );
+    await client.keystore.insert(
+      wallet.id(),
+      sdk.AuthSecretKey.ecdsaWithRNG(null)
+    );
+    const fileBytes = (await client.exportAccountFile(wallet.id())).serialize();
+    const [commitment] = await client.keystore.getCommitments(wallet.id());
+    const key = await client.keystore.get(commitment);
+    const restore = async (scenario: string) => {
+      const keys = new Map<string, Uint8Array>();
+      const restored = await sdk.WasmWebClient.createClientWithExternalKeystore(
+        window.rpcUrl,
+        undefined,
+        undefined,
+        `${window.storeName}-file-import-${scenario}`,
+        scenario === "insert-only"
+          ? undefined
+          : async (id) => {
+              if (scenario === "get-rejects")
+                throw new Error("external getKey denied");
+              return keys.get(id.toString());
+            },
+        async (id, bytes) => {
+          if (scenario === "insert-only")
+            throw new Error("external insertKey denied");
+          const name = id.toString();
+          if (keys.has(name)) throw new Error("key already stored");
+          keys.set(name, bytes);
+          if (scenario === "insert-then-rejects")
+            throw new Error("external write outcome unknown");
+        },
+        undefined,
+        undefined,
+        false,
+        undefined,
+        window.feeFaucetId
+      );
+
+      try {
+        if (scenario === "key") {
+          await restored.keystore.insert(wallet.id(), key);
+          keys.clear();
+        } else if (scenario === "association") {
+          keys.set(commitment.toString(), key.serialize());
+        } else if (scenario === "mismatch") {
+          keys.set(
+            commitment.toString(),
+            sdk.AuthSecretKey.ecdsaWithRNG(null).serialize()
+          );
+        }
+        const error = await restored
+          .importAccountFile(sdk.AccountFile.deserialize(fileBytes))
+          .then(
+            () => null,
+            (err) => (err instanceof Error ? err.message : String(err))
+          );
+        const count =
+          error || scenario === "get-rejects"
+            ? null
+            : (
+                await restored.exportAccountFile(wallet.id())
+              ).authSecretKeyCount();
+        const tracked = Boolean(await restored.getAccount(wallet.id()));
+        return { error, count, tracked };
+      } finally {
+        restored.terminate();
+      }
+    };
+    return {
+      missingKey: await restore("key"),
+      missingAssociation: await restore("association"),
+      insertedThenRejected: await restore("insert-then-rejects"),
+      mismatch: await restore("mismatch"),
+      getterError: await restore("get-rejects"),
+      insertOnlyError: await restore("insert-only"),
+    };
+  });
+
+  expect(results.missingKey).toEqual({ error: null, count: 2, tracked: true });
+  expect(results.missingAssociation).toEqual({
+    error: null,
+    count: 2,
+    tracked: true,
+  });
+  expect(results.insertedThenRejected).toEqual({
+    error: null,
+    count: 2,
+    tracked: true,
+  });
+  expect(results.mismatch.error).toContain("stored secret does not match");
+  expect(results.mismatch.tracked).toBe(false);
+  expect(results.getterError.error).toContain("external getKey denied");
+  expect(results.getterError.tracked).toBe(false);
+  expect(results.insertOnlyError.error).toContain("external insertKey denied");
+  expect(results.insertOnlyError.tracked).toBe(false);
+});
+
 test.describe("import from seed", () => {
   test("should import same public account from seed", async ({ run }) => {
     test.slow();
