@@ -173,4 +173,35 @@ describe("retryProvenBatch (#571)", () => {
       /Node\.js `transactions\.retryProvenBatch\(submission\)` now surfaces/
     );
   });
+
+  it("reads batch getKey detail under the single push_and_submit_batch lock", () => {
+    const newTransactionsRs = readFileSync(
+      new URL("../../src/new_transactions.rs", import.meta.url),
+      "utf8"
+    );
+    const sliceBetween = (start, end) => {
+      const from = newTransactionsRs.indexOf(start);
+      const to = newTransactionsRs.indexOf(end, from);
+      expect(from, start).toBeGreaterThanOrEqual(0);
+      expect(to, end).toBeGreaterThan(from);
+      return newTransactionsRs.slice(from, to);
+    };
+
+    const submitBatchFn = sliceBetween(
+      "pub async fn submit_new_transaction_batch(",
+      "pub async fn retry_proven_batch("
+    );
+    expect(submitBatchFn).not.toMatch(/last_get_key_error/);
+
+    const pushAndSubmitFn = sliceBetween(
+      "async fn push_and_submit_batch(",
+      "async fn resubmit_proven_batch("
+    );
+    const afterSubmit = pushAndSubmitFn.slice(
+      pushAndSubmitFn.indexOf("builder.submit()")
+    );
+    expect(afterSubmit).toMatch(/keystore\.last_get_key_error\(\)/);
+
+    expect(newTransactionsRs).not.toMatch(/async fn last_get_key_error\b/);
+  });
 });

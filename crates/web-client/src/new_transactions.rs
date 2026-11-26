@@ -571,10 +571,11 @@ impl WebClient {
     pub async fn submit_new_transaction_batch(&self, items: Vec<BatchItem>) -> Result<u32, JsErr> {
         match self.push_and_submit_batch(items).await? {
             Ok(block_number) => Ok(block_number),
-            Err(err) => {
-                let js_error = js_batch_submit_error(err, "failed to submit transaction batch");
+            Err(failure) => {
+                let js_error =
+                    js_batch_submit_error(failure.error, "failed to submit transaction batch");
                 #[cfg(feature = "browser")]
-                append_get_key_detail(&js_error, self.last_get_key_error().await);
+                append_get_key_detail(&js_error, failure.get_key_error);
                 Err(js_error)
             },
         }
@@ -1136,7 +1137,7 @@ impl WebClient {
         &self,
         items: Vec<BatchItem>,
     ) -> Result<NodeBatchSubmitOutcome, JsErr> {
-        let result = self.push_and_submit_batch(items).await?;
+        let result = self.push_and_submit_batch(items).await?.map_err(|failure| failure.error);
         node_batch_submit_outcome(result, "failed to submit transaction batch")
     }
 
@@ -1150,11 +1151,19 @@ impl WebClient {
     }
 }
 
+/// A batch submit failure plus any `getKey` callback detail retained by the keystore, read
+/// while `push_and_submit_batch` still holds the inner client lock.
+struct BatchSubmitFailure {
+    error: ClientError,
+    #[cfg(feature = "browser")]
+    get_key_error: Option<String>,
+}
+
 impl WebClient {
     async fn push_and_submit_batch(
         &self,
         items: Vec<BatchItem>,
-    ) -> Result<Result<u32, ClientError>, JsErr> {
+    ) -> Result<Result<u32, BatchSubmitFailure>, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
 
@@ -1188,7 +1197,12 @@ impl WebClient {
 
         Ok(maybe_wrap_send(Box::pin(builder.submit()))
             .await
-            .map(|block_number| block_number.as_u32()))
+            .map(|block_number| block_number.as_u32())
+            .map_err(|error| BatchSubmitFailure {
+                #[cfg(feature = "browser")]
+                get_key_error: keystore.as_ref().and_then(|keystore| keystore.last_get_key_error()),
+                error,
+            }))
     }
 
     async fn resubmit_proven_batch(
@@ -1201,15 +1215,6 @@ impl WebClient {
         Ok(maybe_wrap_send(Box::pin(client.retry_proven_batch(submission.native())))
             .await
             .map(|block_number| block_number.as_u32()))
-    }
-
-    #[cfg(feature = "browser")]
-    async fn last_get_key_error(&self) -> Option<String> {
-        let guard = self.get_mut_inner().await;
-        guard
-            .as_ref()
-            .and_then(|client| client.authenticator())
-            .and_then(|keystore| keystore.last_get_key_error())
     }
 }
 

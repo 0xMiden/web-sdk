@@ -1238,6 +1238,26 @@ mod post_submit_code_tests {
 
     #[cfg(feature = "nodejs")]
     #[tokio::test]
+    async fn node_submit_new_transaction_batch_surfaces_indeterminate_error() {
+        use crate::models::batch_item::BatchItem;
+
+        let fixture = setup_mock_mint_batch("web-sdk-node-submit").await;
+        fail_next_submit_proven_batch(&fixture.client).await;
+
+        let err = fixture
+            .client
+            .submit_new_transaction_batch(vec![BatchItem::new(
+                &fixture.faucet_id,
+                &fixture.request,
+            )])
+            .await
+            .unwrap_err();
+        assert!(err.reason.starts_with("BATCH_SUBMISSION_OUTCOME_UNKNOWN: failed to submit"));
+        assert_eq!(err.reason.matches(BATCH_SUBMISSION_OUTCOME_UNKNOWN).count(), 1);
+    }
+
+    #[cfg(feature = "nodejs")]
+    #[tokio::test]
     async fn node_batch_outcome_unknown_and_retry() {
         use crate::models::batch_item::BatchItem;
         use crate::models::transaction_filter::TransactionFilter;
