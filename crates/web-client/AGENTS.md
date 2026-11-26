@@ -169,12 +169,15 @@ local apply fails, so `apply` and the single-transaction `transactions.*` helper
 `transactionId`, `submissionHeight` and the original error as `cause`. A batch whose
 local update fails after the node accepted it rejects with the same `code` and the
 accepted block in its message, without those fields. Do not submit it again.
+`ApplyTransactionAfterSubmitFailed` fields are browser builds only: Node.js errors
+only prefix the message with the code.
 A batch whose admission is indeterminate rejects with
-`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` and nothing recorded locally; resend it
+`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`, `transactionIds`, and nothing recorded
+locally, plus `submission` (browser in-thread and Node.js) or `submissionId`
+(browser Web Worker); resend it
 with `transactions.retryProvenBatch(error.submission ?? { submissionId: error.submissionId })`
 and never re-run `batch` / `submitBatch`. A rejected retry records nothing and a
-sync does not insert the records, so look the ids up on the node. Browser builds
-only: Node.js errors only prefix the message with the code.
+sync does not insert the records, so look the ids up on the node.
 
 MASM that does not assemble or link rejects with `code: "MASM_COMPILE_FAILED"`;
 a transaction program that fails in the VM (a failing `assert`) rejects with

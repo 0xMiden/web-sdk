@@ -1368,10 +1368,10 @@ call once every transaction of the batch is committed, and rejects if the node
 discards one or `timeout` (default 60 s) runs out.
 
 If submit fails with `code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`, do not call
-`batch` / `submitBatch` again. Pass `error.submission` (in-thread) or
-`{ submissionId: error.submissionId }` (worker) to
+`batch` / `submitBatch` again. Pass `error.submission` (browser in-thread or
+Node.js) or `{ submissionId: error.submissionId }` (browser worker) to
 `transactions.retryProvenBatch(...)` so the same proven bytes go out without a
-new prove. Confirm with `waitFor` / `list` for `error.transactionIds`. A conflict on retry usually means the original attempt landed, but a rejected retry records nothing locally and a sync does not insert the missing records, so look the ids up on the node, not in the local store. Browser builds only: Node.js errors prefix the message with the code and carry no submission handle or `transactionIds`.
+new prove. Confirm with `waitFor` / `list` for `error.transactionIds`. A conflict on retry usually means the original attempt landed, but a rejected retry records nothing locally and a sync does not insert the missing records, so look the ids up on the node, not in the local store.
 `ApplyTransactionAfterSubmitFailed` means the node already accepted the batch:
 sync, do not resubmit or retry.
 
