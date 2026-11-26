@@ -137,6 +137,21 @@ export class NotesResource {
 }
 
 function buildNoteFilter(query, wasm) {
+  const filter = buildBaseNoteFilter(query, wasm);
+  if (query?.limit === undefined && query?.after === undefined) {
+    return filter;
+  }
+  const { limit, after } = query;
+  if (limit !== undefined && !(Number.isInteger(limit) && limit >= 1)) {
+    throw new Error("Note query limit must be a positive integer");
+  }
+  if (after !== undefined && typeof after !== "string") {
+    throw new Error("Note query after must be a string");
+  }
+  return filter.page(after, limit);
+}
+
+function buildBaseNoteFilter(query, wasm) {
   if (!query) {
     return new wasm.NoteFilter(wasm.NoteFilterTypes.All, undefined);
   }
@@ -156,6 +171,18 @@ function buildNoteFilter(query, wasm) {
       wasm.NoteFilterTypes.ScriptRoots,
       undefined,
       scriptRoots
+    );
+  }
+
+  if (query.nullifiers) {
+    const nullifiers = query.nullifiers.map((nullifier) =>
+      typeof nullifier === "string" ? wasm.Word.fromHex(nullifier) : nullifier
+    );
+    return new wasm.NoteFilter(
+      wasm.NoteFilterTypes.Nullifiers,
+      undefined,
+      undefined,
+      nullifiers
     );
   }
 

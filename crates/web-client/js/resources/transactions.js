@@ -1166,7 +1166,13 @@ export class TransactionsResource {
    * unfiltered query would hand a stale caller a superset of what it asked for, so it throws
    * instead. Read `TransactionRecord.expirationBlockNum()` and compare it yourself.
    *
-   * @param {object} [query] - `{ status: "uncommitted" }` or `{ ids: [...] }`.
+   * A query with an `account`, a `limit`, or a `status` of `"pending"`, `"committed"` or
+   * `"discarded"` returns the matching transactions newest first, at most `limit` of them,
+   * and only those reach JavaScript. `status: "uncommitted"` with a `limit` reads as
+   * `"pending"`. It cannot be combined with `ids`.
+   *
+   * @param {object} [query] - `{ status: "uncommitted" }`, `{ ids: [...] }` or
+   * `{ account?, status?, limit? }`.
    * @returns {Promise<TransactionRecord[]>}
    * @throws {Error} If `query` carries a defined `expiredBefore` and neither
    * `status: "uncommitted"` nor `ids` — the two shapes that outranked the expiry filter
@@ -1179,6 +1185,8 @@ export class TransactionsResource {
     let filter;
     if (!query) {
       filter = wasm.TransactionFilter.all();
+    } else if (isBoundedTransactionQuery(query)) {
+      filter = buildTransactionQuery(query, wasm);
     } else if (query.status === "uncommitted") {
       filter = wasm.TransactionFilter.uncommitted();
     } else if (query.ids) {
@@ -1717,4 +1725,35 @@ class TransactionSubmission {
   async waitForConfirmation(opts) {
     return await this.#resource.waitFor(this.#result.id().toHex(), opts);
   }
+}
+
+const TRANSACTION_STATUSES = ["pending", "committed", "discarded"];
+
+function isBoundedTransactionQuery(query) {
+  return (
+    query.account !== undefined ||
+    query.limit !== undefined ||
+    TRANSACTION_STATUSES.includes(query.status)
+  );
+}
+
+function buildTransactionQuery(query, wasm) {
+  if (query.ids) {
+    throw new Error(
+      "Transaction query ids cannot be combined with account, status or limit"
+    );
+  }
+  const { limit } = query;
+  if (limit !== undefined && !(Number.isInteger(limit) && limit >= 1)) {
+    throw new Error("Transaction query limit must be a positive integer");
+  }
+  const status = query.status === "uncommitted" ? "pending" : query.status;
+  if (status !== undefined && !TRANSACTION_STATUSES.includes(status)) {
+    throw new Error(`Unknown transaction status: ${status}`);
+  }
+  const account =
+    query.account === undefined
+      ? undefined
+      : resolveAccountRef(query.account, wasm).toString();
+  return wasm.TransactionFilter.query(account, status, limit);
 }

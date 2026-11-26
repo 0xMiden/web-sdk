@@ -1241,14 +1241,38 @@ export interface ConsumeAllResult {
  */
 export type TransactionQuery =
   | { status: "uncommitted" }
-  | { ids: (string | TransactionId)[] };
+  | { ids: (string | TransactionId)[] }
+  /**
+   * Transactions executed by `account` in `status`, newest first, keeping at
+   * most `limit` of them; only those reach JavaScript. An omitted criterion
+   * matches every transaction. `"uncommitted"` with a `limit` reads as
+   * `"pending"`. Not combinable with `ids`.
+   */
+  | {
+      account?: AccountRef;
+      status?: "uncommitted" | "pending" | "committed" | "discarded";
+      limit?: number;
+    };
 
 // ════════════════════════════════════════════════════════════════
 // Note types
 // ════════════════════════════════════════════════════════════════
 
+/**
+ * Bounds a note query to one page. Input notes are keyed by details commitment
+ * (`record.detailsCommitment().toHex()`), output notes by note ID
+ * (`record.id().toString()`). A page holds at most `limit` notes in ascending
+ * key order, strictly above `after`; pass the last note's key to read the next
+ * page. The store still reads every match, but only the page reaches
+ * JavaScript. A query without either field returns every match.
+ */
+export interface NoteQueryPage {
+  limit?: number;
+  after?: string;
+}
+
 /** Discriminated union for note queries. */
-export type NoteQuery =
+export type NoteQuery = (
   | {
       status:
         | "consumed"
@@ -1264,7 +1288,16 @@ export type NoteQuery =
    * state. Only supported by `notes.list`; `notes.listSent` returns an empty
    * list for this query.
    */
-  | { scriptRoots: (string | Word)[] };
+  | { scriptRoots: (string | Word)[] }
+  /**
+   * Filter by nullifier, given as hex strings or Word instances (e.g. from
+   * `InputNoteRecord.nullifier()`). Notes match regardless of their state, and
+   * a nullifier no stored note has matches nothing.
+   */
+  | { nullifiers: (string | Word)[] }
+  | NoteQueryPage
+) &
+  NoteQueryPage;
 
 /** Options for standalone note creation utilities. */
 export interface NoteOptions {
