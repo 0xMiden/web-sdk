@@ -5,6 +5,11 @@ import {
   createFakePage,
   WasmWebClient,
 } from "./node-adapter.ts";
+import {
+  DEFAULT_LOCAL_TX_PROVER_URL,
+  installBrowserFunderHelpers,
+  REMOTE_TX_PROVER_PORT,
+} from "./fee-funder";
 
 // Unique per test run so concurrent suites don't share IndexedDB stores.
 export const RUN_ID = crypto.randomUUID().slice(0, 8);
@@ -15,7 +20,6 @@ function generateStoreName(testInfo: TestInfo): string {
 
 const TEST_SERVER_PORT = 8080;
 const MIDEN_NODE_PORT = 57291;
-const REMOTE_TX_PROVER_PORT = 50051;
 
 // Check if running against localhost (vs devnet/testnet)
 export function isLocalhost(): boolean {
@@ -226,7 +230,7 @@ export const test = base.extend<{ forEachTest: void }>({
 
             window.helpers.waitForTransaction = async (
               transactionId,
-              maxWaitTime = 10000,
+              maxWaitTime = 45000,
               delayInterval = 1000
             ) => {
               const client = window.client;
@@ -340,11 +344,18 @@ export const test = base.extend<{ forEachTest: void }>({
           {
             rpcUrl: getRpcUrl(),
             proverUrl: getProverUrl() ?? null,
-            localTxProverUrl: `http://localhost:${REMOTE_TX_PROVER_PORT}`,
+            localTxProverUrl: DEFAULT_LOCAL_TX_PROVER_URL,
             storeName,
             feeFaucetId: getFeeFaucetId(),
           }
         );
+
+        const rpcUrl = getRpcUrl();
+        const feeFaucetId = getFeeFaucetId();
+        await installBrowserFunderHelpers(page, {
+          rpcUrl,
+          feeFaucetId,
+        });
       }
       await use();
     },

@@ -38,6 +38,9 @@ test.describe("getAccountProof vault commitment (browser-only)", () => {
         const vaultCommitment = proof1.accountHeader()!.vaultCommitment();
 
         const vaultAssets = proof1.vaultFungibleAssets() ?? [];
+        const matchingAsset = vaultAssets.find(
+          (asset) => asset.faucetId().toString() === faucetId
+        );
 
         // Query 2: actual vault commitment — matches node state, should skip vault data
         // Note: passing vaultCommitment consumes the Word (wasm ownership transfer)
@@ -53,9 +56,9 @@ test.describe("getAccountProof vault commitment (browser-only)", () => {
 
         return {
           numVaultAssetsQuery1: vaultAssets.length,
-          vaultAssetFaucetId: vaultAssets[0]?.faucetId().toString() ?? null,
+          vaultAssetFaucetId: matchingAsset?.faucetId().toString() ?? null,
           vaultAssetAmount:
-            vaultAssets[0] != null ? Number(vaultAssets[0].amount()) : null,
+            matchingAsset != null ? Number(matchingAsset.amount()) : null,
           numVaultAssetsQuery2: proof2.vaultFungibleAssets()?.length ?? null,
           numVaultAssetsQuery3: proof3.vaultFungibleAssets()?.length ?? null,
         };
@@ -63,8 +66,8 @@ test.describe("getAccountProof vault commitment (browser-only)", () => {
       { walletId: walletResult.id, faucetId: faucetResult.id }
     );
 
-    // EMPTY_WORD — always fetches vault data with correct content
-    expect(proofResults.numVaultAssetsQuery1).toBe(1);
+    // EMPTY_WORD: always fetches vault data with correct content (fee asset may also be present)
+    expect(proofResults.numVaultAssetsQuery1).toBeGreaterThanOrEqual(1);
     expect(proofResults.vaultAssetFaucetId).toBe(faucetResult.id);
     expect(proofResults.vaultAssetAmount).toBe(1000);
     // Actual vault commitment — matches, node skips vault data

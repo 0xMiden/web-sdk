@@ -32,6 +32,7 @@ test.describe("import from seed", () => {
 
       // Mint
       await intClient.syncState();
+      await helpers.fundAccounts([faucetId, initialWalletId], intClient);
       const mintRequest = await intClient.newMintTransactionRequest(
         initialWalletId,
         faucetId,
@@ -55,7 +56,7 @@ test.describe("import from seed", () => {
 
       // Wait for mint tx
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -86,7 +87,7 @@ test.describe("import from seed", () => {
 
       // Wait for consume tx
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -252,6 +253,7 @@ test.describe("import public account by id", () => {
 
       // Mint
       await intClient.syncState();
+      await helpers.fundAccounts([faucetId, initialWalletId], intClient);
       const mintRequest = await intClient.newMintTransactionRequest(
         initialWalletId,
         faucetId,
@@ -275,7 +277,7 @@ test.describe("import public account by id", () => {
 
       // Wait for mint tx
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -306,7 +308,7 @@ test.describe("import public account by id", () => {
 
       // Wait for consume tx
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()

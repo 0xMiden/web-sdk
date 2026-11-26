@@ -113,8 +113,8 @@ const networkCounterTransaction = async (
     // matching notes to it.
     //
     // Each allowed note script carries the fee the account charges to consume it,
-    // denominated in the chain's fee asset. This test node charges no
-    // verification fee, so the note is priced at zero.
+    // denominated in the chain's fee asset. The test prices this note script at
+    // zero while protocol verification fees still settle from each account vault.
     //
     // The fee faucet has to be the CHAIN'S, not one minted here. Since 0.17 the
     // node's network-transaction builder checks a network account's fee asset
@@ -144,6 +144,54 @@ const networkCounterTransaction = async (
     const built = accountBuilder.build();
     await client.newAccount(built.account, false);
 
+    // Fund and deploy the network account in its initial deploy transaction so
+    // its vault holds native fee assets without prematurely submitting a
+    // separate post-deployment user transaction for the public network account.
+    const localRemoteProver = () =>
+      window.TransactionProver.newRemoteProver(
+        window.localTxProverUrl,
+        BigInt(120_000)
+      );
+    const sent = await window.helpers.sendFundingNotes([built.account.id()]);
+    let fundingNote = null;
+    if (sent && sent.targetNotes.length > 0) {
+      const noteId = sent.targetNotes[0].noteId;
+      const funderClient = (sent as { funderClient?: any }).funderClient;
+      const deadline = Date.now() + 30_000;
+      while (!fundingNote) {
+        await client.syncState();
+        const record = await client.getInputNote(noteId);
+        if (record) {
+          fundingNote = record.toNote();
+          break;
+        }
+        if (funderClient && typeof funderClient.exportNoteFile === "function") {
+          try {
+            const noteFile = await funderClient.exportNoteFile(
+              noteId,
+              window.NoteExportFormat.Full
+            );
+            await client.importNoteFile(
+              window.NoteFile.deserialize(noteFile.serialize())
+            );
+            const imported = await client.getInputNote(noteId);
+            if (imported) {
+              fundingNote = imported.toNote();
+              break;
+            }
+          } catch {
+            // Retry after the next sync if note export is not yet available.
+          }
+        }
+        if (Date.now() >= deadline) {
+          throw new Error(
+            `Funding note ${noteId} not found in network account client`
+          );
+        }
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+
     // Readback: the built account identifies as a network account and reports
     // exactly the allowlisted note-script root.
     const isNetworkAccount = built.account.isNetworkAccount();
@@ -152,14 +200,18 @@ const networkCounterTransaction = async (
       ?.map((root) => root.toHex());
     const allowlistedNoteRoot = noteScript.root().toHex();
 
-    // Deploy with the allowlisted counter bump, which both commits the account
-    // on-chain and gives the transaction the effect 0.17 requires. The counter
-    // therefore reads 1 after deployment, not 0.
+    // Deploy with the allowlisted counter bump, which bumps the counter to 1.
+    const deployBuilder =
+      new window.TransactionRequestBuilder().withCustomScript(deployScript);
+    if (fundingNote) {
+      deployBuilder.withInputNotes(
+        new window.NoteAndArgsArray([new window.NoteAndArgs(fundingNote, null)])
+      );
+    }
     const deployTx = await window.helpers.executeAndApplyTransaction(
       built.account.id(),
-      new window.TransactionRequestBuilder()
-        .withCustomScript(deployScript)
-        .build()
+      deployBuilder.build(),
+      localRemoteProver()
     );
     await window.helpers.waitForTransaction(
       deployTx.executedTransaction().id().toHex()
@@ -179,6 +231,11 @@ const networkCounterTransaction = async (
       window.AuthScheme.AuthRpoFalcon512
     );
     await client.syncState();
+    await window.helpers.fundAccounts(
+      [sender.id()],
+      client,
+      localRemoteProver()
+    );
 
     // A plain wallet is not a network account (no allowlist slot).
     const senderIsNetworkAccount = sender.isNetworkAccount();
