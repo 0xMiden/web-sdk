@@ -181,6 +181,99 @@ describe("code registry", () => {
     expect((await getProcedureRoots(dbId))?.sort()).toEqual(["0xa", "0xb"]);
   });
 
+  it("changes nothing when the same forests are added twice", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    const forests = [
+      {
+        commitment: "0xf1",
+        mast: new Uint8Array([1]),
+        procedureRoots: ["0xa"],
+      },
+      {
+        commitment: "0xf2",
+        mast: new Uint8Array([2]),
+        procedureRoots: ["0xa", "0xb"],
+      },
+    ];
+    const rows = async () => ({
+      forests: await db.codeMastForests.toArray(),
+      procedures: await db.codeProcedures.toArray(),
+    });
+
+    await insertProcedures(dbId, forests);
+    const afterFirst = await rows();
+    await insertProcedures(dbId, forests);
+
+    expect(await rows()).toEqual(afterFirst);
+    expect(afterFirst.forests).toHaveLength(2);
+    expect(afterFirst.procedures).toHaveLength(2);
+  });
+
+  it("adds debug info to a forest that insertProcedures stored", async () => {
+    const dbId = await openTestDb();
+    await insertProcedures(dbId, [
+      {
+        commitment: "0xf1",
+        mast: new Uint8Array([1]),
+        procedureRoots: ["0xa"],
+      },
+    ]);
+    expect(await getForestsWithDebugInfo(dbId, ["0xf1"])).toEqual([]);
+
+    await insertProceduresWithDebugInfo(dbId, [forest("0xf1", ["0xa"], 1)]);
+
+    expect(await getForestsWithDebugInfo(dbId, ["0xf1"])).toEqual(["0xf1"]);
+    expect(await getProcedure(dbId, "0xa")).toEqual({
+      mast: uint8ArrayToBase64(new Uint8Array([1])),
+      debugInfo: uint8ArrayToBase64(new Uint8Array([1, 1])),
+    });
+  });
+
+  it("adds no forest when one of them fails", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    const bulkAdd = db.codeProcedures.bulkAdd.bind(db.codeProcedures);
+    let calls = 0;
+    vi.spyOn(db.codeProcedures, "bulkAdd").mockImplementation((...args) => {
+      calls += 1;
+      if (calls === 2) {
+        throw new Error("write failed");
+      }
+      return bulkAdd(...args);
+    });
+
+    await expect(
+      insertProcedures(dbId, [
+        {
+          commitment: "0xf1",
+          mast: new Uint8Array([1]),
+          procedureRoots: ["0xa"],
+        },
+        {
+          commitment: "0xf2",
+          mast: new Uint8Array([2]),
+          procedureRoots: ["0xb"],
+        },
+      ])
+    ).rejects.toThrow("write failed");
+
+    vi.mocked(db.codeProcedures.bulkAdd).mockRestore();
+    expect(await db.codeMastForests.count()).toBe(0);
+    expect(await getProcedureRoots(dbId)).toEqual([]);
+  });
+
+  it("handles empty input and unknown commitments", async () => {
+    const dbId = await openTestDb();
+
+    await insertProcedures(dbId, []);
+    await insertProceduresWithDebugInfo(dbId, []);
+
+    expect(await getProcedureRoots(dbId)).toEqual([]);
+    expect(await getForestsWithDebugInfo(dbId, [])).toEqual([]);
+    expect(await getForestsWithDebugInfo(dbId, ["0xf1", "0xf2"])).toEqual([]);
+  });
+
   it("rethrows errors of an unknown database", async () => {
     await expect(getForestsWithDebugInfo("missing-db", [])).rejects.toThrow();
     await expect(
