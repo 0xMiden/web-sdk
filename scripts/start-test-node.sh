@@ -12,7 +12,7 @@
 #   --help           print usage and exit
 #
 # Env vars:
-#   MIDEN_BLOCK_INTERVAL         sequencer block interval (default 6s; sets 20-block tx window)
+#   MIDEN_BLOCK_INTERVAL         sequencer block interval (default 10s; sets 20-block tx window)
 #   MIDEN_VERIFICATION_BASE_FEE  genesis `verification_base_fee` (default 500; 0 disables fees)
 #   MIDEN_NUM_FUNDER_WALLETS     number of funder wallets a fee-charging genesis declares
 #   MIDEN_BATCH_BUILDER_WALLET   account that receives the batch builder's fees
@@ -77,8 +77,8 @@ PROVER_TIMEOUT=300s
 NETWORK_TX_AUTH="${MIDEN_NETWORK_TX_AUTH:-miden-client-testing-ntx-secret}"
 # Genesis `verification_base_fee`. Every transaction pays out of its own account's vault.
 VERIFICATION_BASE_FEE="${MIDEN_VERIFICATION_BASE_FEE:-500}"
-# Sequencer block interval. 20 blocks at 6s keeps local WASM proving inside the default expiration delta.
-BLOCK_INTERVAL="${MIDEN_BLOCK_INTERVAL:-6s}"
+# Sequencer block interval. 20 blocks at 10s keeps local WASM proving inside the default expiration delta.
+BLOCK_INTERVAL="${MIDEN_BLOCK_INTERVAL:-10s}"
 # Account that receives the batch builder's fees in a P2ID note.
 BATCH_BUILDER_WALLET="${MIDEN_BATCH_BUILDER_WALLET:-0xcc0000000000dd010000ee000000ff}"
 # Account allowlist enforcement. Off by default unless explicitly opted in.

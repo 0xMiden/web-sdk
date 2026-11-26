@@ -128,15 +128,13 @@ export const discardedTransaction = async (
       window.NoteType.Private,
       BigInt(1000)
     );
+    let createdNoteIds = mintTransactionRequest
+      .expectedOutputOwnNotes()
+      .map((note: Note) => note.id().toString());
     let mintTransactionUpdate = await window.helpers.executeAndApplyTransaction(
       faucetAccount.id(),
       mintTransactionRequest
     );
-    let createdNotes = mintTransactionUpdate
-      .executedTransaction()
-      .outputNotes()
-      .notes();
-    let createdNoteIds = createdNotes.map((note: Note) => note.id().toString());
     await window.helpers.waitForTransaction(
       mintTransactionUpdate.executedTransaction().id().toHex()
     );
@@ -172,16 +170,12 @@ export const discardedTransaction = async (
       1,
       null
     );
+    let sendCreatedNoteIds = sendTransactionRequest
+      .expectedOutputOwnNotes()
+      .map((note: Note) => note.id().toString());
     let sendTransactionUpdate = await window.helpers.executeAndApplyTransaction(
       senderAccount.id(),
       sendTransactionRequest
-    );
-    let sendCreatedNotes = sendTransactionUpdate
-      .executedTransaction()
-      .outputNotes()
-      .notes();
-    let sendCreatedNoteIds = sendCreatedNotes.map((note: Note) =>
-      note.id().toString()
     );
 
     await window.helpers.waitForTransaction(
@@ -406,6 +400,7 @@ export const counterAccountComponent = async (
 
 test.describe("transaction request builder expiration delta tests", () => {
   test("submitting an expired transaction fails", async ({ page }) => {
+    test.slow();
     const { accountId: senderId, faucetId } = await setupWalletAndFaucet(page);
     const { accountId: targetId } = await setupWalletAndFaucet(page);
 

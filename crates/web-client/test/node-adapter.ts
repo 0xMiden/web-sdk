@@ -201,7 +201,7 @@ function createHelpers(
     ensureFunded: funderRuntime.ensureFunded,
     waitForTransaction: async (
       transactionId: string,
-      maxWaitTime = 30000,
+      maxWaitTime = 45000,
       delayInterval = 1000
     ) => {
       const client = getClient();

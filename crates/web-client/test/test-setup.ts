@@ -198,7 +198,7 @@ export async function waitForTransaction(
   client: any,
   sdk: any,
   transactionId: string,
-  maxWaitTime = 30000,
+  maxWaitTime = 45000,
   delayInterval = 1000
 ) {
   let timeWaited = 0;
@@ -896,7 +896,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
 
         waitForTransaction: async (
           transactionId,
-          maxWaitTime = 30000,
+          maxWaitTime = 45000,
           delayInterval = 1000
         ) => {
           const c = window.client;
