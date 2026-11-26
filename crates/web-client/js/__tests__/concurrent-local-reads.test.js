@@ -688,6 +688,12 @@ describe("concurrent local reads during in-flight sync and proving", () => {
       syncGate.resolve(new Uint8Array([1]));
       const [r1, r2] = await Promise.all([s1, s2]);
       expect(r1).toEqual(r2);
+      // Coalescing: the interleaved local read must not make s2 start a second run.
+      expect(
+        instance.worker.postMessage.mock.calls.filter(
+          ([msg]) => msg.methodName === "syncState"
+        )
+      ).toHaveLength(1);
       expect(
         seen.some((e) => e.op === "getAccount" && e.outcome === "ok")
       ).toBe(true);
