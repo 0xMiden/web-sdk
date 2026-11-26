@@ -26,6 +26,7 @@ export {
   ClaimLeafData,
   ClaimProofData,
   ConsumableNoteRecord,
+  Eidos,
   Endpoint,
   EstimatedMaxFee,
   EthAddress,
