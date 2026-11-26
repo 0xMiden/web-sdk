@@ -77,6 +77,7 @@ const ciShardProjects = process.env.CI
         use: { ...devices["Desktop Chrome"] },
         testMatch: [
           "test/sync_lock.test.ts",
+          "test/sync_patch_concurrent_read.browser.test.ts",
           "test/tags.test.ts",
           "test/notes.test.ts",
           "test/note_details_commitment.test.ts",
