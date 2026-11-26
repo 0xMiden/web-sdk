@@ -412,6 +412,12 @@ test.describe("submitNewTransactionBatch tests", () => {
             let failCallbacks = false;
             const keys = new Map<string, Uint8Array>();
             const callbackMessage = `Callback ${callbackKind} batch failure`;
+            const insertKeyCb = async (
+              commitment: Uint8Array,
+              key: Uint8Array
+            ) => {
+              keys.set(Array.from(commitment).join(","), key);
+            };
             const client =
               await window.WasmWebClient.createClientWithExternalKeystore(
                 window.rpcUrl,
@@ -427,12 +433,23 @@ test.describe("submitNewTransactionBatch tests", () => {
                     keys.get(Array.from(commitment).join(","))
                   );
                 },
-                async (commitment: Uint8Array, key: Uint8Array) => {
-                  keys.set(Array.from(commitment).join(","), key);
-                },
+                insertKeyCb,
                 callbackKind === "sign"
-                  ? async () => {
-                      throw new Error(callbackMessage);
+                  ? async (
+                      commitment: Uint8Array,
+                      signingInputsBytes: Uint8Array
+                    ) => {
+                      if (failCallbacks) {
+                        throw new Error(callbackMessage);
+                      }
+                      const rawKey = keys.get(Array.from(commitment).join(","));
+                      if (!rawKey) {
+                        throw new Error("Missing key for funding sign");
+                      }
+                      const wasmKey = window.AuthSecretKey.deserialize(rawKey);
+                      const wasmInputs =
+                        window.SigningInputs.deserialize(signingInputsBytes);
+                      return wasmKey.signData(wasmInputs).serialize();
                     }
                   : undefined,
                 undefined,
@@ -456,6 +473,8 @@ test.describe("submitNewTransactionBatch tests", () => {
               undefined
             );
             await client.syncState();
+            await window.helpers.fundAccounts([faucet.id()], client);
+            getKeyCalls = 0;
             const request = await client.newMintTransactionRequest(
               wallet.id(),
               faucet.id(),
