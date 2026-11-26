@@ -23,6 +23,7 @@ use js_bindings::{
     idxdb_get_forests_with_debug_info,
     idxdb_get_procedure,
     idxdb_get_procedure_roots,
+    idxdb_insert_procedures,
     idxdb_insert_procedures_with_debug_info,
 };
 use models::{CodeForestIdxdbInput, CodeForestIdxdbObject};
@@ -31,6 +32,36 @@ use crate::IdxdbStore;
 use crate::promise::{await_js, await_ok};
 
 impl IdxdbStore {
+    /// Adds the procedures of the MAST forests to the code registry, without debug info.
+    ///
+    /// The forests are written in one transaction, so if one fails, none is added. A forest that
+    /// is already stored is kept, with its debug info if it has one, and so is the forest that an
+    /// already registered procedure was first registered with. A forest without procedures is
+    /// skipped.
+    pub(crate) async fn insert_procedures(
+        &self,
+        procedures: Vec<Arc<MastForest>>,
+    ) -> Result<(), StoreError> {
+        let forests: Vec<CodeForestIdxdbInput> = procedures
+            .iter()
+            .filter(|mast| mast.local_procedure_digests().next().is_some())
+            .map(|mast| CodeForestIdxdbInput {
+                commitment: mast.commitment().to_hex(),
+                mast: mast.to_bytes(),
+                debug_info: None,
+                procedure_roots: mast.local_procedure_digests().map(|root| root.to_hex()).collect(),
+            })
+            .collect();
+        if forests.is_empty() {
+            return Ok(());
+        }
+
+        let forests = serde_wasm_bindgen::to_value(&forests)
+            .map_err(|err| StoreError::DatabaseError(format!("serialization error: {err}")))?;
+        let promise = idxdb_insert_procedures(self.db_id(), forests);
+        await_ok(promise, "failed to insert code registry procedures").await
+    }
+
     /// Adds the MAST forests of the packages and their debug info to the code registry.
     ///
     /// A package whose forest already has debug info in the registry is skipped, and so is a
@@ -69,7 +100,7 @@ impl IdxdbStore {
                 missing.push(CodeForestIdxdbInput {
                     commitment,
                     mast: mast.to_bytes(),
-                    debug_info: debug_info.to_bytes(),
+                    debug_info: Some(debug_info.to_bytes()),
                     procedure_roots: mast
                         .local_procedure_digests()
                         .map(|root| root.to_hex())

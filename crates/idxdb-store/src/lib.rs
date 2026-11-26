@@ -67,6 +67,7 @@ use miden_client_core::store::{
     PartialBlockchainFilter,
 };
 use miden_processor::LoadedMastForest;
+use miden_protocol::MastForest;
 use miden_protocol::block::code_tree::{CodeTreeRoot, CodeWitness};
 use miden_protocol::code::ProcedureRoot;
 use miden_protocol::vm::Package;
@@ -560,6 +561,10 @@ impl Store for IdxdbStore {
 
     // CODE REGISTRY
     // --------------------------------------------------------------------------------------------
+
+    async fn insert_procedures(&self, procedures: Vec<Arc<MastForest>>) -> Result<(), StoreError> {
+        self.insert_procedures(procedures).await
+    }
 
     async fn insert_procedures_with_debug_info(
         &self,

@@ -16,6 +16,9 @@ extern "C" {
     #[wasm_bindgen(js_name = getProcedureRoots)]
     pub fn idxdb_get_procedure_roots(db_id: &str) -> js_sys::Promise;
 
+    #[wasm_bindgen(js_name = insertProcedures)]
+    pub fn idxdb_insert_procedures(db_id: &str, forests: JsValue) -> js_sys::Promise;
+
     #[wasm_bindgen(js_name = insertProceduresWithDebugInfo)]
     pub fn idxdb_insert_procedures_with_debug_info(
         db_id: &str,

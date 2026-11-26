@@ -40,21 +40,55 @@ export async function insertProceduresWithDebugInfo(dbId, forests) {
                     mast: forest.mast,
                     debugInfo: forest.debugInfo,
                 });
-                // A forest can list the same procedure root more than once.
-                const procedureRoots = [...new Set(forest.procedureRoots)];
-                const registered = await db.codeProcedures.bulkGet(procedureRoots);
-                await db.codeProcedures.bulkAdd(procedureRoots
-                    .filter((_, i) => registered[i] === undefined)
-                    .map((procedureRoot) => ({
-                    procedureRoot,
-                    commitment: forest.commitment,
-                })));
+                await registerProcedureRoots(db, forest);
             }
         });
     }
     catch (error) {
         logWebStoreError(error, "Error while inserting code registry procedures");
     }
+}
+/**
+ * Adds the forests and their procedure roots to the code registry, without debug info, in one
+ * transaction.
+ *
+ * A forest that is already stored is kept as it is, with its debug info if it has one. A procedure
+ * root that is already registered keeps the forest that it was first registered with.
+ */
+export async function insertProcedures(dbId, forests) {
+    try {
+        const db = getDatabase(dbId);
+        await db.dexie.transaction("rw", db.codeMastForests, db.codeProcedures, async () => {
+            for (const forest of forests) {
+                const stored = await db.codeMastForests.get(forest.commitment);
+                if (stored === undefined) {
+                    await db.codeMastForests.add({
+                        commitment: forest.commitment,
+                        mast: forest.mast,
+                    });
+                }
+                await registerProcedureRoots(db, forest);
+            }
+        });
+    }
+    catch (error) {
+        logWebStoreError(error, "Error while inserting code registry procedures");
+    }
+}
+/**
+ * Registers the procedure roots of the forest that are not registered yet, inside the caller's
+ * transaction.
+ */
+async function registerProcedureRoots(db, forest) {
+    // A forest can list the same procedure root more than once.
+    const procedureRoots = [...new Set(forest.procedureRoots)];
+    const registered = await db.codeProcedures.bulkGet(procedureRoots);
+    await db.codeProcedures.bulkAdd(procedureRoots
+        .filter((_, i) => registered[i] === undefined)
+        .map((procedureRoot) => ({
+        procedureRoot,
+        commitment: forest.commitment,
+    })));
 }
 /**
  * Returns the forest that holds the procedure, with the debug info of the forest if the registry

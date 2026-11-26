@@ -4,6 +4,7 @@ import {
   getForestsWithDebugInfo,
   getProcedure,
   getProcedureRoots,
+  insertProcedures,
   insertProceduresWithDebugInfo,
   type CodeForestInput,
 } from "./code.js";
@@ -152,6 +153,34 @@ describe("code registry", () => {
     ]);
   });
 
+  it("adds forests without debug info and keeps a stored forest", async () => {
+    const dbId = await openTestDb();
+    await insertProceduresWithDebugInfo(dbId, [forest("0xf1", ["0xa"], 1)]);
+
+    await insertProcedures(dbId, [
+      {
+        commitment: "0xf1",
+        mast: new Uint8Array([9]),
+        procedureRoots: ["0xa"],
+      },
+      {
+        commitment: "0xf2",
+        mast: new Uint8Array([2]),
+        procedureRoots: ["0xa", "0xb", "0xb"],
+      },
+    ]);
+
+    // The stored forest keeps its MAST and debug info, and `0xa` keeps its first forest.
+    expect(await getProcedure(dbId, "0xa")).toEqual({
+      mast: uint8ArrayToBase64(new Uint8Array([1])),
+      debugInfo: uint8ArrayToBase64(new Uint8Array([1, 1])),
+    });
+    expect(await getProcedure(dbId, "0xb")).toEqual({
+      mast: uint8ArrayToBase64(new Uint8Array([2])),
+    });
+    expect((await getProcedureRoots(dbId))?.sort()).toEqual(["0xa", "0xb"]);
+  });
+
   it("rethrows errors of an unknown database", async () => {
     await expect(getForestsWithDebugInfo("missing-db", [])).rejects.toThrow();
     await expect(
@@ -159,5 +188,6 @@ describe("code registry", () => {
     ).rejects.toThrow();
     await expect(getProcedure("missing-db", "0xa")).rejects.toThrow();
     await expect(getProcedureRoots("missing-db")).rejects.toThrow();
+    await expect(insertProcedures("missing-db", [])).rejects.toThrow();
   });
 });

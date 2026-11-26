@@ -1,12 +1,16 @@
-import { getDatabase } from "./schema.js";
+import { getDatabase, type MidenDatabase } from "./schema.js";
 import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
 
-/** A MAST forest to add to the code registry, with its debug info and procedure roots. */
-export interface CodeForestInput {
+/** A MAST forest to add to the code registry, with its procedure roots. */
+export interface ProcedureForestInput {
   commitment: string;
   mast: Uint8Array;
-  debugInfo: Uint8Array;
   procedureRoots: string[];
+}
+
+/** A MAST forest to add to the code registry, with its debug info and procedure roots. */
+export interface CodeForestInput extends ProcedureForestInput {
+  debugInfo: Uint8Array;
 }
 
 /** Returns the commitments, among the given ones, of the forests that have debug info. */
@@ -63,24 +67,69 @@ export async function insertProceduresWithDebugInfo(
             mast: forest.mast,
             debugInfo: forest.debugInfo,
           });
-
-          // A forest can list the same procedure root more than once.
-          const procedureRoots = [...new Set(forest.procedureRoots)];
-          const registered = await db.codeProcedures.bulkGet(procedureRoots);
-          await db.codeProcedures.bulkAdd(
-            procedureRoots
-              .filter((_, i) => registered[i] === undefined)
-              .map((procedureRoot) => ({
-                procedureRoot,
-                commitment: forest.commitment,
-              }))
-          );
+          await registerProcedureRoots(db, forest);
         }
       }
     );
   } catch (error) {
     logWebStoreError(error, "Error while inserting code registry procedures");
   }
+}
+
+/**
+ * Adds the forests and their procedure roots to the code registry, without debug info, in one
+ * transaction.
+ *
+ * A forest that is already stored is kept as it is, with its debug info if it has one. A procedure
+ * root that is already registered keeps the forest that it was first registered with.
+ */
+export async function insertProcedures(
+  dbId: string,
+  forests: ProcedureForestInput[]
+): Promise<void> {
+  try {
+    const db = getDatabase(dbId);
+    await db.dexie.transaction(
+      "rw",
+      db.codeMastForests,
+      db.codeProcedures,
+      async () => {
+        for (const forest of forests) {
+          const stored = await db.codeMastForests.get(forest.commitment);
+          if (stored === undefined) {
+            await db.codeMastForests.add({
+              commitment: forest.commitment,
+              mast: forest.mast,
+            });
+          }
+          await registerProcedureRoots(db, forest);
+        }
+      }
+    );
+  } catch (error) {
+    logWebStoreError(error, "Error while inserting code registry procedures");
+  }
+}
+
+/**
+ * Registers the procedure roots of the forest that are not registered yet, inside the caller's
+ * transaction.
+ */
+async function registerProcedureRoots(
+  db: MidenDatabase,
+  forest: ProcedureForestInput
+) {
+  // A forest can list the same procedure root more than once.
+  const procedureRoots = [...new Set(forest.procedureRoots)];
+  const registered = await db.codeProcedures.bulkGet(procedureRoots);
+  await db.codeProcedures.bulkAdd(
+    procedureRoots
+      .filter((_, i) => registered[i] === undefined)
+      .map((procedureRoot) => ({
+        procedureRoot,
+        commitment: forest.commitment,
+      }))
+  );
 }
 
 /**
