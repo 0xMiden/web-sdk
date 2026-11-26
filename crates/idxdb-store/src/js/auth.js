@@ -7,7 +7,27 @@ export async function insertAccountAuth(dbId, pubKeyCommitmentHex, secretKey) {
             pubKeyCommitmentHex,
             secretKeyHex: secretKey,
         };
-        await db.accountAuths.add(data);
+        const alreadyStored = async () => {
+            const stored = await db.accountAuths
+                .where("pubKeyCommitmentHex")
+                .equals(pubKeyCommitmentHex)
+                .first();
+            if (!stored)
+                return false;
+            if (stored.secretKeyHex !== secretKey) {
+                throw new Error("stored secret does not match");
+            }
+            return true;
+        };
+        if (await alreadyStored())
+            return;
+        try {
+            await db.accountAuths.add(data);
+        }
+        catch (error) {
+            if (!(await alreadyStored()))
+                throw error;
+        }
     }
     catch (error) {
         logWebStoreError(error, `Error inserting account auth for pubKey: ${pubKeyCommitmentHex}`);
