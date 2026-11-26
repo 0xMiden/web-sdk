@@ -175,7 +175,9 @@ test("account file import restores an external key dropped after its association
     );
     const fileBytes = (await client.exportAccountFile(wallet.id())).serialize();
     const [commitment] = await client.keystore.getCommitments(wallet.id());
+    const commitmentId = commitment.serialize().toString();
     const key = await client.keystore.get(commitment);
+    let associationKeyWrites = 0;
     const restore = async (scenario: string) => {
       const keys = new Map<string, Uint8Array>();
       const restored = await sdk.WasmWebClient.createClientWithExternalKeystore(
@@ -194,6 +196,9 @@ test("account file import restores an external key dropped after its association
           if (scenario === "insert-only")
             throw new Error("external insertKey denied");
           const name = id.toString();
+          if (scenario === "association" && name === commitmentId) {
+            associationKeyWrites++;
+          }
           if (keys.has(name)) throw new Error("key already stored");
           keys.set(name, bytes);
           if (scenario === "insert-then-rejects")
@@ -211,10 +216,10 @@ test("account file import restores an external key dropped after its association
           await restored.keystore.insert(wallet.id(), key);
           keys.clear();
         } else if (scenario === "association") {
-          keys.set(commitment.toString(), key.serialize());
+          keys.set(commitmentId, key.serialize());
         } else if (scenario === "mismatch") {
           keys.set(
-            commitment.toString(),
+            commitmentId,
             sdk.AuthSecretKey.ecdsaWithRNG(null).serialize()
           );
         }
@@ -243,6 +248,7 @@ test("account file import restores an external key dropped after its association
       mismatch: await restore("mismatch"),
       getterError: await restore("get-rejects"),
       insertOnlyError: await restore("insert-only"),
+      associationKeyWrites,
     };
   });
 
@@ -252,6 +258,7 @@ test("account file import restores an external key dropped after its association
     count: 2,
     tracked: true,
   });
+  expect(results.associationKeyWrites).toBe(0);
   expect(results.insertedThenRejected).toEqual({
     error: null,
     count: 2,
