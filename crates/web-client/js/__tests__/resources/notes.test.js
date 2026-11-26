@@ -171,14 +171,15 @@ describe("NotesResource", () => {
     it("builds NoteFilter with nullifiers when query.nullifiers provided", async () => {
       inner.getInputNotes.mockResolvedValue([]);
       const resource = makeResource();
-      const wordNullifier = { word: true };
+      const wordNullifier = { toHex: () => "0xdef" };
       await resource.list({ nullifiers: ["0xabc", wordNullifier] });
       expect(wasm.Word.fromHex).toHaveBeenCalledWith("0xabc");
+      expect(wasm.Word.fromHex).toHaveBeenCalledWith("0xdef");
       expect(wasm.NoteFilter).toHaveBeenCalledWith(
         "Nullifiers",
         undefined,
         undefined,
-        [{ hex: "0xabc" }, wordNullifier]
+        [{ hex: "0xabc" }, { hex: "0xdef" }]
       );
     });
 
@@ -203,12 +204,15 @@ describe("NotesResource", () => {
       expect(wasm.NoteFilter.mock.results[0].value.page).not.toHaveBeenCalled();
     });
 
-    it.each([0, -1, 1.5, "3", null])("rejects limit %j", async (limit) => {
-      const resource = makeResource();
-      await expect(resource.list({ limit })).rejects.toThrow(
-        "Note query limit must be a positive integer"
-      );
-    });
+    it.each([0, -1, 1.5, "3", null, 2 ** 32])(
+      "rejects limit %j",
+      async (limit) => {
+        const resource = makeResource();
+        await expect(resource.list({ limit })).rejects.toThrow(
+          "Note query limit must be a positive integer"
+        );
+      }
+    );
 
     it("rejects a non-string after cursor", async () => {
       const resource = makeResource();

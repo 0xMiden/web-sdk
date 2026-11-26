@@ -1,5 +1,6 @@
 import {
   isConsumableNow,
+  isQueryLimit,
   isStandardPaymentNote,
   resolveAccountRef,
   resolveNoteType,
@@ -1176,7 +1177,8 @@ export class TransactionsResource {
    * @returns {Promise<TransactionRecord[]>}
    * @throws {Error} If `query` carries a defined `expiredBefore` and neither
    * `status: "uncommitted"` nor `ids` — the two shapes that outranked the expiry filter
-   * before it was removed, and still do.
+   * before it was removed, and still do. A bounded query (`account`, `limit` or a
+   * `pending`, `committed` or `discarded` status) throws the same way.
    */
   async list(query) {
     this.#client.assertNotTerminated();
@@ -1186,6 +1188,9 @@ export class TransactionsResource {
     if (!query) {
       filter = wasm.TransactionFilter.all();
     } else if (isBoundedTransactionQuery(query)) {
+      if (query.expiredBefore !== undefined && query.status !== "uncommitted") {
+        throw new Error(EXPIRED_BEFORE_REMOVED);
+      }
       filter = buildTransactionQuery(query, wasm);
     } else if (query.status === "uncommitted") {
       filter = wasm.TransactionFilter.uncommitted();
@@ -1200,10 +1205,7 @@ export class TransactionsResource {
       // always did, and an undefined value still means "no filter" rather than an error.
       // The unknown-shape fallback below is `all()`, so without this branch a stale caller
       // would silently receive every transaction instead of the subset it asked for.
-      throw new Error(
-        "The { expiredBefore } transaction query was removed. Transaction expiry is decided " +
-          "during state sync; read expiry from the transaction record instead."
-      );
+      throw new Error(EXPIRED_BEFORE_REMOVED);
     } else {
       filter = wasm.TransactionFilter.all();
     }
@@ -1729,6 +1731,10 @@ class TransactionSubmission {
 
 const TRANSACTION_STATUSES = ["pending", "committed", "discarded"];
 
+const EXPIRED_BEFORE_REMOVED =
+  "The { expiredBefore } transaction query was removed. Transaction expiry is decided " +
+  "during state sync; read expiry from the transaction record instead.";
+
 function isBoundedTransactionQuery(query) {
   return (
     query.account !== undefined ||
@@ -1744,7 +1750,7 @@ function buildTransactionQuery(query, wasm) {
     );
   }
   const { limit } = query;
-  if (limit !== undefined && !(Number.isInteger(limit) && limit >= 1)) {
+  if (limit !== undefined && !isQueryLimit(limit)) {
     throw new Error("Transaction query limit must be a positive integer");
   }
   const status = query.status === "uncommitted" ? "pending" : query.status;

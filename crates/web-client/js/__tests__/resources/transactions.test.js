@@ -2360,10 +2360,41 @@ describe("TransactionsResource", () => {
       expect(wasm.TransactionFilter.query).not.toHaveBeenCalled();
     });
 
-    it.each([0, -1, 1.5, "3", null])("rejects limit %j", async (limit) => {
-      const { resource } = makeResource();
-      await expect(resource.list({ limit })).rejects.toThrow(
-        "Transaction query limit must be a positive integer"
+    it.each([0, -1, 1.5, "3", null, 2 ** 32])(
+      "rejects limit %j",
+      async (limit) => {
+        const { resource } = makeResource();
+        await expect(resource.list({ limit })).rejects.toThrow(
+          "Transaction query limit must be a positive integer"
+        );
+      }
+    );
+
+    it.each([
+      { limit: 1 },
+      { account: "0xaccHex" },
+      { status: "committed" },
+      { status: "pending" },
+      { status: "discarded" },
+    ])("rejects expiredBefore next to %j", async (bounded) => {
+      const { resource, wasm } = makeResource();
+      await expect(
+        resource.list({ ...bounded, expiredBefore: 100 })
+      ).rejects.toThrow(/expiredBefore.*removed/);
+      expect(wasm.TransactionFilter.query).not.toHaveBeenCalled();
+    });
+
+    it("keeps status uncommitted ahead of expiredBefore with a limit", async () => {
+      const { resource, wasm } = makeResource();
+      await resource.list({
+        status: "uncommitted",
+        limit: 1,
+        expiredBefore: 100,
+      });
+      expect(wasm.TransactionFilter.query).toHaveBeenCalledWith(
+        undefined,
+        "pending",
+        1
       );
     });
 

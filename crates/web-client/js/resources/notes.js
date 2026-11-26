@@ -1,5 +1,6 @@
 import {
   isConsumableNow,
+  isQueryLimit,
   isStandardPaymentNote,
   resolveAccountRef,
   resolveAddress,
@@ -142,7 +143,7 @@ function buildNoteFilter(query, wasm) {
     return filter;
   }
   const { limit, after } = query;
-  if (limit !== undefined && !(Number.isInteger(limit) && limit >= 1)) {
+  if (limit !== undefined && !isQueryLimit(limit)) {
     throw new Error("Note query limit must be a positive integer");
   }
   if (after !== undefined && typeof after !== "string") {
@@ -175,8 +176,12 @@ function buildBaseNoteFilter(query, wasm) {
   }
 
   if (query.nullifiers) {
+    // Copied through hex: the by-value `Vec<Word>` argument consumes its handles in the
+    // browser build, and a paging loop reuses the caller's array.
     const nullifiers = query.nullifiers.map((nullifier) =>
-      typeof nullifier === "string" ? wasm.Word.fromHex(nullifier) : nullifier
+      wasm.Word.fromHex(
+        typeof nullifier === "string" ? nullifier : nullifier.toHex()
+      )
     );
     return new wasm.NoteFilter(
       wasm.NoteFilterTypes.Nullifiers,
