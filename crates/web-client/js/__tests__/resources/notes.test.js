@@ -17,6 +17,8 @@ const noteRecord = (name, root = P2ID_ROOT) => ({
 
 const names = (records) => records.map((record) => record.name);
 
+const pagedFilter = { type: "paged filter" };
+
 function makeWasm(overrides = {}) {
   const NoteFilterTypes = {
     All: "All",
@@ -27,8 +29,9 @@ function makeWasm(overrides = {}) {
     Unverified: "Unverified",
     List: "List",
     ScriptRoots: "ScriptRoots",
+    Nullifiers: "Nullifiers",
   };
-  const filterInstance = { type: "filter" };
+  const filterInstance = { type: "filter", page: vi.fn(() => pagedFilter) };
   return {
     NoteFilter: vi.fn().mockReturnValue(filterInstance),
     NoteFilterTypes,
@@ -163,6 +166,55 @@ describe("NotesResource", () => {
         { hex: "0xabc" },
         wordRoot,
       ]);
+    });
+
+    it("builds NoteFilter with nullifiers when query.nullifiers provided", async () => {
+      inner.getInputNotes.mockResolvedValue([]);
+      const resource = makeResource();
+      const wordNullifier = { word: true };
+      await resource.list({ nullifiers: ["0xabc", wordNullifier] });
+      expect(wasm.Word.fromHex).toHaveBeenCalledWith("0xabc");
+      expect(wasm.NoteFilter).toHaveBeenCalledWith(
+        "Nullifiers",
+        undefined,
+        undefined,
+        [{ hex: "0xabc" }, wordNullifier]
+      );
+    });
+
+    it("bounds a query to a page when limit or after is given", async () => {
+      inner.getInputNotes.mockResolvedValue([]);
+      inner.getOutputNotes.mockResolvedValue([]);
+      const resource = makeResource();
+      await resource.list({ status: "committed", limit: 5, after: "0xcursor" });
+      expect(wasm.NoteFilter.mock.results[0].value.page).toHaveBeenCalledWith(
+        "0xcursor",
+        5
+      );
+      expect(inner.getInputNotes).toHaveBeenCalledWith(pagedFilter);
+      await resource.listSent({ limit: 2 });
+      expect(inner.getOutputNotes).toHaveBeenCalledWith(pagedFilter);
+    });
+
+    it("leaves an unpaged query unbounded", async () => {
+      inner.getInputNotes.mockResolvedValue([]);
+      const resource = makeResource();
+      await resource.list({ status: "committed" });
+      expect(wasm.NoteFilter.mock.results[0].value.page).not.toHaveBeenCalled();
+    });
+
+    it.each([0, -1, 1.5, "3", null])("rejects limit %j", async (limit) => {
+      const resource = makeResource();
+      await expect(resource.list({ limit })).rejects.toThrow(
+        "Note query limit must be a positive integer"
+      );
+    });
+
+    it("rejects a non-string after cursor", async () => {
+      const resource = makeResource();
+      await expect(resource.list({ after: 7 })).rejects.toThrow(
+        "Note query after must be a string"
+      );
     });
 
     it("falls back to All when empty query object", async () => {
