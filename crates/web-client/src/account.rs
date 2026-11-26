@@ -59,8 +59,7 @@ impl WebClient {
     /// Returns the IDs of the accounts whose witness is tracked.
     #[js_export(js_name = "trackedAccountWitnesses")]
     pub async fn tracked_account_witnesses(&self) -> Result<Vec<AccountId>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let client = self.get_read_client()?;
         let ids = client.tracked_account_witnesses().await.map_err(|err| {
             js_error_with_context(err, "failed to list tracked account witnesses")
         })?;
@@ -69,8 +68,7 @@ impl WebClient {
 
     #[js_export(js_name = "getAccounts")]
     pub async fn get_accounts(&self) -> Result<Vec<AccountHeader>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let client = self.get_read_client()?;
         let result = client
             .get_account_headers()
             .await
@@ -84,8 +82,7 @@ impl WebClient {
     /// This method loads the complete account state including vault, storage, and code.
     #[js_export(js_name = "getAccount")]
     pub async fn get_account(&self, account_id: &AccountId) -> Result<Option<Account>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let client = self.get_read_client()?;
         client
             .get_account(account_id.into())
             .await
@@ -98,8 +95,7 @@ impl WebClient {
     /// To check the balance for a single asset, use `accountReader` instead.
     #[js_export(js_name = "getAccountVault")]
     pub async fn get_account_vault(&self, account_id: &AccountId) -> Result<AssetVault, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let client = self.get_read_client()?;
         client
             .get_account_vault(account_id.into())
             .await
@@ -115,8 +111,7 @@ impl WebClient {
         &self,
         account_id: &AccountId,
     ) -> Result<AccountStorage, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let client = self.get_read_client()?;
         client
             .get_account_storage(account_id.into())
             .await
@@ -132,8 +127,7 @@ impl WebClient {
         &self,
         account_id: &AccountId,
     ) -> Result<Option<AccountCode>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let client = self.get_read_client()?;
         client
             .get_account_code(account_id.into())
             .await
@@ -162,10 +156,10 @@ impl WebClient {
     ///   reader.free?.(); // the Node.js reader has no free()
     /// }
     /// ```
+    #[allow(unknown_lints, clippy::unused_async, clippy::unused_async_trait_impl)]
     #[js_export(js_name = "accountReader")]
     pub async fn account_reader(&self, account_id: &AccountId) -> Result<AccountReader, JsErr> {
-        let guard = self.inner.lock().await;
-        let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let client = self.get_read_client()?;
         Ok(AccountReader::from(client.account_reader(account_id.into())))
     }
 

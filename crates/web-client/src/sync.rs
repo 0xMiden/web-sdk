@@ -90,8 +90,7 @@ impl WebClient {
 
     #[js_export(js_name = "getSyncHeight")]
     pub async fn get_sync_height(&self) -> Result<u32, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let client = self.get_read_client()?;
         let sync_height = client
             .get_sync_height()
             .await

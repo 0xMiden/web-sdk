@@ -4,6 +4,7 @@ import {
   getAccountIds,
   getAllAccountHeaders,
   getAccountHeader,
+  getAccountSnapshot,
   getAccountHeaderByCommitment,
   getAccountCode,
   getAccountStorage,
@@ -1695,5 +1696,94 @@ describe("multi-write account operations are atomic", () => {
 
     const header = await db.latestAccountHeaders.get(ACC);
     expect(header?.locked).toBe(false);
+  });
+});
+
+describe("getAccountSnapshot reads only the requested components", () => {
+  async function seedAccount() {
+    const name = uniqueDbName();
+    await openDatabase(name, "0.1.0");
+    openDbIds.push(name);
+    const db = getDatabase(name);
+    await db.latestAccountHeaders.put({
+      id: "acc-1",
+      nonce: "1",
+      vaultRoot: "vault-root",
+      storageRoot: "storage-root",
+      codeRoot: "code-root",
+      locked: false,
+      committed: true,
+      accountCommitment: "commitment",
+    } as never);
+    await db.accountCodes.put({
+      root: "code-root",
+      code: new Uint8Array([1, 2]),
+    } as never);
+    await upsertVaultAssets(name, "acc-1", [
+      { vaultKey: "vault-key-1", asset: "asset-1" },
+    ]);
+    await upsertAccountStorage(name, "acc-1", [
+      { slotName: "slot-1", slotValue: "value-1", slotType: 0 },
+    ]);
+    return { dbId: name, db };
+  }
+
+  it("skips code and storage for a vault-only read", async () => {
+    const { dbId, db } = await seedAccount();
+    const codeRead = vi.spyOn(db.accountCodes, "where");
+    const storageRead = vi.spyOn(db.latestAccountStorages, "where");
+
+    const snapshot = await getAccountSnapshot(
+      dbId,
+      "acc-1",
+      false,
+      false,
+      false,
+      true
+    );
+
+    expect(snapshot?.header.id).toBe("acc-1");
+    expect(snapshot?.assets).toEqual([
+      { vaultKey: "vault-key-1", asset: "asset-1" },
+    ]);
+    expect(snapshot?.storage).toEqual([]);
+    expect(codeRead).not.toHaveBeenCalled();
+    expect(storageRead).not.toHaveBeenCalled();
+  });
+
+  it("skips storage for a code-only read and still returns the code", async () => {
+    const { dbId, db } = await seedAccount();
+    const storageRead = vi.spyOn(db.latestAccountStorages, "where");
+
+    const snapshot = await getAccountSnapshot(
+      dbId,
+      "acc-1",
+      true,
+      false,
+      false,
+      false
+    );
+
+    expect(snapshot?.code?.root).toBe("code-root");
+    expect(storageRead).not.toHaveBeenCalled();
+  });
+
+  it("returns code and storage together when both are requested", async () => {
+    const { dbId } = await seedAccount();
+
+    const snapshot = await getAccountSnapshot(
+      dbId,
+      "acc-1",
+      true,
+      true,
+      false,
+      false
+    );
+
+    expect(snapshot?.code?.root).toBe("code-root");
+    expect(snapshot?.storage).toEqual([
+      expect.objectContaining({ slotName: "slot-1", slotValue: "value-1" }),
+    ]);
+    expect(snapshot?.assets).toEqual([]);
   });
 });

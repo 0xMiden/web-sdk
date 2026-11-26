@@ -29,17 +29,18 @@ impl WebClient {
         if let Some(config) = self.synced_protocol_config().await? {
             return Ok(Some(config.fee_asset_id().faucet_id().into()));
         }
-        Ok((*self.fee_faucet.lock().await).map(Into::into))
+        Ok((*self.fee_faucet.read().unwrap_or_else(std::sync::PoisonError::into_inner))
+            .map(Into::into))
     }
 
     /// The protocol configuration the block at the sync height commits to, or `None` when nothing
     /// has been synced yet (see `header_at_sync_height`) so no configuration is stored for it.
     /// Storage read failures are errors.
     pub(crate) async fn synced_protocol_config(&self) -> Result<Option<ProtocolConfig>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let client = self.get_read_client()?;
+        let mut client_ref = client.as_ref();
 
-        let Some(header) = header_at_sync_height(client).await? else {
+        let Some(header) = header_at_sync_height(&mut client_ref).await? else {
             return Ok(None);
         };
         match client.get_protocol_config(header.protocol_config_commitment()).await {
@@ -334,12 +335,12 @@ trait SyncHeightRead: MaybeSend {
     ) -> impl Future<Output = Result<Option<Self::Value>, Self::Error>> + MaybeSend;
 }
 
-impl SyncHeightRead for Client<ClientAuth> {
+impl SyncHeightRead for &Client<ClientAuth> {
     type Value = BlockHeader;
     type Error = ClientError;
 
     fn height(&mut self) -> impl Future<Output = Result<BlockNumber, Self::Error>> + MaybeSend {
-        Client::get_sync_height(self)
+        Client::get_sync_height(*self)
     }
 
     // `async fn` cannot name the `MaybeSend` bound this method returns.
@@ -348,8 +349,10 @@ impl SyncHeightRead for Client<ClientAuth> {
         &mut self,
         height: BlockNumber,
     ) -> impl Future<Output = Result<Option<Self::Value>, Self::Error>> + MaybeSend {
+        let client = *self;
         async move {
-            self.get_block_header_by_num(height)
+            client
+                .get_block_header_by_num(height)
                 .await
                 .map(|found| found.map(|(header, _)| header))
         }

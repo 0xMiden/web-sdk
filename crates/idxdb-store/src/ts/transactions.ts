@@ -26,82 +26,88 @@ const IDS_FILTER_PREFIX = "Ids:";
 const STATUS_PENDING_VARIANT = 0;
 
 export async function getTransactions(dbId: string, filter: string) {
-  let transactionRecords: ITransaction[] = [];
-
   try {
     const db = getDatabase(dbId);
-    if (filter === "Uncommitted") {
-      transactionRecords = await db.transactions
-        .filter((tx) => tx.statusVariant === STATUS_PENDING_VARIANT)
-        .toArray();
-    } else if (filter.startsWith(IDS_FILTER_PREFIX)) {
-      const idsString = filter.substring(IDS_FILTER_PREFIX.length);
-      const ids = idsString.split(",");
+    return await db.dexie.transaction(
+      "r",
+      [db.transactions, db.transactionScripts],
+      async () => {
+        let transactionRecords: ITransaction[] = [];
 
-      if (ids.length > 0) {
-        transactionRecords = await db.transactions
-          .where("id")
-          .anyOf(ids)
-          .toArray();
-      } else {
-        transactionRecords = [];
-      }
-    } else {
-      transactionRecords = await db.transactions.toArray();
-    }
+        if (filter === "Uncommitted") {
+          transactionRecords = await db.transactions
+            .filter((tx) => tx.statusVariant === STATUS_PENDING_VARIANT)
+            .toArray();
+        } else if (filter.startsWith(IDS_FILTER_PREFIX)) {
+          const idsString = filter.substring(IDS_FILTER_PREFIX.length);
+          const ids = idsString.split(",");
 
-    if (transactionRecords.length === 0) {
-      return [];
-    }
-
-    const scriptRoots = transactionRecords
-      .map((transactionRecord) => {
-        return transactionRecord.scriptRoot;
-      })
-      .filter((scriptRoot) => scriptRoot != undefined);
-
-    const scripts = await db.transactionScripts
-      .where("scriptRoot")
-      .anyOf(scriptRoots)
-      .toArray();
-
-    const scriptMap: Map<string, Uint8Array> = new Map();
-    scripts.forEach((script) => {
-      if (script.txScript) {
-        scriptMap.set(script.scriptRoot, script.txScript);
-      }
-    });
-
-    const processedTransactions = await Promise.all(
-      transactionRecords.map((transactionRecord) => {
-        let txScriptBase64: undefined | string = undefined;
-        if (transactionRecord.scriptRoot) {
-          const txScript = scriptMap.get(transactionRecord.scriptRoot);
-
-          if (txScript) {
-            txScriptBase64 = uint8ArrayToBase64(txScript);
+          if (ids.length > 0) {
+            transactionRecords = await db.transactions
+              .where("id")
+              .anyOf(ids)
+              .toArray();
+          } else {
+            transactionRecords = [];
           }
+        } else {
+          transactionRecords = await db.transactions.toArray();
         }
 
-        const detailsBase64 = uint8ArrayToBase64(transactionRecord.details);
+        if (transactionRecords.length === 0) {
+          return [];
+        }
 
-        const statusBase64 = uint8ArrayToBase64(transactionRecord.status);
+        const scriptRoots = transactionRecords
+          .map((transactionRecord) => {
+            return transactionRecord.scriptRoot;
+          })
+          .filter((scriptRoot) => scriptRoot != undefined);
 
-        const data: ProcessedTransaction = {
-          id: transactionRecord.id,
-          details: detailsBase64,
-          scriptRoot: transactionRecord.scriptRoot,
-          txScript: txScriptBase64,
-          blockNum: transactionRecord.blockNum,
-          statusVariant: transactionRecord.statusVariant,
-          status: statusBase64,
-        };
+        const scripts = await db.transactionScripts
+          .where("scriptRoot")
+          .anyOf(scriptRoots)
+          .toArray();
 
-        return data;
-      })
+        const scriptMap: Map<string, Uint8Array> = new Map();
+        scripts.forEach((script) => {
+          if (script.txScript) {
+            scriptMap.set(script.scriptRoot, script.txScript);
+          }
+        });
+
+        const processedTransactions = transactionRecords.map(
+          (transactionRecord) => {
+            let txScriptBase64: undefined | string = undefined;
+            if (transactionRecord.scriptRoot) {
+              const txScript = scriptMap.get(transactionRecord.scriptRoot);
+
+              if (txScript) {
+                txScriptBase64 = uint8ArrayToBase64(txScript);
+              }
+            }
+
+            const detailsBase64 = uint8ArrayToBase64(transactionRecord.details);
+
+            const statusBase64 = uint8ArrayToBase64(transactionRecord.status);
+
+            const data: ProcessedTransaction = {
+              id: transactionRecord.id,
+              details: detailsBase64,
+              scriptRoot: transactionRecord.scriptRoot,
+              txScript: txScriptBase64,
+              blockNum: transactionRecord.blockNum,
+              statusVariant: transactionRecord.statusVariant,
+              status: statusBase64,
+            };
+
+            return data;
+          }
+        );
+
+        return processedTransactions;
+      }
     );
-
-    return processedTransactions;
   } catch (err) {
     logWebStoreError(err, "Failed to get transactions");
   }

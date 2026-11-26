@@ -2,37 +2,36 @@
 
 /**
  * CI lint script that verifies every async method on the WASM WebClient class
- * is explicitly classified in one of: SYNC_METHODS, WRITE_METHODS,
- * READ_METHODS, or as an explicit wrapper method on the JS WebClient class.
+ * is explicitly classified in one of: SYNC_METHODS, LOCAL_READ_METHODS,
+ * WRITE_METHODS, READ_METHODS, or as an explicit wrapper method on the JS
+ * WebClient class.
  *
- * This prevents new write methods from silently defaulting to read-only
- * (WASM-lock-only) wrapping in the Proxy fallback.
+ * This prevents new write methods from silently defaulting to unserialized
+ * execution or skipping store-mutation tracking.
  *
- * It also enforces the safety invariant SYNC_METHODS carries. Membership there
- * means "bound raw by the Proxy, bypassing `_serializeWasmCall`", so an entry
- * must take no borrow of the client's `AsyncCell`. The borrow is not
- * re-entrant — a `RefCell` on browser, where `panic = "abort"` turns a second
- * borrow into a trap, and a tokio `Mutex` on node, where it deadlocks — so a
- * borrowing method bound raw is a live crash, not a style problem.
+ * It also enforces the safety invariant SYNC_METHODS and LOCAL_READ_METHODS
+ * carry. Membership there bypasses `_wasmCallChain`, so an entry must take no
+ * borrow of the client's `AsyncCell`. The borrow is not re-entrant — a
+ * `RefCell` on browser, where `panic = "abort"` turns a second borrow into a
+ * trap, and a tokio `Mutex` on node, where it deadlocks — so a borrowing method
+ * bypassing `_wasmCallChain` is a live crash, not a style problem.
  *
  * The crate borrows in three shapes, and the check below recognises all three:
  * the `get_mut_inner` accessor, a direct `self.inner.lock()` /
  * `self.inner.borrow()`, and a call to a helper that does one of those —
- * `get_keystore` being the one with real reach. Transitive borrows are resolved
- * to a fixed point, so a helper chain of any depth still counts. Recognising
- * only `get_mut_inner` would leave `storeIdentifier`, `createCodeBuilder`,
- * `accountReader` and every keystore-backed method invisible here, which is
- * exactly the set a reader would most expect this check to cover.
+ * `get_keystore` being the one with reach until it reads from `read_client`.
+ * Transitive borrows are resolved to a fixed point, so a helper chain of any
+ * depth still counts.
  *
  * This is a textual scan, not a call graph, and it is deliberately not claimed
  * to be complete. It follows `self.<helper>()` and nothing else, so a borrow
  * reached through a free function taking `&WebClient`, a trait method, or an
  * alias is invisible to it. Writing one of those and calling it from a
- * SYNC_METHODS entry would defeat the check — the guard is against the ordinary
- * mistake of adding or moving a method, not against a determined workaround.
- * Closing that would take real Rust parsing; if it ever seems worth it, the
- * cheaper move is forcing every borrow through the accessors and linting direct
- * `self.inner` access outside lib.rs.
+ * SYNC_METHODS or LOCAL_READ_METHODS entry would defeat the check — the guard
+ * is against the ordinary mistake of adding or moving a method, not against a
+ * determined workaround. Closing that would take real Rust parsing; if it ever
+ * seems worth it, the cheaper move is forcing every borrow through the
+ * accessors and linting direct `self.inner` access outside lib.rs.
  */
 
 import { access, readFile, readdir } from "node:fs/promises";
@@ -132,7 +131,12 @@ function extractClassifications(sourceText, filePath) {
     ts.ScriptKind.JS
   );
 
-  const wanted = new Set(["SYNC_METHODS", "WRITE_METHODS", "READ_METHODS"]);
+  const wanted = new Set([
+    "SYNC_METHODS",
+    "LOCAL_READ_METHODS",
+    "WRITE_METHODS",
+    "READ_METHODS",
+  ]);
   const sets = {};
 
   const visit = (node) => {
@@ -156,15 +160,16 @@ function extractClassifications(sourceText, filePath) {
         // Anything else — a spread, an identifier, a computed name — means the
         // real membership is not what this scan can see. Skipping it would let
         // `...["someMethod"]` put a borrow-holding method into SYNC_METHODS
-        // with the check still reporting green, so refuse to run instead.
+        // or LOCAL_READ_METHODS with the check still reporting green, so refuse
+        // to run instead.
         console.error(
           `${node.name.text} in ${filePath} contains an entry that is not a ` +
             `plain string literal: ${element.getText(sourceFile)}\n\n` +
-            "This check reads the three sets statically, so it cannot see the " +
+            "This check reads the four sets statically, so it cannot see the " +
             "real membership of a spread or a computed entry. Skipping it " +
             'would let `...["someMethod"]` place a borrow-holding method in ' +
-            "SYNC_METHODS with this check still reporting green. List every " +
-            "entry as a literal."
+            "SYNC_METHODS or LOCAL_READ_METHODS with this check still reporting " +
+            "green. List every entry as a literal."
         );
         process.exit(1);
       }
@@ -178,6 +183,7 @@ function extractClassifications(sourceText, filePath) {
 
   return {
     syncMethods: sets.SYNC_METHODS || new Set(),
+    localReadMethods: sets.LOCAL_READ_METHODS || new Set(),
     writeMethods: sets.WRITE_METHODS || new Set(),
     readMethods: sets.READ_METHODS || new Set(),
   };
@@ -381,7 +387,8 @@ async function extractBorrowingExports() {
 
   for (const [index, file] of files.entries()) {
     const source = sources[index];
-    const attrPattern = /#\[js_export\([^)]*js_name\s*=\s*"([^"]+)"[^)]*\)\]/g;
+    const attrPattern =
+      /#\[(?:js_export|wasm_bindgen|napi)\([^)]*js_name\s*=\s*"([^"]+)"[^)]*\)\]/g;
     let match;
     while ((match = attrPattern.exec(source)) !== null) {
       const jsName = match[1];
@@ -455,14 +462,13 @@ const wasmTypesSource = await readFile(wasmTypesPath, "utf8");
 const indexJsSource = await readFile(indexJsPath, "utf8");
 
 const wasmMethods = extractWasmMethods(wasmTypesSource, wasmTypesPath);
-const { syncMethods, writeMethods, readMethods } = extractClassifications(
-  indexJsSource,
-  indexJsPath
-);
+const { syncMethods, localReadMethods, writeMethods, readMethods } =
+  extractClassifications(indexJsSource, indexJsPath);
 const explicitMethods = extractExplicitMethods(indexJsSource, indexJsPath);
 
 const classified = new Set([
   ...syncMethods,
+  ...localReadMethods,
   ...writeMethods,
   ...readMethods,
   ...explicitMethods,
@@ -491,7 +497,7 @@ const unclassified = [...wasmMethods].filter(
 
 if (unclassified.length > 0) {
   console.error(
-    "The following WASM methods are not classified in SYNC_METHODS, WRITE_METHODS, READ_METHODS, or as explicit wrapper methods in index.js:"
+    "The following WASM methods are not classified in SYNC_METHODS, LOCAL_READ_METHODS, WRITE_METHODS, READ_METHODS, or as explicit wrapper methods in index.js:"
   );
   unclassified.sort().forEach((name) => console.error(`  - ${name}`));
   console.error(
@@ -501,13 +507,15 @@ if (unclassified.length > 0) {
 }
 
 // A name in two sets is ambiguous rather than merely redundant: only
-// SYNC_METHODS is read at runtime (by `createClientProxy`), so a method listed
-// in SYNC_METHODS *and* WRITE_METHODS is bound raw while the classification
-// claims it is serialized. Checking only "is it classified at all" cannot see
-// that, which is how a stale duplicate survives.
+// SYNC_METHODS and LOCAL_READ_METHODS are read at runtime (by
+// `createClientProxy`), so a method listed in one of those *and* WRITE_METHODS
+// bypasses `_wasmCallChain` while the classification claims it is serialized.
+// Checking only "is it classified at all" cannot see that, which is how a stale
+// duplicate survives.
 const membership = new Map();
 for (const [setName, names] of [
   ["SYNC_METHODS", syncMethods],
+  ["LOCAL_READ_METHODS", localReadMethods],
   ["WRITE_METHODS", writeMethods],
   ["READ_METHODS", readMethods],
 ]) {
@@ -531,22 +539,21 @@ if (duplicates.length > 0) {
       console.error(`  - ${name}: ${sets.join(", ")}`)
     );
   console.error(
-    "\nEach method belongs to exactly one set. Only SYNC_METHODS is consulted at runtime, so a duplicate there silently keeps the raw binding."
+    "\nEach method belongs to exactly one set. SYNC_METHODS and LOCAL_READ_METHODS are consulted at runtime, so a duplicate there silently skips `_wasmCallChain`."
   );
   process.exit(1);
 }
 
-// A SYNC_METHODS entry is bound raw by `createClientProxy`, skipping
-// `_serializeWasmCall`, so it must take no borrow of the client's `AsyncCell`.
+// SYNC_METHODS and LOCAL_READ_METHODS entries skip `_serializeWasmCall` and
+// `_wasmCallChain`, so they must take no borrow of the client's `AsyncCell`.
 // The completeness and duplicate checks above cannot see a violation: moving a
-// borrowing method from WRITE_METHODS into SYNC_METHODS leaves every method
-// classified, exactly once. Decide it from the Rust source instead.
+// borrowing method from WRITE_METHODS into SYNC_METHODS or LOCAL_READ_METHODS
+// leaves every method classified, exactly once. Decide it from the Rust source
+// instead.
 const borrowingExports = await extractBorrowingExports();
 
-// `lastAuthError` is the one accepted exception, for the reason given above
-// SYNC_METHODS in js/index.js: it is synchronous by contract, so it cannot be
-// serialized without a breaking change. Widening this list means accepting a
-// reachable panic — say why in the same place.
+// `lastAuthError` is kept in SYNC_METHODS for its synchronous contract (above
+// SYNC_METHODS in js/index.js).
 const allowedRawBorrowers = new Set(["lastAuthError"]);
 
 // The mock helpers borrow `mock_rpc_api` / `mock_note_transport_api`, never the
@@ -564,62 +571,66 @@ const allowedSiblingBorrowers = new Set([
   "usesMockChain",
 ]);
 
-const checkableSyncMethods = [...syncMethods].filter(
-  (name) => !allowedRawBorrowers.has(name)
-);
-
-// An entry the Rust scan cannot find is not a pass — the check would simply be
-// inert for it, which is the failure mode that lets the invariant rot again.
-const unresolvedSyncMethods = checkableSyncMethods.filter(
-  (name) => !borrowingExports.has(name)
-);
-
-if (unresolvedSyncMethods.length > 0) {
-  console.error(
-    "The following SYNC_METHODS entries could not be found in the Rust sources, so whether they borrow the client is unknown:"
-  );
-  unresolvedSyncMethods.sort().forEach((name) => console.error(`  - ${name}`));
-  console.error(
-    `\nEach entry should correspond to a #[js_export(js_name = "...")] method under crates/web-client/src/. If one was renamed or removed, update SYNC_METHODS; if it is exported some other way, add it to \`allowedRawBorrowers\` with the reason it cannot borrow.`
-  );
-  process.exit(1);
-}
-
-const rawBorrowers = checkableSyncMethods
-  .map((name) => [name, borrowingExports.get(name)])
-  .filter(([, info]) => info.borrows);
-
-if (rawBorrowers.length > 0) {
-  console.error(
-    "The following SYNC_METHODS entries borrow the client — via `get_mut_inner`, a direct `self.inner.lock()`/`borrow()`, or a helper that does one of those — but SYNC_METHODS is bound raw by the Proxy and skips serialization:"
-  );
-  rawBorrowers
-    .sort(([a], [b]) => a.localeCompare(b))
-    .forEach(([name, info]) => console.error(`  - ${name} (${info.file})`));
-  console.error(
-    "\nA raw-bound method that borrows can be polled while another call holds the borrow, which aborts with `already borrowed: BorrowMutError` on browser and deadlocks on node. Move each into WRITE_METHODS or READ_METHODS — both are serialized, and the choice between them is the store-mutation annotation described above SYNC_METHODS in js/index.js."
-  );
-  process.exit(1);
-}
-
-const rawSiblingBorrowers = checkableSyncMethods
-  .map((name) => [name, borrowingExports.get(name)])
-  .filter(
-    ([name, info]) => info.borrowsSibling && !allowedSiblingBorrowers.has(name)
+const checkUnserializedSet = (setName, entries, allowBorrowerExceptions) => {
+  const checkable = [...entries].filter(
+    (name) => !(allowBorrowerExceptions && allowedRawBorrowers.has(name))
   );
 
-if (rawSiblingBorrowers.length > 0) {
-  console.error(
-    "The following SYNC_METHODS entries hold a borrow of one of WebClient's sibling `AsyncCell`s across an await, and SYNC_METHODS is bound raw by the Proxy:"
-  );
-  rawSiblingBorrowers
-    .sort(([a], [b]) => a.localeCompare(b))
-    .forEach(([name, info]) => console.error(`  - ${name} (${info.file})`));
-  console.error(
-    "\nTwo overlapping calls abort with `already borrowed: BorrowMutError` on browser. Serialize the method by moving it into WRITE_METHODS or READ_METHODS, or — if it is called from inside `_serializeWasmCall` and so would deadlock if serialized again — add it to `allowedSiblingBorrowers` with that established."
-  );
-  process.exit(1);
-}
+  // An entry the Rust scan cannot find is not a pass — the check would simply
+  // be inert for it, which is the failure mode that lets the invariant rot.
+  const unresolved = checkable.filter((name) => !borrowingExports.has(name));
+  if (unresolved.length > 0) {
+    console.error(
+      `The following ${setName} entries could not be found in the Rust sources, so whether they borrow the client is unknown:`
+    );
+    unresolved.sort().forEach((name) => console.error(`  - ${name}`));
+    console.error(
+      `\nEach entry should correspond to an exported method under crates/web-client/src/. If one was renamed or removed, update ${setName}.`
+    );
+    process.exit(1);
+  }
+
+  const rawBorrowers = checkable
+    .map((name) => [name, borrowingExports.get(name)])
+    .filter(([, info]) => info.borrows);
+
+  if (rawBorrowers.length > 0) {
+    console.error(
+      `The following ${setName} entries borrow the client — via \`get_mut_inner\`, a direct \`self.inner.lock()\`/\`borrow()\`, or a helper that does one of those — but ${setName} skips \`_wasmCallChain\`:`
+    );
+    rawBorrowers
+      .sort(([a], [b]) => a.localeCompare(b))
+      .forEach(([name, info]) => console.error(`  - ${name} (${info.file})`));
+    console.error(
+      "\nA method that borrows `inner` can panic with `already borrowed: BorrowMutError` on browser or deadlock on node if called concurrently. Switch it to `get_read_client()` or move it into WRITE_METHODS or READ_METHODS."
+    );
+    process.exit(1);
+  }
+
+  const rawSiblingBorrowers = checkable
+    .map((name) => [name, borrowingExports.get(name)])
+    .filter(
+      ([name, info]) =>
+        info.borrowsSibling &&
+        !(allowBorrowerExceptions && allowedSiblingBorrowers.has(name))
+    );
+
+  if (rawSiblingBorrowers.length > 0) {
+    console.error(
+      `The following ${setName} entries hold a borrow of one of WebClient's sibling \`AsyncCell\`s across an await, and ${setName} skips \`_wasmCallChain\`:`
+    );
+    rawSiblingBorrowers
+      .sort(([a], [b]) => a.localeCompare(b))
+      .forEach(([name, info]) => console.error(`  - ${name} (${info.file})`));
+    console.error(
+      "\nTwo overlapping calls abort with `already borrowed: BorrowMutError` on browser. Move it into WRITE_METHODS or READ_METHODS or remove the sibling borrow."
+    );
+    process.exit(1);
+  }
+};
+
+checkUnserializedSet("SYNC_METHODS", syncMethods, true);
+checkUnserializedSet("LOCAL_READ_METHODS", localReadMethods, false);
 
 console.log(
   `Method classification check passed: all WASM WebClient methods are classified, each in exactly one set, and no raw-bound method borrows the client (${borrowingExports.size} exported methods scanned).`

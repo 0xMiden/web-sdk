@@ -17,6 +17,7 @@
 
 ### Fixes
 
+* [FIX][web] Read-only local methods such as `getAccounts`, `getInputNotes`, `getTransactions`, balance reads and `getSyncHeight` complete while `syncState` or transaction proving is in flight instead of queueing behind it, and note, transaction and account reads come from one consistent IndexedDB snapshot ([#567](https://github.com/0xMiden/web-sdk/issues/567), [#644](https://github.com/0xMiden/web-sdk/pull/644)).
 * [FIX][web] Development faucet funding preserves the full integer value of proof-of-work targets sent as JSON numbers ([#626](https://github.com/0xMiden/web-sdk/pull/626)).
 
 ## 0.18.1 (2026-11-25)
