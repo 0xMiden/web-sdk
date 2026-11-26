@@ -155,4 +155,22 @@ describe("retryProvenBatch (#571)", () => {
       )
     ).toBe(true);
   });
+
+  it("keeps one accurate #571 entry in CHANGELOG.md Unreleased Enhancements", () => {
+    const changelog = readFileSync(
+      new URL("../../../../CHANGELOG.md", import.meta.url),
+      "utf8"
+    );
+    const unreleased = changelog.split(/^## /m)[1] ?? "";
+    const issue571Lines = unreleased
+      .split("\n")
+      .filter((line) => line.includes("web-sdk/issues/571"));
+    expect(issue571Lines).toHaveLength(1);
+    expect(issue571Lines[0]).toContain("browser in-thread and Node.js");
+    expect(issue571Lines[0]).toContain("submissionId");
+    expect(issue571Lines[0]).toContain("transactionIds");
+    expect(issue571Lines[0]).not.toMatch(
+      /Node\.js `transactions\.retryProvenBatch\(submission\)` now surfaces/
+    );
+  });
 });
