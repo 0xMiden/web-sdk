@@ -70,8 +70,14 @@ impl TransactionFilter {
                 other => Err(from_str_err(&format!("Unknown transaction status: {other}"))),
             })
             .transpose()?;
+        // A pending query reads the store's indexed pending rows instead of the whole history.
+        let native = if status == Some(TransactionStatusVariant::Pending as u8) {
+            NativeTransactionFilter::Uncommitted
+        } else {
+            NativeTransactionFilter::All
+        };
         Ok(TransactionFilter {
-            native: NativeTransactionFilter::All,
+            native,
             query: Some(TransactionQuery { account_id, status, limit }),
         })
     }

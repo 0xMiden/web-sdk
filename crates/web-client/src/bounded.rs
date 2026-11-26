@@ -11,7 +11,7 @@ pub(crate) fn newest_first<T, K: Ord>(
     key: impl Fn(&T) -> K,
     limit: Option<u32>,
 ) -> Vec<T> {
-    items.sort_by_key(|item| core::cmp::Reverse(key(item)));
+    items.sort_by_cached_key(|item| core::cmp::Reverse(key(item)));
     truncate(items, limit)
 }
 
@@ -22,10 +22,10 @@ pub(crate) fn page_after<T, K: Ord>(
     after: Option<&K>,
     limit: Option<u32>,
 ) -> Vec<T> {
-    items.sort_by_key(&key);
     if let Some(after) = after {
         items.retain(|item| key(item) > *after);
     }
+    items.sort_by_cached_key(key);
     truncate(items, limit)
 }
 
