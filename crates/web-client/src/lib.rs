@@ -989,9 +989,9 @@ fn hint_from_error(err: &(dyn Error + 'static)) -> Option<String> {
 /// API raises the same string from `transactions.js`; wallets must not resubmit on it.
 pub(crate) const APPLY_AFTER_SUBMIT_FAILED: &str = "ApplyTransactionAfterSubmitFailed";
 
-/// Code for a batch submission whose outcome the node never confirmed. The error carries a
-/// `ProvenBatchSubmission` (browser) or the same code as a message prefix (Node.js); callers must
-/// retry with `retryProvenBatch` and must not re-prove.
+/// Code for a batch submission whose outcome the node never confirmed. Both browser and Node.js
+/// surfaces (`wrapClient`) attach `code`, `submission`, and `transactionIds` to the thrown JS
+/// error; callers must retry with `retryProvenBatch` and must not re-prove.
 pub(crate) const BATCH_SUBMISSION_OUTCOME_UNKNOWN: &str = "BATCH_SUBMISSION_OUTCOME_UNKNOWN";
 
 /// [`APPLY_AFTER_SUBMIT_FAILED`] for the typed variants that report an accepted submission whose
@@ -1132,34 +1132,34 @@ mod post_submit_code_tests {
     }
 
     #[cfg(feature = "nodejs")]
-    #[tokio::test]
-    async fn node_distinguishes_an_indeterminate_batch_submission() {
-        use std::path::PathBuf;
+    struct MockMintBatchFixture {
+        _store_dir: std::path::PathBuf,
+        client: WebClient,
+        faucet_id: models::account_id::AccountId,
+        request: models::transaction_request::TransactionRequest,
+    }
 
-        use miden_client::rpc::{GrpcError, RpcEndpoint, RpcError};
+    #[cfg(feature = "nodejs")]
+    impl Drop for MockMintBatchFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self._store_dir);
+        }
+    }
 
+    #[cfg(feature = "nodejs")]
+    async fn setup_mock_mint_batch(prefix: &str) -> MockMintBatchFixture {
         use crate::models::account_storage_mode::AccountStorageMode;
         use crate::models::auth_scheme::AuthScheme;
         use crate::models::note_type::NoteType;
         use crate::platform::u64_to_js_u64;
 
-        struct TestStore(PathBuf);
-
-        impl Drop for TestStore {
-            fn drop(&mut self) {
-                let _ = std::fs::remove_dir_all(&self.0);
-            }
-        }
-
-        let root =
-            std::env::temp_dir().join(format!("web-sdk-batch-{:032x}", rand::random::<u128>()));
+        let root = std::env::temp_dir().join(format!("{prefix}-{:032x}", rand::random::<u128>()));
         std::fs::create_dir(&root).unwrap();
-        let store = TestStore(root);
         let client = WebClient::new();
         client
             .create_mock_client(
-                store.0.join("store.sqlite3").into_os_string().into_string().unwrap(),
-                store.0.join("keys").into_os_string().into_string().unwrap(),
+                root.join("store.sqlite3").into_os_string().into_string().unwrap(),
+                root.join("keys").into_os_string().into_string().unwrap(),
                 None,
                 None,
                 None,
@@ -1193,6 +1193,18 @@ mod post_submit_code_tests {
             .await
             .unwrap();
 
+        MockMintBatchFixture {
+            _store_dir: root,
+            client,
+            faucet_id: faucet.id(),
+            request,
+        }
+    }
+
+    #[cfg(feature = "nodejs")]
+    async fn fail_next_submit_proven_batch(client: &WebClient) {
+        use miden_client::rpc::{GrpcError, RpcEndpoint, RpcError};
+
         client.mock_rpc_api.lock().await.as_ref().unwrap().fail_next_call(
             RpcEndpoint::SubmitProvenBatch,
             RpcError::RequestError {
@@ -1202,10 +1214,19 @@ mod post_submit_code_tests {
                 source: None,
             },
         );
+    }
 
-        let mut inner = client.get_mut_inner().await;
+    #[cfg(feature = "nodejs")]
+    #[tokio::test]
+    async fn node_distinguishes_an_indeterminate_batch_submission() {
+        let fixture = setup_mock_mint_batch("web-sdk-batch").await;
+        fail_next_submit_proven_batch(&fixture.client).await;
+
+        let mut inner = fixture.client.get_mut_inner().await;
         let mut batch = inner.as_mut().unwrap().new_transaction_batch();
-        Box::pin(batch.push(faucet.id().into(), (&request).into())).await.unwrap();
+        Box::pin(batch.push(fixture.faucet_id.into(), (&fixture.request).into()))
+            .await
+            .unwrap();
         let err = Box::pin(batch.submit()).await.unwrap_err();
 
         assert_eq!(post_submit_code(&err), None);
@@ -1213,6 +1234,64 @@ mod post_submit_code_tests {
         let err = js_error_with_context(err, "failed to submit transaction batch");
         assert!(err.reason.starts_with("BATCH_SUBMISSION_OUTCOME_UNKNOWN: failed to submit"));
         assert_eq!(err.reason.matches(BATCH_SUBMISSION_OUTCOME_UNKNOWN).count(), 1);
+    }
+
+    #[cfg(feature = "nodejs")]
+    #[tokio::test]
+    async fn node_batch_outcome_unknown_and_retry() {
+        use crate::models::batch_item::BatchItem;
+        use crate::models::transaction_filter::TransactionFilter;
+
+        let fixture = setup_mock_mint_batch("web-sdk-node-retry").await;
+        fail_next_submit_proven_batch(&fixture.client).await;
+
+        let first = fixture
+            .client
+            .submit_new_transaction_batch_outcome(vec![BatchItem::new(
+                &fixture.faucet_id,
+                &fixture.request,
+            )])
+            .await
+            .unwrap();
+        assert!(first.block_number.is_none());
+        assert_eq!(first.error_code.as_deref(), Some(BATCH_SUBMISSION_OUTCOME_UNKNOWN));
+        assert!(first.error_message.as_deref().is_some_and(|msg| {
+            msg.starts_with("BATCH_SUBMISSION_OUTCOME_UNKNOWN: failed to submit")
+        }));
+        let submission = first.submission.expect("missing submission handle");
+        let expected_ids: Vec<String> =
+            submission.transaction_ids().into_iter().map(|id| id.to_hex()).collect();
+        assert_eq!(expected_ids.len(), 1);
+        assert_eq!(first.transaction_ids.as_ref(), Some(&expected_ids));
+        assert!(
+            fixture
+                .client
+                .get_transactions(TransactionFilter::all())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        fail_next_submit_proven_batch(&fixture.client).await;
+        let second = fixture.client.retry_proven_batch_outcome(&submission).await.unwrap();
+        assert!(second.block_number.is_none());
+        assert_eq!(second.error_code.as_deref(), Some(BATCH_SUBMISSION_OUTCOME_UNKNOWN));
+        assert!(second.error_message.as_deref().is_some_and(|msg| {
+            msg.starts_with("BATCH_SUBMISSION_OUTCOME_UNKNOWN: failed to retry")
+        }));
+        let submission2 = second.submission.expect("missing retry submission handle");
+        assert_eq!(second.transaction_ids.as_ref(), Some(&expected_ids));
+
+        let final_outcome = fixture.client.retry_proven_batch_outcome(&submission2).await.unwrap();
+        assert!(final_outcome.block_number.is_some());
+        assert!(final_outcome.error_code.is_none());
+        assert!(final_outcome.error_message.is_none());
+        assert!(final_outcome.submission.is_none());
+        assert!(final_outcome.transaction_ids.is_none());
+
+        let stored = fixture.client.get_transactions(TransactionFilter::all()).await.unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].id().to_hex(), expected_ids[0]);
     }
 
     #[cfg(feature = "nodejs")]

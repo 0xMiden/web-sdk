@@ -1911,19 +1911,16 @@ export interface TransactionsResource {
    * When {@link batch} / {@link submitBatch} fails with
    * `code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`, the node may or may not have
    * accepted the batch and nothing was recorded locally. Pass
-   * `error.submission` (in-thread / no worker) or
-   * `{ submissionId: error.submissionId }` (worker) to resend the same proven
-   * bytes without re-proving. Do not call `batch` / `submitBatch` again for
-   * that attempt: a new prove changes identities.
+   * `error.submission` (browser in-thread / Node.js) or
+   * `{ submissionId: error.submissionId }` (browser Web Worker) to resend the
+   * same proven bytes without re-proving. Do not call `batch` / `submitBatch`
+   * again for that attempt: a new prove changes identities.
    *
    * After a successful retry, confirm with {@link waitFor} / {@link list} for
    * the transaction ids on the error (`error.transactionIds` or
    * `submission.transactionIds()`). A retry the node rejects as a conflict
    * usually means the original attempt landed, but it records nothing locally and
    * a sync does not insert the missing records: look the ids up on the node.
-   *
-   * Browser builds only: the Node.js build prefixes the message with the code but
-   * cannot attach the submission or `transactionIds`, so it cannot retry yet.
    *
    * Accepting an externally proved transaction as a batch member
    * (`push_proven_transaction`) needs a rust-sdk release that exposes it on
