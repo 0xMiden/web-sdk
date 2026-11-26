@@ -1719,6 +1719,12 @@ describe("getAccountSnapshot reads only the requested components", () => {
       root: "code-root",
       code: new Uint8Array([1, 2]),
     } as never);
+    await upsertVaultAssets(name, "acc-1", [
+      { vaultKey: "vault-key-1", asset: "asset-1" },
+    ]);
+    await upsertAccountStorage(name, "acc-1", [
+      { slotName: "slot-1", slotValue: "value-1", slotType: 0 },
+    ]);
     return { dbId: name, db };
   }
 
@@ -1737,7 +1743,10 @@ describe("getAccountSnapshot reads only the requested components", () => {
     );
 
     expect(snapshot?.header.id).toBe("acc-1");
-    expect(snapshot?.assets).toEqual([]);
+    expect(snapshot?.assets).toEqual([
+      { vaultKey: "vault-key-1", asset: "asset-1" },
+    ]);
+    expect(snapshot?.storage).toEqual([]);
     expect(codeRead).not.toHaveBeenCalled();
     expect(storageRead).not.toHaveBeenCalled();
   });
@@ -1772,6 +1781,9 @@ describe("getAccountSnapshot reads only the requested components", () => {
     );
 
     expect(snapshot?.code?.root).toBe("code-root");
-    expect(snapshot?.storage).toEqual([]);
+    expect(snapshot?.storage).toEqual([
+      expect.objectContaining({ slotName: "slot-1", slotValue: "value-1" }),
+    ]);
+    expect(snapshot?.assets).toEqual([]);
   });
 });
