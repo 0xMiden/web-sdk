@@ -230,7 +230,7 @@ export const test = base.extend<{ forEachTest: void }>({
 
             window.helpers.waitForTransaction = async (
               transactionId,
-              maxWaitTime = 10000,
+              maxWaitTime = 30000,
               delayInterval = 1000
             ) => {
               const client = window.client;

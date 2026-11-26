@@ -92,7 +92,7 @@ test.describe("fpi test", () => {
 
       // Wait for deploy tx
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()

@@ -90,7 +90,7 @@ test.describe("get_input_note", () => {
 
       // Wait for mint tx
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -130,7 +130,7 @@ test.describe("get_input_note", () => {
 
       // Wait for consume tx
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -237,7 +237,7 @@ test.describe("get_input_note", () => {
 
       // Wait for mint tx
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -277,7 +277,7 @@ test.describe("get_input_note", () => {
 
       // Wait for consume tx
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -380,7 +380,7 @@ test.describe("get_input_note", () => {
 
       // Wait for mint tx
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -420,7 +420,7 @@ test.describe("get_input_note", () => {
 
       // Wait for consume tx
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -584,7 +584,7 @@ test.describe("get_input_notes", () => {
 
       // Wait for mint tx
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -624,7 +624,7 @@ test.describe("get_input_notes", () => {
 
       // Wait for consume tx
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -715,7 +715,7 @@ test.describe("get_consumable_notes", () => {
 
       // Wait for mint tx
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -819,7 +819,7 @@ test.describe("get_consumable_notes", () => {
 
         // Wait for mint tx
         let timeWaited = 0;
-        while (timeWaited < 10000) {
+        while (timeWaited < 30000) {
           await intClient.syncState();
           const uncommitted = await intClient.getTransactions(
             sdk.TransactionFilter.uncommitted()
@@ -942,7 +942,7 @@ test.describe("get_consumable_notes", () => {
 
       // Wait for mint tx
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -976,7 +976,7 @@ test.describe("get_consumable_notes", () => {
 
       // Wait for consume tx
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -1013,7 +1013,7 @@ test.describe("get_consumable_notes", () => {
 
       // Wait for send tx
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -1122,7 +1122,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       const mintedNoteId = execUpdate.createdNotes().notes()[0].id().toString();
 
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -1149,7 +1149,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       txId = execUpdate.executedTransaction().id().toHex();
 
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -1193,7 +1193,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       txId = execUpdate.executedTransaction().id().toHex();
 
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -1231,7 +1231,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       txId = execUpdate.executedTransaction().id().toHex();
 
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -1319,7 +1319,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       const mintedNoteId = execUpdate.createdNotes().notes()[0].id().toString();
 
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -1346,7 +1346,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       txId = execUpdate.executedTransaction().id().toHex();
 
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -1392,7 +1392,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       txId = execUpdate.executedTransaction().id().toHex();
 
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -1430,7 +1430,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       txId = execUpdate.executedTransaction().id().toHex();
 
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 30000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
