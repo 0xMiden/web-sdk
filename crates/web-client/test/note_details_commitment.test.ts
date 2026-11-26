@@ -117,3 +117,97 @@ test.describe("note detailsCommitment", () => {
     expect(result.recordHex).toBe(result.noteDetailsHex);
   });
 });
+
+// BOUNDED NOTE READS
+// =======================================================================================================
+//
+// A `NoteFilter` can carry caller-supplied nullifiers and be bounded to a page, so a list read hands
+// JavaScript only the notes it asked for.
+
+test.describe("bounded note reads", () => {
+  test("pages stored notes and matches caller-supplied nullifiers", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk, helpers }) => {
+      const mockClient = await helpers.createFreshMockClient();
+      const sender = await mockClient.newWallet(
+        sdk.AccountStorageMode.private(),
+        sdk.AuthScheme.AuthRpoFalcon512,
+        new Uint8Array(32).fill(1)
+      );
+      const target = await mockClient.newWallet(
+        sdk.AccountStorageMode.private(),
+        sdk.AuthScheme.AuthRpoFalcon512,
+        new Uint8Array(32).fill(2)
+      );
+      const faucet = await mockClient.newFaucet(
+        sdk.AccountStorageMode.private(),
+        false,
+        "DAG",
+        "DAG",
+        8,
+        sdk.u64(10000000),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const address = sdk.Address.fromAccountId(target.id(), "BasicWallet");
+      const proof = sdk.NoteInclusionProof.mockAtBlock(0);
+      for (let amount = 10; amount < 17; amount++) {
+        const note = sdk.Note.createP2IDNote(
+          sender.id(),
+          target.id(),
+          new sdk.NoteAssets([
+            new sdk.FungibleAsset(faucet.id(), sdk.u64(amount)),
+          ]),
+          sdk.NoteType.Private,
+          new sdk.NoteAttachment()
+        );
+        await mockClient.sendPrivateNote(note, address, proof);
+      }
+      await mockClient.fetchPrivateNotes();
+
+      const key = (note) => note.detailsCommitment().toHex();
+      const all = await mockClient.getInputNotes(
+        new sdk.NoteFilter(sdk.NoteFilterTypes.All)
+      );
+      const pages = [];
+      let after;
+      for (;;) {
+        const page = await mockClient.getInputNotes(
+          new sdk.NoteFilter(sdk.NoteFilterTypes.All).page(after, 3)
+        );
+        if (page.length === 0) break;
+        pages.push(page.map(key));
+        after = key(page[page.length - 1]);
+      }
+
+      const withNullifier = all.find((note) => note.nullifier());
+      const byNullifier = (hex) =>
+        mockClient.getInputNotes(
+          new sdk.NoteFilter(
+            sdk.NoteFilterTypes.Nullifiers,
+            undefined,
+            undefined,
+            [sdk.Word.fromHex(hex)]
+          )
+        );
+      const matching = await byNullifier(withNullifier.nullifier());
+      const nonmatching = await byNullifier("0x" + "11".repeat(32));
+
+      return {
+        total: all.length,
+        pages,
+        matching: matching.map(key),
+        expected: key(withNullifier),
+        nonmatching: nonmatching.length,
+      };
+    });
+
+    expect(result.total).toBe(7);
+    expect(result.pages.map((page) => page.length)).toEqual([3, 3, 1]);
+    const flat = result.pages.flat();
+    expect(new Set(flat).size).toBe(7);
+    expect(flat).toEqual([...flat].sort());
+    expect(result.matching).toEqual([result.expected]);
+    expect(result.nonmatching).toBe(0);
+  });
+});
