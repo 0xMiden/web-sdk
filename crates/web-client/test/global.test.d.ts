@@ -21,6 +21,7 @@ import {
   BasicFungibleFaucetComponent,
   BatchItem,
   ConsumableNoteRecord,
+  Eidos,
   Endpoint,
   Felt,
   FeltArray,
@@ -52,8 +53,6 @@ import {
   Package,
   ProcedureThreshold,
   PublicKey,
-  Poseidon2,
-  Rpo256,
   RpcClient,
   Signature,
   SigningInputs,
@@ -117,6 +116,7 @@ declare global {
     BasicFungibleFaucetComponent: typeof BasicFungibleFaucetComponent;
     BatchItem: typeof BatchItem;
     ConsumableNoteRecord: typeof ConsumableNoteRecord;
+    Eidos: typeof Eidos;
     Endpoint: typeof Endpoint;
     Felt: typeof Felt;
     FeltArray: typeof FeltArray;
@@ -151,8 +151,6 @@ declare global {
     Package: typeof Package;
     ProcedureThreshold: typeof ProcedureThreshold;
     PublicKey: typeof PublicKey;
-    Poseidon2: typeof Poseidon2;
-    Rpo256: typeof Rpo256;
     Signature: typeof Signature;
     SigningInputs: typeof SigningInputs;
     SigningInputsType: typeof SigningInputsType;

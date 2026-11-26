@@ -347,14 +347,14 @@ test.describe("custom transaction tests", () => {
       // Creating Second Custom Transaction Request to Consume Custom Note
       // with Valid Transaction Script
       const transactionScript = await builder.compileTxScript(txScript);
-      const noteArgsCommitment = sdk.Poseidon2.hashElements(
+      const noteArgsCommitment = sdk.Eidos.hashElements(
         new sdk.FeltArray(makeNoteArgs())
       );
 
       const noteAndArgs = new sdk.NoteAndArgs(customNote, noteArgsCommitment);
 
       const adviceMap = new sdk.AdviceMap();
-      const noteArgsCommitment2 = sdk.Poseidon2.hashElements(
+      const noteArgsCommitment2 = sdk.Eidos.hashElements(
         new sdk.FeltArray(makeNoteArgs())
       );
       adviceMap.insert(noteArgsCommitment2, new sdk.FeltArray(makeNoteArgs()));
@@ -494,14 +494,14 @@ test.describe("custom transaction tests", () => {
       `;
 
       const transactionScript = await builder.compileTxScript(txScript);
-      const noteArgsCommitment = sdk.Poseidon2.hashElements(
+      const noteArgsCommitment = sdk.Eidos.hashElements(
         new sdk.FeltArray(makeNoteArgs())
       );
 
       const noteAndArgs = new sdk.NoteAndArgs(customNote, noteArgsCommitment);
 
       const adviceMap = new sdk.AdviceMap();
-      const noteArgsCommitment2 = sdk.Poseidon2.hashElements(
+      const noteArgsCommitment2 = sdk.Eidos.hashElements(
         new sdk.FeltArray(makeNoteArgs())
       );
       adviceMap.insert(noteArgsCommitment2, new sdk.FeltArray(makeNoteArgs()));

@@ -100,12 +100,14 @@ this for you.
 before any client is built, because a private account that cannot be
 regenerated from a seed is unrecoverable.
 
-**A 0.15 account does not survive the upgrade.** `evmPkToCommitment` hashes the
-affine point as Poseidon2 over 16 field elements - the x coordinate then the y
+**A 0.15 or 0.16-0.18 account does not survive the upgrade.** `evmPkToCommitment` hashes the
+affine point as Eidos over 16 field elements - the x coordinate then the y
 coordinate, each as eight 32-bit limbs, least significant limb first. 0.15
 hashed a different preimage (nine felts packed from the 33-byte compressed SEC1
 encoding), so the same EVM key yields a different account id and a different
-commitment on 0.16. Treat it as a new account, not a migration.
+commitment on 0.16. 0.19 changed it again: the hash moved from Poseidon2 to
+Eidos, so the same key yields a different account than on 0.16-0.18 too. Treat
+it as a new account, not a migration.
 
 **This path touches the DOM.** The account picker and the signing confirmation
 are plain DOM overlays. They are guarded on `typeof document`, so on a server

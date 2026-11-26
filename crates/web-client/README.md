@@ -1013,7 +1013,7 @@ await client.submitNewTransaction(sender, register);
 
 `buildAccountCodeUpgrade(code)` finalizes a request that upgrades the executing account to `code`. The account needs the `UpgradeManager` component with `AuthControlled` authority, and `code` must keep the storage layout. It replaces any custom script and script argument, and fails when own output notes or an expiration delta are set. `withAccountCodeUpgrade(code)` only places the code in the advice map, and `request.accountCodeUpgrade()` returns it.
 
-`extendMerkleStore(nodes)` adds Merkle tree nodes to the store the transaction executes with, so its scripts can read Merkle paths through them. Each `InnerNodeInfo(value, left, right)` is stored as given: `value` must be the Poseidon2 merge of `left` and `right`, and it is not checked. `request.merkleStoreInnerNodes()` returns the added nodes, without the empty-subtree nodes every store starts with.
+`extendMerkleStore(nodes)` adds Merkle tree nodes to the store the transaction executes with, so its scripts can read Merkle paths through them. Each `InnerNodeInfo(value, left, right)` is stored as given: `value` must be the Eidos merge of `left` and `right`, and it is not checked. `request.merkleStoreInnerNodes()` returns the added nodes, without the empty-subtree nodes every store starts with.
 
 ```typescript
 const nodes = new InnerNodeInfoArray([new InnerNodeInfo(value, left, right)]);
@@ -1063,7 +1063,7 @@ Do **not** reach for `builder.withFeeConversionSalt(salt)` on that builder. `wit
 
 When another party built the request, such as a dApp that gives a finished request to a wallet, set the multisig auth args on it with `client.withFeeAwareAuth(request, multisig, options?)`. A request that declares a salt executes on a multisig as it is, because miden-client derives the auth args from the salt, but it binds them to the reference block of each execution and sets no approval expiration. `withFeeAwareAuth` returns a copy with the same auth argument and advice-map preimage that `feeAwareTransactionRequestBuilder` declares, keeps every other field, and returns the request unchanged, auth argument and all, for an account that is not a multisig. When `feeConversionSalt` is omitted, it uses the salt that the request declares, or draws one. miden-client tracks the bound block when it executes the request, so the request executes at the tip; a co-signer cannot read the bound block from `request.blockNumbers()`, so it syncs before previewing the copy. For a multisig it refuses a request that already has an auth argument (`AUTH_ALREADY_SET`).
 
-To set auth args that you build yourself on a finished request, use `request.withAuthArgs(preimage)`. It mirrors miden-client's `TransactionRequest::with_auth_args`: it returns a copy whose auth argument is the Poseidon2 hash of `preimage`, with `preimage` in the advice map under it, so the two always agree. It replaces an existing auth argument and a declared salt without a check, and keeps every other field. In the browser build the `Felt`s in `preimage` are consumed by the call, so read what you need from them first and pass fresh ones to another call. `withFeeAwareAuth` is built on it.
+To set auth args that you build yourself on a finished request, use `request.withAuthArgs(preimage)`. It mirrors miden-client's `TransactionRequest::with_auth_args`: it returns a copy whose auth argument is the Eidos hash of `preimage`, with `preimage` in the advice map under it, so the two always agree. It replaces an existing auth argument and a declared salt without a check, and keeps every other field. In the browser build the `Felt`s in `preimage` are consumed by the call, so read what you need from them first and pass fresh ones to another call. `withFeeAwareAuth` is built on it.
 
 One path the SDK cannot declare a salt on: `client.pswap.cancelByOrder` builds its request inside miden-client, so there is no builder. An ordinary creator has its conversion info committed and pays normally; a multisig creator fails with `FeeConversionInfoRequired`, so cancel by note with `client.transactions.pswapCancel` there. See the [transactions guide](https://docs.miden.xyz/builder/tools/clients/web-client/library/transactions) for the full narrative.
 
@@ -1375,7 +1375,10 @@ dApp's `signBytes` request. Verify the returned signature with
 `publicKey.verify(domainSeparatedSignCommitment(data, kind), signature)`.
 
 The wallet signs under the domain tag `miden-wallet/sign-bytes/v1`, the
-Poseidon2 hash of that string, one field element per UTF-8 byte. `"word"`:
+Poseidon2 hash of that string, one field element per UTF-8 byte. The SDK
+supplies the tag, so a dApp does not compute it; its four elements are
+`0x38a8bcdddf30cacf`, `0x240d1b8455bc2c58`, `0x18162f6af29602dd` and
+`0x5385955edcd341a4`. `"word"`:
 `data` is a serialized `Word`; the signed commitment is that of
 `SigningInputs.newArbitrary([...tag, ...word.toFelts()])`. `"signingInputs"`:
 `data` is serialized `SigningInputs`. A Blind payload signs

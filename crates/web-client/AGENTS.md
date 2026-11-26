@@ -177,7 +177,7 @@ only: Node.js errors only prefix the message with the code.
 through `withExpectedNtxScripts` are not registered by any submit path; submit
 `newRegisterNoteScriptsTransactionRequest` first. Nodes added with
 `extendMerkleStore` are stored as given, so each `InnerNodeInfo` value must
-already be the Poseidon2 merge of its children.
+already be the Eidos merge of its children.
 
 **Amounts are always `BigInt`.** Passing a `number` either throws at the WASM
 boundary or silently loses precision above 2^53. Convert at the edges of your

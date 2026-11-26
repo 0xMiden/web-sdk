@@ -65,11 +65,12 @@ const loadTranspiledTypeScript = (filePath, mocks = {}) => {
 };
 
 // ---------------------------------------------------------------------------
-// ECDSA public-key commitment — golden vectors (0.16 line).
+// ECDSA public-key commitment — golden vectors (0.19 line).
 //
-// Generated from @miden-sdk/miden-sdk@0.16.0-rc.4. For every vector,
+// Commitments computed with the Eidos hash of miden-crypto 1.0.0-rc.0, the
+// version the 0.19 SDK uses. For every vector,
 //   AuthSecretKey.ecdsaWithRNG(seed).publicKey().toCommitment()
-//     === Poseidon2.hashElements(felts)
+//     === Eidos.hashElements(felts)
 // where `felts` is the preimage this module builds. Both halves are pinned so
 // a drift in either is caught:
 //
@@ -78,8 +79,8 @@ const loadTranspiledTypeScript = (filePath, mocks = {}) => {
 //                    little-endian limb order. The 0.15 line hashed nine felts
 //                    packed from the compressed SEC1 encoding, so these vectors
 //                    differ from the ones on `main` by construction.
-//   * hash family  — the protocol commits with Poseidon2. Committing with
-//                    Rpo256 yields a valid-looking Word that is simply wrong
+//   * hash family  — the protocol commits with Eidos. Committing with
+//                    Poseidon2 yields a valid-looking Word that is simply wrong
 //                    and only surfaces as an auth rejection at transaction time.
 //
 // Vectors pin the public key rather than the RNG seed: seed -> key derivation
@@ -97,7 +98,7 @@ const COMMITMENT_VECTORS = [
       607363266, 4101945117, 1308351706, 903119011,
     ],
     commitment:
-      "0xae4ccb80c2ae474eb5d1165e4d32c0779c2f77cdb793df239efc4026b6b904c6",
+      "0x3dda81c6a0c9b0161f7cc9d360727a7e890ad54959bdc455a6ba0bdbffda512a",
   },
   {
     // y-parity tag 0x03
@@ -109,7 +110,7 @@ const COMMITMENT_VECTORS = [
       1018395274, 2922535159, 3370125428, 2816172105,
     ],
     commitment:
-      "0x205560170f28e96d800b8d39fc2a91fe9153f880ca0347715a7f1d23822dea3a",
+      "0x7f7fe8852eae1d0bfffe29c1d7925453137073ba5f89155ba976b47015fe731a",
   },
   {
     // y-parity tag 0x03
@@ -121,7 +122,7 @@ const COMMITMENT_VECTORS = [
       2463102216, 3471184399, 2848663670, 2189459926,
     ],
     commitment:
-      "0xe35861910160e6c178c503f153c224b1cf2fff2f8a5851f00528f2e007750589",
+      "0xdd03eb63a918d54f9698442875eea901c31aa7818274722257555d9d111c2546",
   },
   {
     // y-parity tag 0x02
@@ -133,13 +134,13 @@ const COMMITMENT_VECTORS = [
       2753464866, 1707238462, 1397312103, 1770130893,
     ],
     commitment:
-      "0xa61503e9a2dcb5621d24e30df81280001c21513544f1008d75d39613ceb9db63",
+      "0x77be9224e7c2bd04bb370cb0665f62424b4be2e60da0a51115ed52c539fd7920",
   },
 ];
 
 /** Minimal stand-in for the SDK's hashing surface that records what was called. */
 const makeSdkSpy = () => {
-  const calls = { poseidon2: [], rpo256: [] };
+  const calls = { eidos: [], poseidon2: [] };
   const record = (bucket) => (feltArray) => {
     calls[bucket].push(feltArray.values.map((felt) => Number(felt.value)));
     return { toHex: () => `0x${bucket}` };
@@ -157,8 +158,8 @@ const makeSdkSpy = () => {
           this.values = values;
         }
       },
+      Eidos: { hashElements: record("eidos") },
       Poseidon2: { hashElements: record("poseidon2") },
-      Rpo256: { hashElements: record("rpo256") },
     },
   };
 };
@@ -181,7 +182,7 @@ const withMockedSdk = async (sdk, run) => {
   }
 };
 
-test("evmPkToCommitment builds the pinned Poseidon2 preimage", async () => {
+test("evmPkToCommitment builds the pinned Eidos preimage", async () => {
   for (const vector of COMMITMENT_VECTORS) {
     const { sdk, calls } = makeSdkSpy();
     const { evmPkToCommitment } = loadUtils({ "@miden-sdk/miden-sdk": sdk });
@@ -189,14 +190,14 @@ test("evmPkToCommitment builds the pinned Poseidon2 preimage", async () => {
     await withMockedSdk(sdk, () => evmPkToCommitment(vector.compressed));
 
     assert.deepEqual(
-      calls.poseidon2[0],
+      calls.eidos[0],
       vector.felts,
       `preimage drifted for ${vector.compressed}`
     );
   }
 });
 
-test("evmPkToCommitment hashes with Poseidon2 and never Rpo256", async () => {
+test("evmPkToCommitment hashes with Eidos and never Poseidon2", async () => {
   for (const vector of COMMITMENT_VECTORS) {
     const { sdk, calls } = makeSdkSpy();
     const { evmPkToCommitment } = loadUtils({ "@miden-sdk/miden-sdk": sdk });
@@ -204,14 +205,14 @@ test("evmPkToCommitment hashes with Poseidon2 and never Rpo256", async () => {
     await withMockedSdk(sdk, () => evmPkToCommitment(vector.compressed));
 
     assert.strictEqual(
-      calls.poseidon2.length,
+      calls.eidos.length,
       1,
-      "expected exactly one Poseidon2 hash"
+      "expected exactly one Eidos hash"
     );
     assert.strictEqual(
-      calls.rpo256.length,
+      calls.poseidon2.length,
       0,
-      "commitments must not be hashed with Rpo256 — the protocol commits with Poseidon2"
+      "commitments must not be hashed with Poseidon2 — the protocol commits with Eidos"
     );
   }
 });

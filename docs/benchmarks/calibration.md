@@ -49,6 +49,12 @@ make bench-proving-calibrate
 
 ## The measurement on this line (2026-08-27)
 
+This measurement predates the move to Eidos: the prover now proves with Eidos,
+not Poseidon2, at the same `QUERY_POW_BITS = 17`. Until the floor is
+re-measured with Eidos, `thresholdProvisional` is true in
+`.github/scripts/bench-profile.mjs` and the comment reports the floor as
+provisional.
+
 30 dispatch runs of one build against a copy of itself on
 `warp-ubuntu-latest-x64-8x` at `reps: 6`, proving with **Poseidon2** under
 `miden-air 0.29.4`, **`QUERY_POW_BITS = 17`**. True delta is zero by

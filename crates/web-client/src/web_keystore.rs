@@ -218,9 +218,9 @@ impl<R: Rng> TransactionAuthenticator for WebKeyStore<R> {
         let mut rng = self.rng.write();
 
         let signature = match secret_key {
-            Some(AuthSecretKey::Falcon512Poseidon2(k)) => {
+            Some(AuthSecretKey::Falcon512Eidos(k)) => {
                 let mut signing_rng = SigningRng(&mut *rng);
-                Signature::Falcon512Poseidon2(k.sign_with_rng(message, &mut signing_rng))
+                Signature::Falcon512Eidos(k.sign_with_rng(message, &mut signing_rng))
             },
             Some(AuthSecretKey::EcdsaK256Keccak(k)) => Signature::EcdsaK256Keccak(k.sign(message)),
             Some(other_k) => other_k.sign(message),

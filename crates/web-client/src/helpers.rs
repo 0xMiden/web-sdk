@@ -41,9 +41,7 @@ pub(crate) async fn generate_wallet(
 
     let native_scheme: NativeAuthScheme = auth_scheme.try_into()?;
     let key_pair = match native_scheme {
-        NativeAuthScheme::Falcon512Poseidon2 => {
-            AuthSecretKey::new_falcon512_poseidon2_with_rng(&mut rng)
-        },
+        NativeAuthScheme::Falcon512Eidos => AuthSecretKey::new_falcon512_eidos_with_rng(&mut rng),
         NativeAuthScheme::EcdsaK256Keccak => {
             AuthSecretKey::new_ecdsa_k256_keccak_with_rng(&mut rng)
         },
@@ -97,9 +95,7 @@ pub(crate) async fn generate_faucet(
 
     let native_scheme: NativeAuthScheme = auth_scheme.try_into()?;
     let key_pair = match native_scheme {
-        NativeAuthScheme::Falcon512Poseidon2 => {
-            AuthSecretKey::new_falcon512_poseidon2_with_rng(&mut rng)
-        },
+        NativeAuthScheme::Falcon512Eidos => AuthSecretKey::new_falcon512_eidos_with_rng(&mut rng),
         NativeAuthScheme::EcdsaK256Keccak => {
             AuthSecretKey::new_ecdsa_k256_keccak_with_rng(&mut rng)
         },

@@ -5,7 +5,8 @@ import type {
   AccountType,
   AccountStorageMode,
 } from "@miden-sdk/miden-sdk";
-import { accountSeedFromStr, evmPkToCommitment, fromTurnkeySig } from "./utils";
+import { evmPkToCommitment } from "@miden-sdk/turnkey";
+import { accountSeedFromStr, fromTurnkeySig } from "./utils";
 import type { v1SignRawPayloadResult } from "@turnkey/core";
 import type { HandleSignMessageParams } from "@turnkey/react-wallet-kit";
 

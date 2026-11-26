@@ -151,6 +151,9 @@ jobs:
     # fraction of it, so this line is quieter. Re-calibrate if the runner class,
     # thread count, repetition count or workload changes.
     #
+    # The prover now proves with Eidos, so that floor is provisional until it is
+    # re-measured; `thresholdProvisional` is true until then.
+    #
     # Measure the floor with `workflow_dispatch` (`calibrate: true`) and the
     # procedure in docs/benchmarks/calibration.md, then set `thresholdPct` from
     # this runner and flip `thresholdProvisional` to false, both in

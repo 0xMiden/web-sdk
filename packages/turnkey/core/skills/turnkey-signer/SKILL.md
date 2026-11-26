@@ -175,10 +175,11 @@ exactly 33 bytes or is not a point on secp256k1.
 
 It recovers `y` from the parity byte, splits `x` and then `y` into eight 32-bit
 limbs each in little-endian limb order, and hashes the 16 field elements with
-Poseidon2. That is the preimage the protocol commits to.
+Eidos. That is the preimage the protocol commits to.
 
-**This changed.** A pre-0.16 release of this integration hashed nine field
-elements packed straight from the compressed encoding, with no decompression.
+**This changed, twice.** A pre-0.16 release of this integration hashed nine field
+elements packed straight from the compressed encoding, with no decompression,
+and 0.16-0.18 hashed the current preimage with Poseidon2 instead of Eidos.
 The same Turnkey key therefore produces a different commitment, a different
 auth component, and an account that is not the one an older release derived.
 There is no migration path: a user signing in through an upgraded app lands on

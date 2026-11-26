@@ -73,14 +73,14 @@ export const accountSeedFromStr = (str?: string) => {
  * Converts an uncompressed EVM public key into a Miden commitment.
  * Assumes input format `0x04${x}${y}` where x and y are 64-char hex strings.
  *
- * The protocol commits to the affine point as Poseidon2 over 16 field elements:
+ * The protocol commits to the affine point as Eidos over 16 field elements:
  * the x coordinate then the y coordinate, each as eight 32-bit limbs in
  * little-endian limb order. 0.15 hashed a different preimage — nine felts
  * packed from the 33-byte compressed SEC1 encoding — so a commitment computed
  * by an older release will not match one computed here.
  */
 export const evmPkToCommitment = async (uncompressedPublicKey: string) => {
-  const { Felt, Poseidon2, FeltArray } = await import("@miden-sdk/miden-sdk");
+  const { Felt, Eidos, FeltArray } = await import("@miden-sdk/miden-sdk");
   const withoutPrefix = uncompressedPublicKey.slice(4);
   const x = withoutPrefix.slice(0, 64);
   const y = withoutPrefix.slice(64);
@@ -89,7 +89,7 @@ export const evmPkToCommitment = async (uncompressedPublicKey: string) => {
     (limb) => new Felt(BigInt(limb))
   );
 
-  return Poseidon2.hashElements(new FeltArray(felts));
+  return Eidos.hashElements(new FeltArray(felts));
 };
 
 /**

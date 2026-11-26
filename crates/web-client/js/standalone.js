@@ -5,7 +5,14 @@ import {
   toAmount,
 } from "./utils.js";
 
-const SIGN_BYTES_DOMAIN_TAG = "miden-wallet/sign-bytes/v1";
+// The domain tag the wallet signs under: the Poseidon2 hash of the string
+// `miden-wallet/sign-bytes/v1`, one field element per UTF-8 byte.
+const SIGN_BYTES_DOMAIN_TAG = [
+  0x38a8bcdddf30cacfn,
+  0x240d1b8455bc2c58n,
+  0x18162f6af29602ddn,
+  0x5385955edcd341a4n,
+];
 
 // Module-level WASM reference, set by index.js after initialization
 let _wasm = null;
@@ -289,15 +296,9 @@ function buildRecipient(opts, wasm) {
 export function domainSeparatedSignCommitment(data, kind) {
   const wasm = getWasm();
   const sign = (payload) => {
-    // The browser binding consumes Felts and FeltArrays by value, so build
-    // fresh ones for every call instead of reusing any.
-    const tagInput = new wasm.FeltArray(
-      Array.from(
-        new TextEncoder().encode(SIGN_BYTES_DOMAIN_TAG),
-        (b) => new wasm.Felt(BigInt(b))
-      )
-    );
-    const tag = wasm.Poseidon2.hashElements(tagInput).toFelts();
+    // The browser binding consumes Felts by value, so build fresh ones for
+    // every call instead of reusing any.
+    const tag = SIGN_BYTES_DOMAIN_TAG.map((v) => new wasm.Felt(v));
     const felts = [...tag, ...payload.map((f) => new wasm.Felt(f.asInt()))];
     return wasm.SigningInputs.newArbitrary(felts).toCommitment();
   };

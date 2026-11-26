@@ -139,9 +139,8 @@ function _reexport(name) {
 // Manual re-exports that aren't plain 1:1 napi passthroughs:
 //   - AuthSchemeNative: the napi `AuthScheme` class under a name that does not
 //     collide with the JS `AuthScheme` enum above.
-//   - Rpo / exportStore / importStore: legacy export names kept for back-compat.
+//   - exportStore / importStore: legacy export names kept for back-compat.
 export const AuthSchemeNative = /* @__PURE__ */ _reexport("AuthScheme");
-export const Rpo = /* @__PURE__ */ _reexport("Rpo");
 export const exportStore = /* @__PURE__ */ _reexport("exportStore");
 export const importStore = /* @__PURE__ */ _reexport("importStore");
 
@@ -220,6 +219,7 @@ export const CommittedNote = /* @__PURE__ */ _reexport("CommittedNote");
 export const ConsumableNoteRecord = /* @__PURE__ */ _reexport(
   "ConsumableNoteRecord"
 );
+export const Eidos = /* @__PURE__ */ _reexport("Eidos");
 export const Endpoint = /* @__PURE__ */ _reexport("Endpoint");
 export const EstimatedMaxFee = /* @__PURE__ */ _reexport("EstimatedMaxFee");
 export const EthAddress = /* @__PURE__ */ _reexport("EthAddress");
@@ -316,7 +316,6 @@ export const P2idNote = /* @__PURE__ */ _reexport("P2idNote");
 export const P2ideNote = /* @__PURE__ */ _reexport("P2ideNote");
 export const Package = /* @__PURE__ */ _reexport("Package");
 export const PartialNote = /* @__PURE__ */ _reexport("PartialNote");
-export const Poseidon2 = /* @__PURE__ */ _reexport("Poseidon2");
 export const ProcedureThreshold =
   /* @__PURE__ */ _reexport("ProcedureThreshold");
 export const Program = /* @__PURE__ */ _reexport("Program");
@@ -337,7 +336,6 @@ export const RpcStatusInfo = /* @__PURE__ */ _reexport("RpcStatusInfo");
 export const RpcTransactionRecord = /* @__PURE__ */ _reexport(
   "RpcTransactionRecord"
 );
-export const Rpo256 = /* @__PURE__ */ _reexport("Rpo256");
 export const Signature = /* @__PURE__ */ _reexport("Signature");
 export const SigningInputs = /* @__PURE__ */ _reexport("SigningInputs");
 export const SigningInputsType = /* @__PURE__ */ _reexport("SigningInputsType");

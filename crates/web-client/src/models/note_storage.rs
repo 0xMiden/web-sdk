@@ -11,7 +11,7 @@ use crate::platform::{JsErr, from_str_err};
 /// field element. Thus, note storage can contain up to ~8 KB of data.
 ///
 /// All storage items associated with a note can be reduced to a single commitment which is
-/// computed as an RPO256 hash over the storage elements.
+/// computed as an Eidos hash over the storage elements.
 #[derive(Clone)]
 #[js_export]
 pub struct NoteStorage(NativeNoteStorage);

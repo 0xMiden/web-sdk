@@ -61,7 +61,7 @@ impl AuthFalcon512RpoMultisigConfig {
                 let native_word: NativeWord = word.into();
                 Approver::new(
                     PublicKeyCommitment::from(native_word),
-                    NativeAuthSchemeId::Falcon512Poseidon2,
+                    NativeAuthSchemeId::Falcon512Eidos,
                 )
             })
             .collect();

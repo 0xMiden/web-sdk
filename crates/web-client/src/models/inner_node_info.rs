@@ -4,7 +4,7 @@ use miden_protocol::crypto::merkle::InnerNodeInfo as NativeInnerNodeInfo;
 use super::word::Word;
 
 /// An inner node of a Merkle tree: its `value` and the `left` and `right` children it hashes.
-/// `value` must be the Poseidon2 merge of `left` and `right`; the Merkle store indexes the node
+/// `value` must be the Eidos merge of `left` and `right`; the Merkle store indexes the node
 /// by `value` without checking.
 #[derive(Clone)]
 #[js_export]

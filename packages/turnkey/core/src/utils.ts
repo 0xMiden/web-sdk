@@ -54,7 +54,7 @@ export function isValidUuid(s: string): boolean {
 /**
  * Converts a compressed SEC1 public key into a Miden commitment.
  *
- * The protocol commits to the affine point as Poseidon2 over 16 field elements:
+ * The protocol commits to the affine point as Eidos over 16 field elements:
  * the x coordinate then the y coordinate, each as eight 32-bit limbs in
  * little-endian limb order. A compressed key carries only x and a parity bit,
  * so y is recovered here. 0.15 hashed a different preimage — nine felts packed
@@ -62,7 +62,7 @@ export function isValidUuid(s: string): boolean {
  * computed by an older release will not match one computed here.
  */
 export const evmPkToCommitment = async (compressedPk: string) => {
-  const { Felt, Poseidon2, FeltArray } = await import("@miden-sdk/miden-sdk");
+  const { Felt, Eidos, FeltArray } = await import("@miden-sdk/miden-sdk");
   const bytes = hexToBytes(compressedPk);
   if (bytes.length !== 33) {
     throw new Error(`Expected a 33-byte compressed key, got ${bytes.length}`);
@@ -75,7 +75,7 @@ export const evmPkToCommitment = async (compressedPk: string) => {
     (limb) => new Felt(BigInt(limb))
   );
 
-  return Poseidon2.hashElements(new FeltArray(felts));
+  return Eidos.hashElements(new FeltArray(felts));
 };
 
 /** secp256k1 field prime. */
