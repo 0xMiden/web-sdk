@@ -250,33 +250,28 @@ const submitInterleavedBatch = async (
       const nonceABefore = BigInt(beforeA!.nonce()!.toString());
       const nonceBBefore = BigInt(beforeB!.nonce()!.toString());
 
-      const reqAtoBFirst = await client.newSendTransactionRequest(
-        idA,
-        idB,
-        faucetId,
-        window.NoteType.Private,
-        BigInt(_transferAmount),
-        null,
-        null
-      );
-      const reqBtoA = await client.newSendTransactionRequest(
-        idB,
-        idA,
-        faucetId,
-        window.NoteType.Private,
-        BigInt(_transferAmount),
-        null,
-        null
-      );
-      const reqAtoBSecond = await client.newSendTransactionRequest(
-        idA,
-        idB,
-        faucetId,
-        window.NoteType.Private,
-        BigInt(_transferAmount),
-        null,
-        null
-      );
+      const buildSendRequest = (senderHex: string, targetHex: string) => {
+        const note = window.Note.createP2IDNote(
+          window.AccountId.fromHex(senderHex),
+          window.AccountId.fromHex(targetHex),
+          new window.NoteAssets([
+            new window.FungibleAsset(
+              window.AccountId.fromHex(_faucet),
+              BigInt(_transferAmount)
+            ),
+          ]),
+          window.NoteType.Private,
+          new window.NoteAttachment()
+        );
+        return new window.TransactionRequestBuilder()
+          .withOwnOutputNotes(new window.NoteArray([note]))
+          .withExpirationDelta(100)
+          .build();
+      };
+
+      const reqAtoBFirst = buildSendRequest(_accountA, _accountB);
+      const reqBtoA = buildSendRequest(_accountB, _accountA);
+      const reqAtoBSecond = buildSendRequest(_accountA, _accountB);
 
       const blockNum = await client.submitNewTransactionBatch([
         new window.BatchItem(window.AccountId.fromHex(_accountA), reqAtoBFirst),
