@@ -165,8 +165,9 @@ function buildBaseNoteFilter(query, wasm) {
   }
 
   if (query.scriptRoots) {
+    // Copied through hex for the same reason as the nullifiers below.
     const scriptRoots = query.scriptRoots.map((root) =>
-      typeof root === "string" ? wasm.Word.fromHex(root) : root
+      wasm.Word.fromHex(typeof root === "string" ? root : root.toHex())
     );
     return new wasm.NoteFilter(
       wasm.NoteFilterTypes.ScriptRoots,

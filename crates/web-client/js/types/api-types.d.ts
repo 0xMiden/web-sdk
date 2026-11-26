@@ -1973,14 +1973,17 @@ export interface TransactionsResource {
   executeProgram(options: ExecuteProgramOptions): Promise<FeltArray>;
 
   /**
-   * List transactions, optionally filtered by status or IDs.
+   * List transactions, optionally filtered by account, status, IDs or a limit.
    *
    * Omitting `query`, or passing a shape this method does not recognise, returns every
-   * stored transaction.
+   * stored transaction. A query with an `account`, a `limit` or a `pending`, `committed` or
+   * `discarded` status returns the matching transactions newest first, at most `limit` of
+   * them.
    *
-   * @param query - Optional filter for transaction status or IDs.
+   * @param query - Optional filter for transaction account, status, IDs or limit.
    * @throws If `query` carries a defined `expiredBefore` and neither `status: "uncommitted"`
-   * nor `ids` — the two shapes that outranked the expiry filter before it was removed.
+   * nor `ids` — the two shapes that outranked the expiry filter before it was removed. A
+   * bounded query throws the same way.
    * That filter was removed upstream — expiry is decided during state sync — and silently
    * widening it to the unfiltered query would return a superset of what was asked for.
    * Compare {@link TransactionRecord.expirationBlockNum} against the height you care about
@@ -2049,10 +2052,12 @@ export interface PswapResource {
 
 export interface NotesResource {
   /**
-   * List received (input) notes, optionally filtered by status, IDs, or note
-   * script roots.
+   * List received (input) notes, optionally filtered by status, IDs, note
+   * script roots or nullifiers, and optionally bounded to one page with `limit`
+   * and `after`.
    *
-   * @param query - Optional filter by note status, note IDs, or script roots.
+   * @param query - Optional filter by note status, note IDs, script roots or
+   * nullifiers, with an optional page.
    */
   list(query?: NoteQuery): Promise<InputNoteRecord[]>;
   /**
@@ -2063,11 +2068,13 @@ export interface NotesResource {
   get(noteId: NoteInput): Promise<InputNoteRecord | null>;
 
   /**
-   * List sent (output) notes, optionally filtered by status or IDs. A script
-   * root query returns an empty list, since script roots are only tracked for
-   * received notes.
+   * List sent (output) notes, optionally filtered by status, IDs or nullifiers,
+   * and optionally bounded to one page keyed by note ID. A script root query
+   * returns an empty list, since script roots are only tracked for received
+   * notes.
    *
-   * @param query - Optional filter by note status or note IDs.
+   * @param query - Optional filter by note status, note IDs or nullifiers, with
+   * an optional page.
    */
   listSent(query?: NoteQuery): Promise<OutputNoteRecord[]>;
 
