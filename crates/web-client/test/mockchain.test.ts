@@ -79,6 +79,147 @@ test.describe("mock chain tests", () => {
     expect(result.finalBalance).toEqual("1000");
   });
 
+  test("note reads match caller-supplied nullifiers", async ({ run }) => {
+    const result = await run(async ({ client, sdk }) => {
+      await client.syncState();
+      const wallet = await client.newWallet(
+        sdk.AccountStorageMode.private(),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const faucet = await client.newFaucet(
+        sdk.AccountStorageMode.private(),
+        false,
+        "DAG",
+        "DAG",
+        8,
+        sdk.u64(10000000),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      for (let i = 0; i < 3; i++) {
+        const request = await client.newMintTransactionRequest(
+          wallet.id(),
+          faucet.id(),
+          sdk.NoteType.Public,
+          sdk.u64(1000 + i)
+        );
+        await client.submitNewTransaction(faucet.id(), request);
+      }
+      await client.proveBlock();
+      await client.syncState();
+
+      const key = (note) => note.detailsCommitment().toHex();
+      const all = await client.getInputNotes(
+        new sdk.NoteFilter(sdk.NoteFilterTypes.All)
+      );
+      const byNullifier = (hex) =>
+        client.getInputNotes(
+          new sdk.NoteFilter(
+            sdk.NoteFilterTypes.Nullifiers,
+            undefined,
+            undefined,
+            [sdk.Word.fromHex(hex)]
+          )
+        );
+      const stored = all[0];
+      const matching = await byNullifier(stored.nullifier());
+      const nonmatching = await byNullifier("0x" + "11".repeat(32));
+
+      return {
+        total: all.length,
+        matching: matching.map(key),
+        expected: key(stored),
+        nonmatching: nonmatching.length,
+      };
+    });
+
+    expect(result.total).toBe(3);
+    expect(result.matching).toEqual([result.expected]);
+    expect(result.nonmatching).toBe(0);
+  });
+
+  test("transaction query bounds by account, status and limit, newest first", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk }) => {
+      await client.syncState();
+
+      const wallet = await client.newWallet(
+        sdk.AccountStorageMode.private(),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      const newFaucet = (symbol) =>
+        client.newFaucet(
+          sdk.AccountStorageMode.private(),
+          false,
+          symbol,
+          symbol,
+          8,
+          sdk.u64(10000000),
+          sdk.AuthScheme.AuthRpoFalcon512
+        );
+      const faucetA = await newFaucet("AAA");
+      const faucetB = await newFaucet("BBB");
+      const mint = async (faucet) => {
+        const request = await client.newMintTransactionRequest(
+          wallet.id(),
+          faucet.id(),
+          sdk.NoteType.Public,
+          sdk.u64(1000)
+        );
+        await client.submitNewTransaction(faucet.id(), request);
+      };
+
+      for (let i = 0; i < 4; i++) await mint(faucetA);
+      await client.proveBlock();
+      await client.syncState();
+      await mint(faucetB);
+
+      const hexA = faucetA.id().toString();
+      const ids = (records) => records.map((r) => r.id().toHex());
+      const newestFirst = (records) =>
+        [...records].sort((a, b) => {
+          const byTime = a.creationTimestamp() - b.creationTimestamp();
+          if (byTime !== 0n && byTime !== 0) return byTime < 0 ? 1 : -1;
+          return a.id().toHex() < b.id().toHex() ? 1 : -1;
+        });
+      const query = (account, status, limit) =>
+        client.getTransactions(
+          sdk.TransactionFilter.query(account, status, limit)
+        );
+
+      const all = await client.getTransactions(sdk.TransactionFilter.all());
+      const fromA = all.filter((r) => r.accountId().toString() === hexA);
+      const topThree = await query(hexA, undefined, 3);
+      const committed = await query(undefined, "committed", 2);
+      const pending = await query(undefined, "pending", undefined);
+      const pendingFromA = await query(hexA, "pending", undefined);
+
+      return {
+        fromA: fromA.length,
+        topThree: ids(topThree),
+        expectedTopThree: ids(newestFirst(fromA)).slice(0, 3),
+        topThreeAccounts: topThree.map((r) => r.accountId().toString()),
+        hexA,
+        committedCount: committed.length,
+        committedAllCommitted: committed.every((r) =>
+          r.transactionStatus().isCommitted()
+        ),
+        pendingAccounts: pending.map((r) => r.accountId().toString()),
+        hexB: faucetB.id().toString(),
+        pendingFromA: pendingFromA.length,
+      };
+    });
+
+    expect(result.fromA).toBe(4);
+    expect(result.topThree).toEqual(result.expectedTopThree);
+    expect(result.topThree).toHaveLength(3);
+    expect(result.topThreeAccounts).toEqual(Array(3).fill(result.hexA));
+    expect(result.committedCount).toBe(2);
+    expect(result.committedAllCommitted).toBe(true);
+    expect(result.pendingAccounts).toEqual([result.hexB]);
+    expect(result.pendingFromA).toBe(0);
+  });
+
   // Issue #557: a second mock with its own storeName syncs while the fixture
   // mock still holds mock_client_db.
   test("second mock with distinct storeName can syncState beside the fixture", async ({

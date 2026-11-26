@@ -54,6 +54,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use wasm_bindgen::prelude::*;
 
 pub mod account;
+mod bounded;
 pub mod export;
 pub mod helpers;
 pub mod import;

@@ -46,6 +46,19 @@ To consume a note running another script, such as a PSWAP order you mean to
 fill, pass it by name to `transactions.consume({ account, notes })` or use
 `transactions.pswapConsume`.
 
+## Querying notes by nullifier
+
+`notes.list` and `notes.listSent` take a `status`, `ids`, `scriptRoots` or
+`nullifiers` filter. A nullifier no stored note has matches nothing.
+
+```typescript
+const notes = await client.notes.list({ status: "committed" });
+
+// A partial note has no nullifier yet, so skip those.
+const nullifiers = notes.map((note) => note.nullifier()).filter(Boolean);
+const spent = await client.notes.list({ nullifiers });
+```
+
 ## Reading why a note is not ready
 
 `listConsumable` keeps each record's `noteConsumability()`, which holds one

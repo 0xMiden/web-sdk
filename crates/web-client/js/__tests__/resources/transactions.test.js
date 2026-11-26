@@ -161,6 +161,7 @@ function makeWasm(overrides = {}) {
       all: vi.fn().mockReturnValue("filterAll"),
       uncommitted: vi.fn().mockReturnValue("filterUncommitted"),
       ids: vi.fn().mockReturnValue("filterIds"),
+      query: vi.fn().mockReturnValue("filterQuery"),
     },
     TransactionId: {
       fromHex: vi.fn((hex) => ({ hex, toHex: () => hex })),
@@ -2311,6 +2312,97 @@ describe("TransactionsResource", () => {
       await resource.list({ ids: ["0xid1", "0xid2"] });
       expect(wasm.TransactionId.fromHex).toHaveBeenCalledTimes(2);
       expect(wasm.TransactionFilter.ids).toHaveBeenCalled();
+    });
+
+    it("queries by account, status and limit", async () => {
+      const { resource, inner, wasm } = makeResource();
+      inner.getTransactions.mockResolvedValue(["tx1"]);
+      const result = await resource.list({
+        account: "0xaccHex",
+        status: "committed",
+        limit: 20,
+      });
+      expect(wasm.TransactionFilter.query).toHaveBeenCalledWith(
+        "0xaccHex",
+        "committed",
+        20
+      );
+      expect(inner.getTransactions).toHaveBeenCalledWith("filterQuery");
+      expect(result).toEqual(["tx1"]);
+    });
+
+    it("leaves an omitted criterion to match every transaction", async () => {
+      const { resource, wasm } = makeResource();
+      await resource.list({ limit: 3 });
+      expect(wasm.TransactionFilter.query).toHaveBeenCalledWith(
+        undefined,
+        undefined,
+        3
+      );
+    });
+
+    it("reads status 'uncommitted' with a limit as pending", async () => {
+      const { resource, wasm } = makeResource();
+      await resource.list({ status: "uncommitted", limit: 1 });
+      expect(wasm.TransactionFilter.query).toHaveBeenCalledWith(
+        undefined,
+        "pending",
+        1
+      );
+      expect(wasm.TransactionFilter.uncommitted).not.toHaveBeenCalled();
+    });
+
+    it("rejects a query that mixes ids with account, status or limit", async () => {
+      const { resource, wasm } = makeResource();
+      await expect(resource.list({ ids: ["0xid1"], limit: 1 })).rejects.toThrow(
+        /ids cannot be combined/
+      );
+      expect(wasm.TransactionFilter.query).not.toHaveBeenCalled();
+    });
+
+    it.each([0, -1, 1.5, "3", null, 2 ** 32])(
+      "rejects limit %j",
+      async (limit) => {
+        const { resource } = makeResource();
+        await expect(resource.list({ limit })).rejects.toThrow(
+          "Transaction query limit must be a positive integer"
+        );
+      }
+    );
+
+    it.each([
+      { limit: 1 },
+      { account: "0xaccHex" },
+      { status: "committed" },
+      { status: "pending" },
+      { status: "discarded" },
+    ])("rejects expiredBefore next to %j", async (bounded) => {
+      const { resource, wasm } = makeResource();
+      await expect(
+        resource.list({ ...bounded, expiredBefore: 100 })
+      ).rejects.toThrow(/expiredBefore.*removed/);
+      expect(wasm.TransactionFilter.query).not.toHaveBeenCalled();
+    });
+
+    it("keeps status uncommitted ahead of expiredBefore with a limit", async () => {
+      const { resource, wasm } = makeResource();
+      await resource.list({
+        status: "uncommitted",
+        limit: 1,
+        expiredBefore: 100,
+      });
+      expect(wasm.TransactionFilter.query).toHaveBeenCalledWith(
+        undefined,
+        "pending",
+        1
+      );
+    });
+
+    it("rejects an unknown status next to a bounding criterion", async () => {
+      const { resource } = makeResource();
+      await expect(
+        resource.list({ status: "bogus", limit: 1 })
+      ).rejects.toThrow("Unknown transaction status: bogus");
     });
 
     it("falls back to filter.all() for unknown query shape", async () => {

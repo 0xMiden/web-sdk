@@ -736,6 +736,7 @@ const result = await client.transactions.consumeAll({ account: wallet });
 console.log(`Consumed ${result.consumed} notes, ${result.remaining} remaining`);
 
 // `remaining === 0` therefore means "no payment consumable now", not "no notes".
+// Filter by nullifier; see the notes guide.
 // To see block-locked notes and other scripts too, with their unlock block:
 const walletId = wallet.id().toString();
 const all = await client.notes.listConsumable({ account: wallet });

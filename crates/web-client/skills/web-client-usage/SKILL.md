@@ -1432,6 +1432,8 @@ replaced `accountDelta()` and return the absolute-valued `AccountPatch` /
 await client.transactions.list(); // every stored transaction
 await client.transactions.list({ status: "uncommitted" });
 await client.transactions.list({ ids: [txId, "0xabc..."] });
+// Newest first; only `limit` records reach JavaScript. Not combinable with `ids`.
+await client.transactions.list({ account: wallet, status: "committed", limit: 20 });
 ```
 
 `TransactionFilter.expiredBefore()` and the `{ expiredBefore }` query were
@@ -1463,6 +1465,7 @@ call runs this same loop.
 await client.notes.list(); // all input notes
 await client.notes.list({ status: "committed" }); // "consumed" | "committed" | "expected" | "processing" | "unverified"
 await client.notes.list({ scriptRoots: [noteScript.root()] }); // hex strings or Word instances
+await client.notes.list({ nullifiers: [record.nullifier()] }); // hex strings or Word instances; nullifier() is undefined for a partial note, so guard it
 await client.notes.get(noteId); // single record
 await client.notes.listSent(); // output notes
 await client.notes.listAvailable({ account: wallet }); // payments the account can consume now
