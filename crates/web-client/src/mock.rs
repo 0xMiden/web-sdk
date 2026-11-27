@@ -10,12 +10,16 @@ use miden_client::rpc::encryption::TransactionEncryptionKey;
 use miden_client::store::Store;
 use miden_client::testing::MockChain;
 use miden_client::testing::mock::MockRpcApi;
-use miden_client::testing::note_transport::{MockNoteTransportApi, MockNoteTransportNode};
+use miden_client::testing::note_transport::MockNoteTransportApi;
 use miden_client::utils::RwLock;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
 use crate::platform::{JsErr, from_str_err};
+use crate::serialization::note_transport::{
+    decode_mock_note_transport_node,
+    encode_mock_note_transport_node,
+};
 use crate::{WebClient, create_rng, js_error_with_context};
 #[cfg(feature = "browser")]
 use crate::{WebKeyStore, idxdb_store_init_error};
@@ -49,10 +53,7 @@ impl WebClient {
 
         let mock_note_transport_api = match serialized_mock_note_transport_node {
             Some(node_bytes) => {
-                let node = miden_client_proto::decode::<MockNoteTransportNode>(&node_bytes)
-                    .map_err(|err| {
-                        js_error_with_context(err, "failed to decode mock note transport node")
-                    })?;
+                let node = decode_mock_note_transport_node(&node_bytes)?;
                 Arc::new(MockNoteTransportApi::new(Arc::new(RwLock::new(node))))
             },
             None => Arc::new(MockNoteTransportApi::default()),
@@ -119,10 +120,7 @@ impl WebClient {
 
         let mock_note_transport_api = match serialized_mock_note_transport_node {
             Some(node_bytes) => {
-                let node = miden_client_proto::decode::<MockNoteTransportNode>(&node_bytes)
-                    .map_err(|err| {
-                        js_error_with_context(err, "failed to decode mock note transport node")
-                    })?;
+                let node = decode_mock_note_transport_node(&node_bytes)?;
                 Arc::new(MockNoteTransportApi::new(Arc::new(RwLock::new(node))))
             },
             None => Arc::new(MockNoteTransportApi::default()),
@@ -235,7 +233,7 @@ impl WebClient {
         let guard = self.mock_note_transport_api.lock().await;
         guard
             .as_ref()
-            .map(|api| miden_client_proto::encode(&*api.mock_node.read()))
+            .map(|api| encode_mock_note_transport_node(&api.mock_node.read()))
             .ok_or_else(|| {
                 from_str_err(
                     "Mock note transport node is not initialized. Create a mock client first.",

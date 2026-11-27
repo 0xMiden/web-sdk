@@ -12,8 +12,24 @@ use prost::Message;
 use crate::js_error_with_context;
 use crate::platform::{JsBytes, JsErr, bytes_to_js, from_str_err};
 
+pub mod note_transport;
 pub mod summary;
+pub mod sync;
 pub mod transaction;
+
+pub(super) fn with_context<E: core::error::Error + 'static>(
+    context: &'static str,
+) -> impl FnOnce(E) -> JsErr {
+    move |err| js_error_with_context(err, context)
+}
+
+pub(super) fn required<T>(field: Option<T>, context: &str, name: &str) -> Result<T, JsErr> {
+    field.ok_or_else(|| from_str_err(&alloc::format!("{context}: missing {name}")))
+}
+
+pub(super) fn invalid(context: &str, reason: &str) -> JsErr {
+    from_str_err(&alloc::format!("{context}: {reason}"))
+}
 
 /// Encodes a value as its protobuf message, into the platform byte type.
 pub fn encode_proto<T: ProtobufValue>(value: &T) -> JsBytes {
