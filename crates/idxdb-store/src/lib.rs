@@ -15,6 +15,7 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use base64::Engine;
@@ -65,6 +66,11 @@ use miden_client_core::store::{
     InputNoteCursor,
     PartialBlockchainFilter,
 };
+use miden_processor::LoadedMastForest;
+use miden_protocol::MastForest;
+use miden_protocol::block::code_tree::{CodeTree, CodeTreeRoot, CodeWitness};
+use miden_protocol::code::ProcedureRoot;
+use miden_protocol::vm::Package;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use wasm_bindgen::prelude::*;
@@ -74,6 +80,7 @@ pub mod account;
 pub mod auth;
 mod bytes;
 pub mod chain_data;
+mod code;
 pub mod export;
 mod forest;
 pub mod import;
@@ -116,6 +123,8 @@ extern "C" {
 pub struct IdxdbStore {
     database_id: String,
     smt_forest: RwLock<AccountForest>,
+    /// The code tree, built from the code registry on the first read. See [`code`].
+    code_tree: RwLock<Option<Arc<CodeTree>>>,
 }
 
 impl IdxdbStore {
@@ -131,6 +140,7 @@ impl IdxdbStore {
         Ok(IdxdbStore {
             database_id: database_name,
             smt_forest: RwLock::new(smt_forest),
+            code_tree: RwLock::new(None),
         })
     }
 
@@ -550,6 +560,38 @@ impl Store for IdxdbStore {
 
     async fn insert_protocol_config(&self, config: &ProtocolConfig) -> Result<(), StoreError> {
         self.insert_protocol_config(config).await
+    }
+
+    // CODE REGISTRY
+    // --------------------------------------------------------------------------------------------
+
+    async fn insert_procedures(&self, procedures: Vec<Arc<MastForest>>) -> Result<(), StoreError> {
+        self.insert_procedures(procedures).await
+    }
+
+    async fn insert_procedures_with_debug_info(
+        &self,
+        packages: Vec<Arc<Package>>,
+    ) -> Result<(), StoreError> {
+        self.insert_procedures_with_debug_info(packages).await
+    }
+
+    async fn get_procedure(
+        &self,
+        procedure_root: ProcedureRoot,
+    ) -> Result<Option<LoadedMastForest>, StoreError> {
+        self.get_procedure(procedure_root).await
+    }
+
+    async fn get_procedure_witness(
+        &self,
+        procedure_root: ProcedureRoot,
+    ) -> Result<CodeWitness, StoreError> {
+        self.get_procedure_witness(procedure_root).await
+    }
+
+    async fn get_code_tree_root(&self) -> Result<CodeTreeRoot, StoreError> {
+        self.get_code_tree_root().await
     }
 
     // RPC LIMITS

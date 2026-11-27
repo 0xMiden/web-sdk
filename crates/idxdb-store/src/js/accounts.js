@@ -268,19 +268,19 @@ export async function upsertAccountStorage(dbId, accountId, storageSlots) {
     try {
         const db = getDatabase(dbId);
         await db.dexie.transaction("rw", db.latestAccountStorages, async () => {
-        await db.latestAccountStorages
-            .where("accountId")
-            .equals(accountId)
-            .delete();
-        if (storageSlots.length === 0)
-            return;
-        const latestEntries = storageSlots.map((slot) => ({
-            accountId,
-            slotName: slot.slotName,
-            slotValue: slot.slotValue,
-            slotType: slot.slotType,
-        }));
-        await db.latestAccountStorages.bulkPut(latestEntries);
+            await db.latestAccountStorages
+                .where("accountId")
+                .equals(accountId)
+                .delete();
+            if (storageSlots.length === 0)
+                return;
+            const latestEntries = storageSlots.map((slot) => ({
+                accountId,
+                slotName: slot.slotName,
+                slotValue: slot.slotValue,
+                slotType: slot.slotType,
+            }));
+            await db.latestAccountStorages.bulkPut(latestEntries);
         });
     }
     catch (error) {
@@ -291,19 +291,19 @@ export async function upsertStorageMapEntries(dbId, accountId, entries) {
     try {
         const db = getDatabase(dbId);
         await db.dexie.transaction("rw", db.latestStorageMapEntries, async () => {
-        await db.latestStorageMapEntries
-            .where("accountId")
-            .equals(accountId)
-            .delete();
-        if (entries.length === 0)
-            return;
-        const latestEntries = entries.map((entry) => ({
-            accountId,
-            slotName: entry.slotName,
-            key: entry.key,
-            value: entry.value,
-        }));
-        await db.latestStorageMapEntries.bulkPut(latestEntries);
+            await db.latestStorageMapEntries
+                .where("accountId")
+                .equals(accountId)
+                .delete();
+            if (entries.length === 0)
+                return;
+            const latestEntries = entries.map((entry) => ({
+                accountId,
+                slotName: entry.slotName,
+                key: entry.key,
+                value: entry.value,
+            }));
+            await db.latestStorageMapEntries.bulkPut(latestEntries);
         });
     }
     catch (error) {
@@ -318,14 +318,14 @@ export async function upsertVaultAssets(dbId, accountId, assets) {
                 .where("accountId")
                 .equals(accountId)
                 .delete();
-        if (assets.length === 0)
-            return;
-        const latestEntries = assets.map((asset) => ({
-            accountId,
-            vaultKey: asset.vaultKey,
-            asset: asset.asset,
-        }));
-        await db.latestAccountAssets.bulkPut(latestEntries);
+            if (assets.length === 0)
+                return;
+            const latestEntries = assets.map((asset) => ({
+                accountId,
+                vaultKey: asset.vaultKey,
+                asset: asset.asset,
+            }));
+            await db.latestAccountAssets.bulkPut(latestEntries);
         });
     }
     catch (error) {
@@ -847,7 +847,7 @@ export async function upsertForeignAccountCode(dbId, accountId, code, codeRoot) 
     try {
         const db = getDatabase(dbId);
         await db.dexie.transaction("rw", [db.accountCodes, db.foreignAccountCode], async () => {
-        await upsertAccountCode(dbId, codeRoot, code);
+            await upsertAccountCode(dbId, codeRoot, code);
             await db.foreignAccountCode.put({ accountId, codeRoot });
         });
     }
@@ -894,15 +894,15 @@ export async function lockAccount(dbId, accountId) {
     try {
         const db = getDatabase(dbId);
         await db.dexie.transaction("rw", [db.latestAccountHeaders, db.historicalAccountHeaders], async () => {
-        await db.latestAccountHeaders
-            .where("id")
-            .equals(accountId)
-            .modify({ locked: true });
-        // Also lock historical rows so that undo/rebuild preserves the lock.
-        await db.historicalAccountHeaders
-            .where("id")
-            .equals(accountId)
-            .modify({ locked: true });
+            await db.latestAccountHeaders
+                .where("id")
+                .equals(accountId)
+                .modify({ locked: true });
+            // Also lock historical rows so that undo/rebuild preserves the lock.
+            await db.historicalAccountHeaders
+                .where("id")
+                .equals(accountId)
+                .modify({ locked: true });
         });
     }
     catch (error) {

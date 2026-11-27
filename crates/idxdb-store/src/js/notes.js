@@ -216,7 +216,7 @@ export async function getInputNoteAfter(dbId, states, consumerAccountId, blockSt
             ? [consumerAccountId, blockEnd, Dexie.maxKey]
             : [consumerAccountId, Dexie.maxKey];
         const note = await db.inputNotes
-                .where(INPUT_NOTE_CONSUMPTION_INDEX)
+            .where(INPUT_NOTE_CONSUMPTION_INDEX)
             .between(lower, upper, !hasCursor, true)
             .filter((n) => {
             if (states.length > 0 && !states.includes(n.stateDiscriminant))
