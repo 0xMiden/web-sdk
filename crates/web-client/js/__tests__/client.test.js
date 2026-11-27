@@ -37,6 +37,7 @@ const fakeWasm = vi.hoisted(() => {
     WebClient,
     resolveStoreName: (nodeUrl, storeName) =>
       storeName ?? `MidenClientDB_${nodeUrl}`,
+    TransactionId: { fromHex: (hex) => hex },
     TransactionResult: { deserialize: () => ({ id: () => "tx-id" }) },
     // The AuthScheme enum in the shape wasm-bindgen emits (each value also
     // maps back to its name), read by the WebClient wrapper's scheme resolution.
@@ -996,7 +997,7 @@ describe("WasmWebClient.terminate", () => {
   const workerResult = () =>
     vi.fn().mockResolvedValue({
       serializedMockChain: [1],
-      serializedTransactionResult: [2],
+      transactionId: "tx-id",
     });
 
   const submit = (client, method, extraArgs) =>

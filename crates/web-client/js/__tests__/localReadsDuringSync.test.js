@@ -6,7 +6,7 @@ const fakeWasm = vi.hoisted(() => {
       deserialize: (bytes) => ({ kind: "sync", length: bytes.length }),
     },
     TransactionStoreUpdate: {
-      deserialize: (bytes) => ({ kind: "applied", length: bytes.length }),
+      fromResult: (_result, height) => ({ kind: "applied", height }),
     },
     ProvenTransaction: {
       deserialize: (bytes) => ({ kind: "proven", length: bytes.length }),

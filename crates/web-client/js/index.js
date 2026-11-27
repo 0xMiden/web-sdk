@@ -1627,11 +1627,7 @@ class WebClient {
           serializedTransactionRequest
         );
 
-        const transactionResult = wasm.TransactionResult.deserialize(
-          new Uint8Array(result.serializedTransactionResult)
-        );
-
-        return transactionResult.id();
+        return wasm.TransactionId.fromHex(result.transactionId);
       } catch (error) {
         console.error("INDEX.JS: Error in submitNewTransaction:", error);
         throw error;
@@ -1837,11 +1833,7 @@ class WebClient {
           proverPayload
         );
 
-        const transactionResult = wasm.TransactionResult.deserialize(
-          new Uint8Array(result.serializedTransactionResult)
-        );
-
-        return transactionResult.id();
+        return wasm.TransactionId.fromHex(result.transactionId);
       } catch (error) {
         console.error(
           "INDEX.JS: Error in submitNewTransactionWithProver:",
@@ -1944,14 +1936,15 @@ class WebClient {
 
         const wasm = await getWasmOrThrow();
         const serializedTransactionResult = transactionResult.serialize();
-        const serializedUpdateBytes = await this.callMethodWithWorker(
+        await this.callMethodWithWorker(
           MethodName.APPLY_TRANSACTION,
           serializedTransactionResult,
           submissionHeight
         );
 
-        return wasm.TransactionStoreUpdate.deserialize(
-          new Uint8Array(serializedUpdateBytes)
+        return wasm.TransactionStoreUpdate.fromResult(
+          transactionResult,
+          submissionHeight
         );
       } catch (error) {
         console.error("INDEX.JS: Error in applyTransaction:", error);
@@ -2475,12 +2468,10 @@ class MockWebClient extends WebClient {
           ? new Uint8Array(result.serializedMockNoteTransportNode)
           : undefined;
 
-        const transactionResult = wasm.TransactionResult.deserialize(
-          new Uint8Array(result.serializedTransactionResult)
-        );
+        const transactionId = wasm.TransactionId.fromHex(result.transactionId);
 
         if (!(this instanceof MockWebClient)) {
-          return transactionResult.id();
+          return transactionId;
         }
 
         // Attached only once it is built, so a failed build leaves the
@@ -2505,7 +2496,7 @@ class MockWebClient extends WebClient {
         this.wasmWebClientPromise = Promise.resolve(replacement);
         await this._freeWasmClient(wasmWebClient, "replacement");
 
-        return transactionResult.id();
+        return transactionId;
       });
     } catch (error) {
       console.error("INDEX.JS: Error in submitNewTransaction:", error);
@@ -2571,12 +2562,10 @@ class MockWebClient extends WebClient {
           ? new Uint8Array(result.serializedMockNoteTransportNode)
           : undefined;
 
-        const transactionResult = wasm.TransactionResult.deserialize(
-          new Uint8Array(result.serializedTransactionResult)
-        );
+        const transactionId = wasm.TransactionId.fromHex(result.transactionId);
 
         if (!(this instanceof MockWebClient)) {
-          return transactionResult.id();
+          return transactionId;
         }
 
         // Attached only once it is built, so a failed build leaves the
@@ -2601,7 +2590,7 @@ class MockWebClient extends WebClient {
         this.wasmWebClientPromise = Promise.resolve(replacement);
         await this._freeWasmClient(wasmWebClient, "replacement");
 
-        return transactionResult.id();
+        return transactionId;
       });
     } catch (error) {
       console.error(

@@ -2387,7 +2387,7 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.18.2"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-remove-needless-proto#e084d38354c4b1fe11520a84b36cb4b879ee05db"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-remove-needless-proto#70139074a1b15e49fd640086ad0ba4d75c0ce99a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2398,7 +2398,6 @@ dependencies = [
  "miden-assembly-syntax",
  "miden-client-core",
  "miden-client-grpc",
- "miden-client-proto",
  "miden-node-proto-build",
  "miden-objects",
  "miden-processor",
@@ -2430,7 +2429,7 @@ dependencies = [
 [[package]]
 name = "miden-client-core"
 version = "0.18.2"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-remove-needless-proto#e084d38354c4b1fe11520a84b36cb4b879ee05db"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-remove-needless-proto#70139074a1b15e49fd640086ad0ba4d75c0ce99a"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2445,7 +2444,7 @@ dependencies = [
 [[package]]
 name = "miden-client-grpc"
 version = "0.18.2"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-remove-needless-proto#e084d38354c4b1fe11520a84b36cb4b879ee05db"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-remove-needless-proto#70139074a1b15e49fd640086ad0ba4d75c0ce99a"
 dependencies = [
  "async-trait",
  "futures",
@@ -2467,7 +2466,7 @@ dependencies = [
 [[package]]
 name = "miden-client-proto"
 version = "0.18.2"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-remove-needless-proto#e084d38354c4b1fe11520a84b36cb4b879ee05db"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-remove-needless-proto#70139074a1b15e49fd640086ad0ba4d75c0ce99a"
 dependencies = [
  "miden-client-core",
  "miden-objects",
@@ -2481,7 +2480,7 @@ dependencies = [
 [[package]]
 name = "miden-client-sqlite-store"
 version = "0.18.2"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-remove-needless-proto#e084d38354c4b1fe11520a84b36cb4b879ee05db"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=jmunoz-remove-needless-proto#70139074a1b15e49fd640086ad0ba4d75c0ce99a"
 dependencies = [
  "anyhow",
  "async-trait",

@@ -10,7 +10,7 @@ use miden_protocol::utils::serde::{Deserializable, Serializable, SliceReader};
 use prost::Message;
 
 use crate::js_error_with_context;
-use crate::platform::{JsBytes, JsErr, bytes_to_js};
+use crate::platform::{JsBytes, JsErr, bytes_to_js, from_str_err};
 
 pub mod note_transport;
 pub mod summary;
