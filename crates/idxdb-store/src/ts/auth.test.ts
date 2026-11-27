@@ -68,6 +68,21 @@ describe("auth", () => {
     expect(r2).toEqual({ secretKey: "secret-2" });
   });
 
+  it("insertAccountAuth accepts the same secret bytes twice", async () => {
+    const dbId = await openTestDb();
+    await insertAccountAuth(dbId, "pubkey-1", "secret-1");
+
+    await expect(
+      insertAccountAuth(dbId, "pubkey-1", "secret-1")
+    ).resolves.toBeUndefined();
+    await expect(
+      insertAccountAuth(dbId, "pubkey-1", "different")
+    ).rejects.toThrow("stored secret does not match");
+    await expect(
+      getAccountAuthByPubKeyCommitment(dbId, "pubkey-1")
+    ).resolves.toEqual({ secretKey: "secret-1" });
+  });
+
   it("getAccountAuthByPubKeyCommitment throws when record does not exist", async () => {
     const dbId = await openTestDb();
     await expect(

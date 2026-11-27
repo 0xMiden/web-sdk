@@ -1,5 +1,357 @@
 // @ts-nocheck
 import { test, expect } from "./test-setup";
+import { isLocalhost } from "./playwright.global.setup";
+
+test("account file import can retry after a temporary key storage error", async ({
+  run,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name === "nodejs" || !isLocalhost(),
+    "requires browser keystore callbacks and a local test node"
+  );
+
+  const result = await run(async ({ client, sdk }) => {
+    const wallet = await client.newWallet(
+      sdk.AccountStorageMode.private(),
+      sdk.AuthScheme.AuthRpoFalcon512
+    );
+    const file = await client.exportAccountFile(wallet.id());
+    const bytes = file.serialize();
+    const keys = new Map<string, Uint8Array>();
+    let storageAvailable = false;
+    let writes = 0;
+    const restored = await sdk.WasmWebClient.createClientWithExternalKeystore(
+      window.rpcUrl,
+      undefined,
+      undefined,
+      `${window.storeName}-file-import`,
+      async (commitment) => keys.get(commitment.toString()),
+      async (commitment, key) => {
+        if (!storageAvailable) throw new Error("key storage unavailable");
+        writes++;
+        keys.set(commitment.toString(), key);
+      },
+      undefined,
+      undefined,
+      false,
+      undefined,
+      window.feeFaucetId
+    );
+
+    const importFile = () =>
+      restored.importAccountFile(sdk.AccountFile.deserialize(bytes));
+    const readImportError = () =>
+      importFile().then(
+        () => null,
+        (error) => (error instanceof Error ? error.message : String(error))
+      );
+
+    try {
+      const error = await readImportError();
+      const trackedAfterFailure = Boolean(
+        await restored.getAccount(wallet.id())
+      );
+
+      storageAvailable = true;
+      const retryError = await readImportError();
+      const imported = await restored.getAccount(wallet.id());
+      const duplicateError = await readImportError();
+      return {
+        error,
+        trackedAfterFailure,
+        retryError,
+        imported: imported?.id().toString(),
+        expectedId: wallet.id().toString(),
+        duplicateError,
+        writes,
+      };
+    } finally {
+      restored.terminate();
+    }
+  });
+
+  expect(result.error).toContain("key storage unavailable");
+  expect(result.trackedAfterFailure).toBe(false);
+  expect(result.retryError).toBeNull();
+  expect(result.imported).toBe(result.expectedId);
+  expect(result.duplicateError).toContain("already being tracked");
+  expect(result.writes).toBe(1);
+});
+
+test("account file import resumes after saving only one of two keys", async ({
+  run,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name === "nodejs" || !isLocalhost(),
+    "requires browser keystore callbacks and a local test node"
+  );
+
+  const result = await run(async ({ client, sdk }) => {
+    const wallet = await client.newWallet(
+      sdk.AccountStorageMode.private(),
+      sdk.AuthScheme.AuthRpoFalcon512
+    );
+    await client.keystore.insert(
+      wallet.id(),
+      sdk.AuthSecretKey.ecdsaWithRNG(null)
+    );
+    const file = await client.exportAccountFile(wallet.id());
+    const bytes = file.serialize();
+    const keys = new Map<string, Uint8Array>();
+    const writeAttempts = new Map<string, number>();
+    let failSecondWrite = true;
+    const restored = await sdk.WasmWebClient.createClientWithExternalKeystore(
+      window.rpcUrl,
+      undefined,
+      undefined,
+      `${window.storeName}-multi-key-file-import`,
+      async (commitment) => keys.get(commitment.toString()),
+      async (commitment, key) => {
+        const id = commitment.toString();
+        writeAttempts.set(id, (writeAttempts.get(id) ?? 0) + 1);
+        if (keys.has(id)) throw new Error("key already stored");
+        if (failSecondWrite && keys.size === 1) {
+          throw new Error("second key write unavailable");
+        }
+        keys.set(id, key);
+      },
+      undefined,
+      undefined,
+      false,
+      undefined,
+      window.feeFaucetId
+    );
+
+    const readImportError = () =>
+      restored.importAccountFile(sdk.AccountFile.deserialize(bytes)).then(
+        () => null,
+        (error) => (error instanceof Error ? error.message : String(error))
+      );
+
+    try {
+      const firstError = await readImportError();
+      const keysAfterFailure = keys.size;
+
+      failSecondWrite = false;
+      const retryError = await readImportError();
+      const restoredKeyCount = retryError
+        ? null
+        : (await restored.exportAccountFile(wallet.id())).authSecretKeyCount();
+      return {
+        firstError,
+        keysAfterFailure,
+        retryError,
+        restoredKeyCount,
+        writeAttempts: Array.from(writeAttempts.values()),
+      };
+    } finally {
+      restored.terminate();
+    }
+  });
+
+  expect(result.firstError).toContain("second key write unavailable");
+  expect(result.keysAfterFailure).toBe(1);
+  expect(result.retryError).toBeNull();
+  expect(result.restoredKeyCount).toBe(2);
+  expect(result.writeAttempts).toEqual([1, 2]);
+});
+
+test("account file import restores an external key dropped after its association was saved", async ({
+  run,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name === "nodejs" || !isLocalhost(),
+    "requires browser keystore callbacks and a local test node"
+  );
+
+  const results = await run(async ({ client, sdk }) => {
+    const wallet = await client.newWallet(
+      sdk.AccountStorageMode.private(),
+      sdk.AuthScheme.AuthRpoFalcon512
+    );
+    await client.keystore.insert(
+      wallet.id(),
+      sdk.AuthSecretKey.ecdsaWithRNG(null)
+    );
+    const fileBytes = (await client.exportAccountFile(wallet.id())).serialize();
+    const [commitment] = await client.keystore.getCommitments(wallet.id());
+    const commitmentId = commitment.serialize().toString();
+    const key = await client.keystore.get(commitment);
+    let associationKeyWrites = 0;
+    const restore = async (scenario: string) => {
+      const keys = new Map<string, Uint8Array>();
+      const restored = await sdk.WasmWebClient.createClientWithExternalKeystore(
+        window.rpcUrl,
+        undefined,
+        undefined,
+        `${window.storeName}-file-import-${scenario}`,
+        scenario === "insert-only"
+          ? undefined
+          : async (id) => {
+              if (scenario === "get-rejects")
+                throw new Error("external getKey denied");
+              return keys.get(id.toString());
+            },
+        async (id, bytes) => {
+          if (scenario === "insert-only")
+            throw new Error("external insertKey denied");
+          const name = id.toString();
+          if (scenario === "association" && name === commitmentId) {
+            associationKeyWrites++;
+          }
+          if (keys.has(name)) throw new Error("key already stored");
+          keys.set(name, bytes);
+          if (scenario === "insert-then-rejects")
+            throw new Error("external write outcome unknown");
+        },
+        undefined,
+        undefined,
+        false,
+        undefined,
+        window.feeFaucetId
+      );
+
+      try {
+        if (scenario === "key") {
+          await restored.keystore.insert(wallet.id(), key);
+          keys.clear();
+        } else if (scenario === "association") {
+          keys.set(commitmentId, key.serialize());
+        } else if (scenario === "mismatch") {
+          keys.set(
+            commitmentId,
+            sdk.AuthSecretKey.ecdsaWithRNG(null).serialize()
+          );
+        }
+        const error = await restored
+          .importAccountFile(sdk.AccountFile.deserialize(fileBytes))
+          .then(
+            () => null,
+            (err) => (err instanceof Error ? err.message : String(err))
+          );
+        const count =
+          error || scenario === "get-rejects"
+            ? null
+            : (
+                await restored.exportAccountFile(wallet.id())
+              ).authSecretKeyCount();
+        const tracked = Boolean(await restored.getAccount(wallet.id()));
+        return { error, count, tracked };
+      } finally {
+        restored.terminate();
+      }
+    };
+    return {
+      missingKey: await restore("key"),
+      missingAssociation: await restore("association"),
+      insertedThenRejected: await restore("insert-then-rejects"),
+      mismatch: await restore("mismatch"),
+      getterError: await restore("get-rejects"),
+      insertOnlyError: await restore("insert-only"),
+      associationKeyWrites,
+    };
+  });
+
+  expect(results.missingKey).toEqual({ error: null, count: 2, tracked: true });
+  expect(results.missingAssociation).toEqual({
+    error: null,
+    count: 2,
+    tracked: true,
+  });
+  expect(results.associationKeyWrites).toBe(0);
+  expect(results.insertedThenRejected).toEqual({
+    error: null,
+    count: 2,
+    tracked: true,
+  });
+  expect(results.mismatch.error).toContain("stored secret does not match");
+  expect(results.mismatch.tracked).toBe(false);
+  expect(results.getterError.error).toContain("external getKey denied");
+  expect(results.getterError.tracked).toBe(false);
+  expect(results.insertOnlyError.error).toContain("external insertKey denied");
+  expect(results.insertOnlyError.tracked).toBe(false);
+});
+
+test("account file import writes the local secret when an insert-only keystore left the account mapping", async ({
+  run,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name === "nodejs" || !isLocalhost(),
+    "requires browser keystore callbacks and a local test node"
+  );
+
+  const result = await run(async ({ client, sdk }) => {
+    const wallet = await client.newWallet(
+      sdk.AccountStorageMode.private(),
+      sdk.AuthScheme.AuthRpoFalcon512
+    );
+    const bytes = (await client.exportAccountFile(wallet.id())).serialize();
+    const [commitment] = await client.keystore.getCommitments(wallet.id());
+    const key = await client.keystore.get(commitment);
+    const storeName = window.storeName + "-mapping-handoff";
+    const externalKeys = new Map<string, Uint8Array>();
+    const external = await sdk.WasmWebClient.createClientWithExternalKeystore(
+      window.rpcUrl,
+      undefined,
+      undefined,
+      storeName,
+      undefined,
+      (id, secret) => {
+        externalKeys.set(id.toString(), secret);
+      },
+      undefined,
+      undefined,
+      false,
+      undefined,
+      window.feeFaucetId
+    );
+    try {
+      await external.keystore.insert(wallet.id(), key);
+    } finally {
+      external.terminate();
+      await external.waitForIdle();
+    }
+
+    const local = await sdk.WasmWebClient.createClient(
+      window.rpcUrl,
+      undefined,
+      undefined,
+      storeName,
+      undefined,
+      false,
+      undefined,
+      window.feeFaucetId
+    );
+    try {
+      const mappings = await local.keystore.getCommitments(wallet.id());
+      const trackedBeforeImport = Boolean(await local.getAccount(wallet.id()));
+      await local.importAccountFile(sdk.AccountFile.deserialize(bytes));
+      const exported = await local.exportAccountFile(wallet.id()).then(
+        (file) => ({ keyCount: file.authSecretKeyCount(), exportError: null }),
+        (error) => ({
+          keyCount: null,
+          exportError: error instanceof Error ? error.message : String(error),
+        })
+      );
+      return {
+        ...exported,
+        externalKeys: externalKeys.size,
+        mappedKeys: mappings.length,
+        trackedBeforeImport,
+        trackedAfterImport: Boolean(await local.getAccount(wallet.id())),
+      };
+    } finally {
+      local.terminate();
+    }
+  });
+
+  expect(result.externalKeys).toBe(1);
+  expect(result.mappedKeys).toBe(1);
+  expect(result.trackedBeforeImport).toBe(false);
+  expect(result.trackedAfterImport).toBe(true);
+  expect(result.exportError).toBeNull();
+  expect(result.keyCount).toBe(1);
+});
 
 test.describe("import from seed", () => {
   test("should import same public account from seed", async ({ run }) => {

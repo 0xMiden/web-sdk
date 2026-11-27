@@ -130,6 +130,60 @@ impl<R: Rng> WebKeyStore<R> {
         *self.callbacks.last_get_key_error.borrow_mut() = None;
     }
 
+    pub(crate) async fn ensure_imported_key(
+        &self,
+        key: &AuthSecretKey,
+        account_id: AccountId,
+    ) -> Result<(), KeyStoreError> {
+        let commitment = key.public_key().to_commitment();
+        let Some(get_key) = &self.callbacks.get_key else {
+            if self.get_account_key_commitments(&account_id).await?.contains(&commitment) {
+                return Ok(());
+            }
+            return self.add_key(key, account_id).await;
+        };
+
+        let matches = async || match get_key.get_secret_key(commitment).await? {
+            None => Ok(false),
+            Some(stored)
+                if stored.public_key().to_commitment() == commitment
+                    && stored.to_bytes() == key.to_bytes() =>
+            {
+                Ok(true)
+            },
+            Some(_) => Err(KeyStoreError::StorageError(
+                "stored secret does not match the key being imported".to_string(),
+            )),
+        };
+
+        // The external store may have saved the key before its response failed.
+        if !matches().await?
+            && let Err(err) = self.add_key_without_account(key).await
+            && !matches().await?
+        {
+            return Err(err);
+        }
+        self.store_key_mapping(account_id, commitment).await
+    }
+
+    async fn store_key_mapping(
+        &self,
+        account_id: AccountId,
+        commitment: PublicKeyCommitment,
+    ) -> Result<(), KeyStoreError> {
+        insert_account_key_mapping(
+            &self.db_id,
+            account_id.to_hex(),
+            NativeWord::from(commitment).to_hex(),
+        )
+        .await
+        .map_err(|_| {
+            KeyStoreError::StorageError(
+                "Failed to insert account key mapping into IndexedDB".to_string(),
+            )
+        })
+    }
+
     /// Adds a secret key to the keystore without updating account mappings.
     ///
     /// This is an internal method. Use [`Keystore::add_key`] instead.
@@ -250,23 +304,8 @@ impl<R: Rng> Keystore for WebKeyStore<R> {
         account_id: AccountId,
     ) -> Result<(), KeyStoreError> {
         let pub_key_commitment = key.public_key().to_commitment();
-
-        // Store the key
         self.add_key_without_account(key).await?;
-
-        // Store the mapping
-        let account_id_hex = account_id.to_hex();
-        let pub_key_hex = NativeWord::from(pub_key_commitment).to_hex();
-
-        insert_account_key_mapping(&self.db_id, account_id_hex, pub_key_hex)
-            .await
-            .map_err(|_| {
-                KeyStoreError::StorageError(
-                    "Failed to insert account key mapping into IndexedDB".to_string(),
-                )
-            })?;
-
-        Ok(())
+        self.store_key_mapping(account_id, pub_key_commitment).await
     }
 
     async fn remove_key(&self, pub_key: PublicKeyCommitment) -> Result<(), KeyStoreError> {
