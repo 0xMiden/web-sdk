@@ -27,10 +27,16 @@ const NAME = "@miden-sdk/miden-sdk";
 
 const force = process.argv.includes("--force");
 
+// On Windows the `npm` shim is a batch file, which Node refuses to spawn without
+// a shell (CVE-2024-27980 hardening rejects direct .cmd/.bat spawns); routing the
+// call through the shell keeps the hydration script usable on Windows. The
+// arguments are fixed npm CLI flags plus a package or semver name, so no shell
+// metacharacters reach the command line.
 const sh = (cmd, args, opts = {}) =>
   execFileSync(cmd, args, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    shell: process.platform === "win32",
     ...opts,
   }).trim();
 
