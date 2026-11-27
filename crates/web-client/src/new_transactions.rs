@@ -25,6 +25,7 @@ use miden_client::transaction::{
     PaymentNoteDescription,
     ProvenTransaction as NativeProvenTransaction,
     PswapTransactionData,
+    RequestAuthArgs,
     SwapTransactionData,
     TransactionExecutorError,
     TransactionRequest as NativeTransactionRequest,
@@ -998,7 +999,7 @@ impl WebClient {
         // `with_auth_args` replaces the auth argument, so the refusal happens here. It comes
         // before the auth args are built, because building them can draw the salt from the
         // client RNG, and a refused call must leave that stream as it was.
-        if native_request.has_auth_arg() {
+        if matches!(native_request.auth_args(), RequestAuthArgs::Explicit(_)) {
             return Err(from_str_err_with_code(
                 "failed to add the fee-aware auth args to the request: the request already has \
                  an auth argument, which its author owns and which this does not replace",
@@ -1008,10 +1009,12 @@ impl WebClient {
 
         let overrides = MultisigAuthOverrides {
             approval_expiration_delta,
-            salt: fee_conversion_salt
-                .as_ref()
-                .map(NativeWord::from)
-                .or(native_request.fee_conversion_salt()),
+            salt: fee_conversion_salt.as_ref().map(NativeWord::from).or(
+                match native_request.auth_args() {
+                    RequestAuthArgs::DefaultWithSalt(salt) => Some(*salt),
+                    _ => None,
+                },
+            ),
             bound_block_num: bound_block_num.map(BlockNumber::from),
             max_fee: max_fee.map(js_u64_to_u64).transpose()?,
         };

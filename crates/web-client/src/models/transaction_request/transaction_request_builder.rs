@@ -195,9 +195,8 @@ impl TransactionRequestBuilder {
     /// the advice map. `authArgs` must hold a whole number of words: a non-empty multiple of 4
     /// felts.
     ///
-    /// Mutually exclusive with `withFeeConversionSalt`, and the exclusion is enforced by
-    /// miden-client rather than reported as an error: each setter clears the other, so whichever
-    /// is called last wins and the request can never carry both.
+    /// Mutually exclusive with `withFeeConversionSalt`: setting both makes `build()` return an
+    /// error rather than silently clearing the salt.
     ///
     /// That makes this setter destructive on a builder returned by
     /// `feeAwareTransactionRequestBuilder` for a multisig account, which already carries the
@@ -241,11 +240,11 @@ impl TransactionRequestBuilder {
     /// Declaring a salt against an account whose auth component does not read the auth args as
     /// conversion info is refused with `FeeConversionInfoUnsupported`.
     ///
-    /// Mutually exclusive with `withAuthArgs` — see the note there. That makes this setter
-    /// destructive on a builder returned by `feeAwareTransactionRequestBuilder` for a multisig:
-    /// that builder already carries the component's three-word auth args, and clearing them
-    /// leaves the auth procedure piping a preimage that was never written. Pass
-    /// `feeConversionSalt` to `feeAwareTransactionRequestBuilder` instead.
+    /// Mutually exclusive with `withAuthArgs` — setting both makes `build()` return an error. That
+    /// exclusion is also relevant on a builder returned by `feeAwareTransactionRequestBuilder` for
+    /// a multisig: that builder already carries the component's three-word auth args, so calling
+    /// this makes `build()` fail. Pass `feeConversionSalt` to `feeAwareTransactionRequestBuilder`
+    /// instead.
     #[js_export(js_name = "withFeeConversionSalt")]
     pub fn with_fee_conversion_salt(&mut self, salt: &Word) -> Self {
         let native_salt: NativeWord = salt.into();

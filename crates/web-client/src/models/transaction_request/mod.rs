@@ -1,7 +1,11 @@
 use js_export_macro::js_export;
 use miden_client::block::BlockNumber;
 use miden_client::note::Note as NativeNote;
-use miden_client::transaction::TransactionRequest as NativeTransactionRequest;
+use miden_client::transaction::{
+    RequestAuthArgs,
+    RequestTransactionScript,
+    TransactionRequest as NativeTransactionRequest,
+};
 use miden_client::vm::AdviceMap as NativeAdviceMap;
 use miden_client::{Felt as NativeFelt, Word as NativeWord};
 use miden_protocol::crypto::SequentialCommit;
@@ -104,7 +108,10 @@ impl TransactionRequest {
     /// Returns the transaction script argument if present.
     #[js_export(js_name = "scriptArg")]
     pub fn script_arg(&self) -> Option<Word> {
-        self.0.script_arg().map(Word::from)
+        match self.0.transaction_script() {
+            RequestTransactionScript::Custom { arg, .. } => Some((*arg).into()),
+            _ => None,
+        }
     }
 
     /// Returns the authentication argument if present.
@@ -119,7 +126,10 @@ impl TransactionRequest {
     /// request would sit outside that exclusion.
     #[js_export(js_name = "authArg")]
     pub fn auth_arg(&self) -> Option<Word> {
-        self.0.auth_arg().map(Word::from)
+        match self.0.auth_args() {
+            RequestAuthArgs::Explicit(arg) => Some((*arg).into()),
+            _ => None,
+        }
     }
 
     /// Returns the fee conversion salt this request declares, if any.
@@ -130,10 +140,13 @@ impl TransactionRequest {
     /// chain's native conversion info under its own fixed default salt, which is what every
     /// account other than a multisig wants.
     ///
-    /// Mutually exclusive with `authArg` — setting either clears the other on the builder.
+    /// Mutually exclusive with `authArg` — setting both fails when building the request.
     #[js_export(js_name = "feeConversionSalt")]
     pub fn fee_conversion_salt(&self) -> Option<Word> {
-        self.0.fee_conversion_salt().map(Word::from)
+        match self.0.auth_args() {
+            RequestAuthArgs::DefaultWithSalt(salt) => Some((*salt).into()),
+            _ => None,
+        }
     }
 
     /// Returns the Merkle store nodes added through `extendMerkleStore`, in no particular order.

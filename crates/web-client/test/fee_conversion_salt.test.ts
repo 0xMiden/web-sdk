@@ -669,13 +669,8 @@ test.describe("fee conversion salt", () => {
   test("withAuthArgs and withFeeConversionSalt are mutually exclusive", async ({
     run,
   }) => {
-    // miden-client keeps these two in the same slot and has each setter clear
-    // the other, so the exclusion is enforced by construction and the last call
-    // simply wins. This used to be an error case in this binding — a request
-    // could declare conversion info and then have its commitment replaced,
-    // leaving the preimage keyed by a word nothing looked up — and the guard
-    // that caught it was deleted because the shape can no longer be built.
-    // This test is what pins that claim.
+    // miden-client keeps these two in an enum and rejects building a request
+    // that sets both explicit auth args and a fee conversion salt.
     const result = await run(async ({ sdk }) => {
       const salt = sdk.Word.newFromFelts([
         new sdk.Felt(11n),
@@ -686,33 +681,35 @@ test.describe("fee conversion salt", () => {
       const authArgs = () =>
         new sdk.FeltArray([55n, 66n, 77n, 88n].map((v) => new sdk.Felt(v)));
 
-      const saltLast = new sdk.TransactionRequestBuilder()
-        .withAuthArgs(authArgs())
-        .withFeeConversionSalt(salt)
-        .build();
+      let saltLastError: string | null = null;
+      try {
+        new sdk.TransactionRequestBuilder()
+          .withAuthArgs(authArgs())
+          .withFeeConversionSalt(salt)
+          .build();
+      } catch (e) {
+        saltLastError = String(e);
+      }
 
-      const authArgLast = new sdk.TransactionRequestBuilder()
-        .withFeeConversionSalt(salt)
-        .withAuthArgs(authArgs())
-        .build();
+      let authArgLastError: string | null = null;
+      try {
+        new sdk.TransactionRequestBuilder()
+          .withFeeConversionSalt(salt)
+          .withAuthArgs(authArgs())
+          .build();
+      } catch (e) {
+        authArgLastError = String(e);
+      }
 
-      return {
-        saltLastSalt: saltLast.feeConversionSalt()?.toHex() ?? null,
-        saltLastAuthArg: saltLast.authArg()?.toHex() ?? null,
-        authArgLastSalt: authArgLast.feeConversionSalt()?.toHex() ?? null,
-        authArgLastAuthArg: authArgLast.authArg()?.toHex() ?? null,
-        expectedSalt: salt.toHex(),
-        expectedAuthArg: sdk.Eidos.hashElements(authArgs()).toHex(),
-      };
+      return { saltLastError, authArgLastError };
     });
 
-    // Salt called last: it wins and the auth arg is cleared.
-    expect(result.saltLastSalt).toBe(result.expectedSalt);
-    expect(result.saltLastAuthArg).toBeNull();
-
-    // Auth arg called last: it wins and the declaration is cleared.
-    expect(result.authArgLastAuthArg).toBe(result.expectedAuthArg);
-    expect(result.authArgLastSalt).toBeNull();
+    expect(result.saltLastError).toContain(
+      "failed to build transaction request"
+    );
+    expect(result.authArgLastError).toContain(
+      "failed to build transaction request"
+    );
   });
 
   test("withAuthArgs sets the commitment and its advice-map preimage", async ({
