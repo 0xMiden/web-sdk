@@ -191,8 +191,10 @@ in-progress flag, and only the transaction family has a `stage`:
 | Account create / import | `useCreateWallet`, `useCreateFaucet`, `useImportAccount` | `isCreating` (`isImporting` for the last) | no |
 | Everything else names its own | `useChainAnchor().isCapturing`, `usePreview().isPreviewing`, `useExportStore()` / `useExportNote().isExporting`, `useImportStore()` / `useImportNote().isImporting` | as named | no |
 
-Two more sit outside the pattern entirely: `useWaitForCommit()` returns
-`{ waitForCommit }` and nothing else, and `useCompile()` is not a write hook at
+Three more sit outside the pattern: `useWaitForCommit()` returns
+`{ waitForCommit }` and nothing else, `useWaitForAccountUpdate()` returns
+`{ waitForAccountUpdate, unsubscribe, account, isWaiting, error, reset }` (its
+busy flag is `isWaiting`, not `isLoading`), and `useCompile()` is not a write hook at
 all (see [Hook Reference](#hook-reference)). `useResendPrivateNotes()` returns
 `{ resend, isLoading, error }`: it has the busy flag but no `result`, `stage` or
 `reset`.
@@ -473,6 +475,18 @@ const { waitForCommit } = useWaitForCommit();
 // After sending
 const result = await send({ ... });
 await waitForCommit({ txId: result.txId });
+```
+
+### Wait for External Account Update
+```tsx
+const { waitForAccountUpdate, unsubscribe, isWaiting } =
+  useWaitForAccountUpdate();
+
+const updated = await waitForAccountUpdate(accountId, {
+  slot: "counter::value",
+  timeoutMs: 30_000,
+  intervalMs: 1_000,
+});
 ```
 
 ### Access Client Directly
@@ -763,6 +777,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | `useTransactionHistory(options?)` | `records`, `record`, `status` | Local transaction log. `record` / `status` are set when you pass a single id |
 | `useSessionAccount()` | `account` | The signer's connected account |
 | `useWaitForNotes(...)` | resolves when matching notes appear | Pull-style note waiting |
+| `useWaitForAccountUpdate(accountId?, options?)` | `{ waitForAccountUpdate, unsubscribe, account, isWaiting, error, reset }` | Resolves with `Account` when commitment or storage `slot` / `mapKey` changes past baseline |
 | `usePswapLineages()` | `lineages` | All tracked PSWAP order lineages |
 | `usePswapLineagesFor(creator)` | `lineages` | Tracked PSWAP lineages for one creator |
 | `usePswapLineage(orderId)` | `lineage` | One tracked PSWAP lineage by stable order id |

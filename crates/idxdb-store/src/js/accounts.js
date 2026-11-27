@@ -91,6 +91,43 @@ export async function getAccountSnapshot(dbId, accountId, includeCode, includeSt
         };
     });
 }
+class PreviewComplete extends Error {
+}
+/**
+ * Reads the snapshots `accountIds` would have if `accountCommitments` were undone, without
+ * persisting the undo: the undo and the reads run in one transaction that is then aborted. Lets
+ * a sync prepare a patch against the post-undo state while the undo itself commits with the sync.
+ */
+export async function getAccountSnapshotsAfterUndo(dbId, accountCommitments, accountIds) {
+    const db = getDatabase(dbId);
+    const snapshots = [];
+    try {
+        await db.dexie.transaction("rw", [
+            db.latestAccountStorages,
+            db.historicalAccountStorages,
+            db.latestStorageMapEntries,
+            db.historicalStorageMapEntries,
+            db.latestAccountAssets,
+            db.historicalAccountAssets,
+            db.latestAccountHeaders,
+            db.historicalAccountHeaders,
+            db.accountCodes,
+        ], async () => {
+            await undoAccountStates(dbId, accountCommitments);
+            for (const accountId of accountIds) {
+                snapshots.push(await getAccountSnapshot(dbId, accountId, true, true, true, true));
+            }
+            // Throwing rolls the whole transaction back, undo included.
+            throw new PreviewComplete();
+        });
+    }
+    catch (error) {
+        if (!(error instanceof PreviewComplete)) {
+            logWebStoreError(error, "Error previewing account state after undo");
+        }
+    }
+    return snapshots;
+}
 export async function getAccountHeaderByCommitment(dbId, accountCommitment) {
     try {
         const db = getDatabase(dbId);
@@ -141,7 +178,7 @@ export async function getAccountCode(dbId, codeRoot) {
 export async function getAccountStorage(dbId, accountId, slotNames) {
     try {
         const db = getDatabase(dbId);
-        let query = db.latestAccountStorages.where("accountId").equals(accountId);
+        const query = db.latestAccountStorages.where("accountId").equals(accountId);
         let allMatchingRecords;
         if (slotNames.length) {
             const nameSet = new Set(slotNames);
@@ -178,7 +215,7 @@ export async function getAccountStorageMaps(dbId, accountId) {
 export async function getAccountVaultAssets(dbId, accountId, vaultKeys) {
     try {
         const db = getDatabase(dbId);
-        let query = db.latestAccountAssets.where("accountId").equals(accountId);
+        const query = db.latestAccountAssets.where("accountId").equals(accountId);
         let records;
         if (vaultKeys.length) {
             const keySet = new Set(vaultKeys);
@@ -873,6 +910,8 @@ export async function lockAccount(dbId, accountId) {
         logWebStoreError(error, `Error locking account: ${accountId}`);
     }
 }
+/** Most historical headers `pruneAccountHistory` holds at once. */
+const ACCOUNT_HISTORY_PAGE_SIZE = 256;
 /**
  * Prunes historical account states for a single account up to the given nonce.
  *
@@ -894,33 +933,41 @@ export async function pruneAccountHistory(dbId, accountId, upToNonce) {
             db.foreignAccountCode,
         ], async () => {
             // Nonces are stored as strings so we cannot use index range queries
-            // (lexicographic ordering would be wrong). Filter in JS instead.
-            const headers = await db.historicalAccountHeaders
-                .where("id")
-                .equals(accountId)
-                .toArray();
-            const toPrune = headers.filter((h) => BigInt(h.replacedAtNonce) <= boundaryNonce);
-            // Collect code roots from headers we are about to delete.
-            const candidateCodeRoots = new Set(toPrune.map((h) => h.codeRoot));
-            for (const h of toPrune) {
-                await db.historicalAccountHeaders
-                    .where("accountCommitment")
-                    .equals(h.accountCommitment)
-                    .delete();
-                const rat = h.replacedAtNonce;
-                totalDeleted += 1;
-                totalDeleted += await db.historicalAccountStorages
-                    .where("[accountId+replacedAtNonce]")
-                    .equals([accountId, rat])
-                    .delete();
-                totalDeleted += await db.historicalStorageMapEntries
-                    .where("[accountId+replacedAtNonce]")
-                    .equals([accountId, rat])
-                    .delete();
-                totalDeleted += await db.historicalAccountAssets
-                    .where("[accountId+replacedAtNonce]")
-                    .equals([accountId, rat])
-                    .delete();
+            // (lexicographic ordering would be wrong). Filter in JS instead, one
+            // page at a time: Dexie applies `limit` after the filter and a pruned
+            // header stops matching, so each pass reads the next page and the pruned
+            // headers are never held whole.
+            const candidateCodeRoots = new Set();
+            for (;;) {
+                const toPrune = await db.historicalAccountHeaders
+                    .where("id")
+                    .equals(accountId)
+                    .and((h) => BigInt(h.replacedAtNonce) <= boundaryNonce)
+                    .limit(ACCOUNT_HISTORY_PAGE_SIZE)
+                    .toArray();
+                if (toPrune.length === 0)
+                    break;
+                for (const h of toPrune) {
+                    candidateCodeRoots.add(h.codeRoot);
+                    await db.historicalAccountHeaders
+                        .where("accountCommitment")
+                        .equals(h.accountCommitment)
+                        .delete();
+                    const rat = h.replacedAtNonce;
+                    totalDeleted += 1;
+                    totalDeleted += await db.historicalAccountStorages
+                        .where("[accountId+replacedAtNonce]")
+                        .equals([accountId, rat])
+                        .delete();
+                    totalDeleted += await db.historicalStorageMapEntries
+                        .where("[accountId+replacedAtNonce]")
+                        .equals([accountId, rat])
+                        .delete();
+                    totalDeleted += await db.historicalAccountAssets
+                        .where("[accountId+replacedAtNonce]")
+                        .equals([accountId, rat])
+                        .delete();
+                }
             }
             // Delete orphaned code: only check roots from the deleted headers,
             // and only if they are not referenced by any remaining header or foreign code.

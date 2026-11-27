@@ -106,6 +106,28 @@ const AUTH_SCHEME_ARG_INDEX = new Map([
 ]);
 
 /**
+ * Converts a Node.js batch submit/retry outcome envelope into a block number
+ * or throws a JS `Error` carrying `code`, `submission`, and `transactionIds`
+ * when admission outcome was unknown.
+ */
+function unwrapBatchSubmitOutcome(outcome, fallbackMessage) {
+  if (outcome?.blockNumber != null) {
+    return outcome.blockNumber;
+  }
+  const error = new Error(outcome?.errorMessage ?? fallbackMessage);
+  if (outcome?.errorCode != null) {
+    error.code = outcome.errorCode;
+  }
+  if (outcome?.submission != null) {
+    error.submission = outcome.submission;
+  }
+  if (outcome?.transactionIds != null) {
+    error.transactionIds = outcome.transactionIds;
+  }
+  throw error;
+}
+
+/**
  * Wraps a raw napi WebClient to normalize API differences with the browser SDK.
  *
  * - syncState() -> syncStateImpl() (no browser lock coordination needed)
@@ -175,6 +197,39 @@ export function wrapClient(rawClient, storeName, rawSdk, releaseStore) {
               normSeed ?? null
             )
             .then((v) => (v === null ? undefined : v));
+        };
+      }
+      if (
+        prop === "submitNewTransactionBatch" &&
+        typeof target._submitNewTransactionBatchOutcome === "function"
+      ) {
+        return async (...args) => {
+          const outcome = await target._submitNewTransactionBatchOutcome(
+            ...args.map(normalizeArg)
+          );
+          return unwrapBatchSubmitOutcome(
+            outcome,
+            "failed to submit transaction batch"
+          );
+        };
+      }
+      if (
+        prop === "retryProvenBatch" &&
+        typeof target._retryProvenBatchOutcome === "function"
+      ) {
+        return async (submission, ...rest) => {
+          const handle =
+            submission?.submission !== undefined
+              ? submission.submission
+              : submission;
+          const outcome = await target._retryProvenBatchOutcome(
+            normalizeArg(handle),
+            ...rest.map(normalizeArg)
+          );
+          return unwrapBatchSubmitOutcome(
+            outcome,
+            "failed to retry proven batch"
+          );
         };
       }
       const authSchemeIndex = AUTH_SCHEME_ARG_INDEX.get(prop);

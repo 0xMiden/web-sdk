@@ -63,6 +63,13 @@ try {
 
     // Get specific transactions by ID
     const specific = await client.transactions.list({ ids: [txId1, txId2] });
+
+    // Newest first, and only the first 20 reach JavaScript
+    const recent = await client.transactions.list({
+        account: walletId,
+        status: "committed", // "pending" | "committed" | "discarded"
+        limit: 20,
+    });
 } catch (error) {
     console.error("Failed to filter transactions:", error.message);
 }
@@ -161,9 +168,13 @@ const txs = await client.transactions.list();
 Two failure modes worth handling after a batch submit:
 
 1. The node can accept a batch and the local store update still fail, which surfaces as `code: "ApplyTransactionAfterSubmitFailed"` (or a message containing `batch was accepted at block N but building store updates failed` / `applying to the store failed`). The node has taken the batch in that case, so do not submit it again; sync instead.
-2. The submission can come back without a definite outcome (`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`). Nothing was recorded locally, and the node may or may not have accepted the batch. The error carries `submission` (in-thread) or `submissionId` (Web Worker) plus `transactionIds`. Resend with `client.transactions.retryProvenBatch(error.submission ?? { submissionId: error.submissionId })` without calling `batch` / `submitBatch` again (a new prove changes identities). After a successful retry, confirm with `waitFor` / `list` for those ids. A conflict on retry usually means the original attempt landed, but a rejected retry records nothing locally and a sync does not insert the missing records, so look the ids up on the node, not in the local store. Browser builds only: Node.js errors prefix the message with the code and carry no submission handle or `transactionIds`.
+2. The submission can come back without a definite outcome (`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`). Nothing was recorded locally, and the node may or may not have accepted the batch. The error carries `submission` (browser in-thread and Node.js) or `submissionId` (browser Web Worker) plus `transactionIds`. Resend with `client.transactions.retryProvenBatch(error.submission ?? { submissionId: error.submissionId })` without calling `batch` / `submitBatch` again (a new prove changes identities). After a successful retry, confirm with `waitFor` / `list` for those ids. A conflict on retry usually means the original attempt landed, but a rejected retry records nothing locally and a sync does not insert the missing records, so look the ids up on the node, not in the local store.
 
 Accepting a transaction proved by another participant as a batch member needs a rust-sdk release that exposes `push_proven_transaction` on the pinned client; that half of [#571](https://github.com/0xMiden/web-sdk/issues/571) is a follow-up.
+
+## MASM assertion diagnostics
+
+Browser transaction errors can include a `masm` diagnostic when the VM reports a failed assertion. The diagnostic contains the full-precision decimal `errorCode` string. When available, it also gives the `assertionMessage` and a source `file` URI with a byte `span` (`start` inclusive, `end` exclusive). The same fields are available in-thread and through the Web Worker. Production builds can strip assertion text and source locations from protocol and standard scripts. Node.js keeps its existing error message.
 
 ## Manual Transaction Lifecycle
 
@@ -326,7 +337,7 @@ await client.transactions.withdrawUsdcx({
 });
 ```
 
-`destinationRecipient` is a `0x`-prefixed 64-digit hex string, validated before any WASM call. An EVM address is left-padded with zeros to 32 bytes. The lower-level builders are `Note.createXReserveBurnNote(...)` and `client.newXReserveBurnTransactionRequest(...)`, which take the recipient as a 32-byte `Uint8Array`.
+`destinationDomain` must be an integer from 0 to 4294967295, inclusive. `destinationRecipient` is a `0x`-prefixed 64-digit hex string, validated before any WASM call. An EVM address is left-padded with zeros to 32 bytes. The lower-level builders are `Note.createXReserveBurnNote(...)` and `client.newXReserveBurnTransactionRequest(...)`, which take the recipient as a 32-byte `Uint8Array`.
 
 ## Paying Transaction Fees
 

@@ -26,6 +26,7 @@ import {
   lockAccount,
   pruneAccountHistory,
   undoAccountStates,
+  getAccountSnapshotsAfterUndo,
 } from "./accounts.js";
 import { uniqueDbName } from "./test-utils.js";
 
@@ -1090,6 +1091,57 @@ describe("pruneAccountHistory", () => {
     const newCodeRecord = await db.accountCodes.get(NEW_CODE);
     expect(newCodeRecord).toBeDefined();
   });
+
+  it("reads a long history in bounded pages", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    const header = (id: string, n: number) => ({
+      id,
+      replacedAtNonce: String(n),
+      codeRoot: CODE_ROOT,
+      storageRoot: STORAGE_ROOT,
+      vaultRoot: VAULT_ROOT,
+      nonce: String(n - 1),
+      committed: false,
+      accountSeed: undefined,
+      accountCommitment: `0x${id}-${n}`,
+      locked: false,
+    });
+    const rows = Array.from({ length: 600 }, (_, i) => header(ACC, i + 1));
+    rows.push(header("0xother", 1));
+    await db.historicalAccountHeaders.bulkPut(rows);
+
+    const collection = db.historicalAccountHeaders.toCollection();
+    const proto = Object.getPrototypeOf(collection);
+    const original = proto.toArray;
+    const sizes: number[] = [];
+    proto.toArray = function (this: unknown, ...args: unknown[]) {
+      const promise = original.apply(this, args);
+      promise.then((result: unknown) => {
+        if (Array.isArray(result)) sizes.push(result.length);
+      });
+      return promise;
+    };
+    let deleted: number;
+    try {
+      deleted = await pruneAccountHistory(dbId, ACC, "450");
+    } finally {
+      proto.toArray = original;
+    }
+
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(256);
+    expect(deleted).toBeGreaterThanOrEqual(450);
+    const left = await db.historicalAccountHeaders
+      .where("id")
+      .equals(ACC)
+      .toArray();
+    expect(
+      left.map((h) => Number(h.replacedAtNonce)).sort((a, b) => a - b)
+    ).toEqual(Array.from({ length: 150 }, (_, i) => i + 451));
+    expect(
+      await db.historicalAccountHeaders.where("id").equals("0xother").count()
+    ).toBe(1);
+  });
 });
 
 // ============================================================
@@ -1785,5 +1837,66 @@ describe("getAccountSnapshot reads only the requested components", () => {
       expect.objectContaining({ slotName: "slot-1", slotValue: "value-1" }),
     ]);
     expect(snapshot?.assets).toEqual([]);
+  });
+});
+
+// ============================================================
+// getAccountSnapshotsAfterUndo
+// ============================================================
+describe("getAccountSnapshotsAfterUndo", () => {
+  it("returns the state after the undo without persisting it", async () => {
+    const dbId = await openTestDb("0.0.1");
+    const db = getDatabase(dbId);
+    await seedAccount(dbId);
+    // Untouched by the undone patch, so the preview must still return both.
+    await db.latestStorageMapEntries.put({
+      accountId: ACC,
+      slotName: "map1",
+      key: "0xkey",
+      value: "0xvalue",
+    });
+    await db.latestAccountAssets.put({
+      accountId: ACC,
+      vaultKey: "0xvaultkey",
+      asset: "0xasset",
+    });
+    await applyAccountPatch(
+      dbId,
+      ACC,
+      "2",
+      [
+        {
+          slotName: "slot1",
+          slotValue: "0xnew",
+          slotType: 0,
+          patchOperation: 1,
+        },
+      ],
+      [],
+      [],
+      CODE_ROOT,
+      STORAGE_ROOT,
+      VAULT_ROOT,
+      false,
+      "0xcommit2"
+    );
+
+    const [snapshot] = (await getAccountSnapshotsAfterUndo(
+      dbId,
+      ["0xcommit2"],
+      [ACC]
+    )) as { header: { nonce: string }; maps: unknown[]; assets: unknown[] }[];
+
+    expect(snapshot.header.nonce).toBe(NONCE);
+    expect(snapshot.maps).toEqual([
+      expect.objectContaining({ key: "0xkey", value: "0xvalue" }),
+    ]);
+    expect(snapshot.assets).toEqual([
+      { vaultKey: "0xvaultkey", asset: "0xasset" },
+    ]);
+    const latest = await db.latestAccountHeaders.get(ACC);
+    expect(latest?.nonce).toBe("2");
+    expect(latest?.accountCommitment).toBe("0xcommit2");
+    expect(await db.historicalAccountHeaders.count()).toBe(1);
   });
 });

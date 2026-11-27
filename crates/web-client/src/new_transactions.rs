@@ -16,12 +16,11 @@ use miden_client::note::{
     NoteScript as NativeNoteScript,
     PswapNote,
 };
-#[cfg(feature = "browser")]
-use miden_client::transaction::BatchBuilderError;
 #[cfg(feature = "testing")]
 use miden_client::transaction::LocalTransactionProver;
 use miden_client::transaction::{
     AccountComponentInterface,
+    BatchBuilderError,
     ChainAnchorError,
     ForeignAccount as NativeForeignAccount,
     PaymentNoteDescription,
@@ -37,6 +36,8 @@ use miden_client::{Client, ClientError, Word as NativeWord};
 #[cfg(feature = "browser")]
 use wasm_bindgen::JsValue;
 
+#[cfg(feature = "nodejs")]
+use crate::BATCH_SUBMISSION_OUTCOME_UNKNOWN;
 use crate::models::NoteType;
 use crate::models::account_id::AccountId;
 use crate::models::advice_inputs::AdviceInputs;
@@ -67,6 +68,20 @@ use crate::platform::{
     maybe_wrap_send,
 };
 use crate::{WebClient, js_error_with_context, js_post_submit_error};
+
+/// Outcome envelope for Node.js batch submit and retry calls. An indeterminate
+/// admission populates `error_message`, `error_code`, `submission`, and
+/// `transaction_ids` so `wrapClient` can throw a JS `Error` carrying those
+/// properties, matching the browser in-thread shape.
+#[cfg(feature = "nodejs")]
+#[napi_derive::napi(object, object_from_js = false)]
+pub struct NodeBatchSubmitOutcome {
+    pub block_number: Option<u32>,
+    pub error_message: Option<String>,
+    pub error_code: Option<String>,
+    pub submission: Option<ProvenBatchSubmission>,
+    pub transaction_ids: Option<Vec<String>>,
+}
 
 #[js_export]
 impl WebClient {
@@ -554,49 +569,16 @@ impl WebClient {
     /// arrays.
     #[js_export(js_name = "submitNewTransactionBatch")]
     pub async fn submit_new_transaction_batch(&self, items: Vec<BatchItem>) -> Result<u32, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-
-        // `BatchBuilder` borrows `client` until `submit`, so retained callback
-        // detail is read from this keystore handle.
-        #[cfg(feature = "browser")]
-        let keystore = client.authenticator().cloned();
-        #[cfg(feature = "browser")]
-        if let Some(keystore) = keystore.as_ref() {
-            keystore.clear_auth_error();
-        }
-
-        let mut builder = client.new_transaction_batch();
-
-        for item in &items {
-            let native_account_id: NativeAccountId = item.account_id().into();
-            let native_req: NativeTransactionRequest = item.request().into();
-            maybe_wrap_send(Box::pin(builder.push(native_account_id, native_req)))
-                .await
-                .map_err(|err| {
-                    let js_error =
-                        js_error_with_context(err, "failed to push transaction to batch");
-                    #[cfg(feature = "browser")]
-                    append_get_key_detail(
-                        &js_error,
-                        keystore.as_ref().and_then(|keystore| keystore.last_get_key_error()),
-                    );
-                    js_error
-                })?;
-        }
-
-        maybe_wrap_send(Box::pin(builder.submit()))
-            .await
-            .map(|block_number| block_number.as_u32())
-            .map_err(|err| {
-                let js_error = js_batch_submit_error(err, "failed to submit transaction batch");
+        match self.push_and_submit_batch(items).await? {
+            Ok(block_number) => Ok(block_number),
+            Err(failure) => {
+                let js_error =
+                    js_batch_submit_error(failure.error, "failed to submit transaction batch");
                 #[cfg(feature = "browser")]
-                append_get_key_detail(
-                    &js_error,
-                    keystore.as_ref().and_then(|keystore| keystore.last_get_key_error()),
-                );
-                js_error
-            })
+                append_get_key_detail(&js_error, failure.get_key_error);
+                Err(js_error)
+            },
+        }
     }
 
     /// Resubmits an already-proven batch after an indeterminate admission response.
@@ -609,12 +591,8 @@ impl WebClient {
         &self,
         submission: &ProvenBatchSubmission,
     ) -> Result<u32, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-
-        maybe_wrap_send(Box::pin(client.retry_proven_batch(submission.native())))
-            .await
-            .map(|block_number| block_number.as_u32())
+        self.resubmit_proven_batch(submission)
+            .await?
             .map_err(|err| js_batch_submit_error(err, "failed to retry proven batch"))
     }
 
@@ -1151,27 +1129,151 @@ impl WebClient {
     }
 }
 
+#[cfg(feature = "nodejs")]
+#[napi_derive::napi]
+impl WebClient {
+    #[napi(js_name = "_submitNewTransactionBatchOutcome")]
+    pub async fn submit_new_transaction_batch_outcome(
+        &self,
+        items: Vec<BatchItem>,
+    ) -> Result<NodeBatchSubmitOutcome, JsErr> {
+        let result = self.push_and_submit_batch(items).await?.map_err(|failure| failure.error);
+        node_batch_submit_outcome(result, "failed to submit transaction batch")
+    }
+
+    #[napi(js_name = "_retryProvenBatchOutcome")]
+    pub async fn retry_proven_batch_outcome(
+        &self,
+        submission: &ProvenBatchSubmission,
+    ) -> Result<NodeBatchSubmitOutcome, JsErr> {
+        let result = self.resubmit_proven_batch(submission).await?;
+        node_batch_submit_outcome(result, "failed to retry proven batch")
+    }
+}
+
+/// A batch submit failure plus any `getKey` callback detail retained by the keystore, read
+/// while `push_and_submit_batch` still holds the inner client lock.
+struct BatchSubmitFailure {
+    error: ClientError,
+    #[cfg(feature = "browser")]
+    get_key_error: Option<String>,
+}
+
+impl WebClient {
+    async fn push_and_submit_batch(
+        &self,
+        items: Vec<BatchItem>,
+    ) -> Result<Result<u32, BatchSubmitFailure>, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+
+        // `BatchBuilder` borrows `client` until `submit`, so retained callback
+        // detail is read from this keystore handle.
+        #[cfg(feature = "browser")]
+        let keystore = client.authenticator().cloned();
+        #[cfg(feature = "browser")]
+        if let Some(keystore) = keystore.as_ref() {
+            keystore.clear_auth_error();
+        }
+
+        let mut builder = client.new_transaction_batch();
+
+        for item in &items {
+            let native_account_id: NativeAccountId = item.account_id().into();
+            let native_req: NativeTransactionRequest = item.request().into();
+            maybe_wrap_send(Box::pin(builder.push(native_account_id, native_req)))
+                .await
+                .map_err(|err| {
+                    let js_error =
+                        js_error_with_context(err, "failed to push transaction to batch");
+                    #[cfg(feature = "browser")]
+                    append_get_key_detail(
+                        &js_error,
+                        keystore.as_ref().and_then(|keystore| keystore.last_get_key_error()),
+                    );
+                    js_error
+                })?;
+        }
+
+        Ok(maybe_wrap_send(Box::pin(builder.submit()))
+            .await
+            .map(|block_number| block_number.as_u32())
+            .map_err(|error| BatchSubmitFailure {
+                #[cfg(feature = "browser")]
+                get_key_error: keystore.as_ref().and_then(|keystore| keystore.last_get_key_error()),
+                error,
+            }))
+    }
+
+    async fn resubmit_proven_batch(
+        &self,
+        submission: &ProvenBatchSubmission,
+    ) -> Result<Result<u32, ClientError>, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+
+        Ok(maybe_wrap_send(Box::pin(client.retry_proven_batch(submission.native())))
+            .await
+            .map(|block_number| block_number.as_u32()))
+    }
+}
+
+fn indeterminate_batch_submission(
+    err: &ClientError,
+) -> Option<(ProvenBatchSubmission, Vec<String>)> {
+    let ClientError::BatchBuilder(BatchBuilderError::BatchSubmissionOutcomeUnknown {
+        submission,
+        ..
+    }) = err
+    else {
+        return None;
+    };
+    let wrapped = ProvenBatchSubmission::from_native(submission.as_ref().clone());
+    let ids = wrapped.transaction_ids().into_iter().map(|id| id.to_hex()).collect();
+    Some((wrapped, ids))
+}
+
+#[cfg(feature = "nodejs")]
+fn node_batch_submit_outcome(
+    result: Result<u32, ClientError>,
+    context: &str,
+) -> Result<NodeBatchSubmitOutcome, JsErr> {
+    match result {
+        Ok(block_number) => Ok(NodeBatchSubmitOutcome {
+            block_number: Some(block_number),
+            error_message: None,
+            error_code: None,
+            submission: None,
+            transaction_ids: None,
+        }),
+        Err(err) => {
+            let Some((wrapped, ids)) = indeterminate_batch_submission(&err) else {
+                return Err(js_error_with_context(err, context));
+            };
+            let js_err = js_error_with_context(err, context);
+            Ok(NodeBatchSubmitOutcome {
+                block_number: None,
+                error_message: Some(js_err.reason),
+                error_code: Some(BATCH_SUBMISSION_OUTCOME_UNKNOWN.to_string()),
+                submission: Some(wrapped),
+                transaction_ids: Some(ids),
+            })
+        },
+    }
+}
+
 /// Maps a batch submit/retry failure to a JS error. An indeterminate outcome
 /// attaches a [`ProvenBatchSubmission`] (browser) so callers can
-/// `retryProvenBatch` without re-proving. Node.js prefixes the stable code in
-/// the message; the submission handle is not attachable across napi, so
-/// `retryProvenBatch` is usable from the browser build only (Node.js callers
-/// see the code but cannot retry yet).
+/// `retryProvenBatch` without re-proving. Direct Node.js callers without
+/// `wrapClient` still see the prefixed code in the error message; `wrapClient`
+/// uses the `_...Outcome` methods to surface `code`, `submission`, and
+/// `transactionIds` matching the browser error shape.
 fn js_batch_submit_error(err: ClientError, context: &str) -> JsErr {
     #[cfg(feature = "browser")]
     {
-        let submission = match &err {
-            ClientError::BatchBuilder(BatchBuilderError::BatchSubmissionOutcomeUnknown {
-                submission,
-                ..
-            }) => Some(submission.as_ref().clone()),
-            _ => None,
-        };
+        let submission = indeterminate_batch_submission(&err);
         let js_error = js_error_with_context(err, context);
-        if let Some(native) = submission {
-            let wrapped = ProvenBatchSubmission::from_native(native);
-            let ids: Vec<String> =
-                wrapped.transaction_ids().into_iter().map(|id| id.to_hex()).collect();
+        if let Some((wrapped, ids)) = submission {
             let ids_js = js_sys::Array::new();
             for id in ids {
                 ids_js.push(&JsValue::from_str(&id));

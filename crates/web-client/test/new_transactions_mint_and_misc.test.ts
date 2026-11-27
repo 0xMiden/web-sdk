@@ -584,10 +584,10 @@ test.describe("storage map test", () => {
 // ================================================================================================
 
 test.describe("submitNewTransactionWithProver tests", () => {
-  test("submitNewTransactionWithProver with failing prover throws", async ({
+  test("submitNewTransactionWithProver reports how to check a failing prover", async ({
     run,
-  }) => {
-    const result = await run(async ({ client, sdk, helpers }) => {
+  }, testInfo) => {
+    const error = await run(async ({ client, sdk, helpers }) => {
       const { wallet, faucet } = await helpers.setupWalletAndFaucet();
 
       const mintTransactionRequest = await client.newMintTransactionRequest(
@@ -603,21 +603,29 @@ test.describe("submitNewTransactionWithProver tests", () => {
         null
       );
 
-      let threw = false;
       try {
         await client.submitNewTransactionWithProver(
           faucet.id(),
           mintTransactionRequest,
           failingProver
         );
-      } catch {
-        threw = true;
+      } catch (error) {
+        return {
+          message: error instanceof Error ? error.message : String(error),
+          help: error?.help,
+        };
       }
 
-      return { threw };
+      return null;
     });
 
-    expect(result.threw).toBe(true);
+    expect(error?.message).toContain("failed to prove transaction");
+    const hint = "Check the transaction prover configuration";
+    if (testInfo.project.name === "nodejs") {
+      expect(error?.message).toContain(`[help: ${hint}`);
+    } else {
+      expect(error?.help).toContain(hint);
+    }
   });
 
   test.describe("executeForSummary tests", () => {

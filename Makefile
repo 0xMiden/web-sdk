@@ -156,7 +156,7 @@ test-coverage: test-react-sdk test-idxdb-store test-vite-plugin test-web-client-
 # than skipping silently. The node mints a fresh one at each genesis and prints it to its
 # bootstrap log, which is the same extraction CI performs. Override TEST_NODE_BOOTSTRAP_LOG for a
 # node started elsewhere, or export TEST_MIDEN_FEE_FAUCET_ID yourself to skip the lookup.
-TEST_NODE_BOOTSTRAP_LOG ?= ../miden-client/target/test-node/data/logs/bootstrap.log
+TEST_NODE_BOOTSTRAP_LOG ?= target/test-node/data/logs/bootstrap.log
 ifndef TEST_MIDEN_FEE_FAUCET_ID
 # `:=` inside the guard, not a bare `?=`: an exported recursive variable is re-expanded while
 # make builds the environment for every recipe line of every target, which would re-run this
@@ -165,6 +165,20 @@ ifndef TEST_MIDEN_FEE_FAUCET_ID
 TEST_MIDEN_FEE_FAUCET_ID := $(shell sed -n 's/^Native faucet account id: //p' $(TEST_NODE_BOOTSTRAP_LOG) 2>/dev/null | tail -1)
 endif
 export TEST_MIDEN_FEE_FAUCET_ID
+
+ifndef TEST_MIDEN_FUNDER_ACCOUNTS_DIR
+TEST_MIDEN_FUNDER_ACCOUNTS_DIR := $(CURDIR)/target/test-node/data/funders
+endif
+export TEST_MIDEN_FUNDER_ACCOUNTS_DIR
+
+.PHONY: start-test-node
+START_TEST_NODE_ARGS ?=
+start-test-node: ## Start the local testing node (matches CI setup)
+	./scripts/start-test-node.sh $(START_TEST_NODE_ARGS)
+
+.PHONY: stop-test-node
+stop-test-node: ## Stop the local testing node
+	./scripts/stop-test-node.sh
 
 .PHONY: require-fee-faucet
 require-fee-faucet:

@@ -15,19 +15,10 @@ env:
   SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
   CARGO_PROFILE_DEV_DEBUG: 0
   RUST_CACHE_KEY: rust-cache-2026.02.18
-  # Pin the miden-client version used for test infrastructure.
-  # MUST match the miden-client + miden-protocol versions in Cargo.lock — the
-  # test node binaries are cargo-installed at the node rev pinned in this
-  # ref's Cargo.lock, and a schema mismatch against the client manifests as
-  # cryptic 'invalid wire type' decode errors on the client side (e.g. Digest
-  # fields encoded as bytes vs fixed64), or 'accept header validation failed'
-  # if the protocol version differs.
-  # Must match the rust-sdk revision the workspace `miden-client` dep resolves
-  # to in Cargo.lock: that ref's own Cargo.lock pins the node rev the client is
-  # built against. A commit sha (not the branch name) keeps cache keys stable.
-  # Re-pin whenever Cargo.lock moves, and to the release tag once one ships.
-  # A `Client PR:` marker overrides this for the test-node jobs
-  # (resolve-client-ref); this value stays the fallback for pushes to next.
+  # Pin the miden-client ref used for cache-key busting when a linked
+  # `Client PR:` marker overrides miden-client / Cargo.lock at CI runtime
+  # (resolve-client-ref). The test-node startup script and test-node-genesis
+  # crate live directly in this repository.
   # v0.18.0
   MIDEN_CLIENT_REF: de56694ceb46b315a14db31049ce2e86c25abf39
   # Sequencer 0.17.0-rc.2 will not start without a batch-builder wallet. The
@@ -741,7 +732,7 @@ jobs:
         with:
           node-version: "20"
       - name: Run linked dependency regressions
-        run: node --test scripts/linked-client-pr.test.cjs
+        run: node --test scripts/linked-client-pr.test.cjs scripts/test-node.test.cjs
 
   test-bench-scripts:
     name: benchmark script unit tests
@@ -926,11 +917,11 @@ jobs:
       MIDEN_CLIENT_REF: ${{ needs.resolve-client-ref.outputs.ref }}
     steps:
       - *update-ca-certificates
-      - name: Checkout miden-client for test infra
-        uses: actions/checkout@v6
-        with:
-          repository: 0xMiden/rust-sdk
-          ref: ${{ env.MIDEN_CLIENT_REF }}
+      - uses: actions/checkout@v6
+      - name: Inject linked miden-client PR
+        uses: ./.github/actions/inject-linked-client-pr
+      - name: Inject linked protocol PR
+        uses: ./.github/actions/inject-linked-protocol-pr
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
       - name: Resolve node revision
@@ -952,19 +943,12 @@ jobs:
         with:
           path: target/test-node/build
           key: ${{ runner.os }}-test-node-build-${{ steps.node-rev.outputs.rev }}
-      # Warm the cache consumed by every job that starts the node:
-      # start-test-node.sh unconditionally runs
-      # `cargo build --release -p test-node-genesis`, so the consumer jobs
-      # restore this target dir to make that build a near-no-op. Cargo does
-      # not mtime-check immutable registry sources, so the heavy dependency
-      # artifacts stay fresh across checkouts; only the small
-      # test-node-genesis crate itself recompiles.
       - name: Restore gen-genesis build cache
         id: cache-gen-genesis
         uses: actions/cache@v4
         with:
           path: genesis-target
-          key: ${{ runner.os }}-gen-genesis-${{ env.MIDEN_CLIENT_REF }}
+          key: ${{ runner.os }}-gen-genesis-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'tools/test-node-genesis/**') }}-${{ env.MIDEN_CLIENT_REF }}
       - name: Install Rust
         if: steps.cache-test-node.outputs.cache-hit != 'true' || steps.cache-gen-genesis.outputs.cache-hit != 'true'
         run: rustup update --no-self-update
@@ -972,20 +956,21 @@ jobs:
         if: steps.cache-test-node.outputs.cache-hit != 'true'
         run: ./scripts/start-test-node.sh --install-only
       - name: Build gen-genesis
-        if: steps.cache-gen-genesis.outputs.cache-hit != 'true'
+        if: steps.cache-gen-genesis.outputs.cache-hit != 'true' || !hashFiles('genesis-target/release/gen-genesis')
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/genesis-target
-        run: cargo build --release -p test-node-genesis --bin gen-genesis
+        run: cargo build --release -p test-node-genesis --bin gen-genesis --locked
       - name: Upload test node binaries
         uses: actions/upload-artifact@v4
         with:
           name: test-node-artifact
-          # `.crates.toml` records the installed rev; start-test-node.sh reads
-          # it in the consumer jobs to confirm the downloaded binaries match
-          # the pinned rev (otherwise it would try to cargo-install them from
-          # scratch).
           include-hidden-files: true
           path: target/test-node/install
+      - name: Upload gen-genesis binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: gen-genesis-artifact
+          path: genesis-target/release/gen-genesis
 
   test-web-client-nodejs:
     # Builds miden-client-web with --features nodejs (napi-rs binding) and
@@ -1056,51 +1041,41 @@ jobs:
         run: pnpm install --no-frozen-lockfile
       - name: Configure setuid sandbox
         run: . ./scripts/configure-sandbox.sh
-      - name: Checkout miden-client for test node
-        uses: actions/checkout@v6
-        with:
-          repository: 0xMiden/rust-sdk
-          ref: ${{ env.MIDEN_CLIENT_REF }}
-          path: miden-client
       - name: Download test node binaries
         uses: actions/download-artifact@v4
         with:
           name: test-node-artifact
-          path: miden-client/target/test-node/install
-      - name: Restore test node permissions
-        run: chmod +x miden-client/target/test-node/install/bin/*
-      - name: Restore gen-genesis build cache
-        uses: actions/cache/restore@v4
+          path: target/test-node/install
+      - name: Download gen-genesis binary
+        uses: actions/download-artifact@v4
         with:
-          path: genesis-target
-          key: ${{ runner.os }}-gen-genesis-${{ env.MIDEN_CLIENT_REF }}
+          name: gen-genesis-artifact
+          path: genesis-target/release
+      - name: Restore test node permissions
+        run: chmod +x target/test-node/install/bin/* genesis-target/release/gen-genesis
       - name: Start test node
-        # start-test-node.sh builds gen-genesis (near-no-op with the restored
-        # cache), bootstraps a fresh genesis, launches the validator,
-        # sequencer, ntx-builder and tx prover, and only returns once the
-        # node RPC answers on 57291.
-        working-directory: miden-client
+        # start-test-node.sh uses the prebuilt gen-genesis binary, bootstraps
+        # a fresh fee-charging genesis, launches the validator, sequencer,
+        # ntx-builder and tx prover, and waits until RPC answers on 57291.
         env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/genesis-target
-          # The web-sdk integration tests create accounts without funding them
-          # with the native fee asset, so run the node fee-free. Remove once the
-          # tests draw fee balances from the genesis funder wallets.
-          MIDEN_VERIFICATION_BASE_FEE: "0"
+          MIDEN_GEN_GENESIS_BIN: ${{ github.workspace }}/genesis-target/release/gen-genesis
+          MIDEN_TEST_NODE_PREBUILT: "1"
         run: |
-          ../scripts/patch-linked-test-node.sh ./scripts/start-test-node.sh
           ./scripts/start-test-node.sh --background
       # Since 0.17 the fee asset lives in the protocol configuration rather than
       # the block header, so a client is told which faucet issues it instead of
       # reading it off a block. Each genesis mints a fresh one, so it is read
       # from the bootstrap log rather than pinned.
-      - name: Export the node's native fee faucet
-        working-directory: miden-client
+      - name: Export the node's native fee faucet and funder wallets
         run: |
           ID=$(sed -n 's/^Native faucet account id: //p' \
             target/test-node/data/logs/bootstrap.log | tail -1)
           [ -n "$ID" ] || { echo "::error::native faucet id not found in bootstrap.log"; exit 1; }
           echo "TEST_MIDEN_FEE_FAUCET_ID=$ID" >> "$GITHUB_ENV"
           echo "native fee faucet: $ID"
+          if [ -d target/test-node/data/funders ]; then
+            echo "TEST_MIDEN_FUNDER_ACCOUNTS_DIR=${{ github.workspace }}/target/test-node/data/funders" >> "$GITHUB_ENV"
+          fi
       - name: Build napi binary
         run: cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
       - name: Stage napi binary as `miden_client_web.node`
@@ -1139,7 +1114,7 @@ jobs:
         run: pnpm --filter @miden-sdk/miden-sdk exec playwright test --project=nodejs --workers=1
       - name: Stop test node
         if: always()
-        run: ./miden-client/scripts/stop-test-node.sh
+        run: ./scripts/stop-test-node.sh
       - name: Show sccache stats
         if: always()
         run: sccache --show-stats || true
@@ -1164,6 +1139,11 @@ jobs:
           - ci-shard-2-sync-and-state
           - ci-shard-3-accounts-and-keys
           - ci-shard-4-compile-and-misc
+          - ci-shard-account-allowlist
+        # Keep the full WebKit suite off the critical path of ordinary PRs.
+        include: >-
+          ${{ fromJSON((github.event_name == 'push' || needs.changes.outputs.release_wasm == 'true')
+            && '[{"project":"webkit"}]' || '[]') }}
     steps:
       - *update-ca-certificates
       - uses: actions/checkout@v6
@@ -1187,61 +1167,64 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
       - name: Configure setuid sandbox
+        if: matrix.project != 'webkit'
         run: . ./scripts/configure-sandbox.sh
-      - name: Checkout miden-client for test node
-        uses: actions/checkout@v6
-        with:
-          repository: 0xMiden/rust-sdk
-          ref: ${{ env.MIDEN_CLIENT_REF }}
-          path: miden-client
       - name: Download test node binaries
         uses: actions/download-artifact@v4
         with:
           name: test-node-artifact
-          path: miden-client/target/test-node/install
-      - name: Restore test node permissions
-        run: chmod +x miden-client/target/test-node/install/bin/*
-      - name: Restore gen-genesis build cache
-        uses: actions/cache/restore@v4
+          path: target/test-node/install
+      - name: Download gen-genesis binary
+        uses: actions/download-artifact@v4
         with:
-          path: genesis-target
-          key: ${{ runner.os }}-gen-genesis-${{ env.MIDEN_CLIENT_REF }}
+          name: gen-genesis-artifact
+          path: genesis-target/release
+      - name: Restore test node permissions
+        run: chmod +x target/test-node/install/bin/* genesis-target/release/gen-genesis
       - name: Start test node
-        # start-test-node.sh builds gen-genesis (near-no-op with the restored
-        # cache), bootstraps a fresh genesis, launches the validator,
-        # sequencer, ntx-builder and tx prover, and only returns once the
-        # node RPC answers on 57291.
-        working-directory: miden-client
+        # start-test-node.sh uses the prebuilt gen-genesis binary, bootstraps
+        # a fresh fee-charging genesis, launches the validator, sequencer,
+        # ntx-builder and tx prover, and waits until RPC answers on 57291.
         env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/genesis-target
-          # The web-sdk integration tests create accounts without funding them
-          # with the native fee asset, so run the node fee-free. Remove once the
-          # tests draw fee balances from the genesis funder wallets.
-          MIDEN_VERIFICATION_BASE_FEE: "0"
+          MIDEN_GEN_GENESIS_BIN: ${{ github.workspace }}/genesis-target/release/gen-genesis
+          MIDEN_TEST_NODE_PREBUILT: "1"
+          MIDEN_ACCOUNT_ALLOWLIST: ${{ matrix.project == 'ci-shard-account-allowlist' && '1' || '0' }}
+          MIDEN_BLOCK_INTERVAL: ${{ matrix.project == 'webkit' && '15s' || '10s' }}
         run: |
-          ../scripts/patch-linked-test-node.sh ./scripts/start-test-node.sh
           ./scripts/start-test-node.sh --background
       # Since 0.17 the fee asset lives in the protocol configuration rather than
       # the block header, so a client is told which faucet issues it instead of
       # reading it off a block. Each genesis mints a fresh one, so it is read
       # from the bootstrap log rather than pinned.
-      - name: Export the node's native fee faucet
-        working-directory: miden-client
+      - name: Export the node's native fee faucet and funder wallets
         run: |
           ID=$(sed -n 's/^Native faucet account id: //p' \
             target/test-node/data/logs/bootstrap.log | tail -1)
           [ -n "$ID" ] || { echo "::error::native faucet id not found in bootstrap.log"; exit 1; }
           echo "TEST_MIDEN_FEE_FAUCET_ID=$ID" >> "$GITHUB_ENV"
           echo "native fee faucet: $ID"
+          if [ -d target/test-node/data/funders ]; then
+            echo "TEST_MIDEN_FUNDER_ACCOUNTS_DIR=${{ github.workspace }}/target/test-node/data/funders" >> "$GITHUB_ENV"
+          fi
       # Install Playwright separately from the test run. Inlining the install
       # into the test:ci script (yarn-style chained `&&`) breaks pnpm arg
       # forwarding: pnpm appends `-- --project=X` to the LAST command, but
       # playwright then sees `-- --project=X` and treats `--project=X` as a
       # positional file regex, yielding "No tests found".
       - name: Install Playwright browsers
+        if: matrix.project != 'webkit'
         run: pnpm --filter @miden-sdk/miden-sdk run test:install:ci
+      - name: Install Playwright WebKit
+        if: matrix.project == 'webkit'
+        run: pnpm --filter @miden-sdk/miden-sdk exec playwright install --with-deps webkit
       - name: Run web client tests
         run: pnpm --filter @miden-sdk/miden-sdk run test:ci --project=${{ matrix.project }}
+      - name: Require passing WebKit tests
+        if: matrix.project == 'webkit'
+        run: >-
+          jq -e 'any(.suites[] | recurse(.suites[]?) | .specs[]? | .tests[]?;
+          .expectedStatus == "passed" and any(.results[]; .status == "passed"))'
+          crates/web-client/playwright-report/results.json
       # A network transaction that the builder declines is not an error anywhere the test can
       # see: the note simply stays unconsumed. Its own log is the only place that says why.
       - name: Dump node logs on failure
@@ -1266,7 +1249,7 @@ jobs:
           if-no-files-found: ignore
       - name: Stop test node
         if: always()
-        run: ./miden-client/scripts/stop-test-node.sh
+        run: ./scripts/stop-test-node.sh
 
   integration-tests-remote-prover-web-client:
     name: Integration tests for remote prover
@@ -1308,50 +1291,41 @@ jobs:
 
       - name: Configure setuid sandbox
         run: . ./scripts/configure-sandbox.sh
-      - name: Checkout miden-client for test node
-        uses: actions/checkout@v6
-        with:
-          repository: 0xMiden/rust-sdk
-          ref: ${{ env.MIDEN_CLIENT_REF }}
-          path: miden-client
       - name: Download test node binaries
         uses: actions/download-artifact@v4
         with:
           name: test-node-artifact
-          path: miden-client/target/test-node/install
-      - name: Restore test node permissions
-        run: chmod +x miden-client/target/test-node/install/bin/*
-      - name: Restore gen-genesis build cache
-        uses: actions/cache/restore@v4
+          path: target/test-node/install
+      - name: Download gen-genesis binary
+        uses: actions/download-artifact@v4
         with:
-          path: genesis-target
-          key: ${{ runner.os }}-gen-genesis-${{ env.MIDEN_CLIENT_REF }}
+          name: gen-genesis-artifact
+          path: genesis-target/release
+      - name: Restore test node permissions
+        run: chmod +x target/test-node/install/bin/* genesis-target/release/gen-genesis
       - name: Start test node
         # start-test-node.sh launches the tx prover (miden-remote-prover on
         # 50051) along with the validator, sequencer and ntx-builder, so no
         # separate prover build or start step is needed.
-        working-directory: miden-client
         env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/genesis-target
-          # The web-sdk integration tests create accounts without funding them
-          # with the native fee asset, so run the node fee-free. Remove once the
-          # tests draw fee balances from the genesis funder wallets.
-          MIDEN_VERIFICATION_BASE_FEE: "0"
+          MIDEN_GEN_GENESIS_BIN: ${{ github.workspace }}/genesis-target/release/gen-genesis
+          MIDEN_TEST_NODE_PREBUILT: "1"
         run: |
-          ../scripts/patch-linked-test-node.sh ./scripts/start-test-node.sh
           ./scripts/start-test-node.sh --background
       # Since 0.17 the fee asset lives in the protocol configuration rather than
       # the block header, so a client is told which faucet issues it instead of
       # reading it off a block. Each genesis mints a fresh one, so it is read
       # from the bootstrap log rather than pinned.
-      - name: Export the node's native fee faucet
-        working-directory: miden-client
+      - name: Export the node's native fee faucet and funder wallets
         run: |
           ID=$(sed -n 's/^Native faucet account id: //p' \
             target/test-node/data/logs/bootstrap.log | tail -1)
           [ -n "$ID" ] || { echo "::error::native faucet id not found in bootstrap.log"; exit 1; }
           echo "TEST_MIDEN_FEE_FAUCET_ID=$ID" >> "$GITHUB_ENV"
           echo "native fee faucet: $ID"
+          if [ -d target/test-node/data/funders ]; then
+            echo "TEST_MIDEN_FUNDER_ACCOUNTS_DIR=${{ github.workspace }}/target/test-node/data/funders" >> "$GITHUB_ENV"
+          fi
       # See integration-tests-web-client for rationale on splitting the
       # Playwright install from the test invocation.
       - name: Install Playwright browsers
@@ -1360,7 +1334,7 @@ jobs:
         run: pnpm --filter @miden-sdk/miden-sdk run test:ci:remote_prover
       - name: Stop test node
         if: always()
-        run: ./miden-client/scripts/stop-test-node.sh
+        run: ./scripts/stop-test-node.sh
 
   # Publishes the aggregate Vitest line-coverage % to a JSON file on the
   # `badges` branch so shields.io can render a live badge in README.md.

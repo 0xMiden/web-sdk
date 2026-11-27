@@ -5081,6 +5081,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-node-genesis"
+version = "0.18.1"
+dependencies = [
+ "anyhow",
+ "miden-agglayer",
+ "miden-objects",
+ "miden-protocol",
+ "miden-standards",
+ "rand 0.10.2",
+ "rand_chacha 0.10.0",
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "textwrap"
 version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

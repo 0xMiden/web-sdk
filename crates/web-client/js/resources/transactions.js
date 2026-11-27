@@ -1,5 +1,6 @@
 import {
   isConsumableNow,
+  isQueryLimit,
   isStandardPaymentNote,
   resolveAccountRef,
   resolveNoteType,
@@ -384,8 +385,8 @@ export class TransactionsResource {
 
   /**
    * Withdraws USDCx through Circle xReserve by emitting one public burn note
-   * that the USDCx faucet consumes. The amount and the recipient are validated
-   * before any WASM call.
+   * that the USDCx faucet consumes. The amount, destination domain, and
+   * recipient are validated before building the withdrawal request.
    */
   async withdrawUsdcx(opts) {
     rejectUnexpectedAnchor(opts, "withdrawUsdcx", "submit()");
@@ -733,6 +734,10 @@ export class TransactionsResource {
       : await this.#inner.executeForSummary(accountId, request);
   }
 
+  /**
+   * Execute a custom transaction script. Browser VM assertions can expose
+   * optional MASM diagnostics as `error.masm`.
+   */
   async execute(opts) {
     rejectUnexpectedAnchor(opts, "execute", "executeRequest() or submit()");
     this.#client.assertNotTerminated();
@@ -1174,19 +1179,16 @@ export class TransactionsResource {
    * When `batch` / `submitBatch` fails with
    * `code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`, the node may or may not have
    * accepted the batch and nothing was recorded locally. Pass
-   * `error.submission` (in-thread) or `{ submissionId: error.submissionId }`
-   * (worker) to resend the same proven bytes without re-proving. Do not call
-   * `batch` / `submitBatch` again for that attempt: a new prove changes
-   * identities.
+   * `error.submission` (browser in-thread or Node.js) or
+   * `{ submissionId: error.submissionId }` (browser Web Worker) to resend the
+   * same proven bytes without re-proving. Do not call `batch` / `submitBatch`
+   * again for that attempt: a new prove changes identities.
    *
    * After a successful retry, confirm with {@link waitFor} / `list` for the
    * transaction ids on the error (`error.transactionIds` or
    * `submission.transactionIds()`). A retry the node rejects as a conflict
    * usually means the original attempt landed, but it records nothing locally and
    * a sync does not insert the missing records: look the ids up on the node.
-   *
-   * Browser builds only: the Node.js build prefixes the message with the code but
-   * cannot attach the submission or `transactionIds`, so it cannot retry yet.
    *
    * @param {object|string} submission - ProvenBatchSubmission, worker
    *   `submissionId`, or `{ submissionId }` from the unknown-outcome error.
@@ -1208,11 +1210,18 @@ export class TransactionsResource {
    * unfiltered query would hand a stale caller a superset of what it asked for, so it throws
    * instead. Read `TransactionRecord.expirationBlockNum()` and compare it yourself.
    *
-   * @param {object} [query] - `{ status: "uncommitted" }` or `{ ids: [...] }`.
+   * A query with an `account`, a `limit`, or a `status` of `"pending"`, `"committed"` or
+   * `"discarded"` returns the matching transactions newest first, at most `limit` of them,
+   * and only those reach JavaScript. `status: "uncommitted"` with a `limit` reads as
+   * `"pending"`. It cannot be combined with `ids`.
+   *
+   * @param {object} [query] - `{ status: "uncommitted" }`, `{ ids: [...] }` or
+   * `{ account?, status?, limit? }`.
    * @returns {Promise<TransactionRecord[]>}
    * @throws {Error} If `query` carries a defined `expiredBefore` and neither
    * `status: "uncommitted"` nor `ids` — the two shapes that outranked the expiry filter
-   * before it was removed, and still do.
+   * before it was removed, and still do. A bounded query (`account`, `limit` or a
+   * `pending`, `committed` or `discarded` status) throws the same way.
    */
   async list(query) {
     this.#client.assertNotTerminated();
@@ -1221,6 +1230,11 @@ export class TransactionsResource {
     let filter;
     if (!query) {
       filter = wasm.TransactionFilter.all();
+    } else if (isBoundedTransactionQuery(query)) {
+      if (query.expiredBefore !== undefined && query.status !== "uncommitted") {
+        throw new Error(EXPIRED_BEFORE_REMOVED);
+      }
+      filter = buildTransactionQuery(query, wasm);
     } else if (query.status === "uncommitted") {
       filter = wasm.TransactionFilter.uncommitted();
     } else if (query.ids) {
@@ -1234,10 +1248,7 @@ export class TransactionsResource {
       // always did, and an undefined value still means "no filter" rather than an error.
       // The unknown-shape fallback below is `all()`, so without this branch a stale caller
       // would silently receive every transaction instead of the subset it asked for.
-      throw new Error(
-        "The { expiredBefore } transaction query was removed. Transaction expiry is decided " +
-          "during state sync; read expiry from the transaction record instead."
-      );
+      throw new Error(EXPIRED_BEFORE_REMOVED);
     } else {
       filter = wasm.TransactionFilter.all();
     }
@@ -1373,6 +1384,12 @@ export class TransactionsResource {
 
   async #buildXReserveBurnRequest(opts, wasm) {
     const amount = toAmount(opts.amount, "withdrawUsdcx");
+    const domain = opts.destinationDomain;
+    if (!Number.isInteger(domain) || domain < 0 || domain > 0xffffffff) {
+      throw new Error(
+        "withdrawUsdcx: destinationDomain must be an integer from 0 to 4294967295"
+      );
+    }
     const recipientHex = opts.destinationRecipient;
     if (
       typeof recipientHex !== "string" ||
@@ -1393,7 +1410,7 @@ export class TransactionsResource {
       accountId,
       faucetId,
       amount,
-      opts.destinationDomain,
+      domain,
       recipient
     );
     return { accountId, request };
@@ -1753,4 +1770,39 @@ class TransactionSubmission {
   async waitForConfirmation(opts) {
     return await this.#resource.waitFor(this.#result.id().toHex(), opts);
   }
+}
+
+const TRANSACTION_STATUSES = ["pending", "committed", "discarded"];
+
+const EXPIRED_BEFORE_REMOVED =
+  "The { expiredBefore } transaction query was removed. Transaction expiry is decided " +
+  "during state sync; read expiry from the transaction record instead.";
+
+function isBoundedTransactionQuery(query) {
+  return (
+    query.account !== undefined ||
+    query.limit !== undefined ||
+    TRANSACTION_STATUSES.includes(query.status)
+  );
+}
+
+function buildTransactionQuery(query, wasm) {
+  if (query.ids) {
+    throw new Error(
+      "Transaction query ids cannot be combined with account, status or limit"
+    );
+  }
+  const { limit } = query;
+  if (limit !== undefined && !isQueryLimit(limit)) {
+    throw new Error("Transaction query limit must be a positive integer");
+  }
+  const status = query.status === "uncommitted" ? "pending" : query.status;
+  if (status !== undefined && !TRANSACTION_STATUSES.includes(status)) {
+    throw new Error(`Unknown transaction status: ${status}`);
+  }
+  const account =
+    query.account === undefined
+      ? undefined
+      : resolveAccountRef(query.account, wasm).toString();
+  return wasm.TransactionFilter.query(account, status, limit);
 }

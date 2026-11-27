@@ -60,6 +60,7 @@ test.describe("get_input_note", () => {
 
       // Mint
       await intClient.syncState();
+      await helpers.fundAccounts([walletId, faucetId], intClient);
       const mintRequest = await intClient.newMintTransactionRequest(
         walletId,
         faucetId,
@@ -89,7 +90,7 @@ test.describe("get_input_note", () => {
 
       // Wait for mint tx
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -129,7 +130,7 @@ test.describe("get_input_note", () => {
 
       // Wait for consume tx
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -206,6 +207,7 @@ test.describe("get_input_note", () => {
 
       // Mint (public note)
       await intClient.syncState();
+      await helpers.fundAccounts([walletId, faucetId], intClient);
       const mintRequest = await intClient.newMintTransactionRequest(
         walletId,
         faucetId,
@@ -235,7 +237,7 @@ test.describe("get_input_note", () => {
 
       // Wait for mint tx
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -275,7 +277,7 @@ test.describe("get_input_note", () => {
 
       // Wait for consume tx
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -348,6 +350,7 @@ test.describe("get_input_note", () => {
 
       // Mint (public note)
       await intClient.syncState();
+      await helpers.fundAccounts([walletId, faucetId], intClient);
       const mintRequest = await intClient.newMintTransactionRequest(
         walletId,
         faucetId,
@@ -377,7 +380,7 @@ test.describe("get_input_note", () => {
 
       // Wait for mint tx
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -417,7 +420,7 @@ test.describe("get_input_note", () => {
 
       // Wait for consume tx
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -551,6 +554,7 @@ test.describe("get_input_notes", () => {
 
       // Mint
       await intClient.syncState();
+      await helpers.fundAccounts([walletId, faucetId], intClient);
       const mintRequest = await intClient.newMintTransactionRequest(
         walletId,
         faucetId,
@@ -580,7 +584,7 @@ test.describe("get_input_notes", () => {
 
       // Wait for mint tx
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -620,7 +624,7 @@ test.describe("get_input_notes", () => {
 
       // Wait for consume tx
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -681,6 +685,7 @@ test.describe("get_consumable_notes", () => {
 
       // Mint
       await intClient.syncState();
+      await helpers.fundAccounts([walletIdStr, faucetIdStr], intClient);
       const mintRequest = await intClient.newMintTransactionRequest(
         walletIdObj,
         faucetIdObj,
@@ -710,7 +715,7 @@ test.describe("get_consumable_notes", () => {
 
       // Wait for mint tx
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -784,6 +789,7 @@ test.describe("get_consumable_notes", () => {
         const faucetId = faucet.id();
 
         await intClient.syncState();
+        await helpers.fundAccounts([walletId, faucetId], intClient);
         const mintRequest = await intClient.newMintTransactionRequest(
           walletId,
           faucetId,
@@ -813,7 +819,7 @@ test.describe("get_consumable_notes", () => {
 
         // Wait for mint tx
         let timeWaited = 0;
-        while (timeWaited < 10000) {
+        while (timeWaited < 45000) {
           await intClient.syncState();
           const uncommitted = await intClient.getTransactions(
             sdk.TransactionFilter.uncommitted()
@@ -913,6 +919,10 @@ test.describe("get_consumable_notes", () => {
 
       // Mint
       await intClient.syncState();
+      await helpers.fundAccounts(
+        [senderWalletId, senderFaucetId, targetWalletId],
+        intClient
+      );
       const mintRequest = await intClient.newMintTransactionRequest(
         senderWalletId,
         senderFaucetId,
@@ -932,7 +942,7 @@ test.describe("get_consumable_notes", () => {
 
       // Wait for mint tx
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -966,7 +976,7 @@ test.describe("get_consumable_notes", () => {
 
       // Wait for consume tx
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -1003,7 +1013,7 @@ test.describe("get_consumable_notes", () => {
 
       // Wait for send tx
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -1093,6 +1103,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
 
       // Mint (public note) and wait
       await intClient.syncState();
+      await helpers.fundAccounts([senderId, faucetId, targetId], intClient);
       const mintRequest = await intClient.newMintTransactionRequest(
         senderId,
         faucetId,
@@ -1111,7 +1122,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       const mintedNoteId = execUpdate.createdNotes().notes()[0].id().toString();
 
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -1138,7 +1149,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       txId = execUpdate.executedTransaction().id().toHex();
 
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -1182,7 +1193,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       txId = execUpdate.executedTransaction().id().toHex();
 
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -1220,7 +1231,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       txId = execUpdate.executedTransaction().id().toHex();
 
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -1289,6 +1300,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
 
       // Mint (public note) and wait
       await intClient.syncState();
+      await helpers.fundAccounts([senderId, faucetId, targetId], intClient);
       const mintRequest = await intClient.newMintTransactionRequest(
         senderId,
         faucetId,
@@ -1307,7 +1319,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       const mintedNoteId = execUpdate.createdNotes().notes()[0].id().toString();
 
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -1334,7 +1346,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       txId = execUpdate.executedTransaction().id().toHex();
 
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -1380,7 +1392,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       txId = execUpdate.executedTransaction().id().toHex();
 
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -1418,7 +1430,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       txId = execUpdate.executedTransaction().id().toHex();
 
       timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()

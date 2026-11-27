@@ -21,6 +21,7 @@ import {
   NODE_ARRAY_TYPES,
   wrapClient,
 } from "../js/node/napi-compat.js";
+import { getSharedNodeFunderRuntime } from "./fee-funder";
 
 const require = createRequire(import.meta.url);
 
@@ -168,11 +169,39 @@ export const WasmWebClient = {
 
 // ── Helpers (matches window.helpers.*) ────────────────────────────────
 
-function createHelpers(getClient: () => any, setClient: (c: any) => void) {
+export function createNodeFunderClient(
+  targetRpcUrl: string,
+  feeFaucetId?: string
+): Promise<any> {
+  return WasmWebClient.createClient(
+    targetRpcUrl,
+    undefined,
+    undefined,
+    "funder",
+    feeFaucetId
+  );
+}
+
+function createHelpers(
+  getClient: () => any,
+  setClient: (c: any) => void,
+  rpcUrl: string
+) {
+  const funderRuntime = getSharedNodeFunderRuntime({
+    sdk: getNodeSdk(),
+    rpcUrl,
+    feeFaucetId: process.env.TEST_MIDEN_FEE_FAUCET_ID,
+    createFunderClient: createNodeFunderClient,
+    getDefaultClient: getClient,
+  });
+
   return {
+    sendFundingNotes: funderRuntime.sendFundingNotes,
+    fundAccounts: funderRuntime.fundAccounts,
+    ensureFunded: funderRuntime.ensureFunded,
     waitForTransaction: async (
       transactionId: string,
-      maxWaitTime = 10000,
+      maxWaitTime = 45000,
       delayInterval = 1000
     ) => {
       const client = getClient();
@@ -364,7 +393,7 @@ export async function setupNodeGlobals(
     currentClient = client;
     (globalThis as any).client = client;
   };
-  globals.helpers = createHelpers(() => currentClient, setClientFn);
+  globals.helpers = createHelpers(() => currentClient, setClientFn, rpcUrl);
 
   // Put everything on globalThis.window and globalThis directly
   const w = globalThis as any;

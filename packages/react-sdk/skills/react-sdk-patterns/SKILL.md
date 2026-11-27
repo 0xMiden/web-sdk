@@ -97,6 +97,7 @@ The package exports 37 hooks from `src/hooks/`, plus the context accessors `useM
 | `useSyncControl()` | control | `{ pauseSync, resumeSync, isPaused }`. Use this instead of `autoSyncInterval: 0` when you need to stop auto-sync after mount; manual `useSyncState().sync()` still works while paused |
 | `useExportStore()` / `useImportStore()` | store portability (deprecated: keep a separate store per signer through its `storeName`, or use `useExportNote()`, `useImportNote()` and `useImportAccount()`, and `useMidenClient().accounts.export(id)` to export an account) | `isExporting` / `isImporting` |
 | `useExportNote()` / `useImportNote()` | note portability | `exportNote(noteId)` returns `Uint8Array`; `importNote(bytes)` returns the note id |
+| `useWaitForAccountUpdate()` | subscription / wait | watches commitment or storage `slot` / `mapKey` updates (`isWaiting`, `unsubscribe`, `reset`, optional reactive `enabled`) |
 | `MultiSignerProvider` / `SignerSlot` / `useMultiSigner` | signer | see "Signer Integration" |
 
 ## Query Hooks
@@ -456,6 +457,19 @@ await waitForConsumableNotes({
 });
 ```
 
+### useWaitForAccountUpdate()
+```tsx
+const { waitForAccountUpdate, unsubscribe, account, isWaiting, error, reset } =
+  useWaitForAccountUpdate();
+// Resolves when account commitment or storage slot/mapKey changes past baseline
+const updated = await waitForAccountUpdate(myAccountId, {
+  slot: "counter::value",
+  timeoutMs: 30000,
+  intervalMs: 1000,
+});
+```
+Also accepts `useWaitForAccountUpdate(accountId, { enabled: true, ... })` for reactive mode, `baselineCommitment` / `baselineValue` / `mapKey` filters, and stops polling cleanly on `unsubscribe()` or component unmount.
+
 ### useSessionAccount(options)
 ```tsx
 const { initialize, sessionAccountId, isReady, step, error, reset } = useSessionAccount({
@@ -714,7 +728,7 @@ await runExclusive(async () => {
 });
 ```
 
-**The built-in hooks route their own client calls through `runExclusive` too.** 22 files under `src/hooks/` pull it out of `useMiden()` and wrap their multi-call work, using the pattern `const runExclusiveSafe = runExclusive ?? runExclusiveDirect;` so they still serialize when no provider-supplied lock is available: `useSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useWithdrawUsdcx`, `useClaimAggLayerDeposit`, `useTransaction`, `usePreview`, `useChainAnchor`, `useCreateWallet`, `useCreateFaucet`, `useExecuteProgram`, `useCreateNetworkNote`, `useMultiSend`, `useWaitForNotes`, the four export/import hooks and all four PSWAP transaction hooks. Use it for your own multi-step sequences for the same reason they do - the client serializes each individual forwarded call, not your group of them (see `frontend-pitfalls` FP2, which also names the raw-bound `SYNC_METHODS` that serialize themselves not at all).
+**The built-in hooks route their own client calls through `runExclusive` too.** 22 files under `src/hooks/` pull it out of `useMiden()` and wrap their multi-call work, using the pattern `const runExclusiveSafe = runExclusive ?? runExclusiveDirect;` so they still serialize when no provider-supplied lock is available: `useSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useWithdrawUsdcx`, `useClaimAggLayerDeposit`, `useTransaction`, `usePreview`, `useChainAnchor`, `useCreateWallet`, `useCreateFaucet`, `useExecuteProgram`, `useCreateNetworkNote`, `useMultiSend`, `useWaitForNotes`, `useWaitForAccountUpdate`, the four export/import hooks and all four PSWAP transaction hooks. Use it for your own multi-step sequences for the same reason they do - the client serializes each individual forwarded call, not your group of them (see `frontend-pitfalls` FP2, which also names the raw-bound `SYNC_METHODS` that serialize themselves not at all).
 
 ## Non-Surface: Do Not Invent These
 
@@ -745,6 +759,8 @@ import type {
   ExecuteTransactionOptions, CaptureAnchorOptions, PreviewTransactionOptions,
   ExecuteProgramOptions, ExecuteProgramResult,
   TransactionResult, SyncState, WaitForCommitOptions, WaitForNotesOptions,
+  WaitForAccountUpdateOptions, UseWaitForAccountUpdateOptions,
+  UseWaitForAccountUpdateResult,
   TransactionHistoryOptions, TransactionHistoryResult, TransactionStatus,
   StreamedNote, UseNoteStreamOptions, UseNoteStreamReturn,
   UseSessionAccountOptions, UseSessionAccountReturn, SessionAccountStep,

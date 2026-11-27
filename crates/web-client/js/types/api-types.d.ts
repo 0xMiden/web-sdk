@@ -847,7 +847,7 @@ export interface WithdrawUsdcxOptions extends TransactionOptions {
    * `2 ** 53 - 1`.
    */
   amount: number | bigint;
-  /** Circle domain of the destination chain (for example 6 for Arbitrum). */
+  /** Circle domain ID as an integer from 0 to 4294967295, inclusive. */
   destinationDomain: number;
   /**
    * Destination recipient as Circle's 32-byte form, 0x-prefixed hex (64 hex
@@ -1130,6 +1130,18 @@ export interface ExecuteOptions extends TransactionOptions {
   )[];
 }
 
+/** Additional details on a browser transaction error caused by a MASM assertion. */
+export interface MasmExecutionDiagnostic {
+  /** The unsigned field element in decimal, preserving its full precision. */
+  errorCode: string;
+  /** Assertion text, when available from the VM. */
+  assertionMessage?: string;
+  /** Source file URI, present together with a valid span. */
+  file?: string;
+  /** Byte offsets in the source file, with an inclusive start and exclusive end. */
+  span?: { start: number; end: number };
+}
+
 export interface ExecuteProgramOptions {
   /** Account to execute the program against. */
   account: AccountRef;
@@ -1269,7 +1281,18 @@ export interface ConsumeAllResult {
  */
 export type TransactionQuery =
   | { status: "uncommitted" }
-  | { ids: (string | TransactionId)[] };
+  | { ids: (string | TransactionId)[] }
+  /**
+   * Transactions executed by `account` in `status`, newest first, keeping at
+   * most `limit` of them; only those reach JavaScript. An omitted criterion
+   * matches every transaction. `"uncommitted"` with a `limit` reads as
+   * `"pending"`. Not combinable with `ids`.
+   */
+  | {
+      account?: AccountRef;
+      status?: "uncommitted" | "pending" | "committed" | "discarded";
+      limit?: number;
+    };
 
 // ════════════════════════════════════════════════════════════════
 // Note types
@@ -1292,7 +1315,13 @@ export type NoteQuery =
    * state. Only supported by `notes.list`; `notes.listSent` returns an empty
    * list for this query.
    */
-  | { scriptRoots: (string | Word)[] };
+  | { scriptRoots: (string | Word)[] }
+  /**
+   * Filter by nullifier, given as hex strings or Word instances (e.g. from
+   * `InputNoteRecord.nullifier()`). Notes match regardless of their state, and
+   * a nullifier no stored note has matches nothing.
+   */
+  | { nullifiers: (string | Word)[] };
 
 /** Options for standalone note creation utilities. */
 export interface NoteOptions {
@@ -1702,6 +1731,7 @@ export interface TransactionsResource {
    * (see {@link MasmErrorCode}).
    *
    * @param options - Execute options including the account, compiled script, and foreign accounts.
+   * @throws A browser MASM assertion may expose a {@link MasmExecutionDiagnostic} as `error.masm`.
    */
   execute(options: ExecuteOptions): Promise<TransactionSubmitResult>;
 
@@ -1941,19 +1971,16 @@ export interface TransactionsResource {
    * When {@link batch} / {@link submitBatch} fails with
    * `code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`, the node may or may not have
    * accepted the batch and nothing was recorded locally. Pass
-   * `error.submission` (in-thread / no worker) or
-   * `{ submissionId: error.submissionId }` (worker) to resend the same proven
-   * bytes without re-proving. Do not call `batch` / `submitBatch` again for
-   * that attempt: a new prove changes identities.
+   * `error.submission` (browser in-thread / Node.js) or
+   * `{ submissionId: error.submissionId }` (browser Web Worker) to resend the
+   * same proven bytes without re-proving. Do not call `batch` / `submitBatch`
+   * again for that attempt: a new prove changes identities.
    *
    * After a successful retry, confirm with {@link waitFor} / {@link list} for
    * the transaction ids on the error (`error.transactionIds` or
    * `submission.transactionIds()`). A retry the node rejects as a conflict
    * usually means the original attempt landed, but it records nothing locally and
    * a sync does not insert the missing records: look the ids up on the node.
-   *
-   * Browser builds only: the Node.js build prefixes the message with the code but
-   * cannot attach the submission or `transactionIds`, so it cannot retry yet.
    *
    * Accepting an externally proved transaction as a batch member
    * (`push_proven_transaction`) needs a rust-sdk release that exposes it on
@@ -1973,14 +2000,17 @@ export interface TransactionsResource {
   executeProgram(options: ExecuteProgramOptions): Promise<FeltArray>;
 
   /**
-   * List transactions, optionally filtered by status or IDs.
+   * List transactions, optionally filtered by account, status, IDs or a limit.
    *
    * Omitting `query`, or passing a shape this method does not recognise, returns every
-   * stored transaction.
+   * stored transaction. A query with an `account`, a `limit` or a `pending`, `committed` or
+   * `discarded` status returns the matching transactions newest first, at most `limit` of
+   * them.
    *
-   * @param query - Optional filter for transaction status or IDs.
+   * @param query - Optional filter for transaction account, status, IDs or limit.
    * @throws If `query` carries a defined `expiredBefore` and neither `status: "uncommitted"`
-   * nor `ids` — the two shapes that outranked the expiry filter before it was removed.
+   * nor `ids` — the two shapes that outranked the expiry filter before it was removed. A
+   * bounded query throws the same way.
    * That filter was removed upstream — expiry is decided during state sync — and silently
    * widening it to the unfiltered query would return a superset of what was asked for.
    * Compare {@link TransactionRecord.expirationBlockNum} against the height you care about
@@ -2049,10 +2079,11 @@ export interface PswapResource {
 
 export interface NotesResource {
   /**
-   * List received (input) notes, optionally filtered by status, IDs, or note
-   * script roots.
+   * List received (input) notes, optionally filtered by status, IDs, note
+   * script roots or nullifiers.
    *
-   * @param query - Optional filter by note status, note IDs, or script roots.
+   * @param query - Optional filter by note status, note IDs, script roots or
+   * nullifiers.
    */
   list(query?: NoteQuery): Promise<InputNoteRecord[]>;
   /**
@@ -2063,11 +2094,11 @@ export interface NotesResource {
   get(noteId: NoteInput): Promise<InputNoteRecord | null>;
 
   /**
-   * List sent (output) notes, optionally filtered by status or IDs. A script
-   * root query returns an empty list, since script roots are only tracked for
-   * received notes.
+   * List sent (output) notes, optionally filtered by status, IDs or nullifiers.
+   * A script root query returns an empty list, since script roots are only
+   * tracked for received notes.
    *
-   * @param query - Optional filter by note status or note IDs.
+   * @param query - Optional filter by note status, note IDs or nullifiers.
    */
   listSent(query?: NoteQuery): Promise<OutputNoteRecord[]>;
 

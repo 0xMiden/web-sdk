@@ -38,6 +38,7 @@ Everything is published from this monorepo, in lockstep with the upstream Rust [
 
 - **[Web Client](https://docs.miden.xyz/builder/tools/clients/web-client/)** — full API reference for `@miden-sdk/miden-sdk`: `MidenClient`, accounts, notes, transactions, sync, prover.
 - **[React SDK](https://docs.miden.xyz/builder/tools/clients/react-sdk/)** — every hook, with prop tables, return shapes, and copy-pasteable examples.
+- **[WASM troubleshooting](docs/external/src/web-client/library/wasm-troubleshooting.md)** helps diagnose browser SDK errors.
 - **[`miden-client` crate](https://docs.rs/miden-client)** — the upstream Rust client these bind to.
 - **[Network docs](https://docs.miden.xyz)** — protocol, accounts model, note semantics, mainnet/testnet endpoints.
 

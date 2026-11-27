@@ -15,9 +15,10 @@ impl WebClient {
     ) -> Result<Vec<TransactionRecord>, JsErr> {
         let client = self.get_read_client()?;
         let transaction_records: Vec<NativeTransactionRecord> = client
-            .get_transactions(transaction_filter.into())
+            .get_transactions((&transaction_filter).into())
             .await
             .map_err(|err| js_error_with_context(err, "failed to get transactions"))?;
+        let transaction_records = transaction_filter.select(transaction_records);
 
         Ok(transaction_records.into_iter().map(Into::into).collect())
     }

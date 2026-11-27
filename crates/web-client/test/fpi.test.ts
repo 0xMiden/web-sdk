@@ -61,6 +61,7 @@ test.describe("fpi test", () => {
       let getItemAccountBuilderResult = new sdk.AccountBuilder(walletSeed)
         .withAuthComponent(authComponent)
         .withComponent(getItemComponent)
+        .withBasicWalletComponent()
         .storageMode(sdk.AccountStorageMode.public())
         .build();
 
@@ -74,6 +75,7 @@ test.describe("fpi test", () => {
       await intClient.keystore.insert(foreignAccountId, secretKey);
       await intClient.newAccount(getItemAccountBuilderResult.account, false);
       await intClient.syncState();
+      await helpers.fundAccounts([foreignAccountId], intClient);
 
       let txRequest = new sdk.TransactionRequestBuilder().build();
 
@@ -90,7 +92,7 @@ test.describe("fpi test", () => {
 
       // Wait for deploy tx
       let timeWaited = 0;
-      while (timeWaited < 10000) {
+      while (timeWaited < 45000) {
         await intClient.syncState();
         const uncommitted = await intClient.getTransactions(
           sdk.TransactionFilter.uncommitted()
@@ -108,6 +110,7 @@ test.describe("fpi test", () => {
         sdk.AccountStorageMode.public(),
         sdk.AuthScheme.AuthRpoFalcon512
       );
+      await helpers.fundAccounts([newAccount.id()], intClient);
 
       let txScript = `
             use miden::protocol::tx

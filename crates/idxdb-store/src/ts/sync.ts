@@ -14,7 +14,12 @@ import {
 
 import { upsertInputNote, upsertOutputNote } from "./notes.js";
 
-import { applyFullAccountState } from "./accounts.js";
+import {
+  applyAccountPatch,
+  applyFullAccountState,
+  lockAccount,
+  undoAccountStates,
+} from "./accounts.js";
 import { updateAccountWitness } from "./witnesses.js";
 import {
   logWebStoreError,
@@ -27,9 +32,9 @@ import Dexie from "dexie";
 export async function getNoteTags(dbId: string) {
   try {
     const db = getDatabase(dbId);
-    let records = await db.tags.toArray();
+    const records = await db.tags.toArray();
 
-    let processedRecords = records.map((record) => {
+    const processedRecords = records.map((record) => {
       record.sourceNoteId =
         record.sourceNoteId == "" ? undefined : record.sourceNoteId;
       record.sourceAccountId =
@@ -52,7 +57,7 @@ export async function getSyncHeight(dbId: string) {
     const db = getDatabase(dbId);
     const record = await db.blockchainCheckpoint.get(1);
     if (record) {
-      let data = {
+      const data = {
         blockNum: record.blockNum,
       };
       return data;
@@ -92,8 +97,8 @@ export async function addNoteTag(
 ) {
   try {
     const db = getDatabase(dbId);
-    let tagArray = new Uint8Array(tag);
-    let tagBase64 = uint8ArrayToBase64(tagArray);
+    const tagArray = new Uint8Array(tag);
+    const tagBase64 = uint8ArrayToBase64(tagArray);
     await db.tags.add({
       tag: tagBase64,
       sourceNoteId: sourceNoteId ? sourceNoteId : "",
@@ -114,8 +119,8 @@ export async function removeNoteTag(
 ) {
   try {
     const db = getDatabase(dbId);
-    let tagArray = new Uint8Array(tag);
-    let tagBase64 = uint8ArrayToBase64(tagArray);
+    const tagArray = new Uint8Array(tag);
+    const tagBase64 = uint8ArrayToBase64(tagArray);
     const subscriptionKey = sourceSubscriptionKey ? sourceSubscriptionKey : "";
 
     return await db.tags
@@ -202,6 +207,21 @@ interface JsAccountWitnessUpdate {
   witness: Uint8Array;
 }
 
+interface JsAccountPatchUpdate {
+  accountId: string;
+  nonce: string;
+  updatedSlots: JsStorageSlot[];
+  changedMapEntries: JsStorageMapEntry[];
+  changedAssets: JsVaultAsset[];
+  codeRoot: string;
+  storageRoot: string;
+  vaultRoot: string;
+  committed: boolean;
+  commitment: string;
+  code: Uint8Array;
+  initialAccountCommitment: string;
+}
+
 interface JsStateSyncUpdate {
   blockNum: number;
   flattenedNewBlockHeaders: FlattenedU8Vec;
@@ -216,8 +236,25 @@ interface JsStateSyncUpdate {
   accountUpdates: JsAccountUpdate[];
   transactionUpdates: SerializedTransactionData[];
   accountWitnesses?: JsAccountWitnessUpdate[];
+  /** Incremental public-account patches, applied inside the sync transaction. */
+  accountPatches?: JsAccountPatchUpdate[];
+  /** Commitments of discarded account states to undo inside the sync transaction. */
+  undoAccountCommitments?: string[];
+  /** Accounts to lock inside the sync transaction. */
+  lockedAccountIds?: string[];
 }
 
+/**
+ * Writes a sync result in one Dexie transaction: height, block headers and MMR nodes, notes,
+ * transactions, account replacements and witnesses, patches, undo and locks. These commit or
+ * roll back together, so the height never moves past rows that were not written. The protocol
+ * configuration is the one write outside it: the caller persists it first (a stored row without
+ * its state write is unused, and the retried sync writes it again).
+ *
+ * The body may only await Dexie requests. Awaiting anything else (a WASM call, a fetch, a timer)
+ * lets IndexedDB auto-commit the transaction, so every value is computed by the caller first and
+ * passed in ready to write.
+ */
 export async function applyStateSync(
   dbId: string,
   stateUpdate: JsStateSyncUpdate
@@ -238,6 +275,9 @@ export async function applyStateSync(
     transactionUpdates,
   } = stateUpdate;
   const accountWitnesses = stateUpdate.accountWitnesses ?? [];
+  const accountPatches = stateUpdate.accountPatches ?? [];
+  const undoAccountCommitments = stateUpdate.undoAccountCommitments ?? [];
+  const lockedAccountIds = stateUpdate.lockedAccountIds ?? [];
 
   const newBlockHeaders = reconstructFlattenedVec(flattenedNewBlockHeaders);
 
@@ -264,6 +304,33 @@ export async function applyStateSync(
   ];
 
   return await db.dexie.transaction("rw", tablesToAccess, async (tx) => {
+    // Account locks, the undo of discarded transactions and incremental patches commit with the
+    // rest of the sync, so a failure anywhere leaves the accounts as they were. They run in
+    // sequence, in the order the sync computed them, before the independent writes below.
+    for (const accountId of lockedAccountIds) {
+      await lockAccount(dbId, accountId);
+    }
+    if (undoAccountCommitments.length > 0) {
+      await undoAccountStates(dbId, undoAccountCommitments);
+    }
+    for (const patch of accountPatches) {
+      await applyAccountPatch(
+        dbId,
+        patch.accountId,
+        patch.nonce,
+        patch.updatedSlots,
+        patch.changedMapEntries,
+        patch.changedAssets,
+        patch.codeRoot,
+        patch.storageRoot,
+        patch.vaultRoot,
+        patch.committed,
+        patch.commitment,
+        patch.code,
+        patch.initialAccountCommitment
+      );
+    }
+
     await Promise.all([
       Promise.all(
         serializedInputNotes.map((note) => {
@@ -308,7 +375,7 @@ export async function applyStateSync(
       ),
       Promise.all(
         transactionUpdates.map((transactionRecord) => {
-          let promises = [
+          const promises = [
             upsertTransactionRecord(
               dbId,
               transactionRecord.id,

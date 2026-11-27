@@ -1661,7 +1661,7 @@ class WebClient {
    * Resubmits an already-proven batch after an indeterminate admission response.
    *
    * Pass the `submission` from a batch failure with
-   * `code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` (in-thread), or
+   * `code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` (browser in-thread), or
    * `{ submissionId }` / the `submissionId` string from a worker-backed
    * failure. Does not re-execute or re-prove. Returns the node's chain tip on
    * acceptance.

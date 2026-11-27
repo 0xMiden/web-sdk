@@ -760,6 +760,7 @@ const result = await client.transactions.consumeAll({ account: wallet });
 console.log(`Consumed ${result.consumed} notes, ${result.remaining} remaining`);
 
 // `remaining === 0` therefore means "no payment consumable now", not "no notes".
+// Filter by nullifier; see the notes guide.
 // To see block-locked notes and other scripts too, with their unlock block:
 const walletId = wallet.id().toString();
 const all = await client.notes.listConsumable({ account: wallet });
@@ -979,7 +980,11 @@ const txs = await client.transactions.list();
 Two failure modes worth handling after a batch submit:
 
 1. The node can accept a batch and the local store update still fail (`code: "ApplyTransactionAfterSubmitFailed"`, or a message containing `batch was accepted at block N but building store updates failed` / `applying to the store failed`). Do not submit again; sync instead.
-2. The submission can come back without a definite outcome (`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` with `submission` in-thread or `submissionId` under a Web Worker, plus `transactionIds`). Resend with `client.transactions.retryProvenBatch(error.submission ?? { submissionId: error.submissionId })` without calling `batch` / `submitBatch` again. After a successful retry, confirm with `waitFor` / `list` for those ids. A conflict on retry usually means the original attempt landed, but a rejected retry records nothing locally and a sync does not insert the missing records, so look the ids up on the node, not in the local store. Browser builds only: Node.js errors prefix the message with the code and carry no submission handle or `transactionIds`.
+2. The submission can come back without a definite outcome (`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` with `submission` in browser in-thread and Node.js builds, or `submissionId` under a Web Worker, plus `transactionIds`). Resend with `client.transactions.retryProvenBatch(error.submission ?? { submissionId: error.submissionId })` without calling `batch` / `submitBatch` again. After a successful retry, confirm with `waitFor` / `list` for those ids. A conflict on retry usually means the original attempt landed, but a rejected retry records nothing locally and a sync does not insert the missing records, so look the ids up on the node, not in the local store.
+
+### MASM assertion diagnostics
+
+When browser transaction execution fails on a VM assertion, the error can carry a `masm` diagnostic alongside its existing message. The diagnostic includes `errorCode` as a decimal string and may include `assertionMessage` and a source `file` URI with a byte `span` (`start` inclusive, `end` exclusive). This works in-thread and through the Web Worker. Production builds can strip assertion text and source locations from protocol and standard scripts. Node.js keeps its existing error message.
 
 ### Manual Transaction Lifecycle
 
@@ -1311,6 +1316,8 @@ await client.transactions.withdrawUsdcx({
   destinationRecipient: "0x0000000000000000000000001111111111111111111111111111111111111111" // 32 bytes
 });
 ```
+
+`destinationDomain` must be an integer from 0 to 4294967295, inclusive.
 
 The lower-level builders are `Note.createXReserveBurnNote(...)` and `client.newXReserveBurnTransactionRequest(...)`, which take the recipient as a 32-byte `Uint8Array`.
 
