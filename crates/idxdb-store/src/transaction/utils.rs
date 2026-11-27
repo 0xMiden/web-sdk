@@ -4,30 +4,20 @@ use alloc::vec::Vec;
 
 use miden_client::Word;
 use miden_client::account::AccountId;
-use miden_client::note::{BlockNumber, ToInputNoteCommitments};
 use miden_client::store::StoreError;
 use miden_client::transaction::{
-    ExecutedTransaction,
     LogTopic,
-    TransactionDetails,
     TransactionLog,
     TransactionLogs,
     TransactionRecord,
     TransactionScript,
-    TransactionStatus,
 };
 use miden_client_proto::encode;
 use serde::Serialize;
 use wasm_bindgen::prelude::wasm_bindgen;
 
-use super::js_bindings::{
-    idxdb_insert_transaction_logs,
-    idxdb_insert_transaction_script,
-    idxdb_upsert_transaction_record,
-};
 use super::models::TransactionLogIdxdbObject;
 use crate::bytes::{FromStoreBytes, ToStoreBytes};
-use crate::promise::await_ok;
 
 // TYPES
 // ================================================================================================
@@ -62,64 +52,6 @@ pub(crate) struct SerializedTransactionLog {
     pub topic: Vec<u8>,
     #[serde(with = "serde_bytes")]
     pub content: Vec<u8>,
-}
-
-// ================================================================================================
-
-/// Converts an `ExecutedTransaction` into a pending `TransactionRecord`.
-/// `submission_height` is the block number at which the transaction was submitted to the network.
-pub(crate) fn build_transaction_record(
-    executed_transaction: &ExecutedTransaction,
-    submission_height: BlockNumber,
-) -> TransactionRecord {
-    let nullifiers: Vec<Word> = executed_transaction
-        .input_notes()
-        .iter()
-        .map(|x| x.nullifier().as_word())
-        .collect();
-
-    let output_notes = executed_transaction.output_notes();
-
-    let details = TransactionDetails {
-        account_id: executed_transaction.account_id(),
-        init_account_state: executed_transaction.initial_account().initial_commitment(),
-        final_account_state: executed_transaction.final_account().to_commitment(),
-        input_note_nullifiers: nullifiers,
-        output_notes: output_notes.clone(),
-        block_num: executed_transaction.block_header().block_num(),
-        submission_height,
-        expiration_block_num: executed_transaction.expiration_block_num(),
-        creation_timestamp: crate::current_timestamp_u64(),
-    };
-
-    TransactionRecord::new(
-        executed_transaction.id(),
-        details,
-        executed_transaction.tx_args().tx_script().cloned(),
-        TransactionStatus::Pending,
-    )
-}
-
-/// Converts an `ExecutedTransaction` into a `TransactionRecord` and inserts it into the store,
-/// with the logs that the transaction emitted.
-/// `submission_height` is the block number at which the transaction was submitted to the network.
-pub async fn insert_proven_transaction_data(
-    db_id: &str,
-    executed_transaction: &ExecutedTransaction,
-    submission_height: BlockNumber,
-) -> Result<(), StoreError> {
-    let transaction_record = build_transaction_record(executed_transaction, submission_height);
-
-    upsert_transaction_record(db_id, &transaction_record).await?;
-
-    let logs =
-        serde_wasm_bindgen::to_value(&serialize_transaction_logs(executed_transaction.logs()))
-            .map_err(|err| StoreError::DatabaseError(format!("serialization error: {err}")))?;
-    let promise =
-        idxdb_insert_transaction_logs(db_id, transaction_record.id.as_word().to_hex(), logs);
-    await_ok(promise, "failed to insert transaction logs").await?;
-
-    Ok(())
 }
 
 // TRANSACTION LOGS
@@ -191,30 +123,4 @@ pub(crate) fn serialize_transaction_record(
         status_variant: transaction_record.status.variant() as u8,
         status: encode(&transaction_record.status),
     }
-}
-
-/// Updates the transaction record in the database, inserting it if it doesn't exist.
-pub(crate) async fn upsert_transaction_record(
-    db_id: &str,
-    transaction: &TransactionRecord,
-) -> Result<(), StoreError> {
-    let serialized_data = serialize_transaction_record(transaction);
-
-    if let Some(root) = serialized_data.script_root.clone() {
-        let promise = idxdb_insert_transaction_script(db_id, root, serialized_data.tx_script);
-        await_ok(promise, "failed to insert script").await?;
-    }
-
-    let promise = idxdb_upsert_transaction_record(
-        db_id,
-        serialized_data.id,
-        serialized_data.details,
-        serialized_data.block_num,
-        serialized_data.status_variant,
-        serialized_data.status,
-        serialized_data.script_root,
-    );
-    await_ok(promise, "failed to insert transaction data").await?;
-
-    Ok(())
 }

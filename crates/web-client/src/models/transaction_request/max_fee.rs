@@ -13,6 +13,7 @@ use miden_client::account::standards::auth::{FeeConversionInfo, MultisigAuthArgs
 use miden_client::asset::AssetAmount;
 use miden_client::block::BlockNumber;
 use miden_client::transaction::{
+    RequestAuthArgs,
     TransactionRequest as NativeTransactionRequest,
     TransactionSummary as NativeTransactionSummary,
 };
@@ -119,7 +120,9 @@ impl EstimatedMaxFee {
 fn multisig_auth_args(request: &NativeTransactionRequest) -> Result<MultisigAuthArgs, MaxFeeError> {
     let not_multisig = |reason: &str| MaxFeeError::NotMultisigAuthArgs(reason.to_string());
 
-    let auth_arg = (*request.auth_arg()).ok_or_else(|| not_multisig("it has no auth argument"))?;
+    let RequestAuthArgs::Explicit(auth_arg) = *request.auth_args() else {
+        return Err(not_multisig("it has no auth argument"));
+    };
     let preimage = request
         .advice_map()
         .get(&auth_arg)

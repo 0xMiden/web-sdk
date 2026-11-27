@@ -1,9 +1,10 @@
 use js_export_macro::js_export;
-use miden_client::account::AccountHeader as NativeAccountHeader;
 use miden_client::note::TxFeeNote;
 use miden_client::transaction::{
-    ExecutedTransaction as NativeExecutedTransaction,
     RawOutputNote as NativeRawOutputNote,
+    RawOutputNotes as NativeRawOutputNotes,
+    TransactionOutcome as NativeTransactionOutcome,
+    TransactionWitness as NativeTransactionWitness,
 };
 
 use super::account_header::AccountHeader;
@@ -16,51 +17,54 @@ use super::output_notes::OutputNotes;
 use super::transaction_args::TransactionArgs;
 use super::transaction_id::TransactionId;
 use super::transaction_logs::TransactionLogs;
+use crate::platform::{JsErr, from_str_err};
 
 /// Describes the result of executing a transaction program for the Miden protocol.
 ///
-/// Executed transaction serves two primary purposes:
-/// - It contains a complete description of the effects of the transaction. Specifically, it
-///   contains all output notes created as the result of the transaction and the absolute-valued
-///   account patch produced by execution.
-/// - It contains all the information required to re-execute and prove the transaction in a
-///   stateless manner. This includes all public transaction inputs, but also all nondeterministic
-///   inputs that the host provided to Miden VM while executing the transaction (i.e., advice
-///   witness).
+/// An executed transaction has two parts:
+/// - The outcome: a complete description of the effects of the transaction. It contains the account
+///   headers before and after the transaction, the absolute-valued account patch, the input notes
+///   and all output notes created as the result of the transaction.
+/// - The witness: the inputs required to re-execute and prove the transaction. An executed
+///   transaction from a `TransactionStoreUpdate` does not have it, so `txArgs()` and
+///   `blockHeader()` throw for it.
 #[derive(Clone)]
 #[js_export]
-pub struct ExecutedTransaction(NativeExecutedTransaction);
+pub struct ExecutedTransaction {
+    outcome: NativeTransactionOutcome,
+    witness: Option<NativeTransactionWitness>,
+}
 
 #[js_export]
 impl ExecutedTransaction {
     /// Returns the transaction ID.
     pub fn id(&self) -> TransactionId {
-        self.0.id().into()
+        self.outcome.id().into()
     }
 
     /// Returns the account the transaction was executed against.
     #[js_export(js_name = "accountId")]
     pub fn account_id(&self) -> AccountId {
-        self.0.account_id().into()
+        self.outcome.account_id().into()
     }
 
     //TODO: Expose partial account
     /// Returns the initial account header before execution.
     #[js_export(js_name = "initialAccountHeader")]
     pub fn initial_account_header(&self) -> AccountHeader {
-        NativeAccountHeader::from(self.0.initial_account()).into()
+        self.outcome.initial_account().into()
     }
 
     /// Returns the final account header after execution.
     #[js_export(js_name = "finalAccountHeader")]
     pub fn final_account_header(&self) -> AccountHeader {
-        self.0.final_account().into()
+        self.outcome.final_account().into()
     }
 
     /// Returns the input notes consumed by the transaction.
     #[js_export(js_name = "inputNotes")]
     pub fn input_notes(&self) -> InputNotes {
-        self.0.input_notes().into()
+        self.outcome.effects().input_notes().into()
     }
 
     /// Returns the output notes produced by the transaction.
@@ -71,7 +75,7 @@ impl ExecutedTransaction {
     /// and [`Self::user_output_notes`].
     #[js_export(js_name = "outputNotes")]
     pub fn output_notes(&self) -> OutputNotes {
-        self.0.output_notes().into()
+        self.native_output_notes().into()
     }
 
     /// Returns the kernel's `TX_FEE` note, or `undefined` when the transaction paid no fee.
@@ -82,7 +86,7 @@ impl ExecutedTransaction {
     /// itself to collide with.
     #[js_export(js_name = "feeNote")]
     pub fn fee_note(&self) -> Option<OutputNote> {
-        self.0.output_notes().iter().find(|note| is_fee_note(note)).map(Into::into)
+        self.native_output_notes().iter().find(|note| is_fee_note(note)).map(Into::into)
     }
 
     /// Returns the output notes the transaction's author actually created, with the kernel's
@@ -93,8 +97,7 @@ impl ExecutedTransaction {
     /// whenever the kernel happens to order it first.
     #[js_export(js_name = "userOutputNotes")]
     pub fn user_output_notes(&self) -> Vec<OutputNote> {
-        self.0
-            .output_notes()
+        self.native_output_notes()
             .iter()
             .filter(|note| !is_fee_note(note))
             .map(Into::into)
@@ -102,26 +105,32 @@ impl ExecutedTransaction {
     }
 
     /// Returns the arguments passed to the transaction script.
+    ///
+    /// Throws for an executed transaction from a `TransactionStoreUpdate`, which does not hold the
+    /// transaction inputs.
     #[js_export(js_name = "txArgs")]
-    pub fn tx_args(&self) -> TransactionArgs {
-        self.0.tx_args().into()
+    pub fn tx_args(&self) -> Result<TransactionArgs, JsErr> {
+        Ok(self.witness()?.tx_inputs().tx_args().into())
     }
 
-    /// Returns the block header that included the transaction.
+    /// Returns the reference block header of the transaction.
+    ///
+    /// Throws for an executed transaction from a `TransactionStoreUpdate`, which does not hold the
+    /// transaction inputs.
     #[js_export(js_name = "blockHeader")]
-    pub fn block_header(&self) -> BlockHeader {
-        self.0.block_header().into()
+    pub fn block_header(&self) -> Result<BlockHeader, JsErr> {
+        Ok(self.witness()?.tx_inputs().block_header().into())
     }
 
     /// Returns the absolute account patch resulting from execution.
     #[js_export(js_name = "accountPatch")]
     pub fn account_patch(&self) -> AccountPatch {
-        self.0.account_patch().into()
+        self.outcome.effects().account_patch().into()
     }
 
     /// Returns the logs that the transaction emitted, in emission order.
     pub fn logs(&self) -> TransactionLogs {
-        self.0.logs().clone().into()
+        self.outcome.effects().logs().clone().into()
     }
 
     // TODO: tx_inputs
@@ -129,18 +138,26 @@ impl ExecutedTransaction {
     // TODO: advice_witness
 }
 
-// CONVERSIONS
-// ================================================================================================
-
-impl From<NativeExecutedTransaction> for ExecutedTransaction {
-    fn from(native_executed_transaction: NativeExecutedTransaction) -> Self {
-        ExecutedTransaction(native_executed_transaction)
+impl ExecutedTransaction {
+    /// Creates an executed transaction from its outcome and, if available, its witness.
+    pub(crate) fn new(
+        outcome: NativeTransactionOutcome,
+        witness: Option<NativeTransactionWitness>,
+    ) -> Self {
+        Self { outcome, witness }
     }
-}
 
-impl From<&NativeExecutedTransaction> for ExecutedTransaction {
-    fn from(native_executed_transaction: &NativeExecutedTransaction) -> Self {
-        ExecutedTransaction(native_executed_transaction.clone())
+    fn native_output_notes(&self) -> &NativeRawOutputNotes {
+        self.outcome.effects().output_notes()
+    }
+
+    fn witness(&self) -> Result<&NativeTransactionWitness, JsErr> {
+        self.witness.as_ref().ok_or_else(|| {
+            from_str_err(
+                "the executed transaction of a TransactionStoreUpdate does not hold the \
+                 transaction inputs",
+            )
+        })
     }
 }
 

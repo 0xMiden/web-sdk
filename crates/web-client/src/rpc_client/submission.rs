@@ -41,7 +41,7 @@ impl TransactionInputs {
     /// Extracts the complete inputs from a transaction execution result.
     #[js_export(js_name = "fromTransactionResult")]
     pub fn from_transaction_result(result: &TransactionResult) -> TransactionInputs {
-        TransactionInputs(result.native().into())
+        TransactionInputs(result.tx_inputs().clone())
     }
 
     /// Serializes the plaintext inputs as a canonical `miden_objects` Protobuf message.

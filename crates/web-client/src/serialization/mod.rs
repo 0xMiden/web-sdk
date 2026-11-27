@@ -12,8 +12,24 @@ use prost::Message;
 use crate::js_error_with_context;
 use crate::platform::{JsBytes, JsErr, bytes_to_js, from_str_err};
 
+pub mod note_transport;
 pub mod summary;
+pub mod sync;
 pub mod transaction;
+
+pub(super) fn with_context<E: core::error::Error + 'static>(
+    context: &'static str,
+) -> impl FnOnce(E) -> JsErr {
+    move |err| js_error_with_context(err, context)
+}
+
+pub(super) fn required<T>(field: Option<T>, context: &str, name: &str) -> Result<T, JsErr> {
+    field.ok_or_else(|| from_str_err(&alloc::format!("{context}: missing {name}")))
+}
+
+pub(super) fn invalid(context: &str, reason: &str) -> JsErr {
+    from_str_err(&alloc::format!("{context}: {reason}"))
+}
 
 /// Encodes a value as its protobuf message, into the platform byte type.
 pub fn encode_proto<T: ProtobufValue>(value: &T) -> JsBytes {
@@ -25,25 +41,6 @@ pub fn decode_proto<T: ProtobufValue>(bytes: &JsBytes) -> Result<T, JsErr> {
     let vec = crate::platform::js_to_bytes(bytes);
     let context = alloc::format!("failed to deserialize {}", core::any::type_name::<T>());
     miden_client_proto::decode(&vec).map_err(|e| js_error_with_context(e, &context))
-}
-
-/// Decodes platform bytes from an untrusted party that hold the protobuf message of `T`, with all
-/// the checks of `T`.
-///
-/// Differs from [`decode_proto`] by rejecting bytes that the message does not use, such as a
-/// suffix or a field that the message does not define. Then a value and the same value with
-/// extra bytes do not decode as equal. The check compares the encoded length of the decoded
-/// message with the input length, so it does not encode the message again. It does not reject
-/// every non-canonical encoding. For example, the same fields in a different order still decode.
-pub fn decode_untrusted_proto<T: ProtobufValue>(bytes: &JsBytes) -> Result<T, JsErr> {
-    let vec = crate::platform::js_to_bytes(bytes);
-    let context = alloc::format!("failed to deserialize {}", core::any::type_name::<T>());
-    let message =
-        T::Message::decode(vec.as_slice()).map_err(|e| js_error_with_context(e, &context))?;
-    if message.encoded_len() != vec.len() {
-        return Err(from_str_err(&alloc::format!("{context}: the message has unused bytes")));
-    }
-    T::from_proto(message).map_err(|e| js_error_with_context(e, &context))
 }
 
 /// Encodes a `miden-objects` protobuf message, the canonical encoding of a protocol value, into the

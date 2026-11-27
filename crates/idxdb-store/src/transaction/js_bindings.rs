@@ -15,31 +15,6 @@ extern "C" {
     #[wasm_bindgen(js_name = getTransactionLogs)]
     pub fn idxdb_get_transaction_logs(db_id: &str, transaction_id: String) -> js_sys::Promise;
 
-    #[wasm_bindgen(js_name = insertTransactionLogs)]
-    pub fn idxdb_insert_transaction_logs(
-        db_id: &str,
-        transaction_id: String,
-        logs: JsValue,
-    ) -> js_sys::Promise;
-
-    #[wasm_bindgen(js_name = insertTransactionScript)]
-    pub fn idxdb_insert_transaction_script(
-        db_id: &str,
-        script_root: Vec<u8>,
-        tx_script: Option<Vec<u8>>,
-    ) -> js_sys::Promise;
-
-    #[wasm_bindgen(js_name = upsertTransactionRecord)]
-    pub fn idxdb_upsert_transaction_record(
-        db_id: &str,
-        transaction_id: String,
-        details: Vec<u8>,
-        block_num: u32,
-        statusVariant: u8,
-        status: Vec<u8>,
-        scriptRoot: Option<Vec<u8>>,
-    ) -> js_sys::Promise;
-
     #[wasm_bindgen(js_name = applyTransactionBatch)]
     pub fn idxdb_apply_transaction_batch(db_id: &str, payloads: JsValue) -> js_sys::Promise;
 }

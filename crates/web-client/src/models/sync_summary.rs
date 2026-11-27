@@ -5,7 +5,8 @@ use crate::models::account_id::AccountId;
 use crate::models::note_id::NoteId;
 use crate::models::transaction_id::TransactionId;
 use crate::platform::{JsBytes, JsErr};
-use crate::serialization::{decode_proto, encode_proto};
+use crate::serialization::encode_message;
+use crate::serialization::sync::{SyncSummaryMessage, decode_sync_summary};
 
 /// Contains stats about the sync operation.
 #[js_export]
@@ -45,12 +46,12 @@ impl SyncSummary {
 
     /// Serializes the sync summary into bytes.
     pub fn serialize(&self) -> JsBytes {
-        encode_proto(&self.0)
+        encode_message(&SyncSummaryMessage::from(&self.0))
     }
 
     /// Deserializes a sync summary from bytes.
     pub fn deserialize(bytes: JsBytes) -> Result<SyncSummary, JsErr> {
-        decode_proto::<NativeSyncSummary>(&bytes).map(SyncSummary)
+        decode_sync_summary(&bytes).map(SyncSummary)
     }
 }
 

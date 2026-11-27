@@ -200,12 +200,7 @@ const methodHandlers = {
     const transactionResult = wasm.TransactionResult.deserialize(
       transactionResultBytes
     );
-    const transactionUpdate = await wasmWebClient.applyTransaction(
-      transactionResult,
-      submissionHeight
-    );
-    const serializedUpdate = transactionUpdate.serialize();
-    return serializedUpdate.buffer;
+    await wasmWebClient.applyTransaction(transactionResult, submissionHeight);
   },
   [MethodName.EXECUTE_TRANSACTION]: async (args) => {
     const wasm = await getWasmOrThrow();
@@ -288,16 +283,10 @@ const methodHandlers = {
       proven,
       result
     );
-    const transactionUpdate = await wasmWebClient.applyTransaction(
-      result,
-      submissionHeight
-    );
+    await wasmWebClient.applyTransaction(result, submissionHeight);
 
     return {
       transactionId,
-      submissionHeight,
-      serializedTransactionResult: result.serialize().buffer,
-      serializedTransactionUpdate: transactionUpdate.serialize().buffer,
     };
   },
   [MethodName.SUBMIT_NEW_TRANSACTION_BATCH]: async (args) => {
@@ -399,16 +388,10 @@ const methodHandlers = {
       proven,
       result
     );
-    const transactionUpdate = await wasmWebClient.applyTransaction(
-      result,
-      submissionHeight
-    );
+    await wasmWebClient.applyTransaction(result, submissionHeight);
 
     return {
       transactionId,
-      submissionHeight,
-      serializedTransactionResult: result.serialize().buffer,
-      serializedTransactionUpdate: transactionUpdate.serialize().buffer,
     };
   },
 };
@@ -488,9 +471,6 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_MOCK] = async (args) => {
 
   return {
     transactionId: result.transactionId,
-    submissionHeight: result.submissionHeight,
-    serializedTransactionResult: result.serializedTransactionResult,
-    serializedTransactionUpdate: result.serializedTransactionUpdate,
     serializedMockChain: updatedMockChain,
     serializedMockNoteTransportNode: updatedMockNoteTransportNode,
   };
@@ -525,9 +505,6 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK] = async (
 
   return {
     transactionId: result.transactionId,
-    submissionHeight: result.submissionHeight,
-    serializedTransactionResult: result.serializedTransactionResult,
-    serializedTransactionUpdate: result.serializedTransactionUpdate,
     serializedMockChain: updatedMockChain,
     serializedMockNoteTransportNode: updatedMockNoteTransportNode,
   };

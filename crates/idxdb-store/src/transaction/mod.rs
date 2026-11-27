@@ -8,10 +8,10 @@ use miden_client::store::{StoreError, TransactionFilter};
 use miden_client::sync::{NoteTagRecord, NoteTagSource};
 use miden_client::transaction::{
     BatchStoreUpdate,
-    ExecutedTransaction,
     TransactionDetails,
     TransactionId,
     TransactionLogs,
+    TransactionOutcome,
     TransactionRecord,
     TransactionScript,
     TransactionStatus,
@@ -50,7 +50,6 @@ pub mod utils;
 use utils::{
     SerializedTransactionData,
     SerializedTransactionLog,
-    build_transaction_record,
     serialize_transaction_logs,
     serialize_transaction_record,
     transaction_logs_from_idxdb,
@@ -214,7 +213,7 @@ impl IdxdbStore {
         tx_update: TransactionStoreUpdate,
     ) -> Result<(), StoreError> {
         self.apply_executed_transactions(
-            core::slice::from_ref(tx_update.executed_transaction()),
+            core::slice::from_ref(tx_update.transaction()),
             tx_update.submission_height(),
             tx_update.note_updates(),
             tx_update.new_tags(),
@@ -228,7 +227,7 @@ impl IdxdbStore {
         batch_update: BatchStoreUpdate,
     ) -> Result<(), StoreError> {
         self.apply_executed_transactions(
-            batch_update.executed_transactions(),
+            batch_update.transactions(),
             batch_update.submission_height(),
             batch_update.note_updates(),
             batch_update.new_tags(),
@@ -240,7 +239,7 @@ impl IdxdbStore {
     /// transaction.
     async fn apply_executed_transactions(
         &self,
-        transactions: &[ExecutedTransaction],
+        transactions: &[TransactionOutcome],
         submission_height: BlockNumber,
         note_updates: &NoteUpdates,
         new_tags: &[NoteTagRecord],
@@ -298,15 +297,19 @@ impl IdxdbStore {
     /// for the batch JS call, without notes or tags.
     fn prepare_transaction_for_batch(
         &self,
-        executed_tx: &ExecutedTransaction,
+        transaction: &TransactionOutcome,
         submission_height: BlockNumber,
     ) -> Result<BatchUpdatePayload, StoreError> {
-        let patch = executed_tx.account_patch();
-        let final_header = executed_tx.final_account();
-        let account_id = executed_tx.account_id();
+        let patch = transaction.effects().account_patch();
+        let final_header = transaction.final_account();
+        let account_id = transaction.account_id();
 
         // Build transaction record payload via the shared serializer.
-        let record = build_transaction_record(executed_tx, submission_height);
+        let record = TransactionRecord::from_outcome(
+            transaction,
+            submission_height,
+            crate::current_timestamp_u64(),
+        );
         let transaction_record = serialize_transaction_record(&record);
 
         // Build the payload and advance the forest. Later updates in the batch read the forest, so
@@ -355,9 +358,9 @@ impl IdxdbStore {
         };
 
         let payload = BatchUpdatePayload {
-            initial_account_commitment: executed_tx.initial_account().to_commitment().to_string(),
+            initial_account_commitment: transaction.initial_account().to_commitment().to_string(),
             transaction_record,
-            transaction_logs: serialize_transaction_logs(executed_tx.logs()),
+            transaction_logs: serialize_transaction_logs(transaction.effects().logs()),
             account_state,
             input_notes: Vec::new(),
             output_notes: Vec::new(),
