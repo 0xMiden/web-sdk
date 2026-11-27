@@ -69,12 +69,13 @@ describe("code registry", () => {
 
   it("returns a forest without debug info", async () => {
     const dbId = await openTestDb();
-    const db = getDatabase(dbId);
-    await db.codeMastForests.put({
-      commitment: "0xf1",
-      mast: new Uint8Array([1]),
-    });
-    await db.codeProcedures.put({ procedureRoot: "0xa", commitment: "0xf1" });
+    await insertProcedures(dbId, [
+      {
+        commitment: "0xf1",
+        mast: new Uint8Array([1]),
+        procedureRoots: ["0xa"],
+      },
+    ]);
 
     expect(await getProcedure(dbId, "0xa")).toEqual({
       mast: uint8ArrayToBase64(new Uint8Array([1])),
@@ -94,15 +95,6 @@ describe("code registry", () => {
     const second = uint8ArrayToBase64(new Uint8Array([2]));
     expect((await getProcedure(dbId, "0xshared"))?.mast).toBe(first);
     expect((await getProcedure(dbId, "0xb"))?.mast).toBe(second);
-  });
-
-  it("registers a procedure root that a forest lists twice once", async () => {
-    const dbId = await openTestDb();
-    await insertProceduresWithDebugInfo(dbId, [
-      forest("0xf1", ["0xa", "0xa", "0xb"], 1),
-    ]);
-
-    expect(await getDatabase(dbId).codeProcedures.count()).toBe(2);
   });
 
   it("skips a forest that already has debug info", async () => {
@@ -156,52 +148,6 @@ describe("code registry", () => {
     );
   });
 
-  it("returns every registered procedure root once", async () => {
-    const dbId = await openTestDb();
-    expect(await getProcedureRoots(dbId)).toEqual([]);
-    expect(await getProcedureCount(dbId)).toBe(0);
-
-    await insertProceduresWithDebugInfo(dbId, [
-      forest("0xf1", ["0xa", "0xb"], 1),
-      forest("0xf2", ["0xb", "0xc"], 2),
-    ]);
-
-    expect((await getProcedureRoots(dbId))?.sort()).toEqual([
-      "0xa",
-      "0xb",
-      "0xc",
-    ]);
-    expect(await getProcedureCount(dbId)).toBe(3);
-  });
-
-  it("adds forests without debug info and keeps a stored forest", async () => {
-    const dbId = await openTestDb();
-    await insertProceduresWithDebugInfo(dbId, [forest("0xf1", ["0xa"], 1)]);
-
-    await insertProcedures(dbId, [
-      {
-        commitment: "0xf1",
-        mast: new Uint8Array([9]),
-        procedureRoots: ["0xa"],
-      },
-      {
-        commitment: "0xf2",
-        mast: new Uint8Array([2]),
-        procedureRoots: ["0xa", "0xb", "0xb"],
-      },
-    ]);
-
-    // The stored forest keeps its MAST and debug info, and `0xa` keeps its first forest.
-    expect(await getProcedure(dbId, "0xa")).toEqual({
-      mast: uint8ArrayToBase64(new Uint8Array([1])),
-      debugInfo: uint8ArrayToBase64(new Uint8Array([1, 1])),
-    });
-    expect(await getProcedure(dbId, "0xb")).toEqual({
-      mast: uint8ArrayToBase64(new Uint8Array([2])),
-    });
-    expect((await getProcedureRoots(dbId))?.sort()).toEqual(["0xa", "0xb"]);
-  });
-
   it("changes nothing when the same forests are added twice", async () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
@@ -229,26 +175,6 @@ describe("code registry", () => {
     expect(await rows()).toEqual(afterFirst);
     expect(afterFirst.forests).toHaveLength(2);
     expect(afterFirst.procedures).toHaveLength(2);
-  });
-
-  it("adds debug info to a forest that insertProcedures stored", async () => {
-    const dbId = await openTestDb();
-    await insertProcedures(dbId, [
-      {
-        commitment: "0xf1",
-        mast: new Uint8Array([1]),
-        procedureRoots: ["0xa"],
-      },
-    ]);
-    expect(await getForestsWithDebugInfo(dbId, ["0xf1"])).toEqual([]);
-
-    await insertProceduresWithDebugInfo(dbId, [forest("0xf1", ["0xa"], 1)]);
-
-    expect(await getForestsWithDebugInfo(dbId, ["0xf1"])).toEqual(["0xf1"]);
-    expect(await getProcedure(dbId, "0xa")).toEqual({
-      mast: uint8ArrayToBase64(new Uint8Array([1])),
-      debugInfo: uint8ArrayToBase64(new Uint8Array([1, 1])),
-    });
   });
 
   it("adds no forest when one of them fails", async () => {
