@@ -82,37 +82,37 @@ export async function getAccountHeader(dbId: string, accountId: string) {
 export async function getAccountSnapshot(
   dbId: string,
   accountId: string,
+  includeCode: boolean,
+  includeStorage: boolean,
   maps: boolean,
   assets: boolean
 ) {
   const db = getDatabase(dbId);
-  return db.dexie.transaction(
-    "r",
-    [
-      db.latestAccountHeaders,
-      db.accountCodes,
-      db.latestAccountStorages,
-      db.latestStorageMapEntries,
-      db.latestAccountAssets,
-    ],
-    async () => {
-      const header = await getAccountHeader(dbId, accountId);
-      if (!header) return null;
-      const [code, storage, mapEntries, vaultAssets] = await Promise.all([
-        getAccountCode(dbId, header.codeRoot),
-        getAccountStorage(dbId, accountId, []),
-        maps ? getAccountStorageMaps(dbId, accountId) : [],
-        assets ? getAccountVaultAssets(dbId, accountId, []) : [],
-      ]);
-      return {
-        header,
-        code,
-        storage,
-        maps: mapEntries,
-        assets: vaultAssets,
-      };
-    }
-  );
+  const tables = [
+    db.latestAccountHeaders,
+    ...(includeCode ? [db.accountCodes] : []),
+    ...(includeStorage ? [db.latestAccountStorages] : []),
+    ...(maps ? [db.latestStorageMapEntries] : []),
+    ...(assets ? [db.latestAccountAssets] : []),
+  ];
+
+  return db.dexie.transaction("r", tables, async () => {
+    const header = await getAccountHeader(dbId, accountId);
+    if (!header) return null;
+    const [code, storage, mapEntries, vaultAssets] = await Promise.all([
+      includeCode ? getAccountCode(dbId, header.codeRoot) : undefined,
+      includeStorage ? getAccountStorage(dbId, accountId, []) : [],
+      maps ? getAccountStorageMaps(dbId, accountId) : [],
+      assets ? getAccountVaultAssets(dbId, accountId, []) : [],
+    ]);
+    return {
+      header,
+      code,
+      storage,
+      maps: mapEntries,
+      assets: vaultAssets,
+    };
+  });
 }
 
 class PreviewComplete extends Error {}
@@ -146,7 +146,9 @@ export async function getAccountSnapshotsAfterUndo(
       async () => {
         await undoAccountStates(dbId, accountCommitments);
         for (const accountId of accountIds) {
-          snapshots.push(await getAccountSnapshot(dbId, accountId, true, true));
+          snapshots.push(
+            await getAccountSnapshot(dbId, accountId, true, true, true, true)
+          );
         }
         // Throwing rolls the whole transaction back, undo included.
         throw new PreviewComplete();

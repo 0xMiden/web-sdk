@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
+import Dexie from "dexie";
 import { openDatabase, getDatabase } from "./schema.js";
 import {
   upsertInputNote,
@@ -16,6 +17,23 @@ import {
   getNoteScript,
 } from "./notes.js";
 import { recordReads } from "./test-utils.js";
+import { uint8ArrayToBase64 } from "./utils.js";
+
+const base64Calls = vi.hoisted(() => ({ insideTransaction: [] as boolean[] }));
+
+// Pass-through wrapper that records whether a Dexie transaction is still active
+// when each conversion runs.
+vi.mock("./utils.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./utils.js")>();
+  const { default: DexieCtor } = await import("dexie");
+  return {
+    ...actual,
+    uint8ArrayToBase64: (bytes: Uint8Array) => {
+      base64Calls.insideTransaction.push(DexieCtor.currentTransaction != null);
+      return actual.uint8ArrayToBase64(bytes);
+    },
+  };
+});
 
 // Unique DB names to avoid collisions between tests.
 let dbCounter = 0;
@@ -954,21 +972,24 @@ describe("getUnspentInputNoteNullifiers", () => {
 // ================================================================================================
 
 describe("getNoteScript", () => {
-  it("returns undefined when script not found", async () => {
+  it("returns null when script not found", async () => {
     const dbId = await openTestDb();
     const result = await getNoteScript(dbId, "nonexistent-root");
-    expect(result).toBeUndefined();
+    expect(result).toBeNull();
   });
 
-  it("returns the script record when found", async () => {
+  it("returns the shape the Rust store deserializes when found", async () => {
     const dbId = await openTestDb();
     const scriptRoot = "my-script";
     const scriptBytes = new Uint8Array([7, 8, 9]);
     await upsertNoteScript(dbId, scriptRoot, scriptBytes);
     const result = await getNoteScript(dbId, scriptRoot);
     expect(result).toBeDefined();
-    expect(result!.scriptRoot).toBe(scriptRoot);
-    expect(result!.serializedNoteScript).toEqual(scriptBytes);
+    // `NoteScriptIdxdbObject` on the Rust side expects `noteScriptRoot` and a base64 string.
+    expect(result).toEqual({
+      noteScriptRoot: scriptRoot,
+      serializedNoteScript: uint8ArrayToBase64(scriptBytes),
+    });
   });
 });
 
@@ -983,7 +1004,9 @@ describe("upsertNoteScript", () => {
     await upsertNoteScript(dbId, scriptRoot, new Uint8Array([1, 2, 3]));
     await upsertNoteScript(dbId, scriptRoot, new Uint8Array([4, 5, 6]));
     const result = await getNoteScript(dbId, scriptRoot);
-    expect(result!.serializedNoteScript).toEqual(new Uint8Array([4, 5, 6]));
+    expect(result!.serializedNoteScript).toBe(
+      uint8ArrayToBase64(new Uint8Array([4, 5, 6]))
+    );
   });
 });
 
@@ -1012,7 +1035,7 @@ describe("getOutputNotes", () => {
     );
 
     const stored = await getNoteScript(dbId, "0xscriptroot");
-    expect(stored!.serializedNoteScript).toEqual(script);
+    expect(stored!.serializedNoteScript).toBe(uint8ArrayToBase64(script));
 
     const result = await getOutputNotesFromIds(dbId, ["out-script"]);
     expect(result![0].serializedNoteScript).toBe("BwgJ");
@@ -1489,5 +1512,46 @@ describe("error paths: unregistered dbId re-throws", () => {
     await expect(
       upsertNoteScript(BAD_DB, "root", new Uint8Array([1]))
     ).rejects.toThrow();
+  });
+
+  it("reads notes and scripts in a single readonly transaction snapshot", async () => {
+    const dbId = await openTestDb();
+    await insertInputNoteWithScript(dbId, "note-a", "root-a", SCRIPT_A);
+
+    const db = getDatabase(dbId);
+    const txSpy = vi.spyOn(db.dexie, "transaction");
+    const scriptTableRead = db.notesScripts.bulkGet.bind(db.notesScripts);
+    const scriptReadInsideTransaction: boolean[] = [];
+    vi.spyOn(db.notesScripts, "bulkGet").mockImplementation(((
+      ...args: Parameters<typeof scriptTableRead>
+    ) => {
+      scriptReadInsideTransaction.push(Dexie.currentTransaction != null);
+      return scriptTableRead(...args);
+    }) as typeof scriptTableRead);
+
+    const inputs = await getInputNotes(dbId, new Uint8Array([]));
+    expect(inputs).toHaveLength(1);
+    expect(inputs![0].serializedNoteScript).toBe(SCRIPT_A_BASE64);
+    expect(txSpy).toHaveBeenCalledWith(
+      "r",
+      [db.inputNotes, db.notesScripts],
+      expect.any(Function)
+    );
+    // The script lookup must run while the readonly transaction is active.
+    expect(scriptReadInsideTransaction).toEqual([true]);
+  });
+
+  it("converts notes to base64 after the readonly transaction closes", async () => {
+    const dbId = await openTestDb();
+    await insertInputNoteWithScript(dbId, "note-a", "root-a", SCRIPT_A);
+    await insertOutputNoteWithScript(dbId, "out-a", "root-a", SCRIPT_A);
+    base64Calls.insideTransaction.length = 0;
+
+    await getInputNotes(dbId, new Uint8Array([]));
+    await getOutputNotes(dbId, new Uint8Array([]));
+
+    expect(base64Calls.insideTransaction.length).toBeGreaterThan(0);
+    expect(base64Calls.insideTransaction.every((inside) => !inside)).toBe(true);
+    expect(Dexie.currentTransaction).toBeNull();
   });
 });

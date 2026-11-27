@@ -428,3 +428,53 @@ it("strictly type-checks api-types.d.ts and docs-entry.d.ts declarations without
     )
   ).toEqual([]);
 }, 15_000);
+
+it("types compile options as source or package, never both and never neither", () => {
+  expect(
+    diagnostics(
+      `export class Package { free(): void; }`,
+      `
+      import type { CompilerResource, CompileComponentOptions,
+        CompileTxScriptOptions, CompileNoteScriptOptions,
+        CompileComponentPackageOptions, CompileTxScriptPackageOptions,
+        CompileNoteScriptPackageOptions, Package } from "./index";
+      declare const pkg: Package;
+      declare const compile: CompilerResource;
+      const source: CompileComponentOptions = { code: "c", namespace: "n", libraries: [{ namespace: "a", code: "b" }] };
+      const fromPackage: CompileComponentPackageOptions[] = [
+        { package: pkg, slots: [], supportAllTypes: false },
+        { package: new Uint8Array(1) },
+      ];
+      const txSource: CompileTxScriptOptions = { code: "c" };
+      const noteSource: CompileNoteScriptOptions = { code: "c" };
+      const txPackage: CompileTxScriptPackageOptions = { package: pkg };
+      const notePackage: CompileNoteScriptPackageOptions = { package: pkg };
+      void [compile.component(source), compile.component(fromPackage[0]),
+        compile.txScript(txSource), compile.txScript(txPackage),
+        compile.noteScript(noteSource), compile.noteScript(notePackage),
+        compile.component({ package: pkg }), compile.txScript({ package: pkg }),
+        compile.noteScript({ package: pkg })];
+      // @ts-expect-error neither code nor package
+      void compile.component({});
+      // @ts-expect-error both code and package
+      void compile.component({ code: "c", package: pkg });
+      // @ts-expect-error namespace is source-only
+      void compile.component({ package: pkg, namespace: "n" });
+      // @ts-expect-error libraries are source-only
+      void compile.component({ package: pkg, libraries: [] });
+      // @ts-expect-error neither code nor package
+      void compile.txScript({});
+      // @ts-expect-error both code and package
+      void compile.txScript({ code: "c", package: pkg });
+      // @ts-expect-error libraries are source-only
+      void compile.txScript({ package: pkg, libraries: [] });
+      // @ts-expect-error neither code nor package
+      void compile.noteScript({});
+      // @ts-expect-error both code and package
+      void compile.noteScript({ code: "c", package: pkg });
+      // @ts-expect-error libraries are source-only
+      void compile.noteScript({ package: pkg, libraries: [] });
+    `
+    )
+  ).toEqual([]);
+});

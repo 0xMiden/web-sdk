@@ -112,8 +112,10 @@ value sets the limit. Invalid values throw `TypeError` from `MidenClient.create`
 In React, `useParaMiden(nodeUrl, storageMode?, opts?, showSigningModal?, customSignConfirmStep?)`
 wraps the same call under a Para `ParaProvider` ancestor and returns
 `{ client, accountId, error, para, evmWallets, nodeUrl, opts }`. `client` is
-`null` until the session resolves, it is held in a ref so re-renders do not
-rebuild it, and setup failures land on `error` instead of throwing.
+`null` until the session resolves. It is terminated and rebuilt on logout, an
+EVM wallet change, a config change, and unmount, but not when `para`, the
+wallets, `opts` or `customSignConfirmStep` only change reference, and setup
+failures land on `error` instead of throwing.
 
 Both forms open DOM overlays: an account picker when more than one EVM wallet
 resolves, and a confirmation per signature unless `showSigningModal` is `false`.

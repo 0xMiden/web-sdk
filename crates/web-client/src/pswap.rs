@@ -13,10 +13,7 @@ impl WebClient {
     /// Returns every PSWAP lineage tracked by this client.
     #[js_export(js_name = "getPswapLineages")]
     pub async fn get_pswap_lineages(&self) -> Result<Vec<PswapLineageRecord>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard
-            .as_mut()
-            .ok_or_else(|| from_str_err("Client not initialized while fetching pswap lineages"))?;
+        let client = self.get_read_client()?;
         let lineages = client
             .pswap_lineages()
             .await
@@ -30,10 +27,7 @@ impl WebClient {
         &self,
         creator: &AccountId,
     ) -> Result<Vec<PswapLineageRecord>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard
-            .as_mut()
-            .ok_or_else(|| from_str_err("Client not initialized while fetching pswap lineages"))?;
+        let client = self.get_read_client()?;
         let lineages = client.pswap_lineages_for(creator.into()).await.map_err(|err| {
             js_error_with_context(err, "failed to fetch pswap lineages for account")
         })?;
@@ -49,10 +43,7 @@ impl WebClient {
         order_id: String,
     ) -> Result<Option<PswapLineageRecord>, JsErr> {
         let order_id = parse_order_id(&order_id)?;
-        let mut guard = self.get_mut_inner().await;
-        let client = guard
-            .as_mut()
-            .ok_or_else(|| from_str_err("Client not initialized while fetching pswap lineage"))?;
+        let client = self.get_read_client()?;
         client
             .pswap_lineage(order_id)
             .await

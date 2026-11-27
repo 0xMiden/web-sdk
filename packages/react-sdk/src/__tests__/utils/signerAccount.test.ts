@@ -148,6 +148,20 @@ describe("initializeSignerAccount", () => {
       expect(callArg.length).toBe(32);
     });
 
+    it("derives the same account on every init when no seed is provided", async () => {
+      const config = createMockSignerAccountConfig();
+      delete (config as any).accountSeed;
+
+      await initializeSignerAccount(mockClient, config);
+      await initializeSignerAccount(mockClient, config);
+
+      const [first, second] = (AccountBuilder as any).mock.calls.map(
+        (call: unknown[]) => call[0]
+      );
+      expect(first).toEqual(new Uint8Array(32));
+      expect(second).toEqual(first);
+    });
+
     it("should set auth component from commitment", async () => {
       const config = createMockSignerAccountConfig();
 

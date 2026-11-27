@@ -1,16 +1,20 @@
-import { getDatabase } from "./schema.js";
+import { getDatabase, } from "./schema.js";
 import Dexie from "dexie";
 import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
 export async function getOutputNotes(dbId, states) {
     try {
         const db = getDatabase(dbId);
-        const notes = states.length == 0
-            ? await db.outputNotes.toArray()
-            : await db.outputNotes
-                .where("stateDiscriminant")
-                .anyOf(states)
-                .toArray();
-        return await processOutputNotes(dbId, notes);
+        const { notes, scripts } = await db.dexie.transaction("r", [db.outputNotes, db.notesScripts], async () => {
+            const notes = states.length == 0
+                ? await db.outputNotes.toArray()
+                : await db.outputNotes
+                    .where("stateDiscriminant")
+                    .anyOf(states)
+                    .toArray();
+            const scripts = await getNoteScripts(dbId, notes.map((note) => note.scriptRoot));
+            return { notes, scripts };
+        });
+        return processOutputNotes(notes, scripts);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get output notes");
@@ -19,17 +23,17 @@ export async function getOutputNotes(dbId, states) {
 export async function getInputNotes(dbId, states) {
     try {
         const db = getDatabase(dbId);
-        let notes;
-        if (states.length === 0) {
-            notes = await db.inputNotes.toArray();
-        }
-        else {
-            notes = await db.inputNotes
-                .where("stateDiscriminant")
-                .anyOf(states)
-                .toArray();
-        }
-        return await processInputNotes(dbId, notes);
+        const { notes, scripts } = await db.dexie.transaction("r", [db.inputNotes, db.notesScripts], async () => {
+            const notes = states.length === 0
+                ? await db.inputNotes.toArray()
+                : await db.inputNotes
+                    .where("stateDiscriminant")
+                    .anyOf(states)
+                    .toArray();
+            const scripts = await getNoteScripts(dbId, notes.map((note) => note.scriptRoot));
+            return { notes, scripts };
+        });
+        return processInputNotes(notes, scripts);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get input notes");
@@ -38,8 +42,15 @@ export async function getInputNotes(dbId, states) {
 export async function getInputNotesFromIds(dbId, noteIds) {
     try {
         const db = getDatabase(dbId);
-        const notes = await db.inputNotes.where("noteId").anyOf(noteIds).toArray();
-        return await processInputNotes(dbId, notes);
+        const { notes, scripts } = await db.dexie.transaction("r", [db.inputNotes, db.notesScripts], async () => {
+            const notes = await db.inputNotes
+                .where("noteId")
+                .anyOf(noteIds)
+                .toArray();
+            const scripts = await getNoteScripts(dbId, notes.map((note) => note.scriptRoot));
+            return { notes, scripts };
+        });
+        return processInputNotes(notes, scripts);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get input notes from IDs");
@@ -48,11 +59,15 @@ export async function getInputNotesFromIds(dbId, noteIds) {
 export async function getInputNotesFromNullifiers(dbId, nullifiers) {
     try {
         const db = getDatabase(dbId);
-        const notes = await db.inputNotes
-            .where("nullifier")
-            .anyOf(nullifiers)
-            .toArray();
-        return await processInputNotes(dbId, notes);
+        const { notes, scripts } = await db.dexie.transaction("r", [db.inputNotes, db.notesScripts], async () => {
+            const notes = await db.inputNotes
+                .where("nullifier")
+                .anyOf(nullifiers)
+                .toArray();
+            const scripts = await getNoteScripts(dbId, notes.map((note) => note.scriptRoot));
+            return { notes, scripts };
+        });
+        return processInputNotes(notes, scripts);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get input notes from nullifiers");
@@ -61,11 +76,15 @@ export async function getInputNotesFromNullifiers(dbId, nullifiers) {
 export async function getOutputNotesFromNullifiers(dbId, nullifiers) {
     try {
         const db = getDatabase(dbId);
-        const notes = await db.outputNotes
-            .where("nullifier")
-            .anyOf(nullifiers)
-            .toArray();
-        return await processOutputNotes(dbId, notes);
+        const { notes, scripts } = await db.dexie.transaction("r", [db.outputNotes, db.notesScripts], async () => {
+            const notes = await db.outputNotes
+                .where("nullifier")
+                .anyOf(nullifiers)
+                .toArray();
+            const scripts = await getNoteScripts(dbId, notes.map((note) => note.scriptRoot));
+            return { notes, scripts };
+        });
+        return processOutputNotes(notes, scripts);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get output notes from nullifiers");
@@ -74,11 +93,15 @@ export async function getOutputNotesFromNullifiers(dbId, nullifiers) {
 export async function getInputNotesFromDetailsCommitments(dbId, detailsCommitments) {
     try {
         const db = getDatabase(dbId);
-        const notes = await db.inputNotes
-            .where("detailsCommitment")
-            .anyOf(detailsCommitments)
-            .toArray();
-        return await processInputNotes(dbId, notes);
+        const { notes, scripts } = await db.dexie.transaction("r", [db.inputNotes, db.notesScripts], async () => {
+            const notes = await db.inputNotes
+                .where("detailsCommitment")
+                .anyOf(detailsCommitments)
+                .toArray();
+            const scripts = await getNoteScripts(dbId, notes.map((note) => note.scriptRoot));
+            return { notes, scripts };
+        });
+        return processInputNotes(notes, scripts);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get input notes from details commitments");
@@ -87,11 +110,15 @@ export async function getInputNotesFromDetailsCommitments(dbId, detailsCommitmen
 export async function getInputNotesFromScriptRoots(dbId, scriptRoots) {
     try {
         const db = getDatabase(dbId);
-        const notes = await db.inputNotes
-            .where("scriptRoot")
-            .anyOf(scriptRoots)
-            .toArray();
-        return await processInputNotes(dbId, notes);
+        const { notes, scripts } = await db.dexie.transaction("r", [db.inputNotes, db.notesScripts], async () => {
+            const notes = await db.inputNotes
+                .where("scriptRoot")
+                .anyOf(scriptRoots)
+                .toArray();
+            const scripts = await getNoteScripts(dbId, notes.map((note) => note.scriptRoot));
+            return { notes, scripts };
+        });
+        return processInputNotes(notes, scripts);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get input notes from script roots");
@@ -100,11 +127,15 @@ export async function getInputNotesFromScriptRoots(dbId, scriptRoots) {
 export async function getOutputNotesFromDetailsCommitments(dbId, detailsCommitments) {
     try {
         const db = getDatabase(dbId);
-        const notes = await db.outputNotes
-            .where("detailsCommitment")
-            .anyOf(detailsCommitments)
-            .toArray();
-        return await processOutputNotes(dbId, notes);
+        const { notes, scripts } = await db.dexie.transaction("r", [db.outputNotes, db.notesScripts], async () => {
+            const notes = await db.outputNotes
+                .where("detailsCommitment")
+                .anyOf(detailsCommitments)
+                .toArray();
+            const scripts = await getNoteScripts(dbId, notes.map((note) => note.scriptRoot));
+            return { notes, scripts };
+        });
+        return processOutputNotes(notes, scripts);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get output notes from details commitments");
@@ -113,8 +144,15 @@ export async function getOutputNotesFromDetailsCommitments(dbId, detailsCommitme
 export async function getOutputNotesFromIds(dbId, noteIds) {
     try {
         const db = getDatabase(dbId);
-        const notes = await db.outputNotes.where("noteId").anyOf(noteIds).toArray();
-        return await processOutputNotes(dbId, notes);
+        const { notes, scripts } = await db.dexie.transaction("r", [db.outputNotes, db.notesScripts], async () => {
+            const notes = await db.outputNotes
+                .where("noteId")
+                .anyOf(noteIds)
+                .toArray();
+            const scripts = await getNoteScripts(dbId, notes.map((note) => note.scriptRoot));
+            return { notes, scripts };
+        });
+        return processOutputNotes(notes, scripts);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get output notes from IDs");
@@ -146,7 +184,13 @@ export async function getNoteScript(dbId, scriptRoot) {
             .where("scriptRoot")
             .equals(scriptRoot)
             .first();
-        return noteScript;
+        if (!noteScript) {
+            return null;
+        }
+        return {
+            noteScriptRoot: noteScript.scriptRoot,
+            serializedNoteScript: uint8ArrayToBase64(noteScript.serializedNoteScript),
+        };
     }
     catch (err) {
         logWebStoreError(err, "Failed to get note script from root");
@@ -202,33 +246,38 @@ export async function getInputNoteAfter(dbId, states, consumerAccountId, blockSt
         const hasCursor = cursorBlockHeight != null &&
             cursorTxOrder != null &&
             cursorDetailsCommitment != null;
-        // The consumer leads the index, so every read is one consumer's slice. With a cursor,
-        // `blockStart` is left to the predicate below: the cursor is the tighter lower bound.
-        const lower = hasCursor
-            ? [
-                consumerAccountId,
-                cursorBlockHeight,
-                cursorTxOrder,
-                cursorDetailsCommitment,
-            ]
-            : [consumerAccountId, blockStart ?? Dexie.minKey];
-        const upper = blockEnd != null
-            ? [consumerAccountId, blockEnd, Dexie.maxKey]
-            : [consumerAccountId, Dexie.maxKey];
-        const note = await db.inputNotes
+        const result = await db.dexie.transaction("r", [db.inputNotes, db.notesScripts], async () => {
+            // The consumer leads the index, so every read is one consumer's slice. With a cursor,
+            // `blockStart` is left to the predicate below: the cursor is the tighter lower bound.
+            const lower = hasCursor
+                ? [
+                    consumerAccountId,
+                    cursorBlockHeight,
+                    cursorTxOrder,
+                    cursorDetailsCommitment,
+                ]
+                : [consumerAccountId, blockStart ?? Dexie.minKey];
+            const upper = blockEnd != null
+                ? [consumerAccountId, blockEnd, Dexie.maxKey]
+                : [consumerAccountId, Dexie.maxKey];
+            const note = await db.inputNotes
                 .where(INPUT_NOTE_CONSUMPTION_INDEX)
-            .between(lower, upper, !hasCursor, true)
-            .filter((n) => {
-            if (states.length > 0 && !states.includes(n.stateDiscriminant))
-                return false;
-            if (blockStart != null && n.consumedBlockHeight < blockStart)
-                return false;
-            return true;
-        })
-            .first();
-        if (note == null)
-            return [];
-        return await processInputNotes(dbId, [note]);
+                .between(lower, upper, !hasCursor, true)
+                .filter((n) => {
+                if (states.length > 0 && !states.includes(n.stateDiscriminant))
+                    return false;
+                if (blockStart != null && n.consumedBlockHeight < blockStart)
+                    return false;
+                return true;
+            })
+                .first();
+            if (note == null)
+                return { notes: [], scripts: [] };
+            const notes = [note];
+            const scripts = await getNoteScripts(dbId, notes.map((note) => note.scriptRoot));
+            return { notes, scripts };
+        });
+        return processInputNotes(result.notes, result.scripts);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get input note after cursor");
@@ -267,8 +316,8 @@ export async function upsertOutputNote(dbId, detailsCommitment, noteId, assets, 
         return doWork(tx);
     return db.dexie.transaction("rw", db.outputNotes, db.notesScripts, doWork);
 }
-async function processInputNotes(dbId, notes) {
-    const scripts = await getNoteScriptsBase64(dbId, notes.map((note) => note.scriptRoot));
+function processInputNotes(notes, scriptRecords) {
+    const scripts = noteScriptsToBase64(scriptRecords);
     return notes.map((note) => {
         const assetsBase64 = uint8ArrayToBase64(note.assets);
         const serialNumberBase64 = uint8ArrayToBase64(note.serialNumber);
@@ -286,8 +335,8 @@ async function processInputNotes(dbId, notes) {
         };
     });
 }
-async function processOutputNotes(dbId, notes) {
-    const scripts = await getNoteScriptsBase64(dbId, notes.map((note) => note.scriptRoot));
+function processOutputNotes(notes, scriptRecords) {
+    const scripts = noteScriptsToBase64(scriptRecords);
     return notes.map((note) => {
         const assetsBase64 = uint8ArrayToBase64(note.assets);
         const metadataBase64 = uint8ArrayToBase64(note.metadata);
@@ -307,15 +356,17 @@ async function processOutputNotes(dbId, notes) {
         };
     });
 }
-// Fetches the scripts for the given roots in one read and returns them base64-encoded, keyed by
-// root. Empty roots are skipped, and roots without a stored script are absent from the map.
-async function getNoteScriptsBase64(dbId, roots) {
+// Fetches the scripts for the given roots in one read. Empty roots are skipped, and roots without
+// a stored script are absent from the returned records.
+async function getNoteScripts(dbId, roots) {
     const db = getDatabase(dbId);
     const uniqueRoots = [...new Set(roots.filter((root) => !!root))];
     if (uniqueRoots.length === 0) {
-        return new Map();
+        return [];
     }
-    const records = await db.notesScripts.bulkGet(uniqueRoots);
+    return db.notesScripts.bulkGet(uniqueRoots);
+}
+function noteScriptsToBase64(records) {
     return new Map(records
         .filter((record) => record !== undefined)
         .map((record) => [

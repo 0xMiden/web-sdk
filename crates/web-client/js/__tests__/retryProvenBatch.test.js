@@ -156,13 +156,15 @@ describe("retryProvenBatch (#571)", () => {
     ).toBe(true);
   });
 
-  it("keeps one accurate #571 entry in CHANGELOG.md Unreleased Enhancements", () => {
+  it("keeps one accurate #571 entry in the CHANGELOG.md 0.18.2 section", () => {
     const changelog = readFileSync(
       new URL("../../../../CHANGELOG.md", import.meta.url),
       "utf8"
     );
-    const unreleased = changelog.split(/^## /m)[1] ?? "";
-    const issue571Lines = unreleased
+    // Pinned: the first section changes with each new version heading.
+    const release =
+      changelog.split(/^## /m).find((s) => s.startsWith("0.18.2 ")) ?? "";
+    const issue571Lines = release
       .split("\n")
       .filter((line) => line.includes("web-sdk/issues/571"));
     expect(issue571Lines).toHaveLength(1);

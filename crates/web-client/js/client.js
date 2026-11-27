@@ -2,10 +2,12 @@ import { AccountsResource } from "./resources/accounts.js";
 import { TransactionsResource } from "./resources/transactions.js";
 import { NotesResource } from "./resources/notes.js";
 import { TagsResource } from "./resources/tags.js";
+import { ChainResource } from "./resources/chain.js";
 import { SettingsResource } from "./resources/settings.js";
 import { CompilerResource } from "./resources/compiler.js";
 import { KeystoreResource } from "./resources/keystore.js";
 import { PswapResource } from "./resources/pswap.js";
+import { ContractsResource } from "./resources/contracts.js";
 import {
   hashSeed,
   resolveAccountRef,
@@ -47,10 +49,12 @@ export class MidenClient {
     this.transactions = new TransactionsResource(inner, getWasm, this);
     this.notes = new NotesResource(inner, getWasm, this);
     this.tags = new TagsResource(inner, getWasm, this);
+    this.chain = new ChainResource(getWasm, this, (fn) => this.#withRpc(fn));
     this.settings = new SettingsResource(inner, getWasm, this);
     this.compile = new CompilerResource(inner, getWasm, this);
     this.keystore = new KeystoreResource(inner, this);
     this.pswap = new PswapResource(inner, getWasm, this);
+    this.contracts = new ContractsResource(getWasm, this);
   }
 
   /**
@@ -410,16 +414,25 @@ export class MidenClient {
   }
 
   /**
-   * Waits for the ordered WASM calls and concurrent sync-height reads already
-   * in flight when called. Calls made later are outside this wait.
+   * Resolves once every serialized WASM call that was already on the
+   * internal `_serializeWasmCall` chain when `waitForIdle()` was called
+   * (execute, submit, prove, apply, sync, or account creation) has
+   * settled. Use this from callers that need to perform a non-WASM-side
+   * action — e.g. clearing an in-memory auth key on wallet lock — after
+   * the kernel finishes, so its auth callback doesn't race with the key
+   * being cleared.
    *
-   * Use this before clearing app-side state, such as an in-memory auth key,
-   * that a pending operation may still need.
+   * Does NOT wait for calls enqueued after `waitForIdle()` returns —
+   * intentional, so a caller can drain and proceed without being blocked
+   * indefinitely by concurrent workload.
    *
-   * During sync or proof work on a live Web Worker, `getSyncHeight()` can
-   * return the committed height if no later ordered call is already queued.
-   * Note screening and account reader acquisition stay ordered. The
-   * balance lookup on an acquired reader runs outside the idle wait.
+   * A call that takes the store lock is on the chain from the moment it is
+   * made, like every other call; see `WebClient._withStoreLock`.
+   *
+   * Safe to call at any time; returns immediately if nothing was in
+   * flight.
+   *
+   * @returns {Promise<void>}
    */
   async waitForIdle() {
     this.assertNotTerminated();
@@ -466,7 +479,13 @@ export class MidenClient {
     this.#terminated = true;
     for (const stop of this.#healthMonitors) stop();
     this.#releaseHealthRpc();
-    this.#inner.terminate?.();
+    const defaultProver = this.#defaultProver;
+    this.#defaultProver = null;
+    try {
+      this.#inner.terminate?.();
+    } finally {
+      defaultProver?.free?.();
+    }
   }
 
   /** Terminates the client without waiting for the release; see `terminate()`. */
@@ -619,7 +638,9 @@ export class MidenClient {
     this.#healthRpc = null;
   }
 
-  async #probeHealth() {
+  // Runs `fn` with the cached RPC client, creating it on first use, and keeps it alive until
+  // `fn` settles even if the client is terminated meanwhile.
+  async #withRpc(fn) {
     let held = false;
     try {
       if (!this.#healthRpc) {
@@ -631,43 +652,53 @@ export class MidenClient {
       }
       held = true;
       this.#healthRpcUsers++;
-      const status = await this.#healthRpc.getStatus();
-      const producer = status.blockProducer;
-      const mempool = producer?.mempoolStats;
-      const genesis = status.genesisCommitment;
-      try {
-        return {
-          reachable: true,
-          version: status.version,
-          chainTip: status.chainTip,
-          ...(genesis && { genesisCommitment: genesis.toHex() }),
-          ...(producer && {
-            blockProducer: {
-              version: producer.version,
-              status: producer.status,
-              chainTip: producer.chainTip,
-              ...(mempool && {
-                mempoolStats: {
-                  unbatchedTransactions: Number(mempool.unbatchedTransactions),
-                  proposedBatches: Number(mempool.proposedBatches),
-                  provenBatches: Number(mempool.provenBatches),
-                },
-              }),
-            },
-          }),
-        };
-      } finally {
-        for (const wrapper of [mempool, genesis, producer, status]) {
-          wrapper?.free?.();
-        }
-      }
-    } catch (error) {
-      return { reachable: false, error: error?.message ?? String(error) };
+      return await fn(this.#healthRpc);
     } finally {
       if (held) {
         this.#healthRpcUsers--;
         if (this.#terminated) this.#releaseHealthRpc();
       }
+    }
+  }
+
+  async #probeHealth() {
+    try {
+      return await this.#withRpc(async (rpc) => {
+        const status = await rpc.getStatus();
+        const producer = status.blockProducer;
+        const mempool = producer?.mempoolStats;
+        const genesis = status.genesisCommitment;
+        try {
+          return {
+            reachable: true,
+            version: status.version,
+            chainTip: status.chainTip,
+            ...(genesis && { genesisCommitment: genesis.toHex() }),
+            ...(producer && {
+              blockProducer: {
+                version: producer.version,
+                status: producer.status,
+                chainTip: producer.chainTip,
+                ...(mempool && {
+                  mempoolStats: {
+                    unbatchedTransactions: Number(
+                      mempool.unbatchedTransactions
+                    ),
+                    proposedBatches: Number(mempool.proposedBatches),
+                    provenBatches: Number(mempool.provenBatches),
+                  },
+                }),
+              },
+            }),
+          };
+        } finally {
+          for (const wrapper of [mempool, genesis, producer, status]) {
+            wrapper?.free?.();
+          }
+        }
+      });
+    } catch (error) {
+      return { reachable: false, error: error?.message ?? String(error) };
     }
   }
 

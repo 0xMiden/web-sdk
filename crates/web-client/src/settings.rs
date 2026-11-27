@@ -12,8 +12,7 @@ impl WebClient {
     /// Retrieves the setting value for `key`, or `None` if it hasn't been set.
     #[wasm_bindgen(js_name = "getSetting")]
     pub async fn get_setting(&self, key: String) -> Result<Option<JsValue>, JsValue> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let client = self.get_read_client()?;
         let result: Option<Vec<u8>> = client.get_setting(key).await.map_err(|err| {
             js_error_with_context(err, "failed to get setting value from the store")
         })?;
@@ -49,8 +48,7 @@ impl WebClient {
     /// Retrieves the setting value for `key`, or `None` if it hasn't been set.
     #[napi(js_name = "getSetting")]
     pub async fn get_setting(&self, key: String) -> Result<Option<Vec<u8>>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let client = self.get_read_client()?;
         client
             .get_setting(key)
             .await
@@ -86,8 +84,7 @@ impl WebClient {
     /// Returns all the existing setting keys from the store.
     #[js_export(js_name = "listSettingKeys")]
     pub async fn list_setting_keys(&self) -> Result<Vec<String>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let client = self.get_read_client()?;
         client
             .list_setting_keys()
             .await

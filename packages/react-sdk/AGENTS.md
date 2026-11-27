@@ -498,9 +498,11 @@ const client = useMidenClient();
 const height = await client.getSyncHeight();
 ```
 
-**Not everything is on this client.** Block headers in particular are not:
-`getBlockHeaderByNumber` lives on the standalone `RpcClient`, which you
-construct yourself with an endpoint. Take it from `client.endpoint()`, the URL
+**Not everything is on this client.** This is the `WebClient`, which has no
+header reads; a `MidenClient` reads them with `client.chain.getBlockHeader(100)`
+(see the web client guide), but a hook-based app holds no `MidenClient`, and
+opening a second one would open a second store. Use the standalone `RpcClient`,
+whose `getBlockHeaderByNumber` you construct yourself with an endpoint. Take it from `client.endpoint()`, the URL
 of the node the client was created against, so the reads go to the network the
 provider is configured for.
 
@@ -817,7 +819,8 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 `useCompile()` returns `{ component, txScript, noteScript, isReady }`, where the
 first three are themselves async compile functions wrapping `CompilerResource`.
 There is no `compile` callback, no `isLoading` and no `reset`, and the options
-field is `code`, not `source`:
+field is `code`, not `source` (or `package`, a compiled `Package` or its `.masp`
+bytes, in place of `code`; `libraries` and `namespace` apply to source only):
 
 ```tsx
 const { noteScript, isReady } = useCompile();

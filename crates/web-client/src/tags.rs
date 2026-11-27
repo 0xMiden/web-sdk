@@ -42,8 +42,7 @@ impl WebClient {
 
     #[js_export(js_name = "listTags")]
     pub async fn list_tags(&self) -> Result<Vec<String>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let client = self.get_read_client()?;
         let tags: Vec<NoteTag> = client
             .get_note_tags()
             .await

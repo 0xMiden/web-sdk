@@ -3,7 +3,7 @@ use miden_client::transaction::TransactionRecord as NativeTransactionRecord;
 
 use super::models::transaction_filter::TransactionFilter;
 use super::models::transaction_record::TransactionRecord;
-use crate::platform::{JsErr, from_str_err};
+use crate::platform::JsErr;
 use crate::{WebClient, js_error_with_context};
 
 #[js_export]
@@ -13,8 +13,7 @@ impl WebClient {
         &self,
         transaction_filter: TransactionFilter,
     ) -> Result<Vec<TransactionRecord>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let client = self.get_read_client()?;
         let transaction_records: Vec<NativeTransactionRecord> = client
             .get_transactions((&transaction_filter).into())
             .await

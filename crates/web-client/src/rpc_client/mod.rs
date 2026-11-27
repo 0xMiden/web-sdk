@@ -43,6 +43,7 @@ use crate::models::storage_map_info::StorageMapInfo;
 use crate::models::word::Word;
 use crate::platform::JsErr;
 
+mod block;
 mod note;
 mod nullifier;
 mod submission;

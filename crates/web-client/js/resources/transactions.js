@@ -60,6 +60,33 @@ function rejectUnexpectedAnchor(opts, method, alternative) {
 }
 
 /**
+ * Builds an independent `TransactionProver` with the same configuration, from
+ * its serialized descriptor.
+ *
+ * @param {*} prover - A `TransactionProver` that is not consumed by this call.
+ * @returns {*} A new `TransactionProver`.
+ */
+function copyProver(prover) {
+  return prover.constructor.deserialize(prover.serialize());
+}
+
+/**
+ * Frees an internally copied `TransactionProver` if it was not already consumed
+ * by wasm-bindgen (which zeroes `__wbg_ptr` when taking ownership by value).
+ *
+ * @param {*} prover - The copied prover handle to release if still live.
+ */
+function freeUnconsumedProver(prover) {
+  if (typeof prover?.free !== "function") return;
+  if ("__wbg_ptr" in prover && prover.__wbg_ptr === 0) return;
+  try {
+    prover.free();
+  } catch {
+    // Ignore cleanup errors so prover disposal never masks the proving outcome.
+  }
+}
+
+/**
  * Prove an executed transaction, resolving the prover exactly the way the
  * one-shot `submit()` pipeline does: the per-call prover if given, else the
  * client's default prover, else the built-in local prover. Shared by
@@ -73,10 +100,26 @@ function rejectUnexpectedAnchor(opts, method, alternative) {
  * @returns {Promise<*>} The proven transaction.
  */
 async function proveResult(inner, defaultProver, result, opts) {
-  const prover = opts?.prover ?? defaultProver;
-  return prover
-    ? await inner.proveTransaction(result, prover)
-    : await inner.proveTransaction(result);
+  const callerProver = opts?.prover;
+  if (callerProver && callerProver !== defaultProver) {
+    return await inner.proveTransaction(result, callerProver);
+  }
+  if (!defaultProver) {
+    return await inner.proveTransaction(result);
+  }
+  // Worker mode only calls prover.serialize() on the main thread without
+  // consuming the handle, so pass the shared default directly to avoid an
+  // unfreed main-thread WASM allocation. Non-worker mode takes the prover by
+  // value, so pass an independent copy and free it if unconsumed on failure.
+  if (inner.worker) {
+    return await inner.proveTransaction(result, defaultProver);
+  }
+  const prover = copyProver(defaultProver);
+  try {
+    return await inner.proveTransaction(result, prover);
+  } finally {
+    freeUnconsumedProver(prover);
+  }
 }
 
 /**

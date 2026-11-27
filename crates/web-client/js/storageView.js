@@ -125,6 +125,22 @@ export class StorageView {
   }
 
   /**
+   * Get at most `limit` key-value pairs from a StorageMap slot, starting at
+   * position `offset` in the order `getMapEntries` returns. Each call copies only
+   * the requested page into JS (entries before `offset` are skipped inside WASM).
+   * `limit` must be at least 1 (`0` always returns `[]`); a page shorter than
+   * `limit` is the last one.
+   * Returns undefined if the slot isn't a map.
+   *
+   * @param {string} slotName
+   * @param {number} offset
+   * @param {number} limit
+   */
+  getMapEntriesPage(slotName, offset, limit) {
+    return this.#storage.getMapEntriesPage(slotName, offset, limit);
+  }
+
+  /**
    * Returns the commitment root of a storage slot as a Word.
    *
    * For Value slots, this is the stored Word itself.

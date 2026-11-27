@@ -98,10 +98,8 @@ which one you are relying on tells you what a second browser tab can still do to
 
 1. **In-process call chain.** The `WebClient` proxy queues WASM calls on a per-instance
    promise chain (`_serializeWasmCall`), including methods it does not wrap explicitly.
-   Raw-bound `SYNC_METHODS` run outside the chain. During a worker-only sync or prove
-   turn, `getSyncHeight()` can read committed state when no later ordered call is
-   queued. Those height reads serialize with each other and settle before any
-   ordered call borrows the main-realm client.
+   The raw-bound `SYNC_METHODS` are the only exceptions. This is what stops
+   "recursive use of an object detected".
 2. **Web Locks.** Every call that writes the chain MMR or its tracked block headers holds
    one per-database Web Lock, **across tabs** and clients: the syncs (`syncState`,
    `syncChain`, `syncNoteTransport`), `importNoteFile` (`notes.import`),
@@ -117,13 +115,12 @@ which one you are relying on tells you what a second browser tab can still do to
    `inconsistent partial mmr: missing sibling for tracked leaf`.
    The lock is per store opened: a client that omits `storeName` opens
    `MidenClientDB_<network id>` for its node URL and takes the same lock as one that names
-   that store, and clients on different default stores do not block each other. Store
-   writers take an ordered slot when called and request the store lock on that turn.
-   Later writes wait behind it even while the earlier writer waits on another client's
-   lock. A worker sync still holds its ordered slot while eligible height reads run.
-   `waitForIdle()` and `terminate()` drain ordered calls and admitted height reads.
-   A lock request waits at most 10 minutes from when its call is made, then rejects with
-   `Timed out after <ms> ms waiting for the sync lock of <store>`
+   that store, and clients on different default stores do not block each other. Such a
+   call takes its place on the layer 1 chain when it is made and requests the lock
+   when its turn comes (chain, then lock), so call order, `waitForIdle()` and
+   `terminate()` treat it like any other call. While it waits for another client's lock,
+   later calls on its own client wait behind it. Such a call waits at most 10 minutes
+   from when it is made, then rejects with `Timed out after <ms> ms waiting for the sync lock of <store>`
    and its work never runs. A call of a sync joins its client's
    pending run of the *same* sync only while no other call has been queued on that client
    since the run; after one has, it starts a run of its own behind that call, so it never
@@ -299,7 +296,7 @@ export default defineConfig({
 
 `midenVitePlugin()` handles WASM loading (esnext build target, top-level await), pre-bundling exclusion (`optimizeDeps.exclude`), package deduplication, a gRPC-web RPC proxy, and - when `crossOriginIsolation: true` is passed - emits the COOP `same-origin` + COEP `require-corp` headers the **MT** build requires for `SharedArrayBuffer` on both the dev `server` and the `preview` server.
 
-It accepts **four** options, all with source defaults that work for the ST build:
+It accepts **five** options, all with source defaults that work for the ST build:
 
 | Option | Source default | Purpose |
 |--------|----------------|---------|
@@ -307,6 +304,7 @@ It accepts **four** options, all with source defaults that work for the ST build
 | `crossOriginIsolation` | `false` | Emit COOP `same-origin` + COEP `require-corp` on the dev **and** preview servers. Set `true` only when importing the MT variants (`/mt`, `/mt/lazy`) |
 | `rpcProxyTarget` | `"https://rpc.testnet.miden.io"` | gRPC-web dev-proxy target; `false` disables the proxy. Only applied when `command === "serve"` |
 | `rpcProxyPath` | `"/rpc.Api"` | Path prefix the proxy intercepts |
+| `preserveSymlinks` | `false` | Set Vite's `resolve.preserveSymlinks`; leave `false` for pnpm's default layout and enable only for linked local checkouts (`file:` / `link:`) that require symlinked paths kept |
 
 For the **default single-threaded build**, leave `crossOriginIsolation` at its `false` default - the ST WASM loads in any browser context and needs no headers. Pass `crossOriginIsolation: true` **only** when you opt into the multi-threaded variants for local proving; without the headers the MT WASM can't construct shared memory and fails to instantiate. The shipped example wallet uses bare `midenVitePlugin()` because it is ST (and because isolation would break the Para OAuth popups it pairs with via `paraVitePlugin()`) - see FP3. For an MT production deployment, set the same COOP/COEP headers at your real production host - the plugin only injects them into the Vite dev and preview servers. See `vite-wasm-setup` for host-specific configs.
 
@@ -533,7 +531,7 @@ Verify: `crates/web-client/js/eager.js`.
 | FP5 | Bech32 mismatch | HIGH | Match network in rpcUrl and addresses; the HRP is inferred from `client.endpoint()`, and an unrecognised endpoint is mainnet (`mm`) |
 | FP6 | Auto-sync | MEDIUM | Default 15000ms; prefer `useSyncControl()` over `autoSyncInterval: 0` |
 | FP7 | IndexedDB loss | HIGH | Upgrading from a pre-0.17.0 SDK clears the store once and its export cannot be imported; a newer SDK's store and export are refused |
-| FP8 | Vite config | MEDIUM | `midenVitePlugin()` has four options; bare call is right for ST, `crossOriginIsolation: true` only for `/mt` |
+| FP8 | Vite config | MEDIUM | `midenVitePlugin()` has five options; bare call is right for ST, `crossOriginIsolation: true` only for `/mt` |
 | FP9 | StrictMode | LOW | Use MidenProvider, not manual `WasmWebClient.createClient()`; there is no debug-mode argument |
 | FP10 | Fee note in `outputNotes()` | CRITICAL | The list is one longer on a fee-charging chain; use `userOutputNotes()` / `feeNote()` on `ExecutedTransaction`, filter manually elsewhere |
 | FP11 | `expiredBefore` removed | HIGH | `transactions.list({ expiredBefore })` throws; use `{ status: "uncommitted" }` + `expirationBlockNum()` |

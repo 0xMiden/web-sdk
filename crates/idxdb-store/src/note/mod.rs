@@ -86,12 +86,14 @@ impl IdxdbStore {
         &self,
         script_root: Word,
     ) -> Result<NoteScript, StoreError> {
-        let script_root = script_root.to_hex();
-        let promise = idxdb_get_note_script(self.db_id(), script_root);
-        let script_idxdb: NoteScriptIdxdbObject =
+        let script_root_hex = script_root.to_hex();
+        let promise = idxdb_get_note_script(self.db_id(), script_root_hex.clone());
+        let script_idxdb: Option<NoteScriptIdxdbObject> =
             await_js(promise, "failed to get note script").await?;
 
-        parse_note_script_idxdb_object(script_idxdb)
+        script_idxdb
+            .ok_or(StoreError::NoteScriptNotFound(script_root_hex))
+            .and_then(parse_note_script_idxdb_object)
     }
 
     pub(crate) async fn get_unspent_input_note_nullifiers(

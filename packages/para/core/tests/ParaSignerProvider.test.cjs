@@ -487,3 +487,86 @@ test("Only EVM wallets are used for connection", async () => {
     restore();
   }
 });
+
+test("ParaProvider receives stable config objects across re-renders", async () => {
+  const state = {
+    isLoggedIn: false,
+    wallets: [],
+  };
+  const mocks = createMocks(state);
+  const paraProviderProps = [];
+  mocks["@getpara/react-sdk-lite"].ParaProvider = (props) => {
+    paraProviderProps.push(props);
+    return props.children;
+  };
+  const { ParaSignerProvider, restore } = loadParaSignerProvider(mocks);
+
+  try {
+    const { rerender, unmount } = await renderProvider(
+      ParaSignerProvider,
+      mocks,
+      { appName: "Test App" }
+    );
+    await rerender({ appName: "Test App" });
+
+    assert.ok(paraProviderProps.length >= 2, "ParaProvider should re-render");
+    const first = paraProviderProps[0];
+    const last = paraProviderProps[paraProviderProps.length - 1];
+    assert.strictEqual(
+      last.paraClientConfig,
+      first.paraClientConfig,
+      "paraClientConfig should keep its identity when inputs are unchanged"
+    );
+    assert.strictEqual(
+      last.config,
+      first.config,
+      "config should keep its identity when appName is unchanged"
+    );
+
+    await rerender({ appName: "Test App", apiKey: "other-api-key" });
+    const afterApiKeyChange = paraProviderProps[paraProviderProps.length - 1];
+    assert.notStrictEqual(
+      afterApiKeyChange.paraClientConfig,
+      first.paraClientConfig,
+      "paraClientConfig should change when apiKey changes"
+    );
+    assert.strictEqual(
+      afterApiKeyChange.paraClientConfig.apiKey,
+      "other-api-key"
+    );
+    assert.strictEqual(afterApiKeyChange.config, first.config);
+
+    await rerender({
+      appName: "Test App",
+      apiKey: "other-api-key",
+      environment: "PRODUCTION",
+    });
+    const afterEnvironmentChange =
+      paraProviderProps[paraProviderProps.length - 1];
+    assert.notStrictEqual(
+      afterEnvironmentChange.paraClientConfig,
+      afterApiKeyChange.paraClientConfig,
+      "paraClientConfig should change when environment changes"
+    );
+    assert.notStrictEqual(
+      afterEnvironmentChange.paraClientConfig.env,
+      afterApiKeyChange.paraClientConfig.env
+    );
+
+    await rerender({
+      appName: "Other App",
+      apiKey: "other-api-key",
+      environment: "PRODUCTION",
+    });
+    const afterAppNameChange = paraProviderProps[paraProviderProps.length - 1];
+    assert.strictEqual(
+      afterAppNameChange.paraClientConfig,
+      afterEnvironmentChange.paraClientConfig
+    );
+    assert.deepStrictEqual(afterAppNameChange.config, { appName: "Other App" });
+
+    unmount();
+  } finally {
+    restore();
+  }
+});
