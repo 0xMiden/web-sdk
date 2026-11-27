@@ -300,11 +300,15 @@ const cargoArgsFastBuild = [
   "profile.release.codegen-units=16",
 ];
 
+// Release-only wasm-opt flags. Dev builds (`MIDEN_WEB_DEV=true`) skip wasm-opt
+// entirely so full DWARF from `debug='full'` survives for Chrome DevTools
+// (`make build-web-client-debug`). Running wasm-opt over that DWARF either
+// strips it (`--strip-dwarf`) or has OOM'd binaryen on the larger modules.
 const wasmOptArgs = [
   // Strip DWARF sections before optimization to avoid binaryen crashes on
   // unsupported DWARF versions. The name section (function names) is kept.
   "--strip-dwarf",
-  devMode ? "-O0" : "-O3",
+  "-O3",
   "--enable-bulk-memory",
   "--enable-nontrapping-float-to-int",
   // Threads: the WASM uses shared memory + atomics for the rayon thread
@@ -434,15 +438,22 @@ export default [
           // wasm-opt in fast mode - it ran it bare, with no `--strip-dwarf`, over a
           // module that still carried its DWARF, which the runner OOM-killed once
           // the 0.17 module grew (`wasm-opt failed ... error code: null`).
-          wasmOpt: fastBuild ? [] : wasmOptArgs,
+          // Dev and fast builds pass [] and set `optimize.wasmOpt` false so the
+          // pass does not run at all.
+          wasmOpt: fastBuild || devMode ? [] : wasmOptArgs,
           wasmBindgen: ["--keep-debug"],
         },
         experimental: {
           typescriptDeclarationDir: `${distDir}/crates`,
         },
         // Fast mode skips the post-link optimization pass outright: it is 1-2
-        // minutes of the build and PR CI does not ship the artifact.
-        optimize: { release: true, rustc: !devMode, wasmOpt: !fastBuild },
+        // minutes of the build and PR CI does not ship the artifact. Dev mode
+        // skips it too so full DWARF from `debug='full'` is not stripped.
+        optimize: {
+          release: true,
+          rustc: !devMode,
+          wasmOpt: !fastBuild && !devMode,
+        },
       }),
       resolve(),
       commonjs(),
