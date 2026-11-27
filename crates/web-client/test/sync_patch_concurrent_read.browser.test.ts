@@ -36,6 +36,70 @@ test.describe("sync patch of a discarded account during a local read", () => {
         ${setter("set_remote_two", 5004)}
       `;
 
+      // Installed before any client opens a database: Dexie binds the connection's
+      // `transaction` during open, so a later patch would see nothing. Armed for one sync.
+      const PREVIEW_STORES = [
+        "accountCode",
+        "historicalAccountAssets",
+        "historicalAccountHeaders",
+        "historicalAccountStorage",
+        "historicalStorageMapEntries",
+        "latestAccountAssets",
+        "latestAccountHeaders",
+        "latestAccountStorage",
+        "latestStorageMapEntries",
+      ].join();
+      const probe = {
+        previews: 0,
+        previewEnded: false,
+        readQueuedDuringPreview: false,
+        readSettled: false,
+      };
+      let concurrentRead;
+      let awaitingReadTransaction = false;
+      let armed = false;
+      let reopened;
+      const original = IDBDatabase.prototype.transaction;
+      IDBDatabase.prototype.transaction = function (stores, mode, options) {
+        const tx = original.call(this, stores, mode, options);
+        if (!armed) return tx;
+        const names = [stores].flat().sort();
+        if (mode === "readwrite" && names.join() === PREVIEW_STORES) {
+          probe.previews++;
+          const ended = () => (probe.previewEnded = true);
+          tx.addEventListener("abort", ended);
+          tx.addEventListener("complete", ended);
+          setTimeout(() => {
+            awaitingReadTransaction = true;
+            concurrentRead = reopened
+              .getAccount(id(second.id))
+              .catch(() => undefined)
+              .finally(() => (probe.readSettled = true));
+          }, 0);
+        } else if (
+          awaitingReadTransaction &&
+          mode === "readonly" &&
+          names.includes("latestStorageMapEntries") &&
+          names.includes("latestAccountAssets")
+        ) {
+          awaitingReadTransaction = false;
+          probe.readQueuedDuringPreview = !probe.previewEnded;
+          // Queued behind the read and ahead of the sync's next header read.
+          const gate = original.call(
+            this,
+            ["latestAccountHeaders"],
+            "readwrite"
+          );
+          const hold = () => {
+            if (!probe.readSettled) {
+              gate.objectStore("latestAccountHeaders").count().onsuccess = hold;
+            }
+          };
+          hold();
+        }
+        return tx;
+      };
+
       const createClient = async (chain, storeName) => {
         const client = await window.MockWasmWebClient.createClient(
           chain,
@@ -153,74 +217,17 @@ test.describe("sync patch of a discarded account during a local read", () => {
       };
       const chain = await remote.serializeMockChain();
       local.terminate();
-      const reopened = await createClient(chain, localStore);
-
-      const PREVIEW_STORES = [
-        "accountCodes",
-        "historicalAccountAssets",
-        "historicalAccountHeaders",
-        "historicalAccountStorages",
-        "historicalStorageMapEntries",
-        "latestAccountAssets",
-        "latestAccountHeaders",
-        "latestAccountStorages",
-        "latestStorageMapEntries",
-      ].join();
-      const probe = {
-        previews: 0,
-        previewEnded: false,
-        readQueuedDuringPreview: false,
-        readSettled: false,
-      };
-      let concurrentRead;
-      let awaitingReadTransaction = false;
-      const original = IDBDatabase.prototype.transaction;
-      IDBDatabase.prototype.transaction = function (stores, mode, options) {
-        const tx = original.call(this, stores, mode, options);
-        const names = [stores].flat().sort();
-        if (mode === "readwrite" && names.join() === PREVIEW_STORES) {
-          probe.previews++;
-          const ended = () => (probe.previewEnded = true);
-          tx.addEventListener("abort", ended);
-          tx.addEventListener("complete", ended);
-          setTimeout(() => {
-            awaitingReadTransaction = true;
-            concurrentRead = reopened
-              .getAccount(id(second.id))
-              .catch(() => undefined)
-              .finally(() => (probe.readSettled = true));
-          }, 0);
-        } else if (
-          awaitingReadTransaction &&
-          mode === "readonly" &&
-          names.includes("latestStorageMapEntries") &&
-          names.includes("latestAccountAssets")
-        ) {
-          awaitingReadTransaction = false;
-          probe.readQueuedDuringPreview = !probe.previewEnded;
-          // Queued behind the read and ahead of the sync's next header read.
-          const gate = original.call(
-            this,
-            ["latestAccountHeaders"],
-            "readwrite"
-          );
-          const hold = () => {
-            if (!probe.readSettled) {
-              gate.objectStore("latestAccountHeaders").count().onsuccess = hold;
-            }
-          };
-          hold();
-        }
-        return tx;
-      };
+      reopened = await createClient(chain, localStore);
 
       let syncError = null;
       try {
+        armed = true;
         await reopened.syncState();
         await concurrentRead;
       } catch (error) {
         syncError = String(error?.message ?? error);
       } finally {
+        armed = false;
         IDBDatabase.prototype.transaction = original;
       }
 
@@ -246,16 +253,20 @@ test.describe("sync patch of a discarded account during a local read", () => {
       };
     });
 
-    // The interleaving happened: one undo preview, and the read queued while it was open.
-    expect(result.probe).toEqual({
-      previews: 1,
-      previewEnded: true,
-      readQueuedDuringPreview: true,
-      readSettled: true,
+    // One object, so a failure shows every outcome. `probe` proves the interleaving
+    // happened: one undo preview, and the read queued while it was open.
+    const { expected, ...outcome } = result;
+    expect(outcome).toEqual({
+      probe: {
+        previews: 1,
+        previewEnded: true,
+        readQueuedDuringPreview: true,
+        readSettled: true,
+      },
+      syncError: null,
+      discarded: true,
+      loadError: null,
+      loaded: expected,
     });
-    expect(result.syncError).toBeNull();
-    expect(result.discarded).toBe(true);
-    expect(result.loadError).toBeNull();
-    expect(result.loaded).toEqual(result.expected);
   });
 });
