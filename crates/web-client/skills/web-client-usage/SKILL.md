@@ -45,12 +45,13 @@ const summary = await client._withInnerWebClient(async (inner) => {
 });
 ```
 
-The call chain serializes the callback against every other caller: an SDK
+The call chain serializes the callback against every other queued call: such a
 call that an unrelated task makes during one of `fn`'s `await`s queues behind
-`fn`. `inner` is a trusted handle, and only calls made through it run inline in
+`fn`. Local reads (`getAccounts`, `getInputNotes`, `getTransactions`,
+`getSyncHeight` and the like) take no turn, so they run without waiting. `inner` is a trusted handle, and only calls made through it run inline in
 the slot `fn` holds - that is what stops `fn` deadlocking against itself. So
-inside `fn`, call the SDK only through `inner`: a call through `client` or any
-other reference queues behind `fn` and never settles while `fn` awaits it.
+inside `fn`, call the SDK only through `inner`: a queued call through `client` or
+any other reference queues behind `fn` and never settles while `fn` awaits it.
 Calls through `inner` run inline, so await them one at a time. The raw-bound
 accessors (`lastAuthError()`, the `keystore` getter, and on mock clients
 `proveBlock()` and `serializeMock*()`) never queue, so do not call them from

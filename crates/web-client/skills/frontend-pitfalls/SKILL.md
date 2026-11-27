@@ -130,7 +130,7 @@ which one you are relying on tells you what a second browser tab can still do to
    lock or queue, for anything that waits for a call on a client of the same store. That
    is any call on such a client, not only the calls above: one of them already queued on
    that client, an auto-sync for example, holds the client's chain while it waits for the
-   lock the callback holds, and every later call on that client waits behind it. It is
+   lock the callback holds, and every later queued call on that client waits behind it. It is
    also any lock whose holder is waiting on such a call, such as `@miden-sdk/react`'s
    `runExclusive`, which `MidenProvider` holds across its init sync, or an application
    mutex around `_withInnerWebClient`. Every client on the store stalls until the

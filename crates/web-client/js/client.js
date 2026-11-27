@@ -87,9 +87,10 @@ export class MidenClient {
    * Re-entrancy: `fn` receives a trusted handle on the client, and only
    * calls made through that handle run inline in the slot `fn` holds;
    * queueing them would deadlock behind `fn` itself. Use the handle, not
-   * another reference to the client, inside `fn`: a call through any
+   * another reference to the client, inside `fn`: a queued call through any
    * other reference queues behind `fn` and never settles while `fn`
-   * awaits it. Calls through the handle run inline, so await them one at a
+   * awaits it. Local reads take no turn, so they run from any reference.
+   * Calls through the handle run inline, so await them one at a
    * time. Once `fn` settles, calls through a kept handle queue like any
    * other.
    *
