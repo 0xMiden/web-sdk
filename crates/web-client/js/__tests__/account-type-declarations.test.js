@@ -434,35 +434,46 @@ it("types compile options as source or package, never both and never neither", (
     diagnostics(
       `export class Package { free(): void; }`,
       `
-      import type { CompileComponentOptions, CompileTxScriptOptions,
-        CompileNoteScriptOptions, Package } from "./index";
+      import type { CompilerResource, CompileComponentOptions,
+        CompileTxScriptOptions, CompileNoteScriptOptions,
+        CompileComponentPackageOptions, CompileTxScriptPackageOptions,
+        CompileNoteScriptPackageOptions, Package } from "./index";
       declare const pkg: Package;
-      const ok: unknown[] = [
-        { code: "c", namespace: "n", libraries: [{ namespace: "a", code: "b" }] },
+      declare const compile: CompilerResource;
+      const source: CompileComponentOptions = { code: "c", namespace: "n", libraries: [{ namespace: "a", code: "b" }] };
+      const fromPackage: CompileComponentPackageOptions[] = [
         { package: pkg, slots: [], supportAllTypes: false },
         { package: new Uint8Array(1) },
-      ] satisfies CompileComponentOptions[];
-      [{ code: "c" }, { package: pkg }] satisfies CompileTxScriptOptions[];
-      [{ code: "c" }, { package: pkg }] satisfies CompileNoteScriptOptions[];
+      ];
+      const txSource: CompileTxScriptOptions = { code: "c" };
+      const noteSource: CompileNoteScriptOptions = { code: "c" };
+      const txPackage: CompileTxScriptPackageOptions = { package: pkg };
+      const notePackage: CompileNoteScriptPackageOptions = { package: pkg };
+      void [compile.component(source), compile.component(fromPackage[0]),
+        compile.txScript(txSource), compile.txScript(txPackage),
+        compile.noteScript(noteSource), compile.noteScript(notePackage),
+        compile.component({ package: pkg }), compile.txScript({ package: pkg }),
+        compile.noteScript({ package: pkg })];
       // @ts-expect-error neither code nor package
-      const none: CompileComponentOptions = {};
+      void compile.component({});
       // @ts-expect-error both code and package
-      const both: CompileComponentOptions = { code: "c", package: pkg };
+      void compile.component({ code: "c", package: pkg });
       // @ts-expect-error namespace is source-only
-      const ns: CompileComponentOptions = { package: pkg, namespace: "n" };
+      void compile.component({ package: pkg, namespace: "n" });
       // @ts-expect-error libraries are source-only
-      const libs: CompileComponentOptions = { package: pkg, libraries: [] };
+      void compile.component({ package: pkg, libraries: [] });
       // @ts-expect-error neither code nor package
-      const noneTx: CompileTxScriptOptions = {};
+      void compile.txScript({});
       // @ts-expect-error both code and package
-      const bothTx: CompileTxScriptOptions = { code: "c", package: pkg };
+      void compile.txScript({ code: "c", package: pkg });
       // @ts-expect-error libraries are source-only
-      const libsTx: CompileTxScriptOptions = { package: pkg, libraries: [] };
+      void compile.txScript({ package: pkg, libraries: [] });
       // @ts-expect-error neither code nor package
-      const noneNote: CompileNoteScriptOptions = {};
+      void compile.noteScript({});
       // @ts-expect-error both code and package
-      const bothNote: CompileNoteScriptOptions = { code: "c", package: pkg };
-      void [ok, none, both, ns, libs, noneTx, bothTx, libsTx, noneNote, bothNote];
+      void compile.noteScript({ code: "c", package: pkg });
+      // @ts-expect-error libraries are source-only
+      void compile.noteScript({ package: pkg, libraries: [] });
     `
     )
   ).toEqual([]);
