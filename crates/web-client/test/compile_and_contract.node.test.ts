@@ -169,6 +169,145 @@ test.describe("compile.component()", () => {
   });
 });
 
+test.describe("compile.component({ package })", () => {
+  // A package built from the same source: the compiled component code, round
+  // tripped through its serialized form like a `.masp` read from disk.
+  const packageBytes = async (sdk, client) => {
+    const source = await client.compile.component({
+      code: COUNTER_CODE,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+    return source.componentCode().asPackage().serialize();
+  };
+
+  test("a package yields the same procedure hashes as its source", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const source = await client.compile.component({
+      code: COUNTER_CODE,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+    const bytes = await packageBytes(sdk, client);
+
+    const fromBytes = await client.compile.component({
+      package: bytes,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+    const pkg = sdk.Package.deserialize(bytes);
+    const fromPackage = await client.compile.component({
+      package: pkg,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+    // The same Package object is reusable after a compile call.
+    const again = await client.compile.component({
+      package: pkg,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+
+    for (const component of [fromBytes, fromPackage, again]) {
+      expect(component.getProcedureHash("get_count")).toBe(
+        source.getProcedureHash("get_count")
+      );
+      expect(component.getProcedureHash("increment_count")).toBe(
+        source.getProcedureHash("increment_count")
+      );
+    }
+  });
+
+  test("a package component creates a contract", async ({ sdk }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const bytes = await packageBytes(sdk, client);
+    const component = await client.compile.component({
+      package: bytes,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+    const seed = new Uint8Array(32).fill(0x02);
+    const account = await client.accounts.create({
+      type: "ImmutableContract",
+      storage: "public",
+      seed,
+      auth: sdk.AuthSecretKey.rpoFalconWithRNG(seed),
+      components: [component],
+    });
+    expect(account.id().toString()).toBeDefined();
+  });
+
+  test("txScript and noteScript build from a package, as Package or bytes", async ({
+    sdk,
+    client: rawClient,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const txSource = `
+      use miden::core::sys
+      @transaction_script
+      pub proc main
+        exec.sys::truncate_stack
+      end
+    `;
+    // A raw mock client builds the libraries; the package under test goes through MidenClient.
+    const builder = await rawClient.createCodeBuilder();
+    const txBytes = builder
+      .buildLibrary("pkg::tx", txSource)
+      .asPackage()
+      .serialize();
+    const noteBytes = builder
+      .buildLibrary("pkg::note", RECEIVE_NOTE_SCRIPT)
+      .asPackage()
+      .serialize();
+
+    const txFromBytes = await client.compile.txScript({ package: txBytes });
+    const txFromPackage = await client.compile.txScript({
+      package: sdk.Package.deserialize(txBytes),
+    });
+    expect(txFromBytes.root().toHex()).toBe(txFromPackage.root().toHex());
+
+    const noteFromBytes = await client.compile.noteScript({
+      package: noteBytes,
+    });
+    const noteFromPackage = await client.compile.noteScript({
+      package: sdk.Package.deserialize(noteBytes),
+    });
+    expect(noteFromBytes.root().toHex()).toBe(noteFromPackage.root().toHex());
+    // The same sources compile to the same script roots.
+    const txSourceScript = await client.compile.txScript({ code: txSource });
+    const noteSourceScript = await client.compile.noteScript({
+      code: RECEIVE_NOTE_SCRIPT,
+    });
+    expect(txFromBytes.root().toHex()).toBe(txSourceScript.root().toHex());
+    expect(noteFromBytes.root().toHex()).toBe(noteSourceScript.root().toHex());
+  });
+
+  test("a package without the script attribute is rejected by txScript and noteScript", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const bytes = await packageBytes(sdk, client);
+    await expect(client.compile.txScript({ package: bytes })).rejects.toThrow();
+    await expect(
+      client.compile.noteScript({ package: bytes })
+    ).rejects.toThrow();
+  });
+
+  test("rejects source and package together", async ({ sdk }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const bytes = await packageBytes(sdk, client);
+    await expect(
+      client.compile.component({ code: COUNTER_CODE, package: bytes })
+    ).rejects.toThrow(/either `code` or `package`/);
+  });
+});
+
 // ════════════════════════════════════════════════════════════════
 // compile.txScript()
 // ════════════════════════════════════════════════════════════════
@@ -632,6 +771,86 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
 });
 
 // ════════════════════════════════════════════════════════════════
+// contracts.deploy()
+// ════════════════════════════════════════════════════════════════
+
+test.describe("contracts.deploy()", () => {
+  test("generates seed and auth, and matches accounts.create defaults", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const component = await client.compile.component({
+      code: COUNTER_CODE,
+      namespace: "external_contract::counter_contract",
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+
+    const first = await client.contracts.deploy({ components: [component] });
+    const second = await client.contracts.deploy({ components: [component] });
+
+    expect(first.seed).toHaveLength(32);
+    expect(first.auth).not.toBe("none");
+    expect(first.account.isRegularAccount()).toBe(true);
+    // accounts.create's contract default, not a private account.
+    expect(first.account.isPublic()).toBe(true);
+    expect(first.account.id().toString()).not.toBe(
+      second.account.id().toString()
+    );
+    expect(
+      (await client.accounts.get(first.account.id()))?.id().toString()
+    ).toBe(first.account.id().toString());
+  });
+
+  test("honours a given seed, storage and NoAuth", async ({ sdk }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const component = await client.compile.component({
+      code: COUNTER_CODE,
+      namespace: "external_contract::counter_contract",
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+    });
+    const seed = new Uint8Array(32).fill(0x05);
+
+    const { account, auth } = await client.contracts.deploy({
+      components: [component],
+      seed,
+      auth: "none",
+      storage: "private",
+    });
+
+    expect(auth).toBe("none");
+    expect(account.isPublic()).toBe(false);
+    // A second client: the same account cannot be tracked twice by one.
+    const other = await MidenClient.createMock();
+    const again = await other.accounts.create({
+      seed,
+      auth: "none",
+      storage: "private",
+      components: [component],
+    });
+    expect(again.id().toString()).toBe(account.id().toString());
+  });
+
+  test("rejects missing components and a component without a procedure", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+
+    await expect(client.contracts.deploy({} as any)).rejects.toThrow(
+      /requires `components`/
+    );
+    await expect(client.contracts.deploy({ components: [] })).rejects.toThrow(
+      /non-auth procedure/
+    );
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
 // transactions.execute()
 // ════════════════════════════════════════════════════════════════
 
@@ -933,5 +1152,173 @@ test.describe("transactions.executeProgram()", () => {
     );
 
     expect(result.count).toBe("1");
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+// Stable error codes for MASM failures
+// ════════════════════════════════════════════════════════════════
+
+// napi cannot attach a `code`, so the stable code prefixes the message.
+test.describe("MASM error codes", () => {
+  test("compile.txScript() rejects invalid MASM with a MASM_COMPILE_FAILED prefix", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+
+    let message = null;
+    try {
+      await client.compile.txScript({
+        code: `
+          @transaction_script
+          pub proc main
+            not_an_instruction
+          end
+        `,
+      });
+    } catch (e: any) {
+      message = e.message ?? String(e);
+    }
+
+    expect(message).not.toBeNull();
+    expect(message).toMatch(
+      /^MASM_COMPILE_FAILED: .*failed to compile transaction script/s
+    );
+  });
+
+  test("compile.component() rejects an invalid source library with a MASM_COMPILE_FAILED prefix", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+
+    let message = null;
+    try {
+      await client.compile.component({
+        code: "pub proc noop push.1 drop end",
+        libraries: [
+          {
+            namespace: "external_contract::broken",
+            code: "pub proc broken not_an_instruction end",
+          },
+        ],
+      });
+    } catch (e: any) {
+      message = e.message ?? String(e);
+    }
+
+    expect(message).not.toBeNull();
+    expect(message).toMatch(/^MASM_COMPILE_FAILED: /);
+  });
+
+  test("an inline txScript library that fails to build carries the MASM_COMPILE_FAILED prefix", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+
+    let message = null;
+    try {
+      await client.compile.txScript({
+        code: `
+          @transaction_script
+          pub proc main
+            push.1 drop
+          end
+        `,
+        libraries: [
+          {
+            namespace: "external_contract::broken",
+            code: "pub proc broken not_an_instruction end",
+          },
+        ],
+      });
+    } catch (e: any) {
+      message = e.message ?? String(e);
+    }
+
+    expect(message).not.toBeNull();
+    expect(message).toMatch(/^MASM_COMPILE_FAILED: /);
+  });
+
+  test("an invalid module path is a validation error without a MASM code prefix", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+
+    const attempt = async (run: () => Promise<unknown>) => {
+      try {
+        await run();
+        return null;
+      } catch (e: any) {
+        return e.message ?? String(e);
+      }
+    };
+    const component = await attempt(() =>
+      client.compile.component({
+        code: "pub proc noop push.1 drop end",
+        namespace: "not a valid path",
+      })
+    );
+    const library = await attempt(() =>
+      client.compile.txScript({
+        code: `
+          @transaction_script
+          pub proc main
+            push.1 drop
+          end
+        `,
+        libraries: [
+          {
+            namespace: "not a valid path",
+            code: "pub proc noop push.1 drop end",
+          },
+        ],
+      })
+    );
+
+    expect(component).toContain("invalid account component module path");
+    expect(component).not.toMatch(/^MASM_COMPILE_FAILED/);
+    expect(library).toContain("invalid path");
+    expect(library).not.toMatch(/^MASM_COMPILE_FAILED/);
+  });
+
+  test("a failing assertion rejects with a TRANSACTION_EXECUTION_FAILED prefix and its cause", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+    const wallet = await client.accounts.create();
+    client.proveBlock();
+    await client.sync();
+
+    const script = await client.compile.txScript({
+      code: `
+        @transaction_script
+        pub proc main
+          push.0 push.1
+          assert_eq
+        end
+      `,
+    });
+
+    let message = null;
+    try {
+      await client.transactions.execute({ account: wallet.id(), script });
+    } catch (e: any) {
+      message = e.message ?? String(e);
+    }
+
+    expect(message).not.toBeNull();
+    expect(message).toMatch(
+      /^TRANSACTION_EXECUTION_FAILED: .*failed to execute transaction kernel program/s
+    );
   });
 });

@@ -208,6 +208,9 @@ export const BasicFungibleFaucetComponent = /* @__PURE__ */ _reexport(
 );
 export const BatchItem = /* @__PURE__ */ _reexport("BatchItem");
 export const BlockHeader = /* @__PURE__ */ _reexport("BlockHeader");
+export const BlockHeaderWithProof = /* @__PURE__ */ _reexport(
+  "BlockHeaderWithProof"
+);
 export const BlockProducerStatusInfo = /* @__PURE__ */ _reexport(
   "BlockProducerStatusInfo"
 );
@@ -250,6 +253,7 @@ export const Library = /* @__PURE__ */ _reexport("Library");
 export const MempoolStatsInfo = /* @__PURE__ */ _reexport("MempoolStatsInfo");
 export const MerklePath = /* @__PURE__ */ _reexport("MerklePath");
 export const MintNote = /* @__PURE__ */ _reexport("MintNote");
+export const MmrProof = /* @__PURE__ */ _reexport("MmrProof");
 export const NetworkAccountTarget = /* @__PURE__ */ _reexport(
   "NetworkAccountTarget"
 );
@@ -276,6 +280,9 @@ export const NoteDetails = /* @__PURE__ */ _reexport("NoteDetails");
 export const NoteDetailsAndTag = /* @__PURE__ */ _reexport("NoteDetailsAndTag");
 export const NoteDetailsAndTagArray = /* @__PURE__ */ _reexport(
   "NoteDetailsAndTagArray"
+);
+export const NoteExecutionCycles = /* @__PURE__ */ _reexport(
+  "NoteExecutionCycles"
 );
 export const NoteExecutionHint = /* @__PURE__ */ _reexport("NoteExecutionHint");
 export const NoteExportFormat = /* @__PURE__ */ _reexport("NoteExportFormat");
@@ -368,6 +375,9 @@ export const TransactionEncryptionKey = /* @__PURE__ */ _reexport(
 export const TransactionFilter = /* @__PURE__ */ _reexport("TransactionFilter");
 export const TransactionId = /* @__PURE__ */ _reexport("TransactionId");
 export const TransactionInputs = /* @__PURE__ */ _reexport("TransactionInputs");
+export const TransactionMeasurements = /* @__PURE__ */ _reexport(
+  "TransactionMeasurements"
+);
 export const TransactionProver = /* @__PURE__ */ _reexport("TransactionProver");
 export const TransactionRecord = /* @__PURE__ */ _reexport("TransactionRecord");
 export const TransactionRequest =

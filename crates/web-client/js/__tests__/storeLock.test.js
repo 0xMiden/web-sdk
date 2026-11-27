@@ -78,6 +78,7 @@ function makeWasmClient(name) {
     newAccountWithSecretKey: call("newAccountWithSecretKey"),
     executeTransaction: call("executeTransaction"),
     getAccounts: call("getAccounts"),
+    getConsumableNotes: call("getConsumableNotes"),
     // The sync height read and the genesis sync account creation runs first
     // return at once and record nothing, so a creation's events are its create
     // call's. The store is at genesis unless a test says otherwise.
@@ -1007,8 +1008,9 @@ describe("store lock across WebClient instances (Web Locks)", () => {
     }
   );
 
-  // The earlier call is a read, which holds its client's chain slot and no
-  // store lock, so only the chain slot can hold the height read back.
+  // The earlier call is a serialized read (`getConsumableNotes`), which holds
+  // its client's chain slot and no store lock, so only the chain slot can hold
+  // the height read back.
   const readsSyncHeight = new Set([
     ...creations.map(({ name }) => name),
     "syncBeforeAccountCreation",
@@ -1023,18 +1025,18 @@ describe("store lock across WebClient instances (Web Locks)", () => {
         return 0;
       });
 
-      const read = b.client.getAccounts();
-      await waitForStart("B.getAccounts");
+      const read = b.client.getConsumableNotes();
+      await waitForStart("B.getConsumableNotes");
       const result = call(b);
       await flush();
-      expect(events).toEqual(["start B.getAccounts"]);
+      expect(events).toEqual(["start B.getConsumableNotes"]);
 
-      await release("B.getAccounts");
+      await release("B.getConsumableNotes");
       await release(`B.${label}`);
       await Promise.all([read, result]);
       expect(events).toEqual([
-        "start B.getAccounts",
-        "end B.getAccounts",
+        "start B.getConsumableNotes",
+        "end B.getConsumableNotes",
         "height B",
         `start B.${label}`,
         `end B.${label}`,
@@ -1279,14 +1281,41 @@ describe("store lock across WebClient instances (Web Locks)", () => {
       return "hatch";
     });
     await release("A.getAccounts in");
-    const outside = a.client.getAccounts("out");
+    const outside = a.client.getConsumableNotes("out");
     await flush();
     expect(events).toEqual(["start A.getAccounts in", "end A.getAccounts in"]);
 
+    // A local read takes no turn, so it does not wait for the callback.
+    const localRead = a.client.getAccounts("local");
+    await release("A.getAccounts local");
+    await expect(localRead).resolves.toBe("A.getAccounts local");
+
     gate.resolve();
     await expect(hatch).resolves.toBe("hatch");
-    await release("A.getAccounts out");
-    await expect(outside).resolves.toBe("A.getAccounts out");
+    await release("A.getConsumableNotes out");
+    await expect(outside).resolves.toBe("A.getConsumableNotes out");
+  });
+
+  it("serves a local read after terminate() only through an in-flight handle", async () => {
+    const a = makeWebClient(uniqueStore(), "A");
+    const midenA = new MidenClient(a.client, async () => fakeWasm, null);
+    // A method taken before terminate() still reaches the local read path.
+    const retained = a.client.getAccounts;
+
+    const gate = deferred();
+    const hatch = midenA._withInnerWebClient(async (inner) => {
+      await gate.promise;
+      return inner.getAccounts("nested");
+    });
+    await flush();
+    a.client.terminate();
+    const late = retained("retained").catch((error) => error.message);
+
+    gate.resolve();
+    await release("A.getAccounts nested");
+    await expect(hatch).resolves.toBe("A.getAccounts nested");
+    await expect(late).resolves.toBe("WebClient terminated");
+    expect(events).not.toContain("start A.getAccounts retained");
   });
 
   it("queues a call made through the handle after its callback settled", async () => {
@@ -1299,13 +1328,18 @@ describe("store lock across WebClient instances (Web Locks)", () => {
     });
     const running = deferred();
     a.instance._serializeWasmCall(() => running.promise);
-    const late = kept.getAccounts("late");
+    const late = kept.getConsumableNotes("late");
     await flush();
     expect(events).toEqual([]);
 
+    // A local read takes no turn, through a released handle as through the client.
+    const localRead = kept.getAccounts("local");
+    await release("A.getAccounts local");
+    await expect(localRead).resolves.toBe("A.getAccounts local");
+
     running.resolve();
-    await release("A.getAccounts late");
-    await expect(late).resolves.toBe("A.getAccounts late");
+    await release("A.getConsumableNotes late");
+    await expect(late).resolves.toBe("A.getConsumableNotes late");
   });
 
   it("runs account creation and an un-awaited transaction made after it in call order", async () => {
@@ -1402,13 +1436,13 @@ describe("store lock across WebClient instances (Web Locks)", () => {
       return work();
     });
 
-  it("does not start a read on a client while a withSyncLock callback holds the store lock a sync queued on that client waits for", async () => {
+  it("does not start a serialized read on a client while a withSyncLock callback holds the store lock a sync queued on that client waits for", async () => {
     const store = uniqueStore();
     const a = makeWebClient(store, "A");
     const go = deferred();
     let read;
     const callback = holdStoreLock(store, go.promise, async () => {
-      read = a.client.getAccounts();
+      read = a.client.getConsumableNotes();
       await Promise.race([read, flush()]);
       return [...events];
     });
@@ -1421,15 +1455,42 @@ describe("store lock across WebClient instances (Web Locks)", () => {
 
     await release("A.syncState");
     await expect(sync).resolves.toBe("A.syncState");
-    await release("A.getAccounts");
-    await expect(read).resolves.toBe("A.getAccounts");
+    await release("A.getConsumableNotes");
+    await expect(read).resolves.toBe("A.getConsumableNotes");
     expect(events).toEqual([
       "start callback",
       "start A.syncState",
       "end A.syncState",
-      "start A.getAccounts",
-      "end A.getAccounts",
+      "start A.getConsumableNotes",
+      "end A.getConsumableNotes",
     ]);
+  });
+
+  it("lets a local read complete while a withSyncLock callback holds the store lock a sync queued on that client waits for", async () => {
+    const store = uniqueStore();
+    const a = makeWebClient(store, "A");
+    a.wasmClient.getAccounts = vi.fn(async () => {
+      events.push("A.getAccounts");
+      return ["account"];
+    });
+    const go = deferred();
+    let read;
+    const callback = holdStoreLock(store, go.promise, async () => {
+      read = await a.client.getAccounts();
+      return { read, events: [...events] };
+    });
+    await vi.waitFor(() => expect(events).toEqual(["start callback"]));
+
+    const sync = a.client.syncState();
+    await flush();
+    go.resolve();
+    await expect(callback).resolves.toEqual({
+      read: ["account"],
+      events: ["start callback", "A.getAccounts"],
+    });
+
+    await release("A.syncState");
+    await expect(sync).resolves.toBe("A.syncState");
   });
 
   it("does not grant a lock held across a client's queued sync to a withSyncLock callback holding the store lock that sync waits for", async () => {

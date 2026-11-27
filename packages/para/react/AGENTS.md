@@ -87,9 +87,14 @@ const { client, accountId, error } = useParaMiden(
 
 It returns `{ client, accountId, error, para, evmWallets, nodeUrl, opts }`.
 `client` is `null` until the Para session is connected and the account is
-resolved, the client is memoized in a ref so re-renders do not rebuild it, and
-setup failures land on `error` rather than throwing - including the one for
-`storageMode: "private"` with no `accountSeed`.
+resolved. The hook terminates the client and resets `client`, `accountId` and
+`error` on logout, on an EVM wallet change, on a config change (`nodeUrl`,
+`storageMode`, the `opts` fields, `showSigningModal`, or whether
+`customSignConfirmStep` is set) and on unmount. New `para`, wallet, `opts` or
+`customSignConfirmStep` references with the same values do not rebuild it, and
+setups run one at a time, so a superseded setup terminates its client before
+the next starts. Setup failures land on `error` rather than throwing -
+including the one for `storageMode: "private"` with no `accountSeed`.
 
 Do not run both paths in one app. Each builds its own WASM-backed client, with
 its own store and its own account bootstrap. `ParaSignerProvider` goes out of

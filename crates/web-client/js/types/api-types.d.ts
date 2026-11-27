@@ -36,6 +36,7 @@ import type {
   StorageSlot,
   AccountComponent,
   Library,
+  Package,
   AuthSecretKey,
   AccountStorageRequirements,
   TransactionScript,
@@ -50,6 +51,10 @@ import type {
   PswapLineageRecord,
   ClaimProofData,
   ClaimLeafData,
+  BlockHeader,
+  BlockHeaderWithProof,
+  MmrProof,
+  NullifierUpdate,
 } from "./crates/miden_client_web";
 
 // `Account.prototype.storage()` is patched at WASM load time to return the
@@ -561,6 +566,41 @@ export interface ContractCreateOptions {
   components: AccountComponent[];
   /** Storage mode. Defaults to "public" for contracts. */
   storage?: StorageMode;
+}
+
+/** Options for {@link ContractsResource.deploy}. */
+export interface DeployContractOptions {
+  /** Pre-compiled components, as for `accounts.create`. Required. */
+  components: AccountComponent[];
+  /** Raw 32-byte seed. Defaults to 32 random bytes. */
+  seed?: Uint8Array;
+  /**
+   * Auth secret key, or `"none"` for a NoAuth contract. Defaults to a freshly
+   * generated Falcon key, stored with the account.
+   */
+  auth?: AuthSecretKey | "none";
+  /** Storage mode. Defaults to "public", as `accounts.create` does for contracts. */
+  storage?: StorageMode;
+}
+
+/** The account {@link ContractsResource.deploy} created and the inputs it used. */
+export interface DeployedContract {
+  account: Account;
+  seed: Uint8Array;
+  auth: AuthSecretKey | "none";
+}
+
+export interface ContractsResource {
+  /**
+   * Create a contract from compiled components, generating the `seed` and
+   * `auth` that are omitted. It is `accounts.create` for a contract and shares
+   * its validation, so `components` must include a non-auth procedure. The
+   * account is tracked locally; it reaches the chain with its first
+   * transaction.
+   *
+   * @throws TypeError if `components` is missing, instead of creating a wallet.
+   */
+  deploy(options: DeployContractOptions): Promise<DeployedContract>;
 }
 
 /**
@@ -1687,6 +1727,9 @@ export interface TransactionsResource {
   /**
    * Execute a custom transaction script with optional foreign account references.
    *
+   * A script that fails in the VM rejects with `code: "TRANSACTION_EXECUTION_FAILED"`
+   * (see {@link MasmErrorCode}).
+   *
    * @param options - Execute options including the account, compiled script, and foreign accounts.
    * @throws A browser MASM assertion may expose a {@link MasmExecutionDiagnostic} as `error.masm`.
    */
@@ -2214,6 +2257,25 @@ export interface CompileComponentOptions {
   libraries?: Pick<CompileTxScriptLibrary, "namespace" | "code">[];
 }
 
+/** Builds a component from a compiled package (`.masp`) instead of source. */
+export interface CompileComponentPackageOptions {
+  /**
+   * A compiled package, as a `Package` or its serialized bytes, built through
+   * `AccountComponent.fromPackage`: the component gets the fixed metadata name
+   * `"custom"`.
+   */
+  package: Package | Uint8Array;
+  code?: never;
+  /** Source-only: a package carries its own code. */
+  namespace?: never;
+  /** Source-only: a package carries its own code. */
+  libraries?: never;
+  /** Initial storage slots for the component. */
+  slots?: StorageSlot[];
+  /** Same meaning as for source. Default: true. */
+  supportAllTypes?: boolean;
+}
+
 export interface CompileTxScriptLibrary {
   /** MASM namespace for the library (e.g. "counter::module"). */
   namespace: string;
@@ -2258,12 +2320,46 @@ export interface CompileTxScriptOptions {
   libraries?: CompileScriptLibrary[];
 }
 
+/** Builds the transaction script from a compiled package instead of source. */
+export interface CompileTxScriptPackageOptions {
+  /**
+   * A compiled package of the matching kind, as a `Package` or its serialized
+   * bytes.
+   */
+  package: Package | Uint8Array;
+  code?: never;
+  /** Source-only: a package carries its own code. */
+  libraries?: never;
+}
+
 export interface CompileNoteScriptOptions {
   /** MASM source code for the note script. */
   code: string;
   /** Component libraries to link. */
   libraries?: CompileScriptLibrary[];
 }
+
+/** Builds the note script from a compiled package instead of source. */
+export interface CompileNoteScriptPackageOptions {
+  /**
+   * A compiled package of the matching kind, as a `Package` or its serialized
+   * bytes.
+   */
+  package: Package | Uint8Array;
+  code?: never;
+  /** Source-only: a package carries its own code. */
+  libraries?: never;
+}
+
+/**
+ * Stable `code` of the errors MASM failures raise (a message prefix on Node.js, where the
+ * binding cannot attach a property): `MASM_COMPILE_FAILED` when source does not assemble or
+ * link, `TRANSACTION_EXECUTION_FAILED` when a transaction program fails in the VM, for example
+ * a failing `assert`. The message carries the compiler or VM diagnostic.
+ */
+export type MasmErrorCode =
+  | "MASM_COMPILE_FAILED"
+  | "TRANSACTION_EXECUTION_FAILED";
 
 export declare class CompilerResource {
   /**
@@ -2286,7 +2382,7 @@ export declare class CompilerResource {
   );
 
   /**
-   * Compile MASM source into an AccountComponent.
+   * Compile MASM source, or build from a compiled package, into an AccountComponent.
    *
    * Only exports marked `@account_procedure` or `@auth_script` become component
    * procedures. A component with none logs a `[miden-sdk]` console warning and
@@ -2296,18 +2392,36 @@ export declare class CompilerResource {
    *
    * @param options - Component source code, storage slots, and auth options.
    */
+  component(
+    options:
+      | (CompileComponentOptions & { package?: never })
+      | CompileComponentPackageOptions
+  ): Promise<AccountComponent>;
+  /** Source input. Declared last so `Parameters` resolves to the source options. */
   component(options: CompileComponentOptions): Promise<AccountComponent>;
   /**
    * Compile MASM source into a TransactionScript.
    *
    * @param options - Script source code and optional libraries to link.
    */
+  txScript(
+    options:
+      | (CompileTxScriptOptions & { package?: never })
+      | CompileTxScriptPackageOptions
+  ): Promise<TransactionScript>;
+  /** Source input. Declared last so `Parameters` resolves to the source options. */
   txScript(options: CompileTxScriptOptions): Promise<TransactionScript>;
   /**
    * Compile MASM source into a NoteScript.
    *
    * @param options - Script source code and optional libraries to link.
    */
+  noteScript(
+    options:
+      | (CompileNoteScriptOptions & { package?: never })
+      | CompileNoteScriptPackageOptions
+  ): Promise<NoteScript>;
+  /** Source input. Declared last so `Parameters` resolves to the source options. */
   noteScript(options: CompileNoteScriptOptions): Promise<NoteScript>;
 }
 
@@ -2328,6 +2442,66 @@ export interface TagsResource {
    * List all registered note tags.
    */
   list(): Promise<number[]>;
+}
+
+/**
+ * Chain data read straight from the node, with no local store involved. Every
+ * call goes through one cached `RpcClient` that talks to the client's own
+ * endpoint, so the reads are available while a sync or transaction is in
+ * flight. They reject on a mock client, which has no node, and after
+ * `terminate()`. Use the standalone `RpcClient` for node calls this resource
+ * does not cover. Returned `BlockHeader`, `MmrProof` and `NullifierUpdate`
+ * objects are WASM wrappers: call `free()` on them when done. A block number
+ * that is not an integer from 0 to 2^32 - 1 rejects with a `RangeError`.
+ */
+export interface ChainResource {
+  /**
+   * Fetches a block header.
+   *
+   * @param blockNum - The block to fetch; the latest block when omitted.
+   */
+  getBlockHeader(blockNum?: number): Promise<BlockHeader>;
+  /**
+   * Fetches a block header together with the MMR proof that its commitment is
+   * part of the chain. The proof is made against the chain length the node
+   * reports, `mmrProof.forest()`, which can be later than the block.
+   *
+   * @param blockNum - The block to fetch.
+   */
+  getBlockHeaderWithProof(blockNum: number): Promise<{
+    header: BlockHeader;
+    mmrProof: MmrProof;
+  }>;
+  /**
+   * Looks up the block in which each nullifier was consumed, scanning from
+   * `blockFrom` up to the chain tip and comparing full nullifiers.
+   *
+   * @param nullifiers - Nullifiers as `Word`s or 0x-prefixed hex strings. A
+   *   `Word` is only read, never consumed.
+   * @param options.blockFrom - First block to scan, inclusive. Defaults to 0.
+   * @returns A map keyed by each nullifier as you passed it (a `Word` by its
+   *   `toHex()`), to its commit height or `null` when none was found in the
+   *   range. Hex of any case matches.
+   */
+  getNullifierCommitHeights(
+    nullifiers: Array<Word | string>,
+    options?: { blockFrom?: number }
+  ): Promise<Map<string, number | null>>;
+  /**
+   * Fetches consumed nullifiers matching 16-bit prefixes within an inclusive
+   * block range. Prefixes can match unrelated nullifiers, so compare the full
+   * returned nullifier with the one you track.
+   *
+   * @param prefixes - Nullifier prefixes, the high 16 bits of the fourth field
+   *   element: integers from 0 to 65535, else a `RangeError` before any request.
+   * @param blockFrom - First block to scan, inclusive.
+   * @param blockTo - Last block to scan, inclusive; at or below the chain tip.
+   */
+  syncNullifiers(
+    prefixes: ArrayLike<number>,
+    blockFrom: number,
+    blockTo: number
+  ): Promise<NullifierUpdate[]>;
 }
 
 export interface SettingsResource {
@@ -2442,10 +2616,12 @@ export declare class MidenClient {
   readonly transactions: TransactionsResource;
   readonly notes: NotesResource;
   readonly tags: TagsResource;
+  readonly chain: ChainResource;
   readonly settings: SettingsResource;
   readonly compile: CompilerResource;
   readonly keystore: KeystoreResource;
   readonly pswap: PswapResource;
+  readonly contracts: ContractsResource;
 
   /** Syncs the client: fetches private notes from the Note Transport Layer, then syncs on-chain state. Fails fast on either. */
   sync(): Promise<SyncSummary>;
@@ -2456,16 +2632,20 @@ export declare class MidenClient {
   /** Returns the current sync height. */
   getSyncHeight(): Promise<number>;
   /**
-   * Waits for the ordered WASM calls and concurrent sync-height reads already
-   * in flight when called. Calls made later are outside this wait.
+   * Resolves once every serialized WASM call that was already on the
+   * internal call chain when `waitForIdle()` was called (execute, submit,
+   * prove, apply, sync, or account creation) has settled. Use this from
+   * callers that need to perform a non-WASM-side action — e.g. clearing
+   * an in-memory auth key on wallet lock — after the kernel finishes, so
+   * its auth callback doesn't race with the key being cleared. Does NOT
+   * wait for calls enqueued after `waitForIdle()` returns.
    *
-   * Use this before clearing app-side state, such as an in-memory auth key,
-   * that a pending operation may still need.
+   * A call that takes the store lock, a Web Lock shared by every client on
+   * the same store, is on the internal chain from the moment it is made,
+   * like every other call; the `frontend-pitfalls` skill shipped with this
+   * package lists those calls.
    *
-   * During sync or proof work on a live Web Worker, `getSyncHeight()` can
-   * return the committed height if no later ordered call is already queued.
-   * Note screening and account reader acquisition stay ordered. The
-   * balance lookup on an acquired reader runs outside the idle wait.
+   * Returns immediately if nothing was in flight.
    */
   waitForIdle(): Promise<void>;
   /**

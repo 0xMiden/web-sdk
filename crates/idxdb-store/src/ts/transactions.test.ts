@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, vi, beforeEach } from "vitest";
+import Dexie from "dexie";
 import { openDatabase, getDatabase } from "./schema.js";
 import {
   getTransactions,
@@ -387,5 +388,44 @@ describe("transactions", () => {
     expect(ids).toEqual(
       expect.arrayContaining(["multi-1", "multi-2", "multi-3"])
     );
+  });
+
+  it("reads transactions and scripts in a single readonly transaction snapshot", async () => {
+    const dbId = await openTestDb();
+    const scriptRoot = new Uint8Array([7, 7]);
+    await insertTransactionScript(dbId, scriptRoot, new Uint8Array([9]));
+    await upsertTransactionRecord(
+      dbId,
+      "tx-snap",
+      new Uint8Array([1]),
+      1,
+      0,
+      new Uint8Array([0]),
+      scriptRoot
+    );
+
+    const db = getDatabase(dbId);
+    const txSpy = vi.spyOn(db.dexie, "transaction");
+    const scriptTableRead = db.transactionScripts.where.bind(
+      db.transactionScripts
+    );
+    const scriptReadInsideTransaction: boolean[] = [];
+    vi.spyOn(db.transactionScripts, "where").mockImplementation(((
+      ...args: Parameters<typeof scriptTableRead>
+    ) => {
+      scriptReadInsideTransaction.push(Dexie.currentTransaction != null);
+      return scriptTableRead(...args);
+    }) as typeof scriptTableRead);
+
+    const results = await getTransactions(dbId, "All");
+    expect(results).toHaveLength(1);
+    expect(results![0].scriptRoot).toBeDefined();
+    expect(txSpy).toHaveBeenCalledWith(
+      "r",
+      [db.transactions, db.transactionScripts],
+      expect.any(Function)
+    );
+    // The script lookup must run while the readonly transaction is active.
+    expect(scriptReadInsideTransaction).toEqual([true]);
   });
 });

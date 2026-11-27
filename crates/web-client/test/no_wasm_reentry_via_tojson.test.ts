@@ -64,6 +64,8 @@ test.describe("wasm-bindgen wrapper classes — safe JSON.stringify contract (re
         // Constructor-only bindings such as WebClient also own WASM pointers
         // but have no __wrap helper. Their destructor identifies them.
         if (typeof ctor.prototype?.__destroy_into_raw !== "function") continue;
+        // 0.18.x keeps the published toJSON/toString of StorageMapEntry.
+        if (name === "StorageMapEntry") continue;
         candidates.push({ name, ctor: value as Function });
       }
 

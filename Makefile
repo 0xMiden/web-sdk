@@ -197,7 +197,7 @@ test-web-client-nodejs: require-fee-faucet ## Run web client tests on Node.js (m
 RUST_TEST_PROFILE ?= test
 test-web-client-rpc: ## Run native RPC contract and error-code tests (no node or local store required)
 	# Dynamic symbols let the Rust test executable link without a Node.js host.
-	cargo test -p miden-client-web --no-default-features --features nodejs,testing,napi/dyn-symbols --profile $(RUST_TEST_PROFILE) --lib rpc_client:: -- post_submit_code_tests header_at_sync_height_tests
+	cargo test -p miden-client-web --no-default-features --features nodejs,testing,napi/dyn-symbols --profile $(RUST_TEST_PROFILE) --lib rpc_client:: -- post_submit_code_tests header_at_sync_height_tests chain_reads_
 
 .PHONY: test-web-client-rpc-nodejs
 test-web-client-rpc-nodejs: ## Run native RPC binding tests (no Miden node or local store required)

@@ -61,7 +61,10 @@ test.describe("remote prover transaction tests", () => {
   }) => {
     const { accountId, faucetId } = await setupWalletAndFaucet(page);
     const result = await mintTransaction(page, accountId, faucetId, true, true);
-    expect(result.numOutputNotesCreated).toEqual(1);
+    // The test node charges fees: the mint's note, plus the fee note.
+    expect(result.numUserOutputNotes).toEqual(1);
+    expect(result.hasFeeNote).toBe(true);
+    expect(result.numOutputNotesCreated).toEqual(2);
     expect(result.createdNoteId).toBeDefined();
   });
 

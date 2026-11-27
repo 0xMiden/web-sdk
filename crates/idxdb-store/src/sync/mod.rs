@@ -278,12 +278,17 @@ impl IdxdbStore {
     /// absolute, so no account reconstruction is required; the write happens in `applyStateSync`.
     async fn prepare_account_patches(
         &self,
-        patch_updates: Vec<(&AccountHeader, &AccountPatch)>,
+        mut patch_updates: Vec<(&AccountHeader, &AccountPatch)>,
         discarded_account_ids: &BTreeSet<AccountId>,
         undo_account_commitments: &[String],
     ) -> Result<Vec<JsAccountPatchUpdate>, StoreError> {
         // A patch for an account with a discarded transaction applies to the state after the undo,
         // which is written with the sync, so read that state without persisting the undo.
+        //
+        // Reading it leaves the forest in that unpersisted state, and a local account read running
+        // during an await would rebuild the forest from the tables. These patches go first, so
+        // nothing awaits between the read and their application.
+        patch_updates.sort_by_key(|(header, _)| !discarded_account_ids.contains(&header.id()));
         let overlapping: Vec<AccountId> = patch_updates
             .iter()
             .map(|(header, _)| header.id())

@@ -5,18 +5,36 @@ import type {
   TransactionScript,
   NoteScript,
   CompileComponentOptions,
+  CompileComponentPackageOptions,
   CompileTxScriptOptions,
+  CompileTxScriptPackageOptions,
   CompileNoteScriptOptions,
+  CompileNoteScriptPackageOptions,
 } from "@miden-sdk/miden-sdk";
 import { useMiden } from "../context/MidenProvider";
 
 export interface UseCompileResult {
-  /** Compile MASM source into an AccountComponent. */
-  component: (options: CompileComponentOptions) => Promise<AccountComponent>;
-  /** Compile MASM source into a TransactionScript. */
-  txScript: (options: CompileTxScriptOptions) => Promise<TransactionScript>;
-  /** Compile MASM source into a NoteScript. */
-  noteScript: (options: CompileNoteScriptOptions) => Promise<NoteScript>;
+  /** Compile MASM source, or build from a compiled `package`, into an AccountComponent. */
+  component(
+    options:
+      | (CompileComponentOptions & { package?: never })
+      | CompileComponentPackageOptions
+  ): Promise<AccountComponent>;
+  component(options: CompileComponentOptions): Promise<AccountComponent>;
+  /** Compile MASM source, or build from a compiled `package`, into a TransactionScript. */
+  txScript(
+    options:
+      | (CompileTxScriptOptions & { package?: never })
+      | CompileTxScriptPackageOptions
+  ): Promise<TransactionScript>;
+  txScript(options: CompileTxScriptOptions): Promise<TransactionScript>;
+  /** Compile MASM source, or build from a compiled `package`, into a NoteScript. */
+  noteScript(
+    options:
+      | (CompileNoteScriptOptions & { package?: never })
+      | CompileNoteScriptPackageOptions
+  ): Promise<NoteScript>;
+  noteScript(options: CompileNoteScriptOptions): Promise<NoteScript>;
   /** Whether the underlying client is ready to compile. */
   isReady: boolean;
 }
@@ -58,20 +76,21 @@ export function useCompile(): UseCompileResult {
   }, [resource]);
 
   const component = useCallback(
-    async (options: CompileComponentOptions) =>
+    async (options: CompileComponentOptions | CompileComponentPackageOptions) =>
       requireResource().component(options),
     [requireResource]
   );
 
   const txScript = useCallback(
-    async (options: CompileTxScriptOptions) =>
+    async (options: CompileTxScriptOptions | CompileTxScriptPackageOptions) =>
       requireResource().txScript(options),
     [requireResource]
   );
 
   const noteScript = useCallback(
-    async (options: CompileNoteScriptOptions) =>
-      requireResource().noteScript(options),
+    async (
+      options: CompileNoteScriptOptions | CompileNoteScriptPackageOptions
+    ) => requireResource().noteScript(options),
     [requireResource]
   );
 
