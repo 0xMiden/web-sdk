@@ -72,7 +72,7 @@ test.describe("remote keystore", () => {
         authErrorMessage,
         retryAuthError,
       } = await page.evaluate(async (useWorker) => {
-        let failLookup = true;
+        let failLookup = false;
         let getKeyCalls = 0;
         const keys = new Map<string, Uint8Array>();
         const client =
@@ -120,6 +120,9 @@ test.describe("remote keystore", () => {
           undefined
         );
         await client.syncState();
+        await window.helpers.fundAccounts([faucet.id()], client);
+        getKeyCalls = 0;
+        failLookup = true;
         const txRequest = await (client as any).newMintTransactionRequest(
           wallet.id(),
           faucet.id(),
@@ -180,7 +183,7 @@ test.describe("remote keystore", () => {
       page,
     }) => {
       const result = await page.evaluate(async (useWorker) => {
-        let failGetKey = true;
+        let failGetKey = false;
         let getKeyCalls = 0;
         const keys = new Map<string, Uint8Array>();
         const client =
@@ -225,6 +228,9 @@ test.describe("remote keystore", () => {
           undefined
         );
         await client.syncState();
+        await window.helpers.fundAccounts([faucet.id()], client);
+        getKeyCalls = 0;
+        failGetKey = true;
         const request = await (client as any).newMintTransactionRequest(
           wallet.id(),
           faucet.id(),
@@ -308,6 +314,7 @@ test.describe("remote keystore", () => {
         authErrorMessage,
         rawSignPreserved,
       } = await page.evaluate(async (useWorker) => {
+        let failSign = false;
         let signCalls = 0;
         let getKeyCalls = 0;
         const keys = new Map<string, Uint8Array>();
@@ -327,7 +334,17 @@ test.describe("remote keystore", () => {
             async (commitment: Uint8Array, key: Uint8Array) => {
               keys.set(Array.from(commitment).join(","), key);
             },
-            async () => {
+            async (commitment: Uint8Array, signingInputsBytes: Uint8Array) => {
+              if (!failSign) {
+                const rawKey = keys.get(Array.from(commitment).join(","));
+                if (!rawKey) {
+                  throw new Error("Missing key for funding sign");
+                }
+                const wasmKey = window.AuthSecretKey.deserialize(rawKey);
+                const wasmInputs =
+                  window.SigningInputs.deserialize(signingInputsBytes);
+                return wasmKey.signData(wasmInputs).serialize();
+              }
               signCalls++;
               throw signError;
             },
@@ -352,6 +369,10 @@ test.describe("remote keystore", () => {
           undefined
         );
         await client.syncState();
+        await window.helpers.fundAccounts([faucet.id()], client);
+        signCalls = 0;
+        getKeyCalls = 0;
+        failSign = true;
         const txRequest = await (client as any).newMintTransactionRequest(
           wallet.id(),
           faucet.id(),
@@ -741,6 +762,8 @@ test.describe("remote keystore", () => {
       );
 
       await client.syncState();
+      await window.helpers.fundAccounts([faucet.id()], client);
+      signPubKey = undefined;
 
       const txRequest = await (client as any).newMintTransactionRequest(
         wallet.id(),

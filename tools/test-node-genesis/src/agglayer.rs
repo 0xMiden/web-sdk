@@ -1,0 +1,129 @@
+//! Builds the agglayer genesis accounts (bridge admin, GER manager, bridge, faucet) included in the
+//! genesis configuration when agglayer support is requested.
+
+use std::collections::BTreeSet;
+
+use ::rand::{RngExt, random};
+use anyhow::{Context, Result};
+use miden_agglayer::{AggLayerBridge, AggLayerFaucet, BridgeRoles};
+use miden_objects::account_file::AccountFile;
+use miden_protocol::asset::{Asset, AssetAmount};
+use miden_protocol::note::NoteScriptRoot;
+use miden_protocol::{Felt, Word};
+use miden_standards::account::fees::BasicConstantFeePolicy;
+use rand_chacha::ChaCha20Rng;
+use rand_chacha::rand_core::SeedableRng;
+
+use crate::{generate_wallet, into_genesis_account};
+
+/// The `AggLayer` network ID assigned to the Miden chain.
+///
+/// Bridge-in asserts that a claim leaf's `destination_network` equals the value the bridge account
+/// was built with, matching the test vector constant.
+pub const MIDEN_NETWORK_ID: u32 = 77;
+
+/// File names for agglayer genesis account exports.
+pub const BRIDGE_ADMIN_ACCOUNT_FILE: &str = "bridge_admin.mac";
+pub const GER_MANAGER_ACCOUNT_FILE: &str = "ger_manager.mac";
+pub const BRIDGE_ACCOUNT_FILE: &str = "bridge.mac";
+pub const AGGLAYER_FAUCET_ACCOUNT_FILE: &str = "agglayer_faucet.mac";
+
+/// Account files to include in genesis and save to disk (account + secret keys). Each entry is
+/// (filename, `AccountFile`).
+pub type AgglayerGenesisAccounts = Vec<(&'static str, AccountFile)>;
+
+/// Creates all agglayer genesis accounts:
+/// 1. Bridge Admin - public wallet with Falcon512 auth
+/// 2. GER Manager - public wallet with Falcon512 auth
+/// 3. Bridge - `AuthNetworkAccount` network account
+/// 4. Faucet - `AuthNetworkAccount` network account for bridged tokens
+///
+/// All four are deployed at genesis and hold `fee_balance` of the native fee asset, so each can
+/// settle the fee of its own transactions.
+///
+/// The bridge and faucet use `AuthNetworkAccount`, which rejects any input note whose script is not
+/// in the account's allowlist. Theirs holds only the agglayer protocol's own notes, none of which
+/// is a payment, so there is no way to hand them the fee asset once genesis is sealed and their
+/// balance has to be seeded here. The bridge is left **unconfigured**; the faucet is registered at
+/// test time by submitting a `CONFIG_AGG_BRIDGE` note, which the node processes as a network
+/// transaction (the only path allowed to mutate an `AuthNetworkAccount`).
+pub fn create_agglayer_genesis_accounts(fee_balance: Asset) -> Result<AgglayerGenesisAccounts> {
+    let mut rng = ChaCha20Rng::from_seed(random());
+
+    // 1. Create Bridge Admin
+    let (admin_account, admin_secret) =
+        generate_wallet().context("failed to create bridge admin account")?;
+    let admin_account = into_genesis_account(admin_account, fee_balance)?;
+
+    // 2. Create GER Manager
+    let (ger_account, ger_secret) =
+        generate_wallet().context("failed to create GER manager account")?;
+    let ger_account = into_genesis_account(ger_account, fee_balance)?;
+
+    // 3. Create and deploy the Bridge account (unconfigured; configured at test time).
+    let bridge_seed: Word = rng.random::<[u32; 4]>().map(Felt::from).into();
+    let roles = BridgeRoles::new(
+        BTreeSet::from([admin_account.id()]),
+        BTreeSet::from([ger_account.id()]),
+        BTreeSet::from([ger_account.id()]),
+        BTreeSet::from([admin_account.id()]),
+        BTreeSet::from([admin_account.id()]),
+    )
+    .context("failed to build bridge roles")?;
+    let bridge = AggLayerBridge::account_builder(
+        bridge_seed,
+        admin_account.id(),
+        roles,
+        MIDEN_NETWORK_ID,
+        fee_balance.faucet_id(),
+        zero_fee_policy(AggLayerBridge::allowed_notes()),
+    )
+    .build()
+    .context("failed to build bridge account")?;
+    let bridge = into_genesis_account(bridge, fee_balance)?;
+
+    // 4. Create and deploy the Faucet.
+    let faucet_seed: Word = rng.random::<[u32; 4]>().map(Felt::from).into();
+    let faucet = AggLayerFaucet::account_builder(
+        faucet_seed,
+        miden_standards::account::faucets::TokenName::new("AggLayer Token").unwrap(),
+        miden_protocol::asset::TokenSymbol::new("AGG").unwrap(),
+        12,
+        AssetAmount::new(1_000_000_000).unwrap(),
+        AssetAmount::ZERO,
+        admin_account.id(),
+        admin_account.id(),
+        bridge.id(),
+        fee_balance.faucet_id(),
+        zero_fee_policy(AggLayerFaucet::allowed_notes()),
+    )
+    .build()
+    .context("failed to build agglayer faucet account")?;
+    let faucet = into_genesis_account(faucet, fee_balance)?;
+
+    let admin_file = AccountFile::new(admin_account, vec![admin_secret]);
+    let ger_file = AccountFile::new(ger_account, vec![ger_secret]);
+    let bridge_file = AccountFile::new(bridge, vec![]);
+    let faucet_file = AccountFile::new(faucet, vec![]);
+
+    Ok(vec![
+        (BRIDGE_ADMIN_ACCOUNT_FILE, admin_file),
+        (GER_MANAGER_ACCOUNT_FILE, ger_file),
+        (BRIDGE_ACCOUNT_FILE, bridge_file),
+        (AGGLAYER_FAUCET_ACCOUNT_FILE, faucet_file),
+    ])
+}
+
+/// Builds a fee policy charging nothing for every note the account accepts.
+///
+/// The network account's `fee_faucet_id` (passed to `account_builder`) must name the chain's
+/// native fee faucet from the genesis header's fee parameters. A network account settles its fee
+/// against the faucet its own policy names, so a policy pointing anywhere else leaves the
+/// ntx-builder unable to execute the account's transactions at all, and its notes sit unconsumed.
+///
+/// Every allowlisted script needs an entry, including a zero one: a script root missing from the
+/// schedule aborts fee estimation rather than defaulting to free.
+fn zero_fee_policy(allowed_notes: BTreeSet<NoteScriptRoot>) -> BasicConstantFeePolicy {
+    BasicConstantFeePolicy::new()
+        .with_fees(allowed_notes.into_iter().map(|root| (root, AssetAmount::ZERO)))
+}

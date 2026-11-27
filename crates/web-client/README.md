@@ -485,6 +485,10 @@ console.log(`Balance: ${balance}`); // 900n
 client.terminate();
 ```
 
+### Transaction cycle counts
+
+`ExecutedTransaction.measurements()` reports the VM cycles of each execution phase (`prologue`, `notesProcessing`, `noteExecution`, `txScriptProcessing`, `epilogue`, `authProcedure` and `totalCycles`). See the [transactions guide](https://docs.miden.xyz/builder/tools/clients/web-client/) for details.
+
 ### Stateless RPC queries and submission
 
 Use `RpcClient` when your application keeps its own state or submits
@@ -600,6 +604,18 @@ A contract also needs a raw 32-byte `seed` and `auth`. `auth` is an
 anyone can call and that stores no key. Omitting `auth` is rejected and does
 not default to NoAuth. `"none"` is only valid on a contract; wallet and faucet
 `auth` stays `AuthScheme.Falcon` or `AuthScheme.ECDSA`.
+
+A component, transaction script or note script can also come from a compiled
+package (`.masp`) instead of MASM source: pass `package` (a `Package` or its
+serialized bytes) in place of `code`, for example
+`client.compile.component({ package: bytes, slots })`, then pass the result to
+`accounts.create({ components })` as usual. `compile.txScript` and
+`compile.noteScript` take `{ package }` the same way. `namespace` and
+`libraries` apply to source only, and a package must be the right kind for what
+you build. A component built from a package always gets the fixed metadata name
+`"custom"`, whatever name the package declares, and `supportAllTypes` still
+defaults to `true`. The `Package` you pass stays usable afterward.
+
 The legacy selectors `0`, `1` and `"NonFungibleFaucet"` are still read as
 faucet types (non-fungible faucets are not supported yet and are rejected);
 `0` and `1` are also `AccountType.Private` / `AccountType.Public`, so never pass
@@ -608,6 +624,14 @@ a visibility value as `type`. `create()` throws a `TypeError` for any other
 faucet type, for `components` on a faucet, and for a faucet missing `symbol`,
 `decimals` or `maxSupply`, so a missed migration fails instead of creating a
 wallet.
+
+`client.contracts.deploy({ components, seed?, auth?, storage? })` is
+`accounts.create` for a contract with the missing inputs filled in: a random
+32-byte `seed` and a freshly generated Falcon `AuthSecretKey` (stored with the
+account) when you omit them, and `"public"` storage unless you pass `storage`.
+It resolves to `{ account, seed, auth }`, the values it used, and shares
+`accounts.create`'s validation. It throws a `TypeError` without `components`
+rather than creating a wallet.
 
 ### Create a New Wallet
 
@@ -736,6 +760,7 @@ const result = await client.transactions.consumeAll({ account: wallet });
 console.log(`Consumed ${result.consumed} notes, ${result.remaining} remaining`);
 
 // `remaining === 0` therefore means "no payment consumable now", not "no notes".
+// Filter by nullifier; see the notes guide.
 // To see block-locked notes and other scripts too, with their unlock block:
 const walletId = wallet.id().toString();
 const all = await client.notes.listConsumable({ account: wallet });
@@ -955,7 +980,7 @@ const txs = await client.transactions.list();
 Two failure modes worth handling after a batch submit:
 
 1. The node can accept a batch and the local store update still fail (`code: "ApplyTransactionAfterSubmitFailed"`, or a message containing `batch was accepted at block N but building store updates failed` / `applying to the store failed`). Do not submit again; sync instead.
-2. The submission can come back without a definite outcome (`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` with `submission` in-thread or `submissionId` under a Web Worker, plus `transactionIds`). Resend with `client.transactions.retryProvenBatch(error.submission ?? { submissionId: error.submissionId })` without calling `batch` / `submitBatch` again. After a successful retry, confirm with `waitFor` / `list` for those ids. A conflict on retry usually means the original attempt landed, but a rejected retry records nothing locally and a sync does not insert the missing records, so look the ids up on the node, not in the local store. Browser builds only: Node.js errors prefix the message with the code and carry no submission handle or `transactionIds`.
+2. The submission can come back without a definite outcome (`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` with `submission` in browser in-thread and Node.js builds, or `submissionId` under a Web Worker, plus `transactionIds`). Resend with `client.transactions.retryProvenBatch(error.submission ?? { submissionId: error.submissionId })` without calling `batch` / `submitBatch` again. After a successful retry, confirm with `waitFor` / `list` for those ids. A conflict on retry usually means the original attempt landed, but a rejected retry records nothing locally and a sync does not insert the missing records, so look the ids up on the node, not in the local store.
 
 ### MASM assertion diagnostics
 
@@ -1126,13 +1151,29 @@ if (received.commitment().toHex() !== proposed.blockCommitment().toHex()) {
 }
 ```
 
-Before signing, inspect what the transaction actually does — `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()`, and `summary.expirationDelta()` for how long the authorization stays live (`0` means no expiration was set, not that it has already expired) — and confirm it matches what you agreed to. For storage, `summary.accountDelta().storage()` names each changed slot: `valueSlots()` gives a value slot's `slotName`, `operation` and final `value`, and `mapSlots()` gives a map slot's `slotName`, `operation` and changed `entries()` (`key`, `value`), so a change to a multisig's signer set or threshold is visible before you sign. `ChainAnchor` enforces only that its header and partial blockchain are consistent with each other, which is computable over an invented chain; fetch the header for `anchor.blockNum()` with `RpcClient.getBlockHeaderByNumber` and compare commitments to confirm the block is real.
+Before signing, inspect what the transaction actually does — `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()`, and `summary.expirationDelta()` for how long the authorization stays live (`0` means no expiration was set, not that it has already expired) — and confirm it matches what you agreed to. For storage, `summary.accountDelta().storage()` names each changed slot: `valueSlots()` gives a value slot's `slotName`, `operation` and final `value`, and `mapSlots()` gives a map slot's `slotName`, `operation` and changed `entries()` (`key`, `value`), so a change to a multisig's signer set or threshold is visible before you sign. `ChainAnchor` enforces only that its header and partial blockchain are consistent with each other, which is computable over an invented chain; fetch the header for `anchor.blockNum()` with `RpcClient.getBlockHeaderByNumber` and compare commitments to confirm the block is real (a `MidenClient` reads it with `client.chain.getBlockHeader(anchor.blockNum())`).
 
 An anchor pins the **reference block and chain data only**. Account state and authenticated input-note records still come from each participant's own local store, so every party must also agree on the account state. If the account moved in a way that changes the transaction's effects, the re-derived summary will not match even though the anchor is correct - the most common reason a co-signing flow fails.
 
 A match, however, does not prove the two parties agree on account state. The summary binds the account *delta*, not the state it applies to, so divergence that leaves the delta and note sets unchanged — an unrelated nonce bump, assets arriving, or a change to a multisig's signer set or threshold — yields an identical commitment and passes verification. Signatures gathered under one threshold stay valid after it is lowered. Check the state you care about directly.
 
 See [the transactions guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/transactions.md#chain-anchored-execution) for the full flow.
+
+### MASM Failure Codes
+
+MASM that does not assemble or link rejects with `code: "MASM_COMPILE_FAILED"`, and a
+transaction program that fails in the VM (for example a failing `assert`) rejects with
+`code: "TRANSACTION_EXECUTION_FAILED"`. The message carries the compiler or VM diagnostic.
+Node.js errors prefix the message with `"<CODE>: "` instead of setting `code`.
+
+```ts
+try {
+  await client.transactions.execute({ account, script });
+} catch (e) {
+  if (e.code === "TRANSACTION_EXECUTION_FAILED") showScriptFailure(e.message);
+  else throw e;
+}
+```
 
 ### Foreign Accounts
 
@@ -1365,6 +1406,32 @@ client.endpoint(); // "https://rpc.devnet.miden.io"
 
 const rpc = new RpcClient(new Endpoint(client.endpoint()!));
 const header = await rpc.getBlockHeaderByNumber(100, false);
+
+// A MidenClient reads the same header, and an MMR proof, through client.chain:
+const sameHeader = await client.chain.getBlockHeader(100);
+const { header: proven, mmrProof } = await client.chain.getBlockHeaderWithProof(100);
+for (const wrapper of [header, sameHeader, proven, mmrProof]) wrapper.free();
+
+// Which block consumed each nullifier (null when none did), by full nullifier:
+const heights = await client.chain.getNullifierCommitHeights([nullifierHex]);
+// RpcClient.getNullifierCommitHeights(words, blockFrom) is the standalone form
+// and returns NullifierUpdates for the consumed ones. Free headers, proofs and
+// updates yourself; passed Words are consumed on the browser entries.
+```
+
+### Check the Node's Health
+
+`client.checkHealth()` asks the node for its status and never rejects for a node problem: it resolves to `{ reachable: true, version, chainTip, genesisCommitment?, blockProducer? }`, where `blockProducer` carries the block producer's `version`, `status`, `chainTip` and `mempoolStats` (`unbatchedTransactions`, `proposedBatches`, `provenBatches`), or to `{ reachable: false, error }`. A mock client reports unreachable. The request runs outside the client's call queue, so it answers during a sync. `client.monitorHealth({ intervalMs, onChange })` checks every `intervalMs` (at most 2147483647) after the previous check settles, calls `onChange` with the first result and then only when reachability or the block producer's `status` changes, and returns a function that stops it; `terminate()` stops it too. `RpcClient.getStatus()` returns the same status as a `RpcStatusInfo` and rejects when the node cannot be reached.
+
+```typescript
+const health = await client.checkHealth();
+if (!health.reachable) console.warn(health.error);
+
+const stop = client.monitorHealth({
+  intervalMs: 15_000,
+  onChange: (health) => setOnline(health.reachable),
+});
+stop();
 ```
 
 ### Check the Node's Health

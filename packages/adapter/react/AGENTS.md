@@ -75,8 +75,12 @@ one wallet is available.
 stored in `localStorage` under `walletName` (override with
 `localStorageKey`). Reconnecting on load is `autoConnect`, which is `false` by
 default, waits for the stored wallet to be `Installed` (connecting a
-`Loadable` one hands off to its app, which only a tap may start) and silently
-clears the stored name when it fails.
+`Loadable` one hands off to its app, which only a tap may start), and clears
+the stored name on failure under `WalletProvider` or multi-wallet
+`MidenFiSignerProvider`. In single-wallet `MidenFiSignerProvider`, the sole
+wallet stays selected in `localStorage` and `autoConnect` retries stay
+suppressed until `select()` is called explicitly (while manual `connect()`
+still works).
 
 **Server rendering diverges.** The stored name is read inside a `useState`
 initializer; on the server that read fails and is swallowed, so the server

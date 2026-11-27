@@ -1937,6 +1937,10 @@ nodeTest.describe("MidenClient API - Integration", () => {
           maxSupply: 10_000_000n,
         });
 
+        await client._withInnerWebClient(async (inner) => {
+          await window.helpers.fundAccounts([faucet.id(), wallet.id()], inner);
+        });
+
         // Mint tokens
         const { txId: mintTxId } = await client.transactions.mint({
           account: faucet,
@@ -2002,6 +2006,11 @@ nodeTest.describe("MidenClient API - Integration", () => {
         maxSupply: 10_000_000n,
       });
 
+      await client._withInnerWebClient(async (inner) => {
+        await window.helpers.fundAccounts([faucet.id()], inner);
+      });
+      const beforeAll = await client.transactions.list();
+
       const { txId } = await client.transactions.mint({
         account: faucet,
         to: wallet,
@@ -2021,6 +2030,7 @@ nodeTest.describe("MidenClient API - Integration", () => {
       });
 
       return {
+        beforeCount: beforeAll.length,
         allCount: allTxs.length,
         byIdCount: byId.length,
         byIdMatchesTxId: byId[0]?.id().toHex() === txHex,
@@ -2028,7 +2038,7 @@ nodeTest.describe("MidenClient API - Integration", () => {
       };
     });
 
-    expect(result.allCount).toBe(1);
+    expect(result.allCount).toBe(result.beforeCount + 1);
     expect(result.byIdCount).toBe(1);
     expect(result.byIdMatchesTxId).toBe(true);
     expect(result.uncommittedCount).toBeGreaterThanOrEqual(0);
@@ -2049,6 +2059,10 @@ nodeTest.describe("MidenClient API - Integration", () => {
         symbol: "DAG",
         decimals: 8,
         maxSupply: 10_000_000n,
+      });
+
+      await client._withInnerWebClient(async (inner) => {
+        await window.helpers.fundAccounts([faucet.id()], inner);
       });
 
       // Mint to generate a note

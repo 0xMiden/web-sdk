@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createSdkWrapper } from "../node/napi-compat.js";
+import { createSdkWrapper, wrapClient } from "../node/napi-compat.js";
 
 describe("Node optional RPC results", () => {
   it.each([
@@ -110,5 +110,102 @@ describe("Node Note statics", () => {
     // deserialize takes JsBytes, which needs the view itself.
     sdk.Note.deserialize(bytes);
     expect(deserialize).toHaveBeenCalledWith(bytes);
+  });
+});
+
+describe("Node batch submit and retryProvenBatch (#571)", () => {
+  it("returns blockNumber when _submitNewTransactionBatchOutcome succeeds", async () => {
+    const rawClient = {
+      _submitNewTransactionBatchOutcome: vi
+        .fn()
+        .mockResolvedValue({ blockNumber: 42 }),
+    };
+    const wrapped = wrapClient(rawClient, "test-store", {});
+    const items = [{ account: "a" }];
+
+    await expect(wrapped.submitNewTransactionBatch(items)).resolves.toBe(42);
+    expect(rawClient._submitNewTransactionBatchOutcome).toHaveBeenCalledWith(
+      items
+    );
+  });
+
+  it("throws Error with code, submission, and transactionIds on unknown outcome and retries with the handle", async () => {
+    const firstSubmission = { transactionIds: () => [] };
+    const secondSubmission = { transactionIds: () => [] };
+    const rawClient = {
+      _submitNewTransactionBatchOutcome: vi.fn().mockResolvedValue({
+        errorMessage:
+          "BATCH_SUBMISSION_OUTCOME_UNKNOWN: failed to submit transaction batch",
+        errorCode: "BATCH_SUBMISSION_OUTCOME_UNKNOWN",
+        submission: firstSubmission,
+        transactionIds: ["0x1", "0x2"],
+      }),
+      _retryProvenBatchOutcome: vi
+        .fn()
+        .mockResolvedValueOnce({
+          errorMessage:
+            "BATCH_SUBMISSION_OUTCOME_UNKNOWN: failed to retry proven batch",
+          errorCode: "BATCH_SUBMISSION_OUTCOME_UNKNOWN",
+          submission: secondSubmission,
+          transactionIds: ["0x1", "0x2"],
+        })
+        .mockResolvedValueOnce({ blockNumber: 99 }),
+    };
+    const wrapped = wrapClient(rawClient, "test-store", {});
+
+    const err1 = await wrapped.submitNewTransactionBatch([]).catch((e) => e);
+    expect(err1).toBeInstanceOf(Error);
+    expect(err1).toMatchObject({
+      code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN",
+      submission: firstSubmission,
+      transactionIds: ["0x1", "0x2"],
+    });
+
+    const err2 = await wrapped
+      .retryProvenBatch(err1.submission)
+      .catch((e) => e);
+    expect(err2).toBeInstanceOf(Error);
+    expect(err2).toMatchObject({
+      code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN",
+      submission: secondSubmission,
+      transactionIds: ["0x1", "0x2"],
+    });
+    expect(rawClient._retryProvenBatchOutcome).toHaveBeenNthCalledWith(
+      1,
+      firstSubmission
+    );
+
+    await expect(
+      wrapped.retryProvenBatch({ submission: err2.submission })
+    ).resolves.toBe(99);
+    expect(rawClient._retryProvenBatchOutcome).toHaveBeenNthCalledWith(
+      2,
+      secondSubmission
+    );
+  });
+
+  it("propagates ordinary rejections from _...Outcome unchanged", async () => {
+    const boom = new Error("ApplyTransactionAfterSubmitFailed: store failed");
+    const rawClient = {
+      _submitNewTransactionBatchOutcome: vi.fn().mockRejectedValue(boom),
+      _retryProvenBatchOutcome: vi.fn().mockRejectedValue(boom),
+    };
+    const wrapped = wrapClient(rawClient, "test-store", {});
+
+    await expect(wrapped.submitNewTransactionBatch([])).rejects.toBe(boom);
+    await expect(wrapped.retryProvenBatch({})).rejects.toBe(boom);
+  });
+
+  it("falls back to direct methods when _...Outcome helpers are absent", async () => {
+    const rawClient = {
+      submitNewTransactionBatch: vi.fn().mockResolvedValue(12),
+      retryProvenBatch: vi.fn().mockResolvedValue(15),
+    };
+    const wrapped = wrapClient(rawClient, "test-store", {});
+    const handle = { kind: "submission" };
+
+    await expect(wrapped.submitNewTransactionBatch([])).resolves.toBe(12);
+    await expect(wrapped.retryProvenBatch(handle)).resolves.toBe(15);
+    expect(rawClient.retryProvenBatch).toHaveBeenCalledWith(handle);
   });
 });

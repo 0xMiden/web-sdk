@@ -2047,7 +2047,7 @@ dependencies = [
 
 [[package]]
 name = "js-export-macro"
-version = "0.18.0"
+version = "0.18.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2466,7 +2466,7 @@ dependencies = [
 
 [[package]]
 name = "miden-client-web"
-version = "0.18.0"
+version = "0.18.2"
 dependencies = [
  "async-trait",
  "console_error_panic_hook",
@@ -2664,7 +2664,7 @@ dependencies = [
 
 [[package]]
 name = "miden-idxdb-store"
-version = "0.18.0"
+version = "0.18.2"
 dependencies = [
  "async-trait",
  "base64",
@@ -2772,7 +2772,7 @@ dependencies = [
 
 [[package]]
 name = "miden-mobile-prover"
-version = "0.18.0"
+version = "0.18.2"
 dependencies = [
  "miden-client",
 ]
@@ -4946,7 +4946,7 @@ dependencies = [
 
 [[package]]
 name = "strip-masp-debug"
-version = "0.18.0"
+version = "0.18.2"
 dependencies = [
  "miden-core",
  "miden-mast-package",
@@ -5078,6 +5078,21 @@ checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "test-node-genesis"
+version = "0.18.2"
+dependencies = [
+ "anyhow",
+ "miden-agglayer",
+ "miden-objects",
+ "miden-protocol",
+ "miden-standards",
+ "rand 0.10.2",
+ "rand_chacha 0.10.0",
+ "serde",
+ "toml",
 ]
 
 [[package]]

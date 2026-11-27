@@ -216,6 +216,7 @@ import { RpcClient } from "@miden-sdk/miden-sdk";
 
 const rpc = new RpcClient(endpoint);
 const real = await rpc.getBlockHeaderByNumber(received.blockNum());
+// A held MidenClient reads the same header: client.chain.getBlockHeader(received.blockNum())
 if (real.commitment().toHex() !== received.commitment().toHex()) {
   throw new Error("anchor does not name a block on this chain");
 }

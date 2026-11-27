@@ -159,8 +159,18 @@ describe("config() hook", () => {
     expect(result.worker.rollupOptions.output.format).toBe("es");
   });
 
-  it("sets resolve.preserveSymlinks", () => {
+  it("does not set resolve.preserveSymlinks by default", () => {
     const result = callConfig(midenVitePlugin());
+    expect(result.resolve).not.toHaveProperty("preserveSymlinks");
+  });
+
+  it("sets resolve.preserveSymlinks when the option is enabled", () => {
+    const result = callConfig(midenVitePlugin({ preserveSymlinks: true }));
     expect(result.resolve.preserveSymlinks).toBe(true);
+  });
+
+  it("does not set resolve.preserveSymlinks when the option is false", () => {
+    const result = callConfig(midenVitePlugin({ preserveSymlinks: false }));
+    expect(result.resolve).not.toHaveProperty("preserveSymlinks");
   });
 });

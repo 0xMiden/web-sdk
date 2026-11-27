@@ -149,13 +149,30 @@ function buildNoteFilter(query, wasm) {
   }
 
   if (query.scriptRoots) {
+    // Copied through hex for the same reason as the nullifiers below.
     const scriptRoots = query.scriptRoots.map((root) =>
-      typeof root === "string" ? wasm.Word.fromHex(root) : root
+      wasm.Word.fromHex(typeof root === "string" ? root : root.toHex())
     );
     return new wasm.NoteFilter(
       wasm.NoteFilterTypes.ScriptRoots,
       undefined,
       scriptRoots
+    );
+  }
+
+  if (query.nullifiers) {
+    // Copied through hex: the by-value `Vec<Word>` argument consumes its handles in the
+    // browser build, and a caller can reuse its array.
+    const nullifiers = query.nullifiers.map((nullifier) =>
+      wasm.Word.fromHex(
+        typeof nullifier === "string" ? nullifier : nullifier.toHex()
+      )
+    );
+    return new wasm.NoteFilter(
+      wasm.NoteFilterTypes.Nullifiers,
+      undefined,
+      undefined,
+      nullifiers
     );
   }
 

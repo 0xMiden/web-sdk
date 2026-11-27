@@ -1,4 +1,7 @@
+use alloc::collections::BTreeSet;
+
 use js_export_macro::js_export;
+use miden_client::note::Nullifier;
 use miden_client::rpc::domain::nullifier::NullifierUpdate as NativeNullifierUpdate;
 
 use super::RpcClient;
@@ -42,7 +45,7 @@ impl RpcClient {
     /// `SharedArrayBuffer` backing is rejected during argument conversion.
     ///
     /// @param prefixes - A `Uint16Array` of nullifier prefixes.
-    /// @param block_from - First block to scan, inclusive.
+    /// @param `block_from` - First block to scan, inclusive.
     /// @param block_to - Last block to scan, inclusive; must be at least `block_from`.
     /// @returns All matching nullifier updates across every chunk and page.
     #[allow(clippy::doc_markdown)]
@@ -72,5 +75,44 @@ impl RpcClient {
             .await
             .map(|updates| updates.into_iter().map(NullifierUpdate).collect())
             .map_err(|err| js_error_with_context(err, "failed to sync nullifiers"))
+    }
+}
+
+#[js_export]
+impl RpcClient {
+    /// Fetches the block in which each given nullifier was consumed.
+    ///
+    /// Scans from `block_from` (inclusive) up to the chain tip and compares full nullifiers, not
+    /// prefixes. A nullifier with no commitment in that range is left out of the result. On the
+    /// browser entries the `nullifiers` handles are consumed; pass copies you still need.
+    ///
+    /// @param nullifiers - The nullifiers to look up.
+    /// @param `block_from` - First block to scan, inclusive.
+    #[js_export(js_name = "getNullifierCommitHeights")]
+    pub async fn get_nullifier_commit_heights(
+        &self,
+        nullifiers: Vec<Word>,
+        block_from: u32,
+    ) -> Result<Vec<NullifierUpdate>, JsErr> {
+        let requested: BTreeSet<Nullifier> =
+            nullifiers.iter().map(|word| Nullifier::from_raw(word.into())).collect();
+        if requested.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        self.inner
+            .get_nullifier_commit_heights(requested, block_from.into())
+            .await
+            .map(|heights| {
+                heights
+                    .into_iter()
+                    .filter_map(|(nullifier, height)| {
+                        height.map(|block_num| {
+                            NullifierUpdate(NativeNullifierUpdate { nullifier, block_num })
+                        })
+                    })
+                    .collect()
+            })
+            .map_err(|err| js_error_with_context(err, "failed to get nullifier commit heights"))
     }
 }

@@ -19,6 +19,7 @@ import test from "./playwright.global.setup";
  * The fix hands `fn` a trusted handle on the inner WebClient: calls made
  * through it run inline in the slot `fn` holds, while every other caller,
  * including one that runs during an await inside `fn`, queues behind it.
+ * Local reads take no turn on the queue from any caller.
  *
  * These tests cover the three call shapes the wallet (Miden Wallet's
  * MV3 extension) actually uses inside `_withInnerWebClient`, plus the
@@ -102,9 +103,9 @@ test.describe("_withInnerWebClient re-entrancy", () => {
   test("an external SDK call made during fn queues behind fn", async ({
     page,
   }) => {
-    // `fn` parks until the external call, issued while `fn` is mid-flight,
-    // has had 500 ms to run. It must still be pending then and settle only
-    // after `fn` does.
+    // `fn` parks until the external calls, issued while `fn` is mid-flight,
+    // have had 500 ms to run. The queued one must still be pending then and
+    // settle only after `fn` does; the local read takes no turn.
     const result = await page.evaluate(async () => {
       const inner = window.client as any;
       const client = new (window as any).MidenClient(
@@ -113,7 +114,7 @@ test.describe("_withInnerWebClient re-entrancy", () => {
         null
       );
       const order: string[] = [];
-      // Bogus hex: the proxy-fallback read returns undefined cheaply.
+      // Bogus hex: the local read returns undefined cheaply.
       const ZERO_HEX = "0x" + "0".repeat(64);
 
       const defer = () => {
@@ -135,12 +136,15 @@ test.describe("_withInnerWebClient re-entrancy", () => {
       const externalSlot = (async () => {
         await fnEntered.promise;
         const ran = inner
-          .getInputNote(ZERO_HEX)
+          .getConsumableNotes()
           .then(() => order.push("external-ran"));
+        const read = inner
+          .getInputNote(ZERO_HEX)
+          .then(() => order.push("external-read-ran"));
         await new Promise((r) => setTimeout(r, 500));
         order.push("external-waited");
         releaseFn.resolve();
-        await ran;
+        await Promise.all([ran, read]);
       })();
 
       await Promise.all([innerSlot, externalSlot]);
@@ -149,6 +153,7 @@ test.describe("_withInnerWebClient re-entrancy", () => {
 
     expect(result.order).toEqual([
       "inner-start",
+      "external-read-ran",
       "external-waited",
       "inner-end",
       "external-ran",

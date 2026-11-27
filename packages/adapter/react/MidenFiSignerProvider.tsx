@@ -209,6 +209,12 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
   const isConnecting = useRef(false);
   const isDisconnecting = useRef(false);
   const isUnloading = useRef(false);
+  // The wallet whose autoConnect attempt failed. Stored in state so clearing it
+  // in `select()` re-runs the autoConnect effect even when `name` is already
+  // selected (such as the sole-wallet case).
+  const [autoConnectFailed, setAutoConnectFailed] = useState<WalletName | null>(
+    null
+  );
 
   // Wrap adapters to conform to the `Wallet` interface
   const [wallets, setWallets] = useState(() =>
@@ -216,6 +222,39 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
       adapter,
       readyState: adapter.readyState,
     }))
+  );
+  const isSingleWallet = wallets.length === 1;
+  const isSingleWalletRef = useRef(isSingleWallet);
+  isSingleWalletRef.current = isSingleWallet;
+  const activeAdapterRef = useRef(adapter);
+  activeAdapterRef.current = adapter;
+  const selectedNameRef = useRef(name);
+  selectedNameRef.current = name;
+  const autoConnectFailedRef = useRef(autoConnectFailed);
+  autoConnectFailedRef.current = autoConnectFailed;
+  const selectionGenRef = useRef(0);
+  const isMountedRef = useRef(true);
+  const pendingAutoConnectRef = useRef(false);
+  const [autoConnectRetry, setAutoConnectRetry] = useState(0);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const clearSelectedName = useCallback(() => {
+    selectedNameRef.current = null;
+    setName(null);
+  }, [setName]);
+
+  const isCurrentAttempt = useCallback(
+    (targetAdapter: typeof adapter, attemptGen: number) =>
+      isMountedRef.current &&
+      activeAdapterRef.current === targetAdapter &&
+      selectionGenRef.current === attemptGen,
+    []
   );
 
   // When the adapters change, start to listen for changes to their `readyState`
@@ -327,10 +366,38 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
     });
   }, [adapter]);
 
+  // Clear connection state on disconnect without bouncing a sole wallet's name.
+  const clearConnectionOnDisconnect = useCallback(
+    (targetAdapter: typeof adapter = adapter) => {
+      if (
+        !isMountedRef.current ||
+        activeAdapterRef.current !== targetAdapter ||
+        (targetAdapter
+          ? selectedNameRef.current !== targetAdapter.name
+          : selectedNameRef.current !== null)
+      )
+        return;
+      if (targetAdapter) {
+        autoConnectFailedRef.current = targetAdapter.name;
+        setAutoConnectFailed(targetAdapter.name);
+      }
+      if (isSingleWalletRef.current) {
+        setState((prev) =>
+          prev.connected || prev.address !== null || prev.publicKey !== null
+            ? { ...prev, connected: false, address: null, publicKey: null }
+            : prev
+        );
+      } else {
+        clearSelectedName();
+      }
+    },
+    [adapter, clearSelectedName]
+  );
+
   // Handle the adapter's disconnect event
   const handleDisconnect = useCallback(() => {
-    if (!isUnloading.current) setName(null);
-  }, [isUnloading, setName]);
+    if (!isUnloading.current) clearConnectionOnDisconnect(adapter);
+  }, [adapter, clearConnectionOnDisconnect, isUnloading]);
 
   // Handle the adapter's error event
   const handleError = useCallback(
@@ -374,37 +441,62 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
   // tap may start.
   useEffect(() => {
     if (
-      isConnecting.current ||
       connected ||
       !autoConnect ||
       !adapter ||
-      readyState !== WalletReadyState.Installed
-    )
+      readyState !== WalletReadyState.Installed ||
+      autoConnectFailed === adapter.name
+    ) {
+      pendingAutoConnectRef.current = false;
       return;
+    }
+
+    if (isConnecting.current || isDisconnecting.current) {
+      pendingAutoConnectRef.current = true;
+      return;
+    }
+
+    pendingAutoConnectRef.current = false;
+    const targetAdapter = adapter;
+    const attemptGen = selectionGenRef.current;
 
     (async function () {
       isConnecting.current = true;
       setConnecting(true);
       try {
-        await adapter.connect(
+        await targetAdapter.connect(
           privateDataPermission,
           network,
           allowedPrivateData
         );
       } catch (error: any) {
-        setName(null);
+        if (isCurrentAttempt(targetAdapter, attemptGen)) {
+          autoConnectFailedRef.current = targetAdapter.name;
+          setAutoConnectFailed(targetAdapter.name);
+          // Keep the sole wallet selected so a failed autoConnect does not
+          // bounce `adapter` through null (firing disconnect cleanup and
+          // localStorage churn) before single-wallet auto-select restores it.
+          if (!isSingleWalletRef.current) clearSelectedName();
+        }
       } finally {
-        setConnecting(false);
         isConnecting.current = false;
+        setConnecting(false);
+        if (isMountedRef.current && pendingAutoConnectRef.current) {
+          setAutoConnectRetry((n) => n + 1);
+        }
       }
     })();
   }, [
     isConnecting,
+    isDisconnecting,
     connected,
     autoConnect,
     adapter,
     readyState,
-    setName,
+    autoConnectFailed,
+    autoConnectRetry,
+    clearSelectedName,
+    isCurrentAttempt,
     privateDataPermission,
     network,
     allowedPrivateData,
@@ -427,7 +519,7 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
         readyState === WalletReadyState.Loadable
       )
     ) {
-      setName(null);
+      if (!isSingleWalletRef.current) clearSelectedName();
 
       if (typeof window !== "undefined") {
         window.open(adapter.url, "_blank");
@@ -436,19 +528,35 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
       throw handleError(new WalletNotReadyError());
     }
 
+    const targetAdapter = adapter;
+    const attemptGen = selectionGenRef.current;
     isConnecting.current = true;
     setConnecting(true);
     try {
-      await adapter.connect(privateDataPermission, network, allowedPrivateData);
+      await targetAdapter.connect(
+        privateDataPermission,
+        network,
+        allowedPrivateData
+      );
     } catch (error: any) {
       // Preserve a still-live session: a re-drive that fails while the
       // adapter is still connected (e.g. wallet locked and the unlock prompt
       // was dismissed) must not tear down the selected wallet (#470).
-      if (!adapter.connected) setName(null);
+      if (
+        !targetAdapter.connected &&
+        isCurrentAttempt(targetAdapter, attemptGen)
+      ) {
+        autoConnectFailedRef.current = targetAdapter.name;
+        setAutoConnectFailed(targetAdapter.name);
+        if (!isSingleWalletRef.current) clearSelectedName();
+      }
       throw error;
     } finally {
-      setConnecting(false);
       isConnecting.current = false;
+      setConnecting(false);
+      if (isMountedRef.current && pendingAutoConnectRef.current) {
+        setAutoConnectRetry((n) => n + 1);
+      }
     }
   }, [
     isConnecting,
@@ -457,7 +565,8 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
     adapter,
     readyState,
     handleError,
-    setName,
+    clearSelectedName,
+    isCurrentAttempt,
     privateDataPermission,
     network,
     allowedPrivateData,
@@ -466,20 +575,36 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
   // Disconnect the adapter from the wallet
   const disconnect = useCallback(async () => {
     if (isDisconnecting.current) return;
-    if (!adapter) return setName(null);
+    if (!adapter) {
+      if (!isSingleWalletRef.current) clearSelectedName();
+      return;
+    }
 
+    const targetAdapter = adapter;
+    const attemptGen = selectionGenRef.current;
     isDisconnecting.current = true;
     setDisconnecting(true);
     try {
-      await adapter.disconnect();
+      await targetAdapter.disconnect();
     } catch (error: any) {
-      setName(null);
+      if (isCurrentAttempt(targetAdapter, attemptGen)) {
+        clearConnectionOnDisconnect(targetAdapter);
+      }
       throw error;
     } finally {
-      setDisconnecting(false);
       isDisconnecting.current = false;
+      setDisconnecting(false);
+      if (isMountedRef.current && pendingAutoConnectRef.current) {
+        setAutoConnectRetry((n) => n + 1);
+      }
     }
-  }, [isDisconnecting, adapter, setName]);
+  }, [
+    isDisconnecting,
+    adapter,
+    clearSelectedName,
+    clearConnectionOnDisconnect,
+    isCurrentAttempt,
+  ]);
 
   // Request transaction
   const requestTransaction:
@@ -756,6 +881,27 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
     importAccountId,
   ]);
 
+  // An explicit selection lets autoConnect try that wallet again.
+  const select = useCallback(
+    (walletName: WalletName) => {
+      if (
+        walletName !== selectedNameRef.current ||
+        autoConnectFailedRef.current !== null ||
+        isDisconnecting.current
+      ) {
+        selectionGenRef.current += 1;
+      }
+      if (isDisconnecting.current && autoConnect) {
+        pendingAutoConnectRef.current = true;
+      }
+      selectedNameRef.current = walletName;
+      autoConnectFailedRef.current = null;
+      setAutoConnectFailed(null);
+      setName(walletName);
+    },
+    [autoConnect, setName]
+  );
+
   const walletContextValue = useMemo(
     () => ({
       autoConnect,
@@ -766,7 +912,7 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
       connected,
       connecting,
       disconnecting,
-      select: setName,
+      select,
       connect,
       disconnect,
       requestTransaction,
@@ -790,7 +936,7 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
       connected,
       connecting,
       disconnecting,
-      setName,
+      select,
       connect,
       disconnect,
       requestTransaction,

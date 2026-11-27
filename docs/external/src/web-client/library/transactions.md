@@ -63,6 +63,13 @@ try {
 
     // Get specific transactions by ID
     const specific = await client.transactions.list({ ids: [txId1, txId2] });
+
+    // Newest first, and only the first 20 reach JavaScript
+    const recent = await client.transactions.list({
+        account: walletId,
+        status: "committed", // "pending" | "committed" | "discarded"
+        limit: 20,
+    });
 } catch (error) {
     console.error("Failed to filter transactions:", error.message);
 }
@@ -161,7 +168,7 @@ const txs = await client.transactions.list();
 Two failure modes worth handling after a batch submit:
 
 1. The node can accept a batch and the local store update still fail, which surfaces as `code: "ApplyTransactionAfterSubmitFailed"` (or a message containing `batch was accepted at block N but building store updates failed` / `applying to the store failed`). The node has taken the batch in that case, so do not submit it again; sync instead.
-2. The submission can come back without a definite outcome (`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`). Nothing was recorded locally, and the node may or may not have accepted the batch. The error carries `submission` (in-thread) or `submissionId` (Web Worker) plus `transactionIds`. Resend with `client.transactions.retryProvenBatch(error.submission ?? { submissionId: error.submissionId })` without calling `batch` / `submitBatch` again (a new prove changes identities). After a successful retry, confirm with `waitFor` / `list` for those ids. A conflict on retry usually means the original attempt landed, but a rejected retry records nothing locally and a sync does not insert the missing records, so look the ids up on the node, not in the local store. Browser builds only: Node.js errors prefix the message with the code and carry no submission handle or `transactionIds`.
+2. The submission can come back without a definite outcome (`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`). Nothing was recorded locally, and the node may or may not have accepted the batch. The error carries `submission` (browser in-thread and Node.js) or `submissionId` (browser Web Worker) plus `transactionIds`. Resend with `client.transactions.retryProvenBatch(error.submission ?? { submissionId: error.submissionId })` without calling `batch` / `submitBatch` again (a new prove changes identities). After a successful retry, confirm with `waitFor` / `list` for those ids. A conflict on retry usually means the original attempt landed, but a rejected retry records nothing locally and a sync does not insert the missing records, so look the ids up on the node, not in the local store.
 
 Accepting a transaction proved by another participant as a batch member needs a rust-sdk release that exposes `push_proven_transaction` on the pinned client; that half of [#571](https://github.com/0xMiden/web-sdk/issues/571) is a follow-up.
 
@@ -209,6 +216,25 @@ local apply fails, so `apply` and the single-transaction `transactions.*` helper
 `transactionId`, `submissionHeight` and the original error as `cause`. A batch whose
 local update fails after the node accepted it rejects with the same `code` and the
 accepted block in its message, without those fields. Do not submit it again.
+
+## Cycle counts
+
+`ExecutedTransaction.measurements()` reports how many VM cycles each phase of an execution took, so you can see what a transaction costs before you prove it. It returns a `TransactionMeasurements`:
+
+```typescript
+const executed = (await webClient.executeTransaction(accountId, request)).executedTransaction();
+const m = executed.measurements();
+
+m.totalCycles;       // prologue + notesProcessing + txScriptProcessing + epilogue
+m.prologue;
+m.notesProcessing;   // all input notes together
+m.noteExecution;     // [{ noteId, cycles }], one per executed note
+m.txScriptProcessing;
+m.epilogue;
+m.authProcedure;     // measured separately, not part of totalCycles
+```
+
+These are cycle counts only. The SDK adds no wall-clock timing; time the stages yourself if you need it.
 
 ## Pinning How Input Notes Are Consumed
 
@@ -470,7 +496,7 @@ await client.transactions.submit(multisig, proposedRequest);
 Notes:
 
 - **The request still travels.** The salt in the multisig auth args is drawn fresh on every build and bound into the summary, so a co-signer must re-derive from the proposer's request bytes, exactly as in the anchored flow below.
-- **Confirm the bound block is real.** For a multisig, `summary.blockCommitment()` is the bound block's commitment. Fetch that block's header from a node you trust (`RpcClient.getBlockHeaderByNumber`, with the number from the builder's `request.blockNumbers()`) and compare commitments.
+- **Confirm the bound block is real.** For a multisig, `summary.blockCommitment()` is the bound block's commitment. Fetch that block's header from a node you trust (`RpcClient.getBlockHeaderByNumber`, with the number from the builder's `request.blockNumbers()`) and compare commitments. A `MidenClient` talking to that node can use `client.chain.getBlockHeader`.
 - **Approvals can expire.** `approvalExpirationDelta` on `feeAwareTransactionRequestBuilder` counts from the bound block, and the multisig rejects execution at or after that reference block. Omitted, the approval does not expire.
 - **A match still does not prove agreement on account state.** Everything under "Notes on anchors" about what the summary covers, and what it does not, applies unchanged.
 
@@ -556,6 +582,7 @@ Notes on anchors:
 
   const rpc = new RpcClient(endpoint);
   const real = await rpc.getBlockHeaderByNumber(received.blockNum());
+  // With a MidenClient on the same node: await client.chain.getBlockHeader(received.blockNum())
   if (real.commitment().toHex() !== received.commitment().toHex()) {
     throw new Error("anchor does not name a block on this chain");
   }
@@ -574,3 +601,21 @@ Notes on anchors:
   ```
 - **Foreign account proofs are fetched at the anchor's block**, so requests with foreign accounts additionally need the node to serve account state at that height.
 - **The anchor handle is reusable.** Unlike a `TransactionProver`, it is borrowed rather than consumed, so one anchor can drive the preview and the execution.
+
+## MASM failures
+
+Two stable codes tell a failing script from other errors, so a contract developer can branch on them instead of matching message text:
+
+- `code: "MASM_COMPILE_FAILED"`: MASM source does not assemble or link. Raised by `client.compile.component`, `txScript` and `noteScript`.
+- `code: "TRANSACTION_EXECUTION_FAILED"`: the transaction program failed in the VM, for example a failing `assert`. The message carries the VM diagnostic.
+
+```js
+try {
+  await client.transactions.execute({ account, script });
+} catch (e) {
+  if (e.code === "TRANSACTION_EXECUTION_FAILED") console.error(e.message);
+  else throw e;
+}
+```
+
+Browser builds set `code` on the error, including across the Web Worker boundary. Node.js errors prefix the message with the code (`"TRANSACTION_EXECUTION_FAILED: ..."`). Structured procedure and span fields are not part of this ([#192](https://github.com/0xMiden/web-sdk/issues/192)).

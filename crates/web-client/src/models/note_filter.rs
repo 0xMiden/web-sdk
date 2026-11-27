@@ -1,12 +1,10 @@
 use js_export_macro::js_export;
-use miden_client::note::NoteScriptRoot;
+use miden_client::note::{NoteScriptRoot, Nullifier};
 use miden_client::store::NoteFilter as NativeNoteFilter;
 
 use super::note_id::NoteId;
 use super::word::Word;
 use crate::platform::{JsErr, from_str_err};
-
-// TODO: Add nullifier support
 
 /// Filter options for querying notes from the store.
 #[derive(Clone)]
@@ -15,18 +13,25 @@ pub struct NoteFilter {
     note_type: NoteFilterTypes,
     note_ids: Option<Vec<NoteId>>,
     script_roots: Option<Vec<Word>>,
+    nullifiers: Option<Vec<Word>>,
 }
 
 #[js_export]
 impl NoteFilter {
-    /// Creates a new filter for the given type and optional note IDs or script roots.
+    /// Creates a new filter for the given type and optional note IDs, script roots or nullifiers.
     #[js_export(constructor)]
     pub fn new(
         note_type: NoteFilterTypes,
         note_ids: Option<Vec<NoteId>>,
         script_roots: Option<Vec<Word>>,
+        nullifiers: Option<Vec<Word>>,
     ) -> NoteFilter {
-        NoteFilter { note_type, note_ids, script_roots }
+        NoteFilter {
+            note_type,
+            note_ids,
+            script_roots,
+            nullifiers,
+        }
     }
 }
 
@@ -85,7 +90,19 @@ impl TryFrom<&NoteFilter> for NativeNoteFilter {
 
                 NativeNoteFilter::Unique(note_ids.first().expect("length checked above").into())
             },
-            NoteFilterTypes::Nullifiers => NativeNoteFilter::Nullifiers(vec![]),
+            NoteFilterTypes::Nullifiers => {
+                let nullifiers = filter
+                    .nullifiers
+                    .clone()
+                    .ok_or_else(|| from_str_err("Nullifiers required for Nullifiers filter"))?;
+
+                NativeNoteFilter::Nullifiers(
+                    nullifiers
+                        .iter()
+                        .map(|nullifier| Nullifier::from_raw(nullifier.into()))
+                        .collect(),
+                )
+            },
             NoteFilterTypes::Unverified => NativeNoteFilter::Unverified,
             NoteFilterTypes::ScriptRoots => {
                 let script_roots = filter

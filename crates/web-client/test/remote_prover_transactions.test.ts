@@ -61,7 +61,10 @@ test.describe("remote prover transaction tests", () => {
   }) => {
     const { accountId, faucetId } = await setupWalletAndFaucet(page);
     const result = await mintTransaction(page, accountId, faucetId, true, true);
-    expect(result.numOutputNotesCreated).toEqual(1);
+    // The test node charges fees: the mint's note, plus the fee note.
+    expect(result.numUserOutputNotes).toEqual(1);
+    expect(result.hasFeeNote).toBe(true);
+    expect(result.numOutputNotesCreated).toEqual(2);
     expect(result.createdNoteId).toBeDefined();
   });
 
@@ -113,6 +116,14 @@ test.describe("remote prover transaction tests", () => {
         window.AccountStorageMode.private(),
         window.AuthScheme.AuthRpoFalcon512
       );
+      const makeProver = () =>
+        window.remoteProverUrl != null
+          ? window.TransactionProver.newRemoteProver(
+              window.remoteProverUrl,
+              null
+            )
+          : undefined;
+      await window.helpers.fundAccounts([wallet.id()], client, makeProver);
 
       const txScript = `
         @transaction_script
@@ -129,18 +140,10 @@ test.describe("remote prover transaction tests", () => {
         .withCustomScript(transactionScript)
         .build();
 
-      const prover =
-        window.remoteProverUrl != null
-          ? window.TransactionProver.newRemoteProver(
-              window.remoteProverUrl,
-              null
-            )
-          : undefined;
-
       await window.helpers.executeAndApplyTransaction(
         wallet.id(),
         transactionRequest,
-        prover
+        makeProver()
       );
     });
   });

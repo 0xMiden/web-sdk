@@ -73,17 +73,49 @@ impl AccountStorage {
     /// Get all key-value pairs from the map slot identified by `slot_name`.
     /// Returns `undefined` if the slot isn't a map or doesn't exist.
     /// Returns `[]` if the map exists but is empty.
+    ///
+    /// This copies the whole map on every call; use `getMapEntriesPage` for large maps.
     #[js_export(js_name = "getMapEntries")]
     pub fn get_map_entries(&self, slot_name: String) -> Option<Vec<StorageMapEntry>> {
-        let slot = self.0.slots().iter().find(|slot| slot.name().as_str() == slot_name.as_str())?;
+        self.map_entries_page(&slot_name, 0, usize::MAX)
+    }
+
+    /// Get at most `limit` key-value pairs of the map slot identified by `slot_name`, starting
+    /// at position `offset` in the map's key order (the order `getMapEntries` returns).
+    /// Returns `undefined` if the slot isn't a map or doesn't exist, and `[]` once `offset` is
+    /// past the last entry. `limit` must be at least 1 (`0` always returns `[]`); a page
+    /// shorter than `limit` is the last one. Entries before `offset` are skipped inside WASM
+    /// without being copied.
+    #[js_export(js_name = "getMapEntriesPage")]
+    pub fn get_map_entries_page(
+        &self,
+        slot_name: String,
+        offset: u32,
+        limit: u32,
+    ) -> Option<Vec<StorageMapEntry>> {
+        self.map_entries_page(&slot_name, offset as usize, limit as usize)
+    }
+}
+
+impl AccountStorage {
+    fn map_entries_page(
+        &self,
+        slot_name: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Option<Vec<StorageMapEntry>> {
+        let slot = self.0.slots().iter().find(|slot| slot.name().as_str() == slot_name)?;
         let StorageSlotContent::Map(map) = slot.content() else {
             return None;
         };
 
+        let root = map.root().to_hex();
         Some(
             map.entries()
+                .skip(offset)
+                .take(limit)
                 .map(|(key, value)| StorageMapEntry {
-                    root: map.root().to_hex(),
+                    root: root.clone(),
                     key: key.to_hex(),
                     value: value.to_hex(),
                 })

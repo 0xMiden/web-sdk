@@ -19,6 +19,12 @@ browserTest.describe("chain anchor callback details", () => {
               let failCallbacks = false;
               const keys = new Map<string, Uint8Array>();
               const callbackMessage = `Callback ${callbackKind} anchored failure`;
+              const insertKeyCb = async (
+                commitment: Uint8Array,
+                key: Uint8Array
+              ) => {
+                keys.set(Array.from(commitment).join(","), key);
+              };
               const client =
                 await window.WasmWebClient.createClientWithExternalKeystore(
                   window.rpcUrl,
@@ -34,12 +40,26 @@ browserTest.describe("chain anchor callback details", () => {
                       keys.get(Array.from(commitment).join(","))
                     );
                   },
-                  async (commitment: Uint8Array, key: Uint8Array) => {
-                    keys.set(Array.from(commitment).join(","), key);
-                  },
+                  insertKeyCb,
                   callbackKind === "sign"
-                    ? async () => {
-                        throw new Error(callbackMessage);
+                    ? async (
+                        commitment: Uint8Array,
+                        signingInputsBytes: Uint8Array
+                      ) => {
+                        if (failCallbacks) {
+                          throw new Error(callbackMessage);
+                        }
+                        const rawKey = keys.get(
+                          Array.from(commitment).join(",")
+                        );
+                        if (!rawKey) {
+                          throw new Error("Missing key for funding sign");
+                        }
+                        const wasmKey =
+                          window.AuthSecretKey.deserialize(rawKey);
+                        const wasmInputs =
+                          window.SigningInputs.deserialize(signingInputsBytes);
+                        return wasmKey.signData(wasmInputs).serialize();
                       }
                     : undefined,
                   undefined,
@@ -63,6 +83,8 @@ browserTest.describe("chain anchor callback details", () => {
                 undefined
               );
               await client.syncState();
+              await window.helpers.fundAccounts([faucet.id()], client);
+              getKeyCalls = 0;
               const request = await client.newMintTransactionRequest(
                 wallet.id(),
                 faucet.id(),
@@ -502,14 +524,13 @@ test.describe("chain anchor", () => {
   // moved past that window. Executing at the tip fetches the bound block's
   // header and MMR path from the node instead, which it keeps. Needs a running
   // node (CI's test node, or `TEST_MIDEN_RPC_URL`) and skips without one. The
-  // unfunded multisig relies on the fee-free chain CI starts
-  // (`MIDEN_VERIFICATION_BASE_FEE=0`); the fee-charging path is covered by
-  // rust-sdk's `multisig_proposal_reexecutes_after_bound_account_state_is_pruned`.
+  // proposal consumes a funding P2ID note so the fresh multisig pays the
+  // protocol fee from that note's credited asset on a fee-charging chain.
   test("a multisig proposal reproduces its summary on a node after the bound block leaves the history window", async ({
     run,
   }) => {
-    // ~51 blocks at the test node's 3 s interval, plus setup.
-    test.setTimeout(480_000);
+    // ~51 blocks (up to 15s interval on slow browsers like WebKit), plus setup.
+    test.setTimeout(1_200_000);
     const result = await run(async ({ sdk, helpers }) => {
       const integration = await helpers.createIntegrationClient();
       if (!integration) return { skip: true };
@@ -539,15 +560,31 @@ test.describe("chain anchor", () => {
         await client.keystore.insert(multisigId, key);
       }
 
-      const request = (
-        await client.feeAwareTransactionRequestBuilder(multisigId)
-      ).build();
+      const funding = await helpers.sendFundingNotes([multisigId]);
+      let request;
+      if (funding) {
+        await client.syncState();
+        const noteRecord = await client.getInputNote(funding.noteIds[0]);
+        if (!noteRecord) {
+          throw new Error(
+            `Funding note ${funding.noteIds[0]} not found after sync`
+          );
+        }
+        request = await client.newConsumeTransactionRequest(
+          [noteRecord.toNote()],
+          multisigId
+        );
+      } else {
+        request = (
+          await client.feeAwareTransactionRequestBuilder(multisigId)
+        ).build();
+      }
       const boundBlock = await client.getSyncHeight();
       const original = await client.executeForSummary(multisigId, request);
 
       // One block past the node's 50-block account history.
       const target = boundBlock + 51;
-      const deadline = Date.now() + 360_000;
+      const deadline = Date.now() + 960_000;
       let tip = boundBlock;
       while (tip < target) {
         if (Date.now() > deadline) {

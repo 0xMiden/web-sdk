@@ -34,6 +34,7 @@ import {
 } from "./playwright.global.setup";
 import { wrapClient } from "../js/node/napi-compat.js";
 import { getNodeSdk, loadNodeSdk } from "./node-adapter.ts";
+import { installBrowserFunderHelpers } from "./fee-funder";
 
 const require = createRequire(import.meta.url);
 
@@ -197,7 +198,7 @@ export async function waitForTransaction(
   client: any,
   sdk: any,
   transactionId: string,
-  maxWaitTime = 10000,
+  maxWaitTime = 45000,
   delayInterval = 1000
 ) {
   let timeWaited = 0;
@@ -895,7 +896,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
 
         waitForTransaction: async (
           transactionId,
-          maxWaitTime = 10000,
+          maxWaitTime = 45000,
           delayInterval = 1000
         ) => {
           const c = window.client;
@@ -1001,6 +1002,11 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
     },
     { rpcUrl, storeName, feeFaucetId }
   );
+
+  await installBrowserFunderHelpers(page, {
+    rpcUrl,
+    feeFaucetId,
+  });
 }
 
 /**
@@ -1122,6 +1128,20 @@ async function createNodeRunHelpers(client: any, sdk: any): Promise<any> {
         serializedNoteTransport
       ),
     createIntegrationClient: () => h.createIntegrationClient(),
+    sendFundingNotes: (accountIds: any[], amount?: bigint) =>
+      h.sendFundingNotes(accountIds, amount),
+    fundAccounts: (
+      accountIds: any[],
+      targetClient?: any,
+      prover?: any,
+      amount?: bigint
+    ) => h.fundAccounts(accountIds, targetClient, prover, amount),
+    ensureFunded: (
+      accountIds: any[],
+      targetClient?: any,
+      prover?: any,
+      amount?: bigint
+    ) => h.ensureFunded(accountIds, targetClient, prover, amount),
     createMidenMockClient: async (options?: any) => {
       const MidenClient = await h.createMidenClient(sdk);
       if (!MidenClient) throw new Error("MidenClient unavailable");

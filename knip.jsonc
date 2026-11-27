@@ -221,6 +221,8 @@
     "packages/react-sdk": {
       "entry": [
         "src/__tests__/**/*.test.{ts,tsx}",
+        // Type-level tests: nothing imports them, `tsc --noEmit` checks them.
+        "src/__tests__/types/*.ts",
         "test/**/*.test.ts",
         "test/serve-tests.cjs",
         "test/test-app/**/*.{js,html}",

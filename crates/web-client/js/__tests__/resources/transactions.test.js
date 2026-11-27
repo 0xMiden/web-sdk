@@ -161,6 +161,7 @@ function makeWasm(overrides = {}) {
       all: vi.fn().mockReturnValue("filterAll"),
       uncommitted: vi.fn().mockReturnValue("filterUncommitted"),
       ids: vi.fn().mockReturnValue("filterIds"),
+      query: vi.fn().mockReturnValue("filterQuery"),
     },
     TransactionId: {
       fromHex: vi.fn((hex) => ({ hex, toHex: () => hex })),
@@ -278,6 +279,41 @@ function makeInner(overrides = {}) {
   });
 }
 
+/**
+ * Stands in for a wasm-bindgen `TransactionProver`: `proveTransaction` takes it
+ * by value, so passing it frees the handle and any later use of it fails.
+ */
+class FakeProver {
+  static deserialize(descriptor) {
+    return new FakeProver(descriptor);
+  }
+
+  constructor(descriptor) {
+    this.descriptor = descriptor;
+    this.freed = false;
+  }
+
+  serialize() {
+    if (this.freed) throw new Error("null pointer passed to rust");
+    return this.descriptor;
+  }
+
+  free() {
+    this.freed = true;
+  }
+}
+
+/** A `proveTransaction` that consumes its prover the way wasm-bindgen does. */
+function consumingProveTransaction() {
+  return vi.fn(async (_result, prover) => {
+    if (prover) {
+      if (prover.freed) throw new Error("null pointer passed to rust");
+      prover.freed = true;
+    }
+    return "provenTx";
+  });
+}
+
 function makeClient(overrides = {}) {
   return {
     assertNotTerminated: vi.fn(),
@@ -345,7 +381,7 @@ describe("TransactionsResource", () => {
     });
 
     it("uses defaultProver from client when set", async () => {
-      const prover = { prove: vi.fn() };
+      const prover = new FakeProver("remote|https://prover.example");
       const { resource, inner } = makeResource({}, { defaultProver: prover });
       await resource.send({
         account: "0xsender",
@@ -356,8 +392,33 @@ describe("TransactionsResource", () => {
       });
       expect(inner.proveTransaction).toHaveBeenCalledWith(
         expect.anything(),
-        prover
+        expect.objectContaining({ descriptor: prover.descriptor })
       );
+      // The shared default is copied, not handed over to be consumed.
+      expect(inner.proveTransaction.mock.calls[0][1]).not.toBe(prover);
+    });
+
+    it("keeps proving with the default prover across transactions", async () => {
+      const prover = new FakeProver("remote|https://prover.example");
+      const { resource, inner } = makeResource(
+        { proveTransaction: consumingProveTransaction() },
+        { defaultProver: prover }
+      );
+      const send = () =>
+        resource.send({
+          account: "0xsender",
+          to: "0xrecipient",
+          token: "0xfaucet",
+          type: "public",
+          amount: 100,
+        });
+      await send();
+      await send();
+      expect(inner.proveTransaction).toHaveBeenCalledTimes(2);
+      for (const call of inner.proveTransaction.mock.calls) {
+        expect(call[1].descriptor).toBe("remote|https://prover.example");
+      }
+      expect(prover.freed).toBe(false);
     });
 
     it("uses per-call prover over client.defaultProver", async () => {
@@ -376,6 +437,109 @@ describe("TransactionsResource", () => {
         expect.anything(),
         callProver
       );
+    });
+
+    it("copies defaultProver when passed explicitly as opts.prover", async () => {
+      const prover = new FakeProver("remote|https://prover.example");
+      const { resource, inner } = makeResource(
+        { proveTransaction: consumingProveTransaction() },
+        { defaultProver: prover }
+      );
+      await resource.send({
+        account: "0xsender",
+        to: "0xrecipient",
+        token: "0xfaucet",
+        type: "public",
+        amount: 100,
+        prover,
+      });
+      expect(prover.freed).toBe(false);
+      await resource.send({
+        account: "0xsender",
+        to: "0xrecipient",
+        token: "0xfaucet",
+        type: "public",
+        amount: 100,
+      });
+      expect(inner.proveTransaction).toHaveBeenCalledTimes(2);
+      expect(prover.freed).toBe(false);
+    });
+
+    it("passes defaultProver directly without copying in worker mode", async () => {
+      const prover = new FakeProver("remote|https://prover.example");
+      const deserializeSpy = vi.spyOn(FakeProver, "deserialize");
+      try {
+        const { resource, inner } = makeResource(
+          { worker: {} },
+          { defaultProver: prover }
+        );
+        await resource.send({
+          account: "0xsender",
+          to: "0xrecipient",
+          token: "0xfaucet",
+          type: "public",
+          amount: 100,
+        });
+        await resource.send({
+          account: "0xsender",
+          to: "0xrecipient",
+          token: "0xfaucet",
+          type: "public",
+          amount: 100,
+          prover,
+        });
+        expect(deserializeSpy).not.toHaveBeenCalled();
+        expect(inner.proveTransaction).toHaveBeenNthCalledWith(
+          1,
+          expect.anything(),
+          prover
+        );
+        expect(inner.proveTransaction).toHaveBeenNthCalledWith(
+          2,
+          expect.anything(),
+          prover
+        );
+        expect(prover.freed).toBe(false);
+      } finally {
+        deserializeSpy.mockRestore();
+      }
+    });
+
+    it("frees internal copy on pre-consumption rejection without freeing defaultProver or caller prover", async () => {
+      const defaultProver = new FakeProver("remote|https://prover.example");
+      const failBeforeConsume = vi
+        .fn()
+        .mockRejectedValue(new Error("worker init failed"));
+      const { resource, inner } = makeResource(
+        { proveTransaction: failBeforeConsume },
+        { defaultProver }
+      );
+      await expect(
+        resource.send({
+          account: "0xsender",
+          to: "0xrecipient",
+          token: "0xfaucet",
+          type: "public",
+          amount: 100,
+        })
+      ).rejects.toThrow("worker init failed");
+      const copied = inner.proveTransaction.mock.calls[0][1];
+      expect(copied).not.toBe(defaultProver);
+      expect(copied.freed).toBe(true);
+      expect(defaultProver.freed).toBe(false);
+
+      const callProver = new FakeProver("remote|https://custom.example");
+      await expect(
+        resource.send({
+          account: "0xsender",
+          to: "0xrecipient",
+          token: "0xfaucet",
+          type: "public",
+          amount: 100,
+          prover: callProver,
+        })
+      ).rejects.toThrow("worker init failed");
+      expect(callProver.freed).toBe(false);
     });
   });
 
@@ -2149,14 +2313,43 @@ describe("TransactionsResource", () => {
     });
 
     it("prove falls back to client.defaultProver when set", async () => {
-      const defaultProver = { prove: vi.fn() };
+      const defaultProver = new FakeProver("local");
       const { resource, inner } = makeResource({}, { defaultProver });
       const executed = await resource.executeRequest("0xaccHex", {});
       await executed.prove();
       expect(inner.proveTransaction).toHaveBeenCalledWith(
         inner._txResult,
-        defaultProver
+        expect.objectContaining({ descriptor: "local" })
       );
+    });
+
+    it("prove can use the default prover again after it was consumed once", async () => {
+      const defaultProver = new FakeProver("local");
+      const { resource, inner } = makeResource(
+        { proveTransaction: consumingProveTransaction() },
+        { defaultProver }
+      );
+      const first = await resource.executeRequest("0xaccHex", {});
+      await first.prove();
+      const second = await resource.executeRequest("0xaccHex", {});
+      await expect(second.prove()).resolves.toBeDefined();
+      expect(inner.proveTransaction).toHaveBeenCalledTimes(2);
+      expect(inner.proveTransaction.mock.calls[1][1].descriptor).toBe("local");
+    });
+
+    it("prove copies defaultProver when passed explicitly as opts.prover", async () => {
+      const defaultProver = new FakeProver("local");
+      const { resource, inner } = makeResource(
+        { proveTransaction: consumingProveTransaction() },
+        { defaultProver }
+      );
+      const first = await resource.executeRequest("0xaccHex", {});
+      await first.prove({ prover: defaultProver });
+      expect(defaultProver.freed).toBe(false);
+      const second = await resource.executeRequest("0xaccHex", {});
+      await expect(second.prove()).resolves.toBeDefined();
+      expect(inner.proveTransaction).toHaveBeenCalledTimes(2);
+      expect(defaultProver.freed).toBe(false);
     });
 
     it("submit forwards proof + result and exposes the block height", async () => {
@@ -2311,6 +2504,97 @@ describe("TransactionsResource", () => {
       await resource.list({ ids: ["0xid1", "0xid2"] });
       expect(wasm.TransactionId.fromHex).toHaveBeenCalledTimes(2);
       expect(wasm.TransactionFilter.ids).toHaveBeenCalled();
+    });
+
+    it("queries by account, status and limit", async () => {
+      const { resource, inner, wasm } = makeResource();
+      inner.getTransactions.mockResolvedValue(["tx1"]);
+      const result = await resource.list({
+        account: "0xaccHex",
+        status: "committed",
+        limit: 20,
+      });
+      expect(wasm.TransactionFilter.query).toHaveBeenCalledWith(
+        "0xaccHex",
+        "committed",
+        20
+      );
+      expect(inner.getTransactions).toHaveBeenCalledWith("filterQuery");
+      expect(result).toEqual(["tx1"]);
+    });
+
+    it("leaves an omitted criterion to match every transaction", async () => {
+      const { resource, wasm } = makeResource();
+      await resource.list({ limit: 3 });
+      expect(wasm.TransactionFilter.query).toHaveBeenCalledWith(
+        undefined,
+        undefined,
+        3
+      );
+    });
+
+    it("reads status 'uncommitted' with a limit as pending", async () => {
+      const { resource, wasm } = makeResource();
+      await resource.list({ status: "uncommitted", limit: 1 });
+      expect(wasm.TransactionFilter.query).toHaveBeenCalledWith(
+        undefined,
+        "pending",
+        1
+      );
+      expect(wasm.TransactionFilter.uncommitted).not.toHaveBeenCalled();
+    });
+
+    it("rejects a query that mixes ids with account, status or limit", async () => {
+      const { resource, wasm } = makeResource();
+      await expect(resource.list({ ids: ["0xid1"], limit: 1 })).rejects.toThrow(
+        /ids cannot be combined/
+      );
+      expect(wasm.TransactionFilter.query).not.toHaveBeenCalled();
+    });
+
+    it.each([0, -1, 1.5, "3", null, 2 ** 32])(
+      "rejects limit %j",
+      async (limit) => {
+        const { resource } = makeResource();
+        await expect(resource.list({ limit })).rejects.toThrow(
+          "Transaction query limit must be a positive integer"
+        );
+      }
+    );
+
+    it.each([
+      { limit: 1 },
+      { account: "0xaccHex" },
+      { status: "committed" },
+      { status: "pending" },
+      { status: "discarded" },
+    ])("rejects expiredBefore next to %j", async (bounded) => {
+      const { resource, wasm } = makeResource();
+      await expect(
+        resource.list({ ...bounded, expiredBefore: 100 })
+      ).rejects.toThrow(/expiredBefore.*removed/);
+      expect(wasm.TransactionFilter.query).not.toHaveBeenCalled();
+    });
+
+    it("keeps status uncommitted ahead of expiredBefore with a limit", async () => {
+      const { resource, wasm } = makeResource();
+      await resource.list({
+        status: "uncommitted",
+        limit: 1,
+        expiredBefore: 100,
+      });
+      expect(wasm.TransactionFilter.query).toHaveBeenCalledWith(
+        undefined,
+        "pending",
+        1
+      );
+    });
+
+    it("rejects an unknown status next to a bounding criterion", async () => {
+      const { resource } = makeResource();
+      await expect(
+        resource.list({ status: "bogus", limit: 1 })
+      ).rejects.toThrow("Unknown transaction status: bogus");
     });
 
     it("falls back to filter.all() for unknown query shape", async () => {

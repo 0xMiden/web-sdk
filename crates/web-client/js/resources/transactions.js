@@ -1,5 +1,6 @@
 import {
   isConsumableNow,
+  isQueryLimit,
   isStandardPaymentNote,
   resolveAccountRef,
   resolveNoteType,
@@ -59,6 +60,33 @@ function rejectUnexpectedAnchor(opts, method, alternative) {
 }
 
 /**
+ * Builds an independent `TransactionProver` with the same configuration, from
+ * its serialized descriptor.
+ *
+ * @param {*} prover - A `TransactionProver` that is not consumed by this call.
+ * @returns {*} A new `TransactionProver`.
+ */
+function copyProver(prover) {
+  return prover.constructor.deserialize(prover.serialize());
+}
+
+/**
+ * Frees an internally copied `TransactionProver` if it was not already consumed
+ * by wasm-bindgen (which zeroes `__wbg_ptr` when taking ownership by value).
+ *
+ * @param {*} prover - The copied prover handle to release if still live.
+ */
+function freeUnconsumedProver(prover) {
+  if (typeof prover?.free !== "function") return;
+  if ("__wbg_ptr" in prover && prover.__wbg_ptr === 0) return;
+  try {
+    prover.free();
+  } catch {
+    // Ignore cleanup errors so prover disposal never masks the proving outcome.
+  }
+}
+
+/**
  * Prove an executed transaction, resolving the prover exactly the way the
  * one-shot `submit()` pipeline does: the per-call prover if given, else the
  * client's default prover, else the built-in local prover. Shared by
@@ -72,10 +100,26 @@ function rejectUnexpectedAnchor(opts, method, alternative) {
  * @returns {Promise<*>} The proven transaction.
  */
 async function proveResult(inner, defaultProver, result, opts) {
-  const prover = opts?.prover ?? defaultProver;
-  return prover
-    ? await inner.proveTransaction(result, prover)
-    : await inner.proveTransaction(result);
+  const callerProver = opts?.prover;
+  if (callerProver && callerProver !== defaultProver) {
+    return await inner.proveTransaction(result, callerProver);
+  }
+  if (!defaultProver) {
+    return await inner.proveTransaction(result);
+  }
+  // Worker mode only calls prover.serialize() on the main thread without
+  // consuming the handle, so pass the shared default directly to avoid an
+  // unfreed main-thread WASM allocation. Non-worker mode takes the prover by
+  // value, so pass an independent copy and free it if unconsumed on failure.
+  if (inner.worker) {
+    return await inner.proveTransaction(result, defaultProver);
+  }
+  const prover = copyProver(defaultProver);
+  try {
+    return await inner.proveTransaction(result, prover);
+  } finally {
+    freeUnconsumedProver(prover);
+  }
 }
 
 /**
@@ -1135,19 +1179,16 @@ export class TransactionsResource {
    * When `batch` / `submitBatch` fails with
    * `code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`, the node may or may not have
    * accepted the batch and nothing was recorded locally. Pass
-   * `error.submission` (in-thread) or `{ submissionId: error.submissionId }`
-   * (worker) to resend the same proven bytes without re-proving. Do not call
-   * `batch` / `submitBatch` again for that attempt: a new prove changes
-   * identities.
+   * `error.submission` (browser in-thread or Node.js) or
+   * `{ submissionId: error.submissionId }` (browser Web Worker) to resend the
+   * same proven bytes without re-proving. Do not call `batch` / `submitBatch`
+   * again for that attempt: a new prove changes identities.
    *
    * After a successful retry, confirm with {@link waitFor} / `list` for the
    * transaction ids on the error (`error.transactionIds` or
    * `submission.transactionIds()`). A retry the node rejects as a conflict
    * usually means the original attempt landed, but it records nothing locally and
    * a sync does not insert the missing records: look the ids up on the node.
-   *
-   * Browser builds only: the Node.js build prefixes the message with the code but
-   * cannot attach the submission or `transactionIds`, so it cannot retry yet.
    *
    * @param {object|string} submission - ProvenBatchSubmission, worker
    *   `submissionId`, or `{ submissionId }` from the unknown-outcome error.
@@ -1169,11 +1210,18 @@ export class TransactionsResource {
    * unfiltered query would hand a stale caller a superset of what it asked for, so it throws
    * instead. Read `TransactionRecord.expirationBlockNum()` and compare it yourself.
    *
-   * @param {object} [query] - `{ status: "uncommitted" }` or `{ ids: [...] }`.
+   * A query with an `account`, a `limit`, or a `status` of `"pending"`, `"committed"` or
+   * `"discarded"` returns the matching transactions newest first, at most `limit` of them,
+   * and only those reach JavaScript. `status: "uncommitted"` with a `limit` reads as
+   * `"pending"`. It cannot be combined with `ids`.
+   *
+   * @param {object} [query] - `{ status: "uncommitted" }`, `{ ids: [...] }` or
+   * `{ account?, status?, limit? }`.
    * @returns {Promise<TransactionRecord[]>}
    * @throws {Error} If `query` carries a defined `expiredBefore` and neither
    * `status: "uncommitted"` nor `ids` — the two shapes that outranked the expiry filter
-   * before it was removed, and still do.
+   * before it was removed, and still do. A bounded query (`account`, `limit` or a
+   * `pending`, `committed` or `discarded` status) throws the same way.
    */
   async list(query) {
     this.#client.assertNotTerminated();
@@ -1182,6 +1230,11 @@ export class TransactionsResource {
     let filter;
     if (!query) {
       filter = wasm.TransactionFilter.all();
+    } else if (isBoundedTransactionQuery(query)) {
+      if (query.expiredBefore !== undefined && query.status !== "uncommitted") {
+        throw new Error(EXPIRED_BEFORE_REMOVED);
+      }
+      filter = buildTransactionQuery(query, wasm);
     } else if (query.status === "uncommitted") {
       filter = wasm.TransactionFilter.uncommitted();
     } else if (query.ids) {
@@ -1195,10 +1248,7 @@ export class TransactionsResource {
       // always did, and an undefined value still means "no filter" rather than an error.
       // The unknown-shape fallback below is `all()`, so without this branch a stale caller
       // would silently receive every transaction instead of the subset it asked for.
-      throw new Error(
-        "The { expiredBefore } transaction query was removed. Transaction expiry is decided " +
-          "during state sync; read expiry from the transaction record instead."
-      );
+      throw new Error(EXPIRED_BEFORE_REMOVED);
     } else {
       filter = wasm.TransactionFilter.all();
     }
@@ -1720,4 +1770,39 @@ class TransactionSubmission {
   async waitForConfirmation(opts) {
     return await this.#resource.waitFor(this.#result.id().toHex(), opts);
   }
+}
+
+const TRANSACTION_STATUSES = ["pending", "committed", "discarded"];
+
+const EXPIRED_BEFORE_REMOVED =
+  "The { expiredBefore } transaction query was removed. Transaction expiry is decided " +
+  "during state sync; read expiry from the transaction record instead.";
+
+function isBoundedTransactionQuery(query) {
+  return (
+    query.account !== undefined ||
+    query.limit !== undefined ||
+    TRANSACTION_STATUSES.includes(query.status)
+  );
+}
+
+function buildTransactionQuery(query, wasm) {
+  if (query.ids) {
+    throw new Error(
+      "Transaction query ids cannot be combined with account, status or limit"
+    );
+  }
+  const { limit } = query;
+  if (limit !== undefined && !isQueryLimit(limit)) {
+    throw new Error("Transaction query limit must be a positive integer");
+  }
+  const status = query.status === "uncommitted" ? "pending" : query.status;
+  if (status !== undefined && !TRANSACTION_STATUSES.includes(status)) {
+    throw new Error(`Unknown transaction status: ${status}`);
+  }
+  const account =
+    query.account === undefined
+      ? undefined
+      : resolveAccountRef(query.account, wasm).toString();
+  return wasm.TransactionFilter.query(account, status, limit);
 }

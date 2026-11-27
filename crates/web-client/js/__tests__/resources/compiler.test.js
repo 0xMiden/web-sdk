@@ -34,7 +34,16 @@ function makeWasm(builder, component) {
   return {
     AccountComponent: {
       compile: vi.fn().mockReturnValue(component),
+      fromPackage: vi.fn().mockReturnValue(component),
     },
+    Package: { deserialize: vi.fn().mockReturnValue({ deserialized: true }) },
+    StorageSlotArray: class StorageSlotArray {
+      constructor(items) {
+        this.items = items;
+      }
+    },
+    TransactionScript: { fromPackage: vi.fn().mockReturnValue("txFromPkg") },
+    NoteScript: { fromPackage: vi.fn().mockReturnValue("noteFromPkg") },
     createCodeBuilder: vi.fn().mockReturnValue(builder),
   };
 }
@@ -430,6 +439,103 @@ describe("CompilerResource", () => {
       builder.compileNoteScript.mockReturnValue("noteResult");
       const resource = new CompilerResource(inner, getWasm);
       await resource.noteScript({ code: "code" });
+    });
+  });
+
+  describe("package input", () => {
+    const pkg = { isPackage: true };
+
+    it("component builds from a Package without compiling source", async () => {
+      const resource = new CompilerResource(inner, getWasm, client);
+      const slots = [{ slot: 1 }];
+      const result = await resource.component({ package: pkg, slots });
+      expect(wasm.AccountComponent.fromPackage).toHaveBeenCalledOnce();
+      const [passedPkg, passedSlots] =
+        wasm.AccountComponent.fromPackage.mock.calls[0];
+      expect(passedPkg).toBe(pkg);
+      expect(passedSlots.items).toEqual(slots);
+      expect(wasm.AccountComponent.compile).not.toHaveBeenCalled();
+      expect(inner.createCodeBuilder).not.toHaveBeenCalled();
+      expect(component.withSupportsAllTypes).toHaveBeenCalledOnce();
+      expect(result).toBe(component);
+    });
+
+    it("component deserializes Uint8Array bytes", async () => {
+      const resource = new CompilerResource(inner, getWasm, client);
+      const bytes = new Uint8Array([1, 2, 3]);
+      await resource.component({ package: bytes });
+      expect(wasm.Package.deserialize).toHaveBeenCalledWith(bytes);
+      expect(wasm.AccountComponent.fromPackage.mock.calls[0][0]).toEqual({
+        deserialized: true,
+      });
+    });
+
+    it("component honours supportAllTypes=false for a package", async () => {
+      const resource = new CompilerResource(inner, getWasm, client);
+      await resource.component({ package: pkg, supportAllTypes: false });
+      expect(component.withSupportsAllTypes).not.toHaveBeenCalled();
+    });
+
+    it("component keeps the no-procedures warning for a package", async () => {
+      component.getProcedures.mockReturnValue([]);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const resource = new CompilerResource(inner, getWasm, client);
+      await resource.component({ package: pkg });
+      expect(warn).toHaveBeenCalledOnce();
+      warn.mockRestore();
+    });
+
+    it("component rejects code with package, neither, and source-only options", async () => {
+      const resource = new CompilerResource(inner, getWasm, client);
+      await expect(
+        resource.component({ code: "c", package: pkg })
+      ).rejects.toThrow(/either `code` or `package`/);
+      await expect(resource.component({})).rejects.toThrow(
+        /either `code` or `package`/
+      );
+      await expect(
+        resource.component({ package: pkg, namespace: "a::b" })
+      ).rejects.toThrow(/`namespace` and `libraries`/);
+      await expect(
+        resource.component({
+          package: pkg,
+          libraries: [{ namespace: "n", code: "c" }],
+        })
+      ).rejects.toThrow(/`namespace` and `libraries`/);
+    });
+
+    it("txScript builds from a Package", async () => {
+      const resource = new CompilerResource(inner, getWasm, client);
+      expect(await resource.txScript({ package: pkg })).toBe("txFromPkg");
+      expect(wasm.TransactionScript.fromPackage).toHaveBeenCalledWith(pkg);
+      expect(inner.createCodeBuilder).not.toHaveBeenCalled();
+      await resource.txScript({ package: new Uint8Array([9]) });
+      expect(wasm.Package.deserialize).toHaveBeenCalledOnce();
+    });
+
+    it("noteScript builds from a Package", async () => {
+      const resource = new CompilerResource(inner, getWasm, client);
+      expect(await resource.noteScript({ package: pkg })).toBe("noteFromPkg");
+      expect(wasm.NoteScript.fromPackage).toHaveBeenCalledWith(pkg);
+      expect(inner.createCodeBuilder).not.toHaveBeenCalled();
+    });
+
+    it("scripts reject code with package, neither, and libraries", async () => {
+      const resource = new CompilerResource(inner, getWasm, client);
+      for (const fn of ["txScript", "noteScript"]) {
+        await expect(resource[fn]({ code: "c", package: pkg })).rejects.toThrow(
+          /either `code` or `package`/
+        );
+        await expect(resource[fn]({})).rejects.toThrow(
+          /either `code` or `package`/
+        );
+        await expect(
+          resource[fn]({
+            package: pkg,
+            libraries: [{ namespace: "n", code: "c" }],
+          })
+        ).rejects.toThrow(/`libraries`/);
+      }
     });
   });
 });

@@ -15,6 +15,15 @@ export interface MidenVitePluginOptions {
   rpcProxyTarget?: string | false;
   /** gRPC-web proxy path prefix. Default: "/rpc.Api" */
   rpcProxyPath?: string;
+  /**
+   * Set Vite's `resolve.preserveSymlinks`. Default: false.
+   * Leave it off for pnpm's default layout: with it on, packages that live in
+   * the `.pnpm` store resolve their own dependencies (e.g. `zustand`) relative
+   * to the symlink instead of the real path and the build fails. Enable it
+   * only for a linked local checkout (`file:` / `link:`) that needs its
+   * symlinked path kept.
+   */
+  preserveSymlinks?: boolean;
 }
 
 /**
@@ -39,6 +48,7 @@ export function midenVitePlugin(options?: MidenVitePluginOptions): Plugin {
     crossOriginIsolation = false,
     rpcProxyTarget = "https://rpc.testnet.miden.io",
     rpcProxyPath = "/rpc.Api",
+    preserveSymlinks = false,
   } = options ?? {};
 
   const requiredDedupe = [
@@ -103,7 +113,7 @@ export function midenVitePlugin(options?: MidenVitePluginOptions): Plugin {
         resolve: {
           alias,
           dedupe: [...wasmPackages, ...requiredDedupe],
-          preserveSymlinks: true,
+          ...(preserveSymlinks ? { preserveSymlinks: true } : {}),
         },
         optimizeDeps: {
           exclude: [...wasmPackages],

@@ -73,8 +73,8 @@ failure that retains a `noteId`, resume that note instead of calling the faucet
 again. See `docs/external/src/web-client/library/funding.md`.
 
 State is split across resources rather than living on the client:
-`accounts`, `transactions`, `notes`, `tags`, `settings`, `keystore`, `compile`
-and `pswap`. Client-level methods cover the lifecycle around them - `sync`,
+`accounts`, `transactions`, `notes`, `tags`, `chain`, `settings`, `keystore`, `compile`,
+`pswap` and `contracts`. Client-level methods cover the lifecycle around them - `sync`,
 `syncChain`, `syncNoteTransport`, `getSyncHeight`, `waitForIdle` and
 `terminate`.
 
@@ -169,12 +169,20 @@ local apply fails, so `apply` and the single-transaction `transactions.*` helper
 `transactionId`, `submissionHeight` and the original error as `cause`. A batch whose
 local update fails after the node accepted it rejects with the same `code` and the
 accepted block in its message, without those fields. Do not submit it again.
+`ApplyTransactionAfterSubmitFailed` fields are browser builds only: Node.js errors
+only prefix the message with the code.
 A batch whose admission is indeterminate rejects with
-`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"` and nothing recorded locally; resend it
+`code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`, `transactionIds`, and nothing recorded
+locally, plus `submission` (browser in-thread and Node.js) or `submissionId`
+(browser Web Worker); resend it
 with `transactions.retryProvenBatch(error.submission ?? { submissionId: error.submissionId })`
 and never re-run `batch` / `submitBatch`. A rejected retry records nothing and a
-sync does not insert the records, so look the ids up on the node. Browser builds
-only: Node.js errors only prefix the message with the code.
+sync does not insert the records, so look the ids up on the node.
+
+MASM that does not assemble or link rejects with `code: "MASM_COMPILE_FAILED"`;
+a transaction program that fails in the VM (a failing `assert`) rejects with
+`code: "TRANSACTION_EXECUTION_FAILED"`, the VM diagnostic in the message. Same
+Node.js prefix rule as above.
 
 **Submitting never registers network scripts.** Scripts a request declares
 through `withExpectedNtxScripts` are not registered by any submit path; submit
@@ -209,6 +217,17 @@ not default to NoAuth. `"none"` is only valid on a contract; wallet and faucet
 `type` rather than creating a wallet. The legacy `0` / `1` are still faucet
 selectors and equal `AccountType.Private` / `Public`, so never pass a visibility
 value as `type`.
+
+A component, transaction script or note script can also come from a compiled
+package (`.masp`) instead of MASM source: pass `package` (a `Package` or its
+serialized bytes) in place of `code`, for example
+`client.compile.component({ package: bytes, slots })`, then pass the result to
+`accounts.create({ components })` as usual. `compile.txScript` and
+`compile.noteScript` take `{ package }` the same way. `namespace` and
+`libraries` apply to source only, and a package must be the right kind for what
+you build. A component built from a package always gets the fixed metadata name
+`"custom"`, whatever name the package declares, and `supportAllTypes` still
+defaults to `true`. The `Package` you pass stays usable afterward.
 
 ## Read non-fungible assets
 

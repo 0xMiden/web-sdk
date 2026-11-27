@@ -1,6 +1,6 @@
 ---
 name: web-client-usage
-description: Conventions for writing JavaScript/TypeScript code that uses the Miden web SDK (`@miden-sdk/miden-sdk`). Use when building apps on Miden, writing integration tests, or calling MidenClient or RpcClient methods - covers initialization, the resource-based API (accounts, transactions, notes, tags, settings, compile, keystore, pswap), stateless RPC queries and submission, sync ordering, type conversions, transaction flows, fees, batching, named storage slots, custom contracts, foreign accounts, private note transport, mock-chain testing, observability, and pitfalls.
+description: Conventions for writing JavaScript/TypeScript code that uses the Miden web SDK (`@miden-sdk/miden-sdk`). Use when building apps on Miden, writing integration tests, or calling MidenClient or RpcClient methods - covers initialization, the resource-based API (accounts, transactions, notes, tags, chain, settings, compile, keystore, pswap, contracts), stateless RPC queries and submission, sync ordering, type conversions, transaction flows, fees, batching, named storage slots, custom contracts, foreign accounts, private note transport, mock-chain testing, observability, and pitfalls.
 ---
 
 # Web SDK Usage Patterns
@@ -22,9 +22,11 @@ The SDK exposes a top-level `MidenClient` whose state is split across typed
 | Resource             | What it covers                                                                                                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `client.accounts`    | Wallets, faucets, custom contracts, listing, import/export, addresses                                                                                                          |
+| `client.contracts`   | `deploy`: a contract from compiled components with a generated seed and auth                                                                                                   |
 | `client.transactions` | `send` / `mint` / `bridge` / `withdrawUsdcx` / `claimAggLayerDeposit` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `retryProvenBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
 | `client.notes`       | Listing, fetching, importing/exporting, private-note transport                                                                                                                 |
 | `client.tags`        | Note-tag subscriptions                                                                                                                                                         |
+| `client.chain`       | Block headers with MMR proofs and nullifier commit heights, read from the node                                                                                                 |
 | `client.settings`    | Persistent client settings                                                                                                                                                     |
 | `client.compile`     | Compiling MASM into account components, tx scripts, note scripts                                                                                                               |
 | `client.keystore`    | Inserting / fetching / removing secret keys                                                                                                                                    |
@@ -43,12 +45,13 @@ const summary = await client._withInnerWebClient(async (inner) => {
 });
 ```
 
-The call chain serializes the callback against every other caller: an SDK
+The call chain serializes the callback against every other queued call: such a
 call that an unrelated task makes during one of `fn`'s `await`s queues behind
-`fn`. `inner` is a trusted handle, and only calls made through it run inline in
+`fn`. Local reads (`getAccounts`, `getInputNotes`, `getTransactions`,
+`getSyncHeight` and the like) take no turn, so they run without waiting. `inner` is a trusted handle, and only calls made through it run inline in
 the slot `fn` holds - that is what stops `fn` deadlocking against itself. So
-inside `fn`, call the SDK only through `inner`: a call through `client` or any
-other reference queues behind `fn` and never settles while `fn` awaits it.
+inside `fn`, call the SDK only through `inner`: a queued call through `client` or
+any other reference queues behind `fn` and never settles while `fn` awaits it.
 Calls through `inner` run inline, so await them one at a time. The raw-bound
 accessors (`lastAuthError()`, the `keystore` getter, and on mock clients
 `proveBlock()` and `serializeMock*()`) never queue, so do not call them from
@@ -746,11 +749,27 @@ const noAuthContract = await client.accounts.create({
 });
 ```
 
+`client.contracts.deploy({ components })` does the same without the boilerplate:
+it generates the `seed` and a Falcon `auth` key when omitted, keeps
+`accounts.create`'s `public` storage default, and resolves to
+`{ account, seed, auth }`. It throws without `components`.
+
 `compile.component` only turns exports marked `@account_procedure` or
 `@auth_script` into account procedures. A component with none logs a
 `[miden-sdk]` console warning but is still returned, because a storage-only
 component is legitimate beside one that has procedures; nothing can call into
 it on its own.
+
+A component, transaction script or note script can also come from a compiled
+package (`.masp`) instead of MASM source: pass `package` (a `Package` or its
+serialized bytes) in place of `code`, for example
+`client.compile.component({ package: bytes, slots })`, then pass the result to
+`accounts.create({ components })` as usual. `compile.txScript` and
+`compile.noteScript` take `{ package }` the same way. `namespace` and
+`libraries` apply to source only, and a package must be the right kind for what
+you build. A component built from a package always gets the fixed metadata name
+`"custom"`, whatever name the package declares, and `supportAllTypes` still
+defaults to `true`. The `Package` you pass stays usable afterward.
 
 A contract is whatever `accounts.create()` call carries `components` - the
 string forms `type: "MutableContract"` / `"ImmutableContract"` also route to a
@@ -1351,10 +1370,10 @@ call once every transaction of the batch is committed, and rejects if the node
 discards one or `timeout` (default 60 s) runs out.
 
 If submit fails with `code: "BATCH_SUBMISSION_OUTCOME_UNKNOWN"`, do not call
-`batch` / `submitBatch` again. Pass `error.submission` (in-thread) or
-`{ submissionId: error.submissionId }` (worker) to
+`batch` / `submitBatch` again. Pass `error.submission` (browser in-thread or
+Node.js) or `{ submissionId: error.submissionId }` (browser worker) to
 `transactions.retryProvenBatch(...)` so the same proven bytes go out without a
-new prove. Confirm with `waitFor` / `list` for `error.transactionIds`. A conflict on retry usually means the original attempt landed, but a rejected retry records nothing locally and a sync does not insert the missing records, so look the ids up on the node, not in the local store. Browser builds only: Node.js errors prefix the message with the code and carry no submission handle or `transactionIds`.
+new prove. Confirm with `waitFor` / `list` for `error.transactionIds`. A conflict on retry usually means the original attempt landed, but a rejected retry records nothing locally and a sync does not insert the missing records, so look the ids up on the node, not in the local store.
 `ApplyTransactionAfterSubmitFailed` means the node already accepted the batch:
 sync, do not resubmit or retry.
 
@@ -1426,12 +1445,27 @@ change most likely to pass unnoticed.
 replaced `accountDelta()` and return the absolute-valued `AccountPatch` /
 `AccountStoragePatch` / `AccountVaultPatch` models.
 
+To fold a patch into a copy of the account you already hold, call
+`account.applyPatch(patch)`. It returns a new `Account` and leaves the
+receiver unchanged; it throws for a patch of another account, a nonce that does
+not increase, or changes that do not apply to the account's state.
+
+### Cycle counts
+
+`ExecutedTransaction.measurements()` returns a `TransactionMeasurements` with the VM
+cycles of each phase: `prologue`, `notesProcessing`, `noteExecution` (an array of
+`{ noteId, cycles }`), `txScriptProcessing`, `epilogue`, `authProcedure` and
+`totalCycles` (prologue, notes, script and epilogue; `authProcedure` is reported
+separately and is not added in). Cycle counts only; there are no wall-clock timings.
+
 ### Listing transactions
 
 ```typescript
 await client.transactions.list(); // every stored transaction
 await client.transactions.list({ status: "uncommitted" });
 await client.transactions.list({ ids: [txId, "0xabc..."] });
+// Newest first; only `limit` records reach JavaScript. Not combinable with `ids`.
+await client.transactions.list({ account: wallet, status: "committed", limit: 20 });
 ```
 
 `TransactionFilter.expiredBefore()` and the `{ expiredBefore }` query were
@@ -1463,6 +1497,7 @@ call runs this same loop.
 await client.notes.list(); // all input notes
 await client.notes.list({ status: "committed" }); // "consumed" | "committed" | "expected" | "processing" | "unverified"
 await client.notes.list({ scriptRoots: [noteScript.root()] }); // hex strings or Word instances
+await client.notes.list({ nullifiers: [record.nullifier()] }); // hex strings or Word instances; nullifier() is undefined for a partial note, so guard it
 await client.notes.get(noteId); // single record
 await client.notes.listSent(); // output notes
 await client.notes.listAvailable({ account: wallet }); // payments the account can consume now
@@ -1610,6 +1645,10 @@ the wrapper, not the raw `AccountStorage`:
 
 - `getItem(slotName)` - a `StorageResult`, for a value slot or a map slot alike
 - `getMapItem(slotName, key)` / `getMapEntries(slotName)` - map reads
+- `getMapEntriesPage(slotName, offset, limit)` - at most `limit` map entries from
+  `offset`, in `getMapEntries` order; `getMapEntries` copies the whole map on
+  every call, so page large maps (`limit` of at least 1) and stop at the first page
+  shorter than `limit`
 - `getCommitment(slotName)` - the slot's raw protocol value, which for a map
   slot is its Merkle root (useful for proving state did not change)
 - `getSlotNames()` - every slot name on the account
@@ -1687,6 +1726,11 @@ await client.compile.component({
 });
 await client.compile.txScript({ code, libraries });
 await client.compile.noteScript({ code, libraries });
+
+// From a compiled package (a `Package` or its `.masp` bytes) instead of source:
+await client.compile.component({ package, slots });
+await client.compile.txScript({ package });
+await client.compile.noteScript({ package });
 ```
 
 `namespace` on `component()` is the module path procedure identities are derived
@@ -1713,6 +1757,16 @@ helper library whose procedures are not installed on any account has to be
 `{ namespace, code, linking: "static" }`, never as a pre-built `Library`. With
 `"dynamic"` such a script still compiles, then fails at execution with
 `procedure with root digest 0x...`.
+
+### MASM failure codes
+
+MASM that does not assemble or link rejects with `code: "MASM_COMPILE_FAILED"`
+(from `compile.*` and `CodeBuilder`), and a transaction program that fails in the
+VM, such as a failing `assert`, rejects with
+`code: "TRANSACTION_EXECUTION_FAILED"`. The message carries the compiler or VM
+diagnostic, so branch on `error.code` and show `error.message`. Browser builds
+set `code` on the error; Node.js errors only prefix the message with
+`"<CODE>: "`. Procedure and span fields are not structured yet.
 
 ### MASM shape
 

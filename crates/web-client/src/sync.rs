@@ -90,24 +90,12 @@ impl WebClient {
 
     #[js_export(js_name = "getSyncHeight")]
     pub async fn get_sync_height(&self) -> Result<u32, JsErr> {
-        #[cfg(feature = "browser")]
-        let sync_height = {
-            let store = self
-                .sync_height_store
-                .borrow()
-                .clone()
-                .ok_or_else(|| from_str_err("Client not initialized"))?;
-            store.get_sync_height().await.map_err(miden_client::ClientError::from)
-        };
-        #[cfg(feature = "nodejs")]
-        let sync_height = {
-            let mut guard = self.get_mut_inner().await;
-            let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-            client.get_sync_height().await
-        };
+        let client = self.get_read_client()?;
+        let sync_height = client
+            .get_sync_height()
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to get sync height"))?;
 
-        Ok(sync_height
-            .map_err(|err| js_error_with_context(err, "failed to get sync height"))?
-            .as_u32())
+        Ok(sync_height.as_u32())
     }
 }

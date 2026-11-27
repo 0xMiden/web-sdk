@@ -1024,3 +1024,180 @@ test.describe("transactions.executeProgram()", () => {
     expect(result.count).toBe("1");
   });
 });
+
+// ════════════════════════════════════════════════════════════════
+// Stable error codes for MASM failures
+// ════════════════════════════════════════════════════════════════
+
+test.describe("MASM error codes", () => {
+  test("compile.txScript() rejects invalid MASM with code MASM_COMPILE_FAILED", async ({
+    page,
+  }) => {
+    const result = await page.evaluate(async () => {
+      const client = await window.MidenClient.createMock();
+      try {
+        await client.compile.txScript({
+          code: `
+            @transaction_script
+            pub proc main
+              not_an_instruction
+            end
+          `,
+        });
+        return null;
+      } catch (e: any) {
+        return { code: e.code ?? null, message: e.message ?? String(e) };
+      }
+    });
+
+    expect(result).not.toBeNull();
+    expect(result.code).toBe("MASM_COMPILE_FAILED");
+    expect(result.message).toContain("failed to compile transaction script");
+  });
+
+  test("compile.component() rejects an invalid source library with code MASM_COMPILE_FAILED", async ({
+    page,
+  }) => {
+    const result = await page.evaluate(async () => {
+      const client = await window.MidenClient.createMock();
+      try {
+        await client.compile.component({
+          code: "pub proc noop push.1 drop end",
+          libraries: [
+            {
+              namespace: "external_contract::broken",
+              code: "pub proc broken not_an_instruction end",
+            },
+          ],
+        });
+        return null;
+      } catch (e: any) {
+        return { code: e.code ?? null, message: e.message ?? String(e) };
+      }
+    });
+
+    expect(result).not.toBeNull();
+    expect(result.code).toBe("MASM_COMPILE_FAILED");
+  });
+
+  test("a library that fails to build carries MASM_COMPILE_FAILED as an Error", async ({
+    page,
+  }) => {
+    const result = await page.evaluate(async () => {
+      const client = await window.MidenClient.createMock();
+      const script = `
+        @transaction_script
+        pub proc main
+          push.1 drop
+        end
+      `;
+      // One source fails to parse and one fails to assemble: the two ways a build fails.
+      const sources = [
+        "pub proc broken not_an_instruction end",
+        "pub proc broken exec.::missing::module::procedure end",
+      ];
+      const thrown = [];
+      for (const code of sources) {
+        try {
+          await client.compile.txScript({
+            code: script,
+            libraries: [{ namespace: "external_contract::broken", code }],
+          });
+          thrown.push(null);
+        } catch (e: any) {
+          thrown.push({ isError: e instanceof Error, code: e?.code ?? null });
+        }
+      }
+      return thrown;
+    });
+
+    expect(result).toEqual([
+      { isError: true, code: "MASM_COMPILE_FAILED" },
+      { isError: true, code: "MASM_COMPILE_FAILED" },
+    ]);
+  });
+
+  test("an invalid module path is a validation error without a MASM code", async ({
+    page,
+  }) => {
+    const result = await page.evaluate(async () => {
+      const attempt = async (run: () => Promise<unknown>) => {
+        try {
+          await run();
+          return null;
+        } catch (e: any) {
+          return { code: e.code ?? null, message: e.message ?? String(e) };
+        }
+      };
+      const client = await window.MidenClient.createMock();
+      return {
+        component: await attempt(() =>
+          client.compile.component({
+            code: "pub proc noop push.1 drop end",
+            namespace: "not a valid path",
+          })
+        ),
+        library: await attempt(() =>
+          client.compile.txScript({
+            code: `
+              @transaction_script
+              pub proc main
+                push.1 drop
+              end
+            `,
+            libraries: [
+              {
+                namespace: "not a valid path",
+                code: "pub proc noop push.1 drop end",
+              },
+            ],
+          })
+        ),
+      };
+    });
+
+    expect(result.component).not.toBeNull();
+    expect(result.component.message).toContain(
+      "invalid account component module path"
+    );
+    expect(result.component.code).toBeNull();
+    expect(result.library).not.toBeNull();
+    expect(result.library.message).toContain("invalid path");
+    expect(result.library.code).toBeNull();
+  });
+
+  test("a failing assertion rejects with code TRANSACTION_EXECUTION_FAILED and its cause", async ({
+    page,
+  }) => {
+    const result = await page.evaluate(async () => {
+      const client = await window.MidenClient.createMock();
+      const wallet = await client.accounts.create();
+      client.proveBlock();
+      await client.sync();
+
+      const script = await client.compile.txScript({
+        code: `
+          @transaction_script
+          pub proc main
+            push.0 push.1
+            assert_eq
+          end
+        `,
+      });
+
+      try {
+        await client.transactions.execute({ account: wallet.id(), script });
+        return null;
+      } catch (e: any) {
+        return { code: e.code ?? null, message: e.message ?? String(e) };
+      }
+    });
+
+    expect(result).not.toBeNull();
+    expect(result.code).toBe("TRANSACTION_EXECUTION_FAILED");
+    expect(result.message).toContain("failed to execute transaction");
+    expect(result.message).toContain(
+      "failed to execute transaction kernel program"
+    );
+  });
+});

@@ -267,7 +267,7 @@ describe("local reads during worker sync/prove (#567)", () => {
     ]);
   });
 
-  it("keeps a sync-height read behind an earlier queued write", async () => {
+  it("reads the committed sync height ahead of an earlier queued write", async () => {
     const { client } = createWorkerClient("local-reads-after-queued-write");
     const syncStarted = deferred();
     const releaseSync = deferred();
@@ -295,11 +295,12 @@ describe("local reads during worker sync/prove (#567)", () => {
     releaseSync.resolve();
 
     await Promise.all([syncing, importing]);
-    expect(beforeSync).toEqual({ status: "pending" });
-    await expect(reading).resolves.toBe(42);
+    expect(beforeSync).toEqual({ status: "resolved", value: 10 });
+    await expect(reading).resolves.toBe(10);
+    await expect(proxy.getSyncHeight()).resolves.toBe(42);
   });
 
-  it("waitForIdle drains the ordered worker call and admitted sync-height read", async () => {
+  it("waitForIdle waits for the ordered worker call, not for a local read", async () => {
     const { client, proxy } = createWorkerClient("local-reads-idle");
     const syncStarted = deferred();
     const syncGate = deferred();
@@ -323,12 +324,12 @@ describe("local reads during worker sync/prove (#567)", () => {
     readGate.resolve(10);
 
     expect(beforeSync).toEqual({ status: "pending" });
-    expect(afterSync).toEqual({ status: "pending" });
+    expect(afterSync).toEqual({ status: "resolved", value: undefined });
     await expect(reading).resolves.toBe(10);
     await expect(idle).resolves.toBeUndefined();
   });
 
-  it("serializes admitted reads and drains them before an ordered main-realm write", async () => {
+  it("runs local reads concurrently and holds no ordered write behind them", async () => {
     const { client, proxy } = createWorkerClient("local-reads-drain");
     const syncStarted = deferred();
     const syncGate = deferred();
@@ -369,12 +370,12 @@ describe("local reads during worker sync/prove (#567)", () => {
     firstRead.resolve(10);
 
     await Promise.all([first, second, importing]);
-    expect(beforeRead).toEqual({ status: "pending" });
-    expect(beforeRelease).toEqual(["first read"]);
+    expect(beforeRead).toEqual({ status: "resolved", value: undefined });
+    expect(beforeRelease).toEqual(["first read", "second read", "write"]);
     expect(order).toEqual(["first read", "second read", "write"]);
   });
 
-  it("keeps accountReader ordered while a worker sync is active", async () => {
+  it("lets accountReader resolve while a worker sync is active", async () => {
     const { client, proxy } = createWorkerClient("local-reads-account-reader");
     const syncStarted = deferred();
     const releaseSync = deferred();
@@ -393,7 +394,7 @@ describe("local reads during worker sync/prove (#567)", () => {
     releaseSync.resolve();
 
     await syncing;
-    expect(during).toEqual({ status: "pending" });
+    expect(during).toEqual({ status: "resolved", value: reader });
     await expect(reading).resolves.toBe(reader);
   });
 
@@ -433,13 +434,15 @@ describe("local reads during worker sync/prove (#567)", () => {
     expect(wasmClient.free).toHaveBeenCalledTimes(1);
   });
 
-  it("returns to ordered reads after a worker fails mid-sync", async () => {
+  it("keeps writes ordered and local reads free after a worker fails mid-sync", async () => {
     const { client, proxy, worker } = createWorkerClient("local-reads-failure");
     const writeStarted = deferred();
+    let writes = 0;
     const releaseWrite = deferred();
     const wasmClient = {
       getSyncHeight: async () => 10,
       importNoteFile: async () => {
+        writes += 1;
         writeStarted.resolve();
         await releaseWrite.promise;
       },
@@ -455,24 +458,30 @@ describe("local reads during worker sync/prove (#567)", () => {
     expect(await syncing).toBe(client.workerFailure);
     expect(beforeFailure).toEqual({ status: "resolved", value: 10 });
     await expect(initialRead).resolves.toBe(10);
-    expect(client._workerOnlyTurn).toBeFalsy();
 
     const importing = proxy.importNoteFile(new Uint8Array([2]));
     await writeStarted.promise;
+    const queued = proxy.importNoteFile(new Uint8Array([3]));
     const reading = proxy.getSyncHeight();
     const duringWrite = await outcomeAfterFlush(reading);
+    const writesDuringWrite = writes;
     releaseWrite.resolve();
 
-    await importing;
-    expect(duringWrite).toEqual({ status: "pending" });
+    await Promise.all([importing, queued]);
+    expect(duringWrite).toEqual({ status: "resolved", value: 10 });
+    expect(writesDuringWrite).toBe(1);
+    expect(writes).toBe(2);
     await expect(reading).resolves.toBe(10);
   });
 
-  it("runs trusted nested sync inline without admitting an unrelated read", async () => {
+  it("runs trusted nested sync inline without admitting an unrelated write", async () => {
     const { client, proxy } = createWorkerClient("local-reads-trusted");
     const syncStarted = deferred();
     const releaseSync = deferred();
-    client.wasmWebClient = { getSyncHeight: async () => 10 };
+    const importNoteFile = vi.fn(async () => "imported");
+    const wasmClient = { getSyncHeight: async () => 10, importNoteFile };
+    client.wasmWebClient = wasmClient;
+    vi.spyOn(client, "getWasmWebClient").mockResolvedValue(wasmClient);
     vi.spyOn(client, "callMethodWithWorker").mockImplementation(async () => {
       syncStarted.resolve();
       return releaseSync.promise;
@@ -481,16 +490,19 @@ describe("local reads during worker sync/prove (#567)", () => {
 
     const syncing = api._withInnerWebClient((trusted) => trusted.syncState());
     await syncStarted.promise;
+    const unrelated = proxy.importNoteFile(new Uint8Array([2]));
     const reading = proxy.getSyncHeight();
     const during = await outcomeAfterFlush(reading);
+    const writesDuring = importNoteFile.mock.calls.length;
     releaseSync.resolve(new Uint8Array([1]));
 
     await syncing;
-    expect(during).toEqual({ status: "pending" });
-    await expect(reading).resolves.toBe(10);
+    expect(during).toEqual({ status: "resolved", value: 10 });
+    expect(writesDuring).toBe(0);
+    await expect(unrelated).resolves.toBe("imported");
   });
 
-  it("closes a sync join window when a sync-height read is admitted", async () => {
+  it("keeps a sync join window open across a local read", async () => {
     const { client, proxy } = createWorkerClient("local-reads-join");
     const syncStarted = deferred();
     const releaseSync = deferred();
@@ -514,8 +526,8 @@ describe("local reads during worker sync/prove (#567)", () => {
     await expect(first).resolves.toEqual({ kind: "sync", length: 1 });
     await expect(joiner).resolves.toEqual({ kind: "sync", length: 1 });
     expect(during).toEqual({ status: "resolved", value: 10 });
-    await expect(second).resolves.toEqual({ kind: "sync", length: 2 });
-    expect(workerCall).toHaveBeenCalledTimes(2);
+    await expect(second).resolves.toEqual({ kind: "sync", length: 1 });
+    expect(workerCall).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the worker sync lock deadline when an eligible read is admitted", async () => {
