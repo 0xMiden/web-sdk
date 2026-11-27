@@ -1765,6 +1765,9 @@ VM, such as a failing `assert`, rejects with
 diagnostic, so branch on `error.code` and show `error.message`. Browser builds
 set `code` on the error; Node.js errors only prefix the message with
 `"<CODE>: "`. Procedure and span fields are not structured yet.
+In the browser, a library that fails to build (`buildLibrary`, including an inline
+`{ namespace, code }` library of `compile.txScript` or `compile.noteScript`) rejects with a bare
+string that has no `code`.
 
 ### MASM shape
 

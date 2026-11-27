@@ -2228,11 +2228,9 @@ export interface NotesResource {
 // Compiler types
 // ════════════════════════════════════════════════════════════════
 
-export interface CompileComponentSourceOptions {
+export interface CompileComponentOptions {
   /** MASM source code for the component. */
   code: string;
-  /** Source and package inputs are exclusive. */
-  package?: never;
   /**
    * Module path used to derive procedure identities. Use the same namespace when
    * linking this component into transaction scripts.
@@ -2278,11 +2276,6 @@ export interface CompileComponentPackageOptions {
   supportAllTypes?: boolean;
 }
 
-/** Exactly one of `code` and `package`. */
-export type CompileComponentOptions =
-  | CompileComponentSourceOptions
-  | CompileComponentPackageOptions;
-
 export interface CompileTxScriptLibrary {
   /** MASM namespace for the library (e.g. "counter::module"). */
   namespace: string;
@@ -2320,11 +2313,9 @@ export type CompileScriptLibrary =
   | CompileAccountComponentLibrary
   | Library;
 
-export interface CompileTxScriptSourceOptions {
+export interface CompileTxScriptOptions {
   /** MASM source code for the transaction script. */
   code: string;
-  /** Source and package inputs are exclusive. */
-  package?: never;
   /** Component libraries to link. */
   libraries?: CompileScriptLibrary[];
 }
@@ -2341,16 +2332,9 @@ export interface CompileTxScriptPackageOptions {
   libraries?: never;
 }
 
-/** Exactly one of `code` and `package`. */
-export type CompileTxScriptOptions =
-  | CompileTxScriptSourceOptions
-  | CompileTxScriptPackageOptions;
-
-export interface CompileNoteScriptSourceOptions {
+export interface CompileNoteScriptOptions {
   /** MASM source code for the note script. */
   code: string;
-  /** Source and package inputs are exclusive. */
-  package?: never;
   /** Component libraries to link. */
   libraries?: CompileScriptLibrary[];
 }
@@ -2367,16 +2351,15 @@ export interface CompileNoteScriptPackageOptions {
   libraries?: never;
 }
 
-/** Exactly one of `code` and `package`. */
-export type CompileNoteScriptOptions =
-  | CompileNoteScriptSourceOptions
-  | CompileNoteScriptPackageOptions;
-
 /**
  * Stable `code` of the errors MASM failures raise (a message prefix on Node.js, where the
  * binding cannot attach a property): `MASM_COMPILE_FAILED` when source does not assemble or
  * link, `TRANSACTION_EXECUTION_FAILED` when a transaction program fails in the VM, for example
  * a failing `assert`. The message carries the compiler or VM diagnostic.
+ *
+ * In the browser, a library that fails to build (`CodeBuilder.buildLibrary`, including an inline
+ * `{ namespace, code }` library of `compile.txScript` or `compile.noteScript`) rejects with a
+ * bare string that carries no `code`.
  */
 export type MasmErrorCode =
   | "MASM_COMPILE_FAILED"
@@ -2413,18 +2396,36 @@ export declare class CompilerResource {
    *
    * @param options - Component source code, storage slots, and auth options.
    */
+  component(
+    options:
+      | (CompileComponentOptions & { package?: never })
+      | CompileComponentPackageOptions
+  ): Promise<AccountComponent>;
+  /** Source input. Declared last so `Parameters` resolves to the source options. */
   component(options: CompileComponentOptions): Promise<AccountComponent>;
   /**
    * Compile MASM source into a TransactionScript.
    *
    * @param options - Script source code and optional libraries to link.
    */
+  txScript(
+    options:
+      | (CompileTxScriptOptions & { package?: never })
+      | CompileTxScriptPackageOptions
+  ): Promise<TransactionScript>;
+  /** Source input. Declared last so `Parameters` resolves to the source options. */
   txScript(options: CompileTxScriptOptions): Promise<TransactionScript>;
   /**
    * Compile MASM source into a NoteScript.
    *
    * @param options - Script source code and optional libraries to link.
    */
+  noteScript(
+    options:
+      | (CompileNoteScriptOptions & { package?: never })
+      | CompileNoteScriptPackageOptions
+  ): Promise<NoteScript>;
+  /** Source input. Declared last so `Parameters` resolves to the source options. */
   noteScript(options: CompileNoteScriptOptions): Promise<NoteScript>;
 }
 

@@ -183,6 +183,9 @@ MASM that does not assemble or link rejects with `code: "MASM_COMPILE_FAILED"`;
 a transaction program that fails in the VM (a failing `assert`) rejects with
 `code: "TRANSACTION_EXECUTION_FAILED"`, the VM diagnostic in the message. Same
 Node.js prefix rule as above.
+In the browser, a library that fails to build (`buildLibrary`, including an inline
+`{ namespace, code }` library of `compile.txScript` or `compile.noteScript`) rejects with a bare
+string that has no `code`.
 
 **Submitting never registers network scripts.** Scripts a request declares
 through `withExpectedNtxScripts` are not registered by any submit path; submit

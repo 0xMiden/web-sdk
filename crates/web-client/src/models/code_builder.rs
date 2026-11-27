@@ -23,8 +23,12 @@ use crate::models::account_component_code::AccountComponentCode;
 use crate::models::library::Library;
 use crate::models::note_script::NoteScript;
 use crate::models::transaction_script::TransactionScript;
-use crate::platform::{JsErr, from_str_err_with_code};
-use crate::{MASM_COMPILE_FAILED, js_compile_error, js_error_with_context};
+use crate::platform::JsErr;
+#[cfg(feature = "browser")]
+use crate::platform::from_str_err;
+#[cfg(feature = "nodejs")]
+use crate::{MASM_COMPILE_FAILED, platform::from_str_err_with_code};
+use crate::{js_compile_error, js_error_with_context};
 
 /// Utility for linking libraries and compiling transaction/note scripts.
 #[derive(Clone)]
@@ -39,6 +43,19 @@ impl CodeBuilder {
     pub(crate) fn from_source_manager(source_manager: Arc<dyn SourceManagerSync>) -> Self {
         let builder = NativeCodeBuilder::with_source_manager(source_manager);
         Self { builder }
+    }
+}
+
+/// The error of a library that fails to build. 0.18.x browser callers receive a bare string, so it
+/// carries no code there; Node.js prefixes the message with the code.
+fn library_build_error(message: &str) -> JsErr {
+    #[cfg(feature = "browser")]
+    {
+        from_str_err(message)
+    }
+    #[cfg(feature = "nodejs")]
+    {
+        from_str_err_with_code(message, MASM_COMPILE_FAILED)
     }
 }
 
@@ -175,7 +192,7 @@ impl CodeBuilder {
             .parse_str(Some(library_path), &source_code, self.builder.source_manager())
             .map_err(|e| {
                 let err_msg = format_assembler_error(&e, "error while parsing module");
-                from_str_err_with_code(&err_msg, MASM_COMPILE_FAILED)
+                library_build_error(&err_msg)
             })?;
 
         let assembler: Assembler = self.builder.clone().into();
@@ -186,7 +203,7 @@ impl CodeBuilder {
             Err(error_report) => {
                 let err_msg =
                     format_assembler_error(&error_report, "error while assembling library");
-                Err(from_str_err_with_code(&err_msg, MASM_COMPILE_FAILED))
+                Err(library_build_error(&err_msg))
             },
         }
     }
