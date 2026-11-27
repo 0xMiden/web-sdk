@@ -7,6 +7,8 @@ import { Page } from "@playwright/test";
 interface MintTransactionUpdate {
   transactionId: string;
   numOutputNotesCreated: number;
+  numUserOutputNotes?: number;
+  hasFeeNote?: boolean;
   nonce: string | undefined;
   createdNoteId: string;
 }
@@ -78,15 +80,17 @@ export const mintTransaction = async (
         );
       }
 
+      // A fee-charging chain adds the kernel's fee note to the outputs, in no fixed order.
+      const executed = mintTransactionResult.executedTransaction();
+      const userNotes = executed.userOutputNotes();
+
       return {
-        transactionId: mintTransactionResult.executedTransaction().id().toHex(),
+        transactionId: executed.id().toHex(),
         numOutputNotesCreated: mintTransactionResult.createdNotes().numNotes(),
+        numUserOutputNotes: userNotes.length,
+        hasFeeNote: executed.feeNote() != null,
         nonce: mintTransactionResult.accountPatch().finalNonce().toString(),
-        createdNoteId: mintTransactionResult
-          .createdNotes()
-          .notes()[0]
-          .id()
-          .toString(),
+        createdNoteId: userNotes[0].id().toString(),
       };
     },
     {
