@@ -272,6 +272,87 @@ test("account file import restores an external key dropped after its association
   expect(results.insertOnlyError.tracked).toBe(false);
 });
 
+test("account file import writes the local secret when an insert-only keystore left the account mapping", async ({
+  run,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name === "nodejs" || !isLocalhost(),
+    "requires browser keystore callbacks and a local test node"
+  );
+
+  const result = await run(async ({ client, sdk }) => {
+    const wallet = await client.newWallet(
+      sdk.AccountStorageMode.private(),
+      sdk.AuthScheme.AuthRpoFalcon512
+    );
+    const bytes = (await client.exportAccountFile(wallet.id())).serialize();
+    const [commitment] = await client.keystore.getCommitments(wallet.id());
+    const key = await client.keystore.get(commitment);
+    const storeName = window.storeName + "-mapping-handoff";
+    const externalKeys = new Map<string, Uint8Array>();
+    const external = await sdk.WasmWebClient.createClientWithExternalKeystore(
+      window.rpcUrl,
+      undefined,
+      undefined,
+      storeName,
+      undefined,
+      (id, secret) => {
+        externalKeys.set(id.toString(), secret);
+      },
+      undefined,
+      undefined,
+      false,
+      undefined,
+      window.feeFaucetId
+    );
+    try {
+      await external.keystore.insert(wallet.id(), key);
+    } finally {
+      external.terminate();
+      await external.waitForIdle();
+    }
+
+    const local = await sdk.WasmWebClient.createClient(
+      window.rpcUrl,
+      undefined,
+      undefined,
+      storeName,
+      undefined,
+      false,
+      undefined,
+      window.feeFaucetId
+    );
+    try {
+      const mappings = await local.keystore.getCommitments(wallet.id());
+      const trackedBeforeImport = Boolean(await local.getAccount(wallet.id()));
+      await local.importAccountFile(sdk.AccountFile.deserialize(bytes));
+      const exported = await local.exportAccountFile(wallet.id()).then(
+        (file) => ({ keyCount: file.authSecretKeyCount(), exportError: null }),
+        (error) => ({
+          keyCount: null,
+          exportError: error instanceof Error ? error.message : String(error),
+        })
+      );
+      return {
+        ...exported,
+        externalKeys: externalKeys.size,
+        mappedKeys: mappings.length,
+        trackedBeforeImport,
+        trackedAfterImport: Boolean(await local.getAccount(wallet.id())),
+      };
+    } finally {
+      local.terminate();
+    }
+  });
+
+  expect(result.externalKeys).toBe(1);
+  expect(result.mappedKeys).toBe(1);
+  expect(result.trackedBeforeImport).toBe(false);
+  expect(result.trackedAfterImport).toBe(true);
+  expect(result.exportError).toBeNull();
+  expect(result.keyCount).toBe(1);
+});
+
 test.describe("import from seed", () => {
   test("should import same public account from seed", async ({ run }) => {
     test.slow();
